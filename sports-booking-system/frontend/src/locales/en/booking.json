@@ -1,0 +1,10 @@
+{
+  "title": "Book court",
+  "date": "Booking date",
+  "startTime": "Start time",
+  "endTime": "End time",
+  "payment": "Payment",
+  "total": "Total",
+  "success": "Booking created successfully",
+  "history": "Booking history"
+}

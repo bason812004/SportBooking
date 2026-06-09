@@ -2,8 +2,10 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { bookingApi } from "../../features/bookings/api/bookingApi";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
+import { useLanguage } from "../../lib/i18n";
 
 export function UserBookingsPage() {
+  const { t } = useLanguage();
   const bookings = useQuery({ queryKey: ["my-bookings"], queryFn: bookingApi.listMine });
 
   if (bookings.isLoading) return <LoadingState />;
@@ -11,8 +13,8 @@ export function UserBookingsPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Lich su dat san</h1>
-      {bookings.data?.items.length === 0 && <EmptyState title="Ban chua co don dat san" />}
+      <h1 className="text-2xl font-semibold">{t("Lịch sử đặt sân")}</h1>
+      {bookings.data?.items.length === 0 && <EmptyState title={t("Bạn chưa có đơn đặt sân")} />}
       <div className="overflow-hidden rounded-md border border-line bg-white">
         {bookings.data?.items.map((booking) => (
           <Link key={booking.id} to={`/user/bookings/${booking.id}`} className="grid gap-2 border-b border-line p-4 text-sm last:border-0 md:grid-cols-5">

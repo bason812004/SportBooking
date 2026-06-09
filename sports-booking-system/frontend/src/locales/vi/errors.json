@@ -1,0 +1,13 @@
+{
+  "VOUCHER_NOT_FOUND": "Không tìm thấy voucher.",
+  "VOUCHER_EXPIRED": "Voucher đã hết hạn.",
+  "VOUCHER_ALREADY_CLAIMED": "Bạn đã nhận voucher này.",
+  "VOUCHER_USAGE_LIMIT_REACHED": "Voucher đã hết lượt sử dụng.",
+  "VOUCHER_MIN_BOOKING_NOT_MET": "Đơn đặt sân chưa đạt giá trị tối thiểu để dùng voucher.",
+  "BLOG_NOT_FOUND": "Không tìm thấy bài viết.",
+  "BLOG_NOT_ALLOWED": "Bạn không có quyền thao tác với bài viết này.",
+  "TOURNAMENT_NOT_FOUND": "Không tìm thấy giải đấu.",
+  "TOURNAMENT_FULL": "Giải đấu đã đủ số lượng.",
+  "TOURNAMENT_REGISTRATION_CLOSED": "Đã hết hạn đăng ký giải đấu.",
+  "TOURNAMENT_ALREADY_REGISTERED": "Bạn đã đăng ký giải đấu này."
+}

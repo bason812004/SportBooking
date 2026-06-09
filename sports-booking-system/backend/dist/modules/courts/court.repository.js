@@ -8,7 +8,18 @@ const courtInclude = {
     amenities: true,
     prices: true,
     services: { where: { status: "ACTIVE" } },
-    reviews: { where: { displayStatus: "VISIBLE" }, select: { rating: true } },
+    reviews: {
+        where: { displayStatus: "VISIBLE" },
+        select: {
+            id: true,
+            rating: true,
+            comment: true,
+            createdAt: true,
+            user: { select: { id: true, fullName: true, avatarUrl: true } }
+        },
+        orderBy: { createdAt: "desc" },
+        take: 3
+    },
     partner: { include: { user: { select: { fullName: true, email: true, phone: true } } } }
 };
 const courtDetailInclude = {

@@ -11,10 +11,12 @@ import { LoadingState, ErrorState } from "../../components/common/States";
 import { bookingApi } from "../../features/bookings/api/bookingApi";
 import { bookingSchema } from "../../features/bookings/schemas/bookingSchema";
 import { useCourt } from "../../features/courts/hooks/useCourts";
+import { useLanguage } from "../../lib/i18n";
 
 type FormValues = z.infer<typeof bookingSchema>;
 
 export function BookingPage() {
+  const { t } = useLanguage();
   const { courtId } = useParams();
   const navigate = useNavigate();
   const court = useCourt(courtId);
@@ -25,7 +27,7 @@ export function BookingPage() {
   const mutation = useMutation({
     mutationFn: (values: FormValues) => bookingApi.create({ ...values, courtId: courtId!, services: [] }),
     onSuccess: (booking) => {
-      toast.success("Dat san thanh cong");
+      toast.success(t("Đặt sân thành công"));
       navigate(`/payment/${booking.id}`);
     },
     onError: (error) => toast.error(error.message)
@@ -37,28 +39,28 @@ export function BookingPage() {
   return (
     <div className="mx-auto grid max-w-4xl gap-5 md:grid-cols-[1fr_320px]">
       <form className="rounded-md border border-line bg-white p-5 shadow-sm" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>
-        <h1 className="text-2xl font-semibold">Dat san</h1>
+        <h1 className="text-2xl font-semibold">{t("Đặt sân")}</h1>
         <div className="mt-5 grid gap-4 md:grid-cols-2">
-          <Input label="Ngay dat" type="date" {...form.register("bookingDate")} error={form.formState.errors.bookingDate?.message} />
-          <Input label="Gio bat dau" type="time" {...form.register("startTime")} error={form.formState.errors.startTime?.message} />
-          <Input label="Gio ket thuc" type="time" {...form.register("endTime")} error={form.formState.errors.endTime?.message} />
+          <Input label={t("Ngày đặt")} type="date" {...form.register("bookingDate")} error={form.formState.errors.bookingDate?.message} />
+          <Input label={t("Giờ bắt đầu")} type="time" {...form.register("startTime")} error={form.formState.errors.startTime?.message} />
+          <Input label={t("Giờ kết thúc")} type="time" {...form.register("endTime")} error={form.formState.errors.endTime?.message} />
           <Select
-            label="Thanh toan"
+            label={t("Thanh toán")}
             {...form.register("paymentMethod")}
             options={[
-              { value: "CASH", label: "Tien mat" },
-              { value: "BANK_TRANSFER", label: "Chuyen khoan" },
-              { value: "E_WALLET", label: "Vi dien tu" },
-              { value: "MOCK_PAYMENT", label: "Thanh toan demo" }
+              { value: "CASH", label: t("Tiền mặt") },
+              { value: "BANK_TRANSFER", label: t("Chuyển khoản") },
+              { value: "E_WALLET", label: t("Ví điện tử") },
+              { value: "MOCK_PAYMENT", label: t("Thanh toán demo") }
             ]}
           />
         </div>
-        <Button className="mt-5" disabled={mutation.isPending}>{mutation.isPending ? "Dang dat" : "Xac nhan dat san"}</Button>
+        <Button className="mt-5" disabled={mutation.isPending}>{mutation.isPending ? t("Đang đặt") : t("Xác nhận đặt sân")}</Button>
       </form>
       <aside className="h-max rounded-md border border-line bg-white p-5">
         <h2 className="font-semibold">{court.data?.name}</h2>
         <p className="mt-2 text-sm text-slate-600">{court.data?.address}</p>
-        <p className="mt-4 text-sm text-slate-500">Tong tien cuoi cung duoc tinh va tra ve tu backend.</p>
+        <p className="mt-4 text-sm text-slate-500">{t("Tổng tiền cuối cùng được tính và trả về từ backend.")}</p>
       </aside>
     </div>
   );

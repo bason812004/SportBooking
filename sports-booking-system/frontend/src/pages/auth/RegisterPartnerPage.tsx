@@ -9,10 +9,12 @@ import { Input } from "../../components/ui/Input";
 import { authApi } from "../../features/auth/api/authApi";
 import { useAuth } from "../../features/auth/hooks/useAuth";
 import { registerPartnerSchema } from "../../features/auth/schemas/authSchema";
+import { useLanguage } from "../../lib/i18n";
 
 type FormValues = z.infer<typeof registerPartnerSchema>;
 
 export function RegisterPartnerPage() {
+  const { t } = useLanguage();
   const navigate = useNavigate();
   const auth = useAuth();
   const form = useForm<FormValues>({ resolver: zodResolver(registerPartnerSchema) });
@@ -20,7 +22,7 @@ export function RegisterPartnerPage() {
     mutationFn: authApi.registerPartner,
     onSuccess: ({ user, token }) => {
       auth.setSession(user, token);
-      toast.success("Da tao tai khoan doi tac");
+      toast.success(t("Đã tạo tài khoản đối tác"));
       navigate("/partner/dashboard");
     },
     onError: (error) => toast.error(error.message)
@@ -28,15 +30,15 @@ export function RegisterPartnerPage() {
 
   return (
     <div className="mx-auto max-w-2xl rounded-md border border-line bg-white p-6 shadow-sm">
-      <h1 className="text-2xl font-semibold">Dang ky doi tac</h1>
+      <h1 className="text-2xl font-semibold">{t("Đăng ký đối tác")}</h1>
       <form className="mt-5 grid gap-4 md:grid-cols-2" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>
-        <Input label="Ho ten" {...form.register("fullName")} error={form.formState.errors.fullName?.message} />
-        <Input label="Email" {...form.register("email")} error={form.formState.errors.email?.message} />
-        <Input label="So dien thoai" {...form.register("phone")} />
-        <Input label="Mat khau" type="password" {...form.register("password")} error={form.formState.errors.password?.message} />
-        <Input label="Ten don vi" {...form.register("businessName")} error={form.formState.errors.businessName?.message} />
-        <Input label="Dia chi kinh doanh" {...form.register("address")} error={form.formState.errors.address?.message} />
-        <Button className="md:col-span-2" disabled={mutation.isPending}>Tao tai khoan doi tac</Button>
+        <Input label={t("Họ tên")} {...form.register("fullName")} error={form.formState.errors.fullName?.message ? t(form.formState.errors.fullName.message) : undefined} />
+        <Input label="Email" {...form.register("email")} error={form.formState.errors.email?.message ? t(form.formState.errors.email.message) : undefined} />
+        <Input label={t("Số điện thoại")} {...form.register("phone")} />
+        <Input label={t("Mật khẩu")} type="password" {...form.register("password")} error={form.formState.errors.password?.message ? t(form.formState.errors.password.message) : undefined} />
+        <Input label={t("Tên đơn vị")} {...form.register("businessName")} error={form.formState.errors.businessName?.message ? t(form.formState.errors.businessName.message) : undefined} />
+        <Input label={t("Địa chỉ kinh doanh")} {...form.register("address")} error={form.formState.errors.address?.message ? t(form.formState.errors.address.message) : undefined} />
+        <Button className="md:col-span-2" disabled={mutation.isPending}>{t("Tạo tài khoản đối tác")}</Button>
       </form>
     </div>
   );

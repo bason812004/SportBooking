@@ -1,0 +1,54 @@
+{
+  "brand": {
+    "description": "An online sports court booking platform that helps players find courts faster and partners manage operations more efficiently."
+  },
+  "sections": {
+    "product": "Product",
+    "partners": "For Partners",
+    "support": "Support Center",
+    "policies": "Policies",
+    "contact": "Contact"
+  },
+  "links": {
+    "exploreCourts": "Explore Courts",
+    "vouchers": "Vouchers",
+    "blog": "Blog",
+    "tournaments": "Tournaments",
+    "partnerLanding": "Partner Overview",
+    "listCourt": "List Your Court",
+    "manageCourts": "Manage Courts",
+    "revenueAnalytics": "Revenue Analytics",
+    "help": "Help Center",
+    "faq": "FAQ",
+    "contact": "Contact",
+    "report": "Report Issue",
+    "terms": "Terms of Service",
+    "privacy": "Privacy Policy",
+    "payment": "Payment Policy",
+    "refund": "Refund Policy"
+  },
+  "contact": {
+    "email": "Email",
+    "hotline": "Hotline",
+    "address": "Address",
+    "supportHours": "Support Hours",
+    "addressValue": "District 1, Ho Chi Minh City",
+    "supportHoursValue": "08:00 - 22:00, Monday - Sunday"
+  },
+  "newsletter": {
+    "title": "Subscribe to Newsletter",
+    "description": "Receive the latest sports news and promotions.",
+    "placeholder": "Enter your email",
+    "button": "Subscribe"
+  },
+  "stats": {
+    "courts": "500+ Sports Courts",
+    "users": "50,000+ Users",
+    "bookings": "1,000,000+ Bookings",
+    "partners": "200+ Partners"
+  },
+  "bottom": {
+    "copyright": "© 2026 Sports Booking Platform.",
+    "rights": "All rights reserved."
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "search": {
+    "title": "Danh sách sân",
+    "location": "Địa điểm",
+    "courtType": "Loại sân",
+    "date": "Ngày",
+    "today": "Hôm nay",
+    "startTime": "Giờ bắt đầu",
+    "endTime": "Giờ kết thúc",
+    "players": "Số người chơi",
+    "searchAgain": "Tìm lại",
+    "defaultLocation": "TP.HCM, Quận 7",
+    "defaultCourtType": "Cầu lông, bóng đá"
+  },
+  "filters": {
+    "title": "Bộ lọc thông minh",
+    "price": "Khoảng giá",
+    "rating": "Đánh giá",
+    "amenities": "Tiện ích",
+    "status": "Trạng thái",
+    "distance": "Khoảng cách",
+    "verified": "Đối tác xác thực"
+  },
+  "detail": {
+    "reviews": "Review từ người chơi",
+    "reviewAnalytics": "Phân tích review",
+    "reviewDescription": "Lọc nhanh theo mới nhất, rating cao nhất hoặc thấp nhất.",
+    "emptyReviews": "Chưa có review thật cho sân này. Hãy chạy seed review để hiển thị đánh giá.",
+    "newest": "Mới nhất",
+    "highestRating": "Rating cao nhất",
+    "lowestRating": "Rating thấp nhất",
+    "noComment": "Người dùng chưa để lại nội dung.",
+    "from": "Từ",
+    "bookNow": "Đặt sân ngay",
+    "service": "Dịch vụ",
+    "serviceValue": "Thuê vợt + nước",
+    "subtotal": "Tạm tính",
+    "total": "Tổng",
+    "bestTime": "Khung giờ phù hợp cho bạn: 14:00 - 16:00. Dựa trên lịch sử đặt sân, khung này ít đông và đang giảm 20%.",
+    "time": "Giờ"
+  }
+}

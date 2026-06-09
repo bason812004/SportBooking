@@ -1,0 +1,54 @@
+{
+  "brand": {
+    "description": "Nền tảng đặt sân thể thao trực tuyến, giúp người chơi tìm sân nhanh và giúp đối tác quản lý vận hành hiệu quả."
+  },
+  "sections": {
+    "product": "Sản phẩm",
+    "partners": "Dành cho đối tác",
+    "support": "Trung tâm hỗ trợ",
+    "policies": "Chính sách",
+    "contact": "Liên hệ"
+  },
+  "links": {
+    "exploreCourts": "Khám phá sân",
+    "vouchers": "Voucher",
+    "blog": "Blog",
+    "tournaments": "Giải đấu",
+    "partnerLanding": "Giới thiệu đối tác",
+    "listCourt": "Đăng sân",
+    "manageCourts": "Quản lý sân",
+    "revenueAnalytics": "Thống kê doanh thu",
+    "help": "Trợ giúp",
+    "faq": "FAQ",
+    "contact": "Liên hệ",
+    "report": "Báo lỗi",
+    "terms": "Điều khoản sử dụng",
+    "privacy": "Chính sách bảo mật",
+    "payment": "Chính sách thanh toán",
+    "refund": "Chính sách hoàn tiền"
+  },
+  "contact": {
+    "email": "Email",
+    "hotline": "Hotline",
+    "address": "Địa chỉ",
+    "supportHours": "Giờ hỗ trợ",
+    "addressValue": "Quận 1, Thành phố Hồ Chí Minh",
+    "supportHoursValue": "08:00 - 22:00, Thứ 2 - Chủ nhật"
+  },
+  "newsletter": {
+    "title": "Đăng ký nhận tin",
+    "description": "Nhận ưu đãi và thông tin thể thao mới nhất.",
+    "placeholder": "Nhập email của bạn",
+    "button": "Đăng ký"
+  },
+  "stats": {
+    "courts": "500+ Sân thể thao",
+    "users": "50.000+ Người dùng",
+    "bookings": "1.000.000+ Lượt đặt sân",
+    "partners": "200+ Đối tác"
+  },
+  "bottom": {
+    "copyright": "© 2026 Sports Booking Platform.",
+    "rights": "Mọi quyền được bảo lưu."
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "portal": "Admin Portal",
+  "dashboard": "Dashboard",
+  "users": "Users",
+  "partners": "Partners",
+  "pendingCourts": "Court Approvals",
+  "categories": "Categories",
+  "reports": "Reports",
+  "auditLogs": "Audit Logs",
+  "blockchainLogs": "Blockchain Logs"
+}

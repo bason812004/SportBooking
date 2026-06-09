@@ -1,0 +1,13 @@
+{
+  "VOUCHER_NOT_FOUND": "Voucher not found.",
+  "VOUCHER_EXPIRED": "The voucher has expired.",
+  "VOUCHER_ALREADY_CLAIMED": "You have already claimed this voucher.",
+  "VOUCHER_USAGE_LIMIT_REACHED": "The voucher usage limit has been reached.",
+  "VOUCHER_MIN_BOOKING_NOT_MET": "The booking does not meet the minimum amount for this voucher.",
+  "BLOG_NOT_FOUND": "Article not found.",
+  "BLOG_NOT_ALLOWED": "You are not allowed to manage this article.",
+  "TOURNAMENT_NOT_FOUND": "Tournament not found.",
+  "TOURNAMENT_FULL": "The tournament is full.",
+  "TOURNAMENT_REGISTRATION_CLOSED": "Tournament registration is closed.",
+  "TOURNAMENT_ALREADY_REGISTERED": "You have already registered for this tournament."
+}

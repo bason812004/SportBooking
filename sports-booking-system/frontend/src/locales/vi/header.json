@@ -1,0 +1,76 @@
+{
+  "announcement": {
+    "items": [
+      "Giảm đến 30% cho người dùng mới",
+      "Đặt sân nhanh, xác nhận tức thì",
+      "Đối tác mới được miễn phí khởi tạo"
+    ]
+  },
+  "brand": {
+    "eyebrow": "Nền tảng đặt sân thể thao",
+    "name": "SportBooking"
+  },
+  "nav": {
+    "home": "Trang chủ",
+    "explore": "Khám phá sân",
+    "vouchers": "Voucher",
+    "blog": "Blog",
+    "tournaments": "Giải đấu"
+  },
+  "sports": {
+    "football": "Bóng đá",
+    "tennis": "Tennis",
+    "badminton": "Cầu lông",
+    "volleyball": "Bóng chuyền",
+    "basketball": "Bóng rổ",
+    "pickleball": "Pickleball"
+  },
+  "mega": {
+    "title": "Khám phá theo môn thể thao",
+    "description": "Tìm sân phù hợp theo vị trí, giá, rating và khung giờ còn trống.",
+    "cta": "Xem tất cả sân"
+  },
+  "search": {
+    "label": "Tìm kiếm toàn hệ thống",
+    "placeholder": "Tìm sân, giải đấu hoặc khu vực..."
+  },
+  "actions": {
+    "bookNow": "Đặt sân ngay",
+    "listCourt": "Đăng sân của bạn",
+    "login": "Đăng nhập",
+    "register": "Đăng ký",
+    "dashboard": "Bảng điều khiển",
+    "openMenu": "Mở menu",
+    "closeMenu": "Đóng menu"
+  },
+  "partnerArea": {
+    "title": "Dành cho đối tác",
+    "registerCta": "Đăng ký đối tác",
+    "listCourt": "Đăng sân của bạn",
+    "manageCourts": "Quản lý sân",
+    "createVoucher": "Đăng voucher",
+    "createTournament": "Đăng giải đấu",
+    "revenueAnalytics": "Thống kê doanh thu"
+  },
+  "user": {
+    "account": "Tài khoản",
+    "profile": "Hồ sơ",
+    "bookingHistory": "Lịch sử đặt sân",
+    "notifications": "Thông báo",
+    "rewardPoints": "Điểm thưởng",
+    "favorites": "Yêu thích",
+    "myVouchers": "Voucher của tôi",
+    "myPosts": "Bài viết của tôi",
+    "logout": "Đăng xuất"
+  },
+  "notifications": {
+    "title": "Trung tâm thông báo",
+    "voucher": "Bạn vừa nhận được voucher mới",
+    "bookingConfirmed": "Đơn đặt sân đã được xác nhận",
+    "empty": "Chưa có thông báo mới"
+  },
+  "mobile": {
+    "title": "Menu",
+    "quickBook": "Đặt sân nhanh"
+  }
+}

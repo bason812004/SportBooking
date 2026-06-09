@@ -1,0 +1,14 @@
+{
+  "title": "Voucher",
+  "featured": "Voucher nổi bật",
+  "empty": "Chưa có voucher để hiển thị.",
+  "code": "Mã giảm giá",
+  "discount": "Giảm",
+  "condition": "Điều kiện",
+  "validUntil": "Thời hạn",
+  "remainingUses": "Số lượt còn lại",
+  "claimNow": "Nhận ngay",
+  "claimed": "Đã nhận",
+  "expired": "Hết hạn",
+  "myVouchers": "Voucher của tôi"
+}

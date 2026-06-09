@@ -1,0 +1,42 @@
+{
+  "search": {
+    "title": "Court List",
+    "location": "Location",
+    "courtType": "Court type",
+    "date": "Date",
+    "today": "Today",
+    "startTime": "Start time",
+    "endTime": "End time",
+    "players": "Players",
+    "searchAgain": "Search again",
+    "defaultLocation": "Ho Chi Minh City, District 7",
+    "defaultCourtType": "Badminton, football"
+  },
+  "filters": {
+    "title": "Smart filters",
+    "price": "Price range",
+    "rating": "Rating",
+    "amenities": "Amenities",
+    "status": "Status",
+    "distance": "Distance",
+    "verified": "Verified Partner"
+  },
+  "detail": {
+    "reviews": "Player reviews",
+    "reviewAnalytics": "Review analytics",
+    "reviewDescription": "Quickly filter by newest, highest rating or lowest rating.",
+    "emptyReviews": "There are no real reviews for this court yet. Run the review seed to display ratings.",
+    "newest": "Newest",
+    "highestRating": "Highest rating",
+    "lowestRating": "Lowest rating",
+    "noComment": "The user did not leave a comment.",
+    "from": "From",
+    "bookNow": "Book Now",
+    "service": "Service",
+    "serviceValue": "Racket rental + water",
+    "subtotal": "Subtotal",
+    "total": "Total",
+    "bestTime": "Best time for you: 14:00 - 16:00. Based on your booking history, this slot is less crowded and has 20% off.",
+    "time": "Time"
+  }
+}

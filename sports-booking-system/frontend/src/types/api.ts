@@ -86,3 +86,55 @@ export type Paginated<T> = {
   items: T[];
   meta: { page: number; limit: number; total: number; totalPages: number };
 };
+
+export type Voucher = {
+  id: string;
+  code: string;
+  title: string;
+  description?: string | null;
+  discountType: "PERCENTAGE" | "FIXED_AMOUNT";
+  discountValue: number;
+  maxDiscountAmount?: number | null;
+  minBookingAmount: number;
+  usageLimit?: number | null;
+  usedCount: number;
+  startDate: string;
+  endDate: string;
+  status: string;
+  partner: { id: string; businessName: string };
+  court?: { id: string; name: string; city: string; district: string; imageUrl?: string | null } | null;
+};
+
+export type BlogPost = {
+  id: string;
+  title: string;
+  slug: string;
+  excerpt?: string | null;
+  content: string;
+  coverImageUrl?: string | null;
+  status: string;
+  visibility: string;
+  createdAt: string;
+  publishedAt?: string | null;
+  category?: { id: string; name: string; slug: string } | null;
+  author: { id: string; fullName: string; avatarUrl?: string | null };
+};
+
+export type Tournament = {
+  id: string;
+  title: string;
+  slug: string;
+  description?: string | null;
+  sportType: string;
+  coverImageUrl?: string | null;
+  startDate: string;
+  endDate: string;
+  registrationDeadline: string;
+  maxParticipants: number;
+  currentParticipants: number;
+  entryFee: number;
+  prizeDescription?: string | null;
+  status: string;
+  partner: { id: string; businessName: string };
+  court: { id: string; name: string; city: string; district: string; imageUrl?: string | null };
+};

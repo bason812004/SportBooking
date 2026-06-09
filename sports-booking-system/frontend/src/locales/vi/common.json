@@ -1,0 +1,38 @@
+{
+  "language": {
+    "label": "Ngôn ngữ",
+    "vietnamese": "Tiếng Việt",
+    "english": "English"
+  },
+  "states": {
+    "loading": "Đang tải dữ liệu",
+    "error": "Có lỗi xảy ra",
+    "retry": "Thử lại",
+    "empty": "Chưa có dữ liệu",
+    "backToTop": "Cuộn lên đầu trang"
+  },
+  "actions": {
+    "cancel": "Hủy",
+    "confirm": "Xác nhận",
+    "save": "Lưu",
+    "edit": "Chỉnh sửa",
+    "delete": "Xóa",
+    "viewDetail": "Xem chi tiết",
+    "bookNow": "Đặt ngay",
+    "search": "Tìm kiếm",
+    "filter": "Lọc",
+    "clearAll": "Xóa tất cả"
+  },
+  "fields": {
+    "name": "Tên",
+    "fullName": "Họ và tên",
+    "email": "Email",
+    "phone": "Số điện thoại",
+    "password": "Mật khẩu",
+    "address": "Địa chỉ",
+    "city": "Thành phố",
+    "district": "Quận/Huyện",
+    "ward": "Phường/Xã",
+    "note": "Ghi chú"
+  }
+}

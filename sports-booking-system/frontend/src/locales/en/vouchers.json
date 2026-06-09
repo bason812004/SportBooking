@@ -1,0 +1,14 @@
+{
+  "title": "Vouchers",
+  "featured": "Featured Vouchers",
+  "empty": "No vouchers available.",
+  "code": "Voucher Code",
+  "discount": "Discount",
+  "condition": "Condition",
+  "validUntil": "Valid Until",
+  "remainingUses": "Remaining Uses",
+  "claimNow": "Claim Now",
+  "claimed": "Claimed",
+  "expired": "Expired",
+  "myVouchers": "My Vouchers"
+}

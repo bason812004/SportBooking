@@ -6,6 +6,9 @@ import { HomePage } from "../pages/public/HomePage";
 import { CourtsPage } from "../pages/public/CourtsPage";
 import { CourtDetailPage } from "../pages/public/CourtDetailPage";
 import { PartnersLandingPage } from "../pages/public/PartnersLandingPage";
+import { VouchersPage } from "../pages/public/VouchersPage";
+import { BlogPage } from "../pages/public/BlogPage";
+import { TournamentsPage } from "../pages/public/TournamentsPage";
 import { LoginPage } from "../pages/auth/LoginPage";
 import { RegisterPage } from "../pages/auth/RegisterPage";
 import { RegisterPartnerPage } from "../pages/auth/RegisterPartnerPage";
@@ -40,6 +43,9 @@ export function AppRoutes() {
         <Route path="register" element={<RegisterPage />} />
         <Route path="register-partner" element={<RegisterPartnerPage />} />
         <Route path="partners" element={<PartnersLandingPage />} />
+        <Route path="vouchers" element={<VouchersPage />} />
+        <Route path="blog" element={<BlogPage />} />
+        <Route path="tournaments" element={<TournamentsPage />} />
         <Route path="courts" element={<CourtsPage />} />
         <Route path="courts/:id" element={<CourtDetailPage />} />
         <Route element={<ProtectedRoute roles={["USER"]} />}>
@@ -48,6 +54,8 @@ export function AppRoutes() {
           <Route path="user/profile" element={<UserProfilePage />} />
           <Route path="user/bookings" element={<UserBookingsPage />} />
           <Route path="user/bookings/:id" element={<UserBookingDetailPage />} />
+          <Route path="user/vouchers" element={<PartnerPlaceholderPage title="Voucher" />} />
+          <Route path="user/blogs" element={<PartnerPlaceholderPage title="Bài viết của tôi" />} />
         </Route>
       </Route>
 
@@ -57,10 +65,15 @@ export function AppRoutes() {
           <Route path="partner/courts" element={<PartnerCourtsPage />} />
           <Route path="partner/courts/create" element={<PartnerCourtFormPage />} />
           <Route path="partner/courts/:id/edit" element={<PartnerCourtFormPage />} />
-          <Route path="partner/courts/:id/prices" element={<PartnerPlaceholderPage title="Bang gia" />} />
-          <Route path="partner/courts/:id/services" element={<PartnerPlaceholderPage title="Dich vu di kem" />} />
+          <Route path="partner/courts/:id/prices" element={<PartnerPlaceholderPage title="Bảng giá" />} />
+          <Route path="partner/courts/:id/services" element={<PartnerPlaceholderPage title="Dịch vụ đi kèm" />} />
           <Route path="partner/bookings" element={<PartnerBookingsPage />} />
-          <Route path="partner/calendar" element={<PartnerPlaceholderPage title="Lich dat san" />} />
+          <Route path="partner/vouchers" element={<PartnerPlaceholderPage title="Voucher" />} />
+          <Route path="partner/vouchers/create" element={<PartnerPlaceholderPage title="Đăng voucher" />} />
+          <Route path="partner/tournaments" element={<PartnerPlaceholderPage title="Giải đấu" />} />
+          <Route path="partner/tournaments/create" element={<PartnerPlaceholderPage title="Đăng giải đấu" />} />
+          <Route path="partner/blogs" element={<PartnerPlaceholderPage title="Bài viết" />} />
+          <Route path="partner/calendar" element={<PartnerPlaceholderPage title="Lịch đặt sân" />} />
           <Route path="partner/statistics" element={<PartnerStatisticsPage />} />
         </Route>
       </Route>
@@ -73,6 +86,9 @@ export function AppRoutes() {
           <Route path="admin/courts/pending" element={<AdminPendingCourtsPage />} />
           <Route path="admin/categories" element={<AdminCategoriesPage />} />
           <Route path="admin/reviews" element={<AdminReviewsPage />} />
+          <Route path="admin/vouchers" element={<PartnerPlaceholderPage title="Quản lý voucher" />} />
+          <Route path="admin/blogs/pending" element={<PartnerPlaceholderPage title="Duyệt bài viết" />} />
+          <Route path="admin/tournaments/pending" element={<PartnerPlaceholderPage title="Duyệt giải đấu" />} />
           <Route path="admin/reports" element={<AdminReportsPage />} />
           <Route path="admin/statistics" element={<AdminStatisticsPage />} />
           <Route path="admin/audit-logs" element={<AdminAuditLogsPage />} />

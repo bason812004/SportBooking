@@ -1,0 +1,17 @@
+{
+  "hero": {
+    "title": "Đặt sân thể thao dễ dàng chỉ trong vài giây",
+    "subtitle": "Khám phá sân gần bạn, xem lịch trống realtime và đặt sân nhanh với đối tác đã xác thực.",
+    "cta": "Tìm sân ngay"
+  },
+  "sections": {
+    "quickBooking": "Đặt nhanh theo môn",
+    "nearby": "Sân gần bạn",
+    "trending": "Top sân được đặt nhiều tuần này",
+    "promotions": "Khuyến mãi",
+    "reviews": "Top review",
+    "whyChooseUs": "Vì sao chọn chúng tôi",
+    "blog": "Blog thể thao",
+    "faq": "Câu hỏi thường gặp"
+  }
+}

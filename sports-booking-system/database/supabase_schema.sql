@@ -10,6 +10,15 @@ create extension if not exists "pgcrypto";
 
 drop table if exists notifications cascade;
 drop table if exists reports cascade;
+drop table if exists tournament_registrations cascade;
+drop table if exists tournaments cascade;
+drop table if exists blog_likes cascade;
+drop table if exists blog_comments cascade;
+drop table if exists blog_posts cascade;
+drop table if exists blog_categories cascade;
+drop table if exists booking_vouchers cascade;
+drop table if exists user_vouchers cascade;
+drop table if exists vouchers cascade;
 drop table if exists reviews cascade;
 drop table if exists booking_services cascade;
 drop table if exists bookings cascade;
@@ -24,6 +33,13 @@ drop table if exists partner_profiles cascade;
 drop table if exists users cascade;
 
 drop type if exists report_status cascade;
+drop type if exists tournament_registration_status cascade;
+drop type if exists tournament_status cascade;
+drop type if exists blog_visibility cascade;
+drop type if exists blog_post_status cascade;
+drop type if exists user_voucher_status cascade;
+drop type if exists voucher_status cascade;
+drop type if exists voucher_discount_type cascade;
 drop type if exists review_display_status cascade;
 drop type if exists day_type cascade;
 drop type if exists payment_method cascade;
@@ -44,6 +60,13 @@ create type payment_method as enum ('CASH', 'BANK_TRANSFER', 'E_WALLET', 'MOCK_P
 create type day_type as enum ('WEEKDAY', 'WEEKEND', 'HOLIDAY');
 create type review_display_status as enum ('VISIBLE', 'HIDDEN');
 create type report_status as enum ('PENDING', 'RESOLVED', 'REJECTED');
+create type voucher_discount_type as enum ('PERCENTAGE', 'FIXED_AMOUNT');
+create type voucher_status as enum ('DRAFT', 'ACTIVE', 'EXPIRED', 'DISABLED');
+create type user_voucher_status as enum ('CLAIMED', 'USED', 'EXPIRED');
+create type blog_post_status as enum ('DRAFT', 'PENDING', 'PUBLISHED', 'REJECTED', 'HIDDEN');
+create type blog_visibility as enum ('PUBLIC', 'PRIVATE');
+create type tournament_status as enum ('DRAFT', 'PENDING', 'APPROVED', 'REJECTED', 'OPEN', 'CLOSED', 'COMPLETED', 'CANCELLED');
+create type tournament_registration_status as enum ('PENDING', 'APPROVED', 'REJECTED', 'CANCELLED');
 
 create table users (
   id uuid primary key default uuid_generate_v4(),
@@ -227,6 +250,123 @@ create table notifications (
   created_at timestamptz not null default now()
 );
 
+create table vouchers (
+  id uuid primary key default uuid_generate_v4(),
+  partner_id uuid not null references partner_profiles(id) on delete cascade,
+  court_id uuid references courts(id) on delete cascade,
+  code varchar(40) not null unique,
+  title varchar(160) not null,
+  description text,
+  discount_type voucher_discount_type not null,
+  discount_value numeric(12, 2) not null check (discount_value > 0),
+  max_discount_amount numeric(12, 2) check (max_discount_amount is null or max_discount_amount >= 0),
+  min_booking_amount numeric(12, 2) not null default 0 check (min_booking_amount >= 0),
+  usage_limit integer check (usage_limit is null or usage_limit > 0),
+  used_count integer not null default 0 check (used_count >= 0),
+  start_date timestamptz not null,
+  end_date timestamptz not null,
+  status voucher_status not null default 'DRAFT',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint vouchers_valid_date_check check (start_date < end_date),
+  constraint vouchers_usage_check check (usage_limit is null or used_count <= usage_limit)
+);
+
+create table user_vouchers (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references users(id) on delete cascade,
+  voucher_id uuid not null references vouchers(id) on delete cascade,
+  status user_voucher_status not null default 'CLAIMED',
+  claimed_at timestamptz not null default now(),
+  used_at timestamptz,
+  unique(user_id, voucher_id)
+);
+
+create table booking_vouchers (
+  id uuid primary key default uuid_generate_v4(),
+  booking_id uuid not null unique references bookings(id) on delete cascade,
+  voucher_id uuid not null references vouchers(id),
+  discount_amount numeric(12, 2) not null check (discount_amount >= 0),
+  created_at timestamptz not null default now()
+);
+
+create table blog_categories (
+  id uuid primary key default uuid_generate_v4(),
+  name varchar(120) not null unique,
+  slug varchar(140) not null unique,
+  description text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table blog_posts (
+  id uuid primary key default uuid_generate_v4(),
+  author_id uuid not null references users(id) on delete cascade,
+  title varchar(220) not null,
+  slug varchar(240) not null unique,
+  excerpt text,
+  content text not null,
+  cover_image_url text,
+  category_id uuid references blog_categories(id),
+  status blog_post_status not null default 'DRAFT',
+  visibility blog_visibility not null default 'PUBLIC',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  published_at timestamptz
+);
+
+create table blog_comments (
+  id uuid primary key default uuid_generate_v4(),
+  post_id uuid not null references blog_posts(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  content text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table blog_likes (
+  id uuid primary key default uuid_generate_v4(),
+  post_id uuid not null references blog_posts(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique(post_id, user_id)
+);
+
+create table tournaments (
+  id uuid primary key default uuid_generate_v4(),
+  partner_id uuid not null references partner_profiles(id) on delete cascade,
+  court_id uuid not null references courts(id) on delete cascade,
+  title varchar(220) not null,
+  slug varchar(240) not null unique,
+  description text,
+  sport_type varchar(80) not null,
+  cover_image_url text,
+  start_date timestamptz not null,
+  end_date timestamptz not null,
+  registration_deadline timestamptz not null,
+  max_participants integer not null check (max_participants > 0),
+  current_participants integer not null default 0 check (current_participants >= 0),
+  entry_fee numeric(12, 2) not null default 0 check (entry_fee >= 0),
+  prize_description text,
+  status tournament_status not null default 'DRAFT',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint tournaments_date_check check (registration_deadline <= start_date and start_date <= end_date),
+  constraint tournaments_capacity_check check (current_participants <= max_participants)
+);
+
+create table tournament_registrations (
+  id uuid primary key default uuid_generate_v4(),
+  tournament_id uuid not null references tournaments(id) on delete cascade,
+  user_id uuid not null references users(id) on delete cascade,
+  team_name varchar(160),
+  contact_phone varchar(30) not null,
+  note text,
+  status tournament_registration_status not null default 'PENDING',
+  created_at timestamptz not null default now(),
+  unique(tournament_id, user_id)
+);
+
 create or replace function set_updated_at()
 returns trigger as $$
 begin
@@ -243,6 +383,11 @@ create trigger trg_court_prices_updated_at before update on court_prices for eac
 create trigger trg_court_services_updated_at before update on court_services for each row execute function set_updated_at();
 create trigger trg_bookings_updated_at before update on bookings for each row execute function set_updated_at();
 create trigger trg_reviews_updated_at before update on reviews for each row execute function set_updated_at();
+create trigger trg_vouchers_updated_at before update on vouchers for each row execute function set_updated_at();
+create trigger trg_blog_categories_updated_at before update on blog_categories for each row execute function set_updated_at();
+create trigger trg_blog_posts_updated_at before update on blog_posts for each row execute function set_updated_at();
+create trigger trg_blog_comments_updated_at before update on blog_comments for each row execute function set_updated_at();
+create trigger trg_tournaments_updated_at before update on tournaments for each row execute function set_updated_at();
 
 create index idx_users_email on users(email);
 create index idx_users_role on users(role);
@@ -266,6 +411,22 @@ create index idx_bookings_schedule_conflict on bookings(court_id, booking_date, 
 create index idx_reviews_court_id on reviews(court_id);
 create index idx_reports_status on reports(status);
 create index idx_notifications_user_id on notifications(user_id);
+create index idx_vouchers_partner_id on vouchers(partner_id);
+create index idx_vouchers_court_id on vouchers(court_id);
+create index idx_vouchers_status on vouchers(status);
+create index idx_vouchers_date_range on vouchers(start_date, end_date);
+create index idx_user_vouchers_user_id on user_vouchers(user_id);
+create index idx_booking_vouchers_booking_id on booking_vouchers(booking_id);
+create index idx_blog_posts_author_id on blog_posts(author_id);
+create index idx_blog_posts_status on blog_posts(status);
+create index idx_blog_posts_slug on blog_posts(slug);
+create index idx_blog_comments_post_id on blog_comments(post_id);
+create index idx_tournaments_partner_id on tournaments(partner_id);
+create index idx_tournaments_court_id on tournaments(court_id);
+create index idx_tournaments_status on tournaments(status);
+create index idx_tournaments_slug on tournaments(slug);
+create index idx_tournament_registrations_tournament_id on tournament_registrations(tournament_id);
+create index idx_tournament_registrations_user_id on tournament_registrations(user_id);
 
 insert into users (id, full_name, email, phone, password_hash, role, status) values
 ('00000000-0000-0000-0000-000000000001', 'System Admin', 'admin@sportsbooking.com', '0900000001', crypt('123456', gen_salt('bf', 10)), 'ADMIN', 'ACTIVE'),
@@ -351,7 +512,7 @@ insert into court_amenities (court_id, name)
 select id, unnest(array['Wifi', 'Nuoc uong', 'Khu nghi cho', 'Nha ve sinh', 'Bao ve', 'May ban nuoc']) from courts;
 
 insert into court_prices (court_id, day_type, start_time, end_time, price, note)
-select id, 'WEEKDAY'::day_type, '06:00'::time, '17:00'::time, 120000, 'Gio thap diem' from courts union all
+select id, 'WEEKDAY'::day_type, '06:00'::time, '17:00'::time, 120000, 'Gio thap diem'   from courts union all
 select id, 'WEEKDAY'::day_type, '17:00'::time, '23:00'::time, 180000, 'Gio cao diem' from courts union all
 select id, 'WEEKEND'::day_type, '06:00'::time, '23:00'::time, 220000, 'Cuoi tuan' from courts;
 

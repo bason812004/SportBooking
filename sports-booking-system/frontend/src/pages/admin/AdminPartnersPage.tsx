@@ -3,14 +3,16 @@ import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
 import { LoadingState, ErrorState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
+import { useLanguage } from "../../lib/i18n";
 
 export function AdminPartnersPage() {
+  const { t } = useLanguage();
   const queryClient = useQueryClient();
   const partners = useQuery({ queryKey: ["admin-partners"], queryFn: adminApi.partners });
   const action = useMutation({
     mutationFn: ({ id, approve }: { id: string; approve: boolean }) => (approve ? adminApi.approvePartner(id) : adminApi.rejectPartner(id)),
     onSuccess: () => {
-      toast.success("Da cap nhat doi tac");
+      toast.success(t("Đã cập nhật đối tác"));
       queryClient.invalidateQueries({ queryKey: ["admin-partners"] });
     }
   });
@@ -23,7 +25,7 @@ export function AdminPartnersPage() {
         <div key={partner.id} className="rounded-md border border-line bg-white p-4">
           <div className="flex items-center justify-between gap-3">
             <div><h2 className="font-semibold">{partner.businessName}</h2><p className="text-sm text-slate-600">{partner.user.email} - {partner.approvalStatus}</p></div>
-            <div className="flex gap-2"><Button onClick={() => action.mutate({ id: partner.id, approve: true })}>Duyet</Button><Button variant="danger" onClick={() => action.mutate({ id: partner.id, approve: false })}>Tu choi</Button></div>
+            <div className="flex gap-2"><Button onClick={() => action.mutate({ id: partner.id, approve: true })}>{t("Duyệt")}</Button><Button variant="danger" onClick={() => action.mutate({ id: partner.id, approve: false })}>{t("Từ chối")}</Button></div>
           </div>
         </div>
       ))}

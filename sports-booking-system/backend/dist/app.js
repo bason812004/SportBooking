@@ -7,13 +7,16 @@ import { swaggerSpec } from "./config/swagger.js";
 import { errorMiddleware } from "./middlewares/error.middleware.js";
 import { adminRoutes } from "./modules/admin/admin.routes.js";
 import { authRoutes } from "./modules/auth/auth.routes.js";
+import { blogRoutes } from "./modules/blogs/blog.routes.js";
 import { bookingRoutes } from "./modules/bookings/booking.routes.js";
 import { categoryRoutes } from "./modules/categories/category.routes.js";
 import { courtRoutes } from "./modules/courts/court.routes.js";
 import { partnerRoutes } from "./modules/partner/partner.routes.js";
 import { reportRoutes } from "./modules/reports/report.routes.js";
 import { reviewRoutes } from "./modules/reviews/review.routes.js";
+import { tournamentRoutes } from "./modules/tournaments/tournament.routes.js";
 import { userRoutes } from "./modules/users/user.routes.js";
+import { voucherRoutes } from "./modules/vouchers/voucher.routes.js";
 export const app = express();
 const allowedOrigins = new Set([
     env.FRONTEND_URL,
@@ -35,6 +38,9 @@ app.get("/health", (_req, res) => res.json({ success: true, data: { status: "ok"
 app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use("/api/auth", authRoutes);
 app.use("/api/courts", courtRoutes);
+app.use("/api/vouchers", voucherRoutes);
+app.use("/api/blogs", blogRoutes);
+app.use("/api/tournaments", tournamentRoutes);
 app.use("/api/categories", categoryRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/bookings", bookingRoutes);

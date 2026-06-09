@@ -1,17 +1,22 @@
 import { Link } from "react-router-dom";
 import { BarChart3, CalendarDays, CheckCircle2, Rocket, TrendingUp, WalletCards } from "lucide-react";
 import { Button } from "../../components/ui/Button";
+import { useLanguage } from "../../lib/i18n";
 
-const benefits = [
-  { title: "Tang booking", description: "Tiep can khach hang dang tim san moi ngay tren SportBooking.", icon: Rocket },
-  { title: "Quan ly lich thong minh", description: "Theo doi khung gio trong, booking moi va lich su dat san.", icon: CalendarDays },
-  { title: "Thanh toan minh bach", description: "Kiem soat trang thai thanh toan, doanh thu va doi soat.", icon: WalletCards },
-  { title: "Thong ke chi tiet", description: "Bao cao hieu suat san, doanh thu va ti le lap day.", icon: BarChart3 }
+const benefitItems = [
+  { title: "Tăng booking", description: "Tiếp cận khách hàng đang tìm sân mỗi ngày trên SportBooking.", icon: Rocket },
+  { title: "Quản lý lịch thông minh", description: "Theo dõi khung giờ trống, booking mới và lịch sử đặt sân.", icon: CalendarDays },
+  { title: "Thanh toán minh bạch", description: "Kiểm soát trạng thái thanh toán, doanh thu và đối soát.", icon: WalletCards },
+  { title: "Thống kê chi tiết", description: "Báo cáo hiệu suất sân, doanh thu và tỉ lệ lấp đầy.", icon: BarChart3 }
 ];
 
-const steps = ["Dang ky", "Cho duyet", "Them san", "Nhan khach"];
+const stepItems = ["Đăng ký", "Chờ duyệt", "Thêm sân", "Nhận khách"];
 
 export function PartnersLandingPage() {
+  const { t } = useLanguage();
+  const benefits = benefitItems.map((item) => ({ ...item, title: t(item.title), description: t(item.description) }));
+  const steps = stepItems.map((item) => t(item));
+
   return (
     <div className="bg-white">
       <section className="bg-gradient-to-br from-white via-white to-[#effbea]">
@@ -19,24 +24,24 @@ export function PartnersLandingPage() {
           <div>
             <span className="inline-flex items-center gap-2 rounded-full border border-[#b9cdb7] bg-[#eef9ec] px-4 py-1 text-sm font-medium text-[#0a6c2b]">
               <CheckCircle2 className="h-4 w-4" />
-              Danh cho Chu San
+              {t("Dành cho Chủ Sân")}
             </span>
             <h1 className="mt-8 max-w-xl text-5xl font-black leading-tight tracking-tight md:text-6xl">
-              Hop tac cung <span className="text-[#02712a]">SportBooking</span> Toi uu cong suat san cua ban
+              {t("Hợp tác cùng")} <span className="text-[#02712a]">SportBooking</span> {t("Tối ưu công suất sân của bạn")}
             </h1>
             <p className="mt-6 max-w-lg text-lg leading-8 text-slate-600">
-              He thong quan ly thong minh giup ban toi da hoa doanh thu, giam thieu thoi gian trong va mang lai trai nghiem dat san chuyen nghiep.
+              {t("Hệ thống quản lý thông minh giúp bạn tối đa hóa doanh thu, giảm thiểu thời gian trống và mang lại trải nghiệm đặt sân chuyên nghiệp.")}
             </p>
             <div className="mt-8 flex flex-wrap gap-4">
               <Link to="/register-partner">
                 <Button className="h-12 rounded-md bg-[#24c866] px-7 text-base hover:bg-[#16a34a]">
-                  Dang ky lam doi tac
+                  {t("Đăng ký làm đối tác")}
                   <TrendingUp className="h-4 w-4" />
                 </Button>
               </Link>
               <Link to="/login">
                 <Button variant="secondary" className="h-12 rounded-md border-blue-700 px-7 text-base text-blue-700">
-                  Dang nhap doi tac
+                  {t("Đăng nhập đối tác")}
                 </Button>
               </Link>
             </div>
@@ -49,7 +54,7 @@ export function PartnersLandingPage() {
             />
             <div className="absolute bottom-6 left-6 right-6 flex items-center justify-between rounded-2xl border border-[#b9cdb7] bg-white/90 p-5 shadow-lg backdrop-blur">
               <div>
-                <p className="text-sm font-medium">Doanh thu hom nay</p>
+                <p className="text-sm font-medium">{t("Doanh thu hôm nay")}</p>
                 <p className="text-2xl font-extrabold text-[#02712a]">+12,500,000d</p>
               </div>
               <span className="rounded-full bg-[#c9f7d8] p-4 text-[#02712a]">
@@ -63,8 +68,8 @@ export function PartnersLandingPage() {
       <section className="bg-[#f1fbef] py-20">
         <div className="mx-auto max-w-7xl px-5">
           <div className="text-center">
-            <h2 className="text-4xl font-bold">Tai sao chon chung toi?</h2>
-            <p className="mt-4 text-slate-600">Giai phap toan dien giup chu san thanh thoi quan ly, but pha doanh thu.</p>
+            <h2 className="text-4xl font-bold">{t("Tại sao chọn chúng tôi?")}</h2>
+            <p className="mt-4 text-slate-600">{t("Giải pháp toàn diện giúp chủ sân thảnh thơi quản lý, bứt phá doanh thu.")}</p>
           </div>
           <div className="mt-12 grid gap-6 md:grid-cols-4">
             {benefits.map((item) => (
@@ -82,7 +87,7 @@ export function PartnersLandingPage() {
 
       <section className="py-20">
         <div className="mx-auto max-w-7xl px-5 text-center">
-          <h2 className="text-4xl font-bold">Bat dau de dang voi 4 buoc</h2>
+          <h2 className="text-4xl font-bold">{t("Bắt đầu dễ dàng với 4 bước")}</h2>
           <div className="mt-14 grid gap-8 md:grid-cols-4">
             {steps.map((step, index) => (
               <div key={step} className="relative">
@@ -91,22 +96,22 @@ export function PartnersLandingPage() {
                 </span>
                 <h3 className="mt-5 font-bold">{step}</h3>
                 <p className="mt-3 text-sm text-slate-600">
-                  {index === 0 && "Dien thong tin co ban ve co so the thao cua ban."}
-                  {index === 1 && "Doi doi ngu admin lien he xac minh nhanh chong."}
-                  {index === 2 && "Thiet lap danh sach san, khung gio va bang gia."}
-                  {index === 3 && "Bat dau nhan booking va theo doi doanh thu."}
+                  {index === 0 && t("Điền thông tin cơ bản về cơ sở thể thao của bạn.")}
+                  {index === 1 && t("Đợi đội ngũ admin liên hệ xác minh nhanh chóng.")}
+                  {index === 2 && t("Thiết lập danh sách sân, khung giờ và bảng giá.")}
+                  {index === 3 && t("Bắt đầu nhận booking và theo dõi doanh thu.")}
                 </p>
               </div>
             ))}
           </div>
           <div className="mt-20 flex flex-col gap-6 rounded-[28px] bg-[#24c866] p-10 text-left text-white shadow-xl md:flex-row md:items-center md:justify-between">
             <div>
-              <h2 className="text-3xl font-bold">San sang so hoa san tap cua ban?</h2>
-              <p className="mt-3 text-white/80">Tham gia cong dong doi tac cua chung toi ngay hom nay.</p>
+              <h2 className="text-3xl font-bold">{t("Sẵn sàng số hóa sân tập của bạn?")}</h2>
+              <p className="mt-3 text-white/80">{t("Tham gia cộng đồng đối tác của chúng tôi ngay hôm nay.")}</p>
             </div>
             <Link to="/register-partner">
               <Button variant="secondary" className="h-12 min-w-60 rounded-md border-0">
-                Dang ky lam doi tac
+                {t("Đăng ký làm đối tác")}
               </Button>
             </Link>
           </div>

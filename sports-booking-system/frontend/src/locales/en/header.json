@@ -1,0 +1,76 @@
+{
+  "announcement": {
+    "items": [
+      "Up to 30% discount for new users",
+      "Book courts fast with instant confirmation",
+      "New partners get free onboarding"
+    ]
+  },
+  "brand": {
+    "eyebrow": "Sports court booking platform",
+    "name": "SportBooking"
+  },
+  "nav": {
+    "home": "Home",
+    "explore": "Explore Courts",
+    "vouchers": "Vouchers",
+    "blog": "Blog",
+    "tournaments": "Tournaments"
+  },
+  "sports": {
+    "football": "Football",
+    "tennis": "Tennis",
+    "badminton": "Badminton",
+    "volleyball": "Volleyball",
+    "basketball": "Basketball",
+    "pickleball": "Pickleball"
+  },
+  "mega": {
+    "title": "Explore by sport",
+    "description": "Find the right court by location, price, rating and available time slots.",
+    "cta": "View all courts"
+  },
+  "search": {
+    "label": "Global search",
+    "placeholder": "Search courts, tournaments or locations..."
+  },
+  "actions": {
+    "bookNow": "Book Now",
+    "listCourt": "List Your Court",
+    "login": "Login",
+    "register": "Register",
+    "dashboard": "Dashboard",
+    "openMenu": "Open menu",
+    "closeMenu": "Close menu"
+  },
+  "partnerArea": {
+    "title": "For Partners",
+    "registerCta": "Become a Partner",
+    "listCourt": "List Your Court",
+    "manageCourts": "Manage Courts",
+    "createVoucher": "Create Voucher",
+    "createTournament": "Create Tournament",
+    "revenueAnalytics": "Revenue Analytics"
+  },
+  "user": {
+    "account": "Account",
+    "profile": "Profile",
+    "bookingHistory": "Booking History",
+    "notifications": "Notifications",
+    "rewardPoints": "Reward Points",
+    "favorites": "Favorites",
+    "myVouchers": "My Vouchers",
+    "myPosts": "My Posts",
+    "logout": "Logout"
+  },
+  "notifications": {
+    "title": "Notification Center",
+    "voucher": "You received a new voucher",
+    "bookingConfirmed": "Your booking has been confirmed",
+    "empty": "No new notifications"
+  },
+  "mobile": {
+    "title": "Menu",
+    "quickBook": "Quick Booking"
+  }
+}

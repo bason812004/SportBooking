@@ -1,0 +1,17 @@
+{
+  "hero": {
+    "title": "Book sports courts in seconds",
+    "subtitle": "Discover nearby courts, check realtime availability and book fast with verified partners.",
+    "cta": "Find Courts Now"
+  },
+  "sections": {
+    "quickBooking": "Quick booking by sport",
+    "nearby": "Courts near you",
+    "trending": "Most booked courts this week",
+    "promotions": "Promotions",
+    "reviews": "Top reviews",
+    "whyChooseUs": "Why choose us",
+    "blog": "Sports blog",
+    "faq": "Frequently asked questions"
+  }
+}

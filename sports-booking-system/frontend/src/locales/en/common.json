@@ -1,0 +1,38 @@
+{
+  "language": {
+    "label": "Language",
+    "vietnamese": "Tiếng Việt",
+    "english": "English"
+  },
+  "states": {
+    "loading": "Loading data",
+    "error": "Something went wrong",
+    "retry": "Try again",
+    "empty": "No data yet",
+    "backToTop": "Back to top"
+  },
+  "actions": {
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "save": "Save",
+    "edit": "Edit",
+    "delete": "Delete",
+    "viewDetail": "View details",
+    "bookNow": "Book now",
+    "search": "Search",
+    "filter": "Filter",
+    "clearAll": "Clear all"
+  },
+  "fields": {
+    "name": "Name",
+    "fullName": "Full name",
+    "email": "Email",
+    "phone": "Phone number",
+    "password": "Password",
+    "address": "Address",
+    "city": "City",
+    "district": "District",
+    "ward": "Ward",
+    "note": "Note"
+  }
+}
