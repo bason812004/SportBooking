@@ -35,10 +35,25 @@ export const bookingRepository = {
     });
   },
 
-  cancel(id: string, cancelReason?: string) {
+  cancel(
+    id: string,
+    data: {
+      cancelReason?: string;
+      refundAmount: number;
+      platformRetainedAmount: number;
+      paymentStatus: "UNPAID" | "PARTIALLY_REFUNDED" | "REFUNDED";
+    }
+  ) {
     return prisma.booking.update({
       where: { id },
-      data: { bookingStatus: "CANCELLED", cancelReason },
+      data: {
+        bookingStatus: "CANCELLED",
+        cancelReason: data.cancelReason,
+        refundAmount: data.refundAmount,
+        platformRetainedAmount: data.platformRetainedAmount,
+        paymentStatus: data.paymentStatus,
+        cancelledAt: new Date()
+      },
       include: { court: true }
     });
   },
@@ -62,6 +77,7 @@ export const bookingRepository = {
     startTime: Date;
     endTime: Date;
     totalPrice: number;
+    depositAmount: number;
     paymentMethod: "CASH" | "BANK_TRANSFER" | "E_WALLET" | "MOCK_PAYMENT";
     services: Array<{ serviceId: string; quantity: number; price: number }>;
   }) {
@@ -74,6 +90,7 @@ export const bookingRepository = {
         startTime: input.startTime,
         endTime: input.endTime,
         totalPrice: input.totalPrice,
+        depositAmount: input.depositAmount,
         paymentMethod: input.paymentMethod,
         bookingServices: {
           create: input.services.map((service) => ({

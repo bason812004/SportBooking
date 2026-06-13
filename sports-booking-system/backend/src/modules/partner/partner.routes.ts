@@ -4,7 +4,13 @@ import { UserRole } from "@prisma/client";
 import { authMiddleware } from "../../middlewares/auth.middleware.js";
 import { requireRole } from "../../middlewares/role.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
-import { courtWriteSchema, imageSchema, priceWriteSchema, serviceWriteSchema } from "./partner.validation.js";
+import {
+  courtWriteSchema,
+  imageSchema,
+  priceWriteSchema,
+  serviceWriteSchema,
+  voucherWriteSchema
+} from "./partner.validation.js";
 import { partnerController } from "./partner.controller.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 3 * 1024 * 1024 } });
@@ -30,3 +36,10 @@ partnerRoutes.put("/bookings/:id/reject", partnerController.reject);
 partnerRoutes.put("/bookings/:id/complete", partnerController.complete);
 partnerRoutes.put("/bookings/:id/no-show", partnerController.noShow);
 partnerRoutes.get("/statistics/revenue", partnerController.revenue);
+partnerRoutes.get("/vouchers", partnerController.vouchers);
+partnerRoutes.post("/vouchers", validate(voucherWriteSchema), partnerController.createVoucher);
+partnerRoutes.get("/vouchers/:id", partnerController.voucherDetail);
+partnerRoutes.put("/vouchers/:id", validate(voucherWriteSchema), partnerController.updateVoucher);
+partnerRoutes.put("/vouchers/:id/activate", partnerController.activateVoucher);
+partnerRoutes.put("/vouchers/:id/disable", partnerController.disableVoucher);
+partnerRoutes.delete("/vouchers/:id", partnerController.deleteVoucher);

@@ -21,6 +21,7 @@ drop table if exists user_vouchers cascade;
 drop table if exists vouchers cascade;
 drop table if exists reviews cascade;
 drop table if exists booking_services cascade;
+drop table if exists commission_transactions cascade;
 drop table if exists bookings cascade;
 drop table if exists court_services cascade;
 drop table if exists court_prices cascade;
@@ -30,6 +31,7 @@ drop table if exists court_images cascade;
 drop table if exists courts cascade;
 drop table if exists court_categories cascade;
 drop table if exists partner_profiles cascade;
+drop table if exists system_settings cascade;
 drop table if exists users cascade;
 
 drop type if exists report_status cascade;
@@ -55,7 +57,7 @@ create type account_status as enum ('ACTIVE', 'LOCKED');
 create type approval_status as enum ('PENDING', 'APPROVED', 'REJECTED');
 create type court_active_status as enum ('ACTIVE', 'INACTIVE');
 create type booking_status as enum ('PENDING', 'CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW');
-create type payment_status as enum ('UNPAID', 'PAID', 'REFUNDED');
+create type payment_status as enum ('UNPAID', 'PAID', 'PARTIALLY_REFUNDED', 'REFUNDED');
 create type payment_method as enum ('CASH', 'BANK_TRANSFER', 'E_WALLET', 'MOCK_PAYMENT');
 create type day_type as enum ('WEEKDAY', 'WEEKEND', 'HOLIDAY');
 create type review_display_status as enum ('VISIBLE', 'HIDDEN');
@@ -88,6 +90,7 @@ create table partner_profiles (
   address text not null,
   verification_document_url text,
   approval_status approval_status not null default 'PENDING',
+  commission_rate numeric(5, 2) check (commission_rate is null or commission_rate between 0 and 100),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -155,6 +158,7 @@ create table court_images (
   id uuid primary key default uuid_generate_v4(),
   court_id uuid not null references courts(id) on delete cascade,
   image_url text not null,
+  public_id text,
   sort_order integer not null default 0,
   created_at timestamptz not null default now()
 );
@@ -199,13 +203,43 @@ create table bookings (
   start_time time not null,
   end_time time not null,
   total_price numeric(12, 2) not null check (total_price >= 0),
+  deposit_amount numeric(12, 2) not null default 0 check (deposit_amount >= 0 and deposit_amount <= total_price),
+  refund_amount numeric(12, 2) not null default 0 check (refund_amount >= 0 and refund_amount <= total_price),
+  platform_retained_amount numeric(12, 2) not null default 0 check (platform_retained_amount >= 0 and platform_retained_amount <= total_price),
   payment_method payment_method not null default 'CASH',
   payment_status payment_status not null default 'UNPAID',
   booking_status booking_status not null default 'PENDING',
   cancel_reason text,
+  cancelled_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint bookings_time_check check (start_time < end_time)
+);
+
+create table system_settings (
+  key varchar(100) primary key,
+  numeric_value numeric(12, 4),
+  description text,
+  updated_at timestamptz not null default now()
+);
+
+create table commission_transactions (
+  id uuid primary key default uuid_generate_v4(),
+  booking_id uuid not null references bookings(id),
+  partner_id uuid not null references partner_profiles(id),
+  transaction_type varchar(20) not null default 'EARNING' check (transaction_type in ('EARNING', 'REVERSAL')),
+  event_type varchar(20) not null check (event_type in ('COMPLETED', 'NO_SHOW', 'REFUND')),
+  gross_amount numeric(12, 2) not null check (gross_amount >= 0),
+  commission_rate numeric(5, 2) not null check (commission_rate between 0 and 100),
+  commission_amount numeric(12, 2) not null,
+  net_amount numeric(12, 2) not null,
+  original_transaction_id uuid references commission_transactions(id),
+  created_at timestamptz not null default now(),
+  constraint commission_transaction_sign_check check (
+    (transaction_type = 'EARNING' and commission_amount >= 0 and net_amount >= 0)
+    or
+    (transaction_type = 'REVERSAL' and commission_amount <= 0 and net_amount <= 0)
+  )
 );
 
 create table booking_services (
@@ -382,6 +416,7 @@ create trigger trg_courts_updated_at before update on courts for each row execut
 create trigger trg_court_prices_updated_at before update on court_prices for each row execute function set_updated_at();
 create trigger trg_court_services_updated_at before update on court_services for each row execute function set_updated_at();
 create trigger trg_bookings_updated_at before update on bookings for each row execute function set_updated_at();
+create trigger trg_system_settings_updated_at before update on system_settings for each row execute function set_updated_at();
 create trigger trg_reviews_updated_at before update on reviews for each row execute function set_updated_at();
 create trigger trg_vouchers_updated_at before update on vouchers for each row execute function set_updated_at();
 create trigger trg_blog_categories_updated_at before update on blog_categories for each row execute function set_updated_at();
@@ -408,6 +443,9 @@ create index idx_bookings_booking_date on bookings(booking_date);
 create index idx_bookings_booking_status on bookings(booking_status);
 create index idx_bookings_payment_status on bookings(payment_status);
 create index idx_bookings_schedule_conflict on bookings(court_id, booking_date, start_time, end_time, booking_status);
+create index idx_commission_transactions_booking_id on commission_transactions(booking_id);
+create index idx_commission_transactions_partner_created_at on commission_transactions(partner_id, created_at);
+create unique index uq_commission_earning_per_booking on commission_transactions(booking_id) where transaction_type = 'EARNING';
 create index idx_reviews_court_id on reviews(court_id);
 create index idx_reports_status on reports(status);
 create index idx_notifications_user_id on notifications(user_id);
@@ -427,6 +465,21 @@ create index idx_tournaments_status on tournaments(status);
 create index idx_tournaments_slug on tournaments(slug);
 create index idx_tournament_registrations_tournament_id on tournament_registrations(tournament_id);
 create index idx_tournament_registrations_user_id on tournament_registrations(user_id);
+
+create or replace function prevent_commission_transaction_mutation()
+returns trigger as $$
+begin
+  raise exception 'commission_transactions is immutable; insert a REVERSAL record instead';
+end;
+$$ language plpgsql;
+
+create trigger trg_commission_transactions_immutable
+before update or delete on commission_transactions
+for each row execute function prevent_commission_transaction_mutation();
+
+insert into system_settings (key, numeric_value, description) values
+('DEFAULT_COMMISSION_RATE', 10, 'Default platform commission percentage'),
+('BOOKING_DEPOSIT_RATE', 50, 'Default booking deposit percentage');
 
 insert into users (id, full_name, email, phone, password_hash, role, status) values
 ('00000000-0000-0000-0000-000000000001', 'System Admin', 'admin@sportsbooking.com', '0900000001', crypt('123456', gen_salt('bf', 10)), 'ADMIN', 'ACTIVE'),
@@ -549,6 +602,35 @@ insert into bookings (id, booking_code, user_id, court_id, booking_date, start_t
 ('40000000-0000-0000-0000-000000000012','BK202606080012','00000000-0000-0000-0000-000000000030','30000000-0000-0000-0000-000000000016','2026-06-09','19:00','21:00',420000,'E_WALLET','PAID','COMPLETED'),
 ('40000000-0000-0000-0000-000000000013','BK202606080013','00000000-0000-0000-0000-000000000031','30000000-0000-0000-0000-000000000018','2026-06-10','06:00','08:00',240000,'BANK_TRANSFER','PAID','COMPLETED'),
 ('40000000-0000-0000-0000-000000000014','BK202606080014','00000000-0000-0000-0000-000000000032','30000000-0000-0000-0000-000000000020','2026-06-10','18:00','20:00',420000,'CASH','UNPAID','CONFIRMED');
+
+update bookings
+set deposit_amount = round(total_price * 0.5, 2);
+
+insert into commission_transactions (
+  booking_id,
+  partner_id,
+  transaction_type,
+  event_type,
+  gross_amount,
+  commission_rate,
+  commission_amount,
+  net_amount,
+  created_at
+)
+select
+  b.id,
+  c.partner_id,
+  'EARNING',
+  b.booking_status::text,
+  case when b.booking_status = 'NO_SHOW' then b.deposit_amount else b.total_price end,
+  coalesce(pp.commission_rate, 10),
+  round((case when b.booking_status = 'NO_SHOW' then b.deposit_amount else b.total_price end) * coalesce(pp.commission_rate, 10) / 100, 2),
+  round((case when b.booking_status = 'NO_SHOW' then b.deposit_amount else b.total_price end) * (1 - coalesce(pp.commission_rate, 10) / 100), 2),
+  (b.booking_date + b.end_time) at time zone 'Asia/Ho_Chi_Minh'
+from bookings b
+join courts c on c.id = b.court_id
+join partner_profiles pp on pp.id = c.partner_id
+where b.booking_status in ('COMPLETED', 'NO_SHOW');
 
 insert into booking_services (booking_id, service_id, quantity, price)
 select '40000000-0000-0000-0000-000000000001'::uuid, id, 1, price from court_services where court_id = '30000000-0000-0000-0000-000000000001' and name = 'Nuoc suoi'

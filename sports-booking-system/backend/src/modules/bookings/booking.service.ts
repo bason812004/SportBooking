@@ -12,6 +12,7 @@ import {
   toDbDate
 } from "../../shared/utils/time.js";
 import { courtRepository } from "../courts/court.repository.js";
+import { commissionService } from "../commission/commission.service.js";
 import { bookingRepository } from "./booking.repository.js";
 import type { CreateBookingInput } from "./booking.types.js";
 
@@ -55,6 +56,8 @@ export const bookingService = {
 
     const courtTotal = Number(matchingPrice.price) * durationHours(input.startTime, input.endTime);
     const serviceTotal = serviceLines.reduce((sum, line) => sum + line.price * line.quantity, 0);
+    const totalPrice = courtTotal + serviceTotal;
+    const depositRate = await commissionService.depositRate();
 
     return bookingRepository.createWithServices({
       bookingCode: bookingCode(),
@@ -63,7 +66,8 @@ export const bookingService = {
       bookingDate: toDbDate(input.bookingDate),
       startTime: timeToDate(input.startTime),
       endTime: timeToDate(input.endTime),
-      totalPrice: courtTotal + serviceTotal,
+      totalPrice,
+      depositAmount: Math.round(totalPrice * (depositRate / 100) * 100) / 100,
       paymentMethod: input.paymentMethod,
       services: serviceLines
     });
@@ -93,9 +97,24 @@ export const bookingService = {
     }
 
     const startAt = bookingStartsAt(booking.bookingDate, booking.startTime);
-    const minCancelAt = new Date(startAt.getTime() - 2 * 60 * 60 * 1000);
-    if (new Date() > minCancelAt) throw new ValidationError("Chi duoc huy truoc gio bat dau it nhat 2 gio");
+    if (new Date() >= startAt) throw new ValidationError("Khong the huy sau gio bat dau");
 
-    return bookingRepository.cancel(bookingId, cancelReason);
+    const hoursUntilStart = (startAt.getTime() - Date.now()) / (60 * 60 * 1000);
+    const paidAmount = booking.paymentStatus === "PAID" ? Number(booking.totalPrice) : 0;
+    const refundAmount = hoursUntilStart >= 24 ? paidAmount : paidAmount * 0.5;
+    const platformRetainedAmount = paidAmount - refundAmount;
+    const paymentStatus =
+      paidAmount === 0
+        ? "UNPAID"
+        : refundAmount === paidAmount
+          ? "REFUNDED"
+          : "PARTIALLY_REFUNDED";
+
+    return bookingRepository.cancel(bookingId, {
+      cancelReason,
+      refundAmount,
+      platformRetainedAmount,
+      paymentStatus
+    });
   }
 };

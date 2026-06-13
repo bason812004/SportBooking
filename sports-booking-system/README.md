@@ -81,6 +81,13 @@ Frontend mac dinh chay tai `http://localhost:5173` va goi backend `http://localh
 
 - Backend kiem tra trung lich bang dieu kien `newStart < existingEnd && newEnd > existingStart`.
 - Backend tinh tong tien dua tren bang gia, thoi luong va dich vu di kem.
+- Hoa hong mac dinh luu trong `system_settings`; `partner_profiles.commission_rate` co the override theo doi tac.
+- Khi booking chuyen `COMPLETED`, he thong snapshot doanh thu goc, ty le hoa hong, phi va thuc nhan vao `commission_transactions`.
+- Khi `NO_SHOW`, hoa hong duoc tinh tren tien coc. Huy truoc 24 gio hoan 100%; huy trong 24 gio hoan 50%.
+- `commission_transactions` la immutable; dieu chinh sau nay phai them ban ghi `REVERSAL`.
+- Partner co the tao voucher nhap, sua/xoa khi chua phat hanh, kich hoat va vo hieu hoa voucher.
+- Voucher co the ap dung cho tat ca san cua partner hoac mot san cu the; backend kiem tra ownership.
+- Voucher `ACTIVE` con han moi duoc hien thi tren trang voucher public.
 - San chi public khi `approval_status = APPROVED` va `active_status = ACTIVE`.
 - Partner chi sua san, gia, dich vu va don thuoc san cua minh.
 - Admin co API khoa/mo khoa user, duyet partner, duyet san, quan ly category, review, report va thong ke.
@@ -108,3 +115,13 @@ Backend Render/Railway:
 - Login sample fail: chua chay `database/supabase_schema.sql` hoac database khong co seed.
 - CORS fail: `FRONTEND_URL` backend khong khop domain frontend.
 - Upload anh fail: chua tao bucket Supabase Storage hoac thieu service role key.
+
+## Migration hoa hong
+
+Voi database da ton tai, chay mot lan:
+
+```bash
+cd backend
+npx prisma db execute --schema prisma/schema.prisma --file ../database/migrate_commission.sql
+npx prisma generate
+```

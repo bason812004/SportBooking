@@ -3,6 +3,7 @@ import { paginationMeta } from "../../shared/utils/response.js";
 import { parseLimit, parsePage } from "../../shared/utils/time.js";
 import { slugify } from "../../shared/utils/slug.js";
 import { adminRepository } from "./admin.repository.js";
+import { commissionService } from "../commission/commission.service.js";
 
 export const adminService = {
   async dashboard() {
@@ -35,6 +36,22 @@ export const adminService = {
   },
   rejectPartner(id: string) {
     return adminRepository.setPartnerApproval(id, "REJECTED");
+  },
+
+  commissionDefault() {
+    return commissionService.defaultRate();
+  },
+  updateCommissionDefault(rate: number) {
+    return commissionService.updateDefaultRate(rate);
+  },
+  partnerCommission(id: string) {
+    return commissionService.partnerRate(id);
+  },
+  updatePartnerCommission(id: string, rate: number | null) {
+    return commissionService.updatePartnerRate(id, rate);
+  },
+  commissionReport(month?: string) {
+    return commissionService.adminReport(month);
   },
 
   pendingCourts() {

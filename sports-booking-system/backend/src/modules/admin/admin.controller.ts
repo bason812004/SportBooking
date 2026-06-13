@@ -10,6 +10,19 @@ export const adminController = {
   partners: asyncHandler(async (req, res) => sendSuccess(res, await adminService.partners(req.query))),
   approvePartner: asyncHandler(async (req, res) => sendSuccess(res, await adminService.approvePartner(req.params.id))),
   rejectPartner: asyncHandler(async (req, res) => sendSuccess(res, await adminService.rejectPartner(req.params.id))),
+  commissionDefault: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.commissionDefault())),
+  updateCommissionDefault: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.updateCommissionDefault(req.body.rate))
+  ),
+  partnerCommission: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.partnerCommission(req.params.id))
+  ),
+  updatePartnerCommission: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.updatePartnerCommission(req.params.id, req.body.rate))
+  ),
+  commissionReport: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.commissionReport(req.query.month as string | undefined))
+  ),
   pendingCourts: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.pendingCourts())),
   approveCourt: asyncHandler(async (req, res) => sendSuccess(res, await adminService.approveCourt(req.params.id))),
   rejectCourt: asyncHandler(async (req, res) => sendSuccess(res, await adminService.rejectCourt(req.params.id, req.body.reason))),

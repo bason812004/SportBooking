@@ -22,6 +22,8 @@ import { PartnerCourtsPage } from "../pages/partner/PartnerCourtsPage";
 import { PartnerCourtFormPage } from "../pages/partner/PartnerCourtFormPage";
 import { PartnerBookingsPage } from "../pages/partner/PartnerBookingsPage";
 import { PartnerStatisticsPage } from "../pages/partner/PartnerStatisticsPage";
+import { PartnerVouchersPage } from "../pages/partner/PartnerVouchersPage";
+import { PartnerVoucherFormPage } from "../pages/partner/PartnerVoucherFormPage";
 import { PartnerPlaceholderPage } from "../pages/partner/PartnerPlaceholderPage";
 import { AdminDashboardPage } from "../pages/admin/AdminDashboardPage";
 import { AdminUsersPage } from "../pages/admin/AdminUsersPage";
@@ -33,6 +35,8 @@ import { AdminReportsPage } from "../pages/admin/AdminReportsPage";
 import { AdminStatisticsPage } from "../pages/admin/AdminStatisticsPage";
 import { AdminAuditLogsPage } from "../pages/admin/AdminAuditLogsPage";
 import { AdminBlockchainLogsPage } from "../pages/admin/AdminBlockchainLogsPage";
+import { AdminCommissionSettingsPage } from "../pages/admin/AdminCommissionSettingsPage";
+import { AdminPartnerCommissionPage } from "../pages/admin/AdminPartnerCommissionPage";
 
 export function AppRoutes() {
   return (
@@ -68,8 +72,9 @@ export function AppRoutes() {
           <Route path="partner/courts/:id/prices" element={<PartnerPlaceholderPage title="Bảng giá" />} />
           <Route path="partner/courts/:id/services" element={<PartnerPlaceholderPage title="Dịch vụ đi kèm" />} />
           <Route path="partner/bookings" element={<PartnerBookingsPage />} />
-          <Route path="partner/vouchers" element={<PartnerPlaceholderPage title="Voucher" />} />
-          <Route path="partner/vouchers/create" element={<PartnerPlaceholderPage title="Đăng voucher" />} />
+          <Route path="partner/vouchers" element={<PartnerVouchersPage />} />
+          <Route path="partner/vouchers/create" element={<PartnerVoucherFormPage />} />
+          <Route path="partner/vouchers/:id/edit" element={<PartnerVoucherFormPage />} />
           <Route path="partner/tournaments" element={<PartnerPlaceholderPage title="Giải đấu" />} />
           <Route path="partner/tournaments/create" element={<PartnerPlaceholderPage title="Đăng giải đấu" />} />
           <Route path="partner/blogs" element={<PartnerPlaceholderPage title="Bài viết" />} />
@@ -83,6 +88,7 @@ export function AppRoutes() {
           <Route path="admin/dashboard" element={<AdminDashboardPage />} />
           <Route path="admin/users" element={<AdminUsersPage />} />
           <Route path="admin/partners" element={<AdminPartnersPage />} />
+          <Route path="admin/partners/:id/commission" element={<AdminPartnerCommissionPage />} />
           <Route path="admin/courts/pending" element={<AdminPendingCourtsPage />} />
           <Route path="admin/categories" element={<AdminCategoriesPage />} />
           <Route path="admin/reviews" element={<AdminReviewsPage />} />
@@ -90,6 +96,7 @@ export function AppRoutes() {
           <Route path="admin/blogs/pending" element={<PartnerPlaceholderPage title="Duyệt bài viết" />} />
           <Route path="admin/tournaments/pending" element={<PartnerPlaceholderPage title="Duyệt giải đấu" />} />
           <Route path="admin/reports" element={<AdminReportsPage />} />
+          <Route path="admin/commission" element={<AdminCommissionSettingsPage />} />
           <Route path="admin/statistics" element={<AdminStatisticsPage />} />
           <Route path="admin/audit-logs" element={<AdminAuditLogsPage />} />
           <Route path="admin/blockchain-logs" element={<AdminBlockchainLogsPage />} />

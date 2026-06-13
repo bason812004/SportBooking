@@ -79,7 +79,55 @@ export type Booking = {
   paymentMethod: string;
   paymentStatus: string;
   bookingStatus: string;
+  depositAmount?: string;
+  refundAmount?: string;
+  platformRetainedAmount?: string;
   court: Court;
+};
+
+export type CommissionRateConfig = {
+  partnerId: string;
+  businessName: string;
+  overrideRate: number | null;
+  defaultRate: number;
+  effectiveRate: number;
+};
+
+export type CommissionSummary = {
+  grossAmount: number;
+  commissionAmount: number;
+  netAmount: number;
+  transactionCount: number;
+};
+
+export type CommissionReport = {
+  month: string;
+  summary: CommissionSummary;
+  partners: Array<
+    CommissionSummary & {
+      partnerId: string;
+      businessName: string;
+    }
+  >;
+};
+
+export type PartnerRevenueReport = {
+  month: string;
+  summary: CommissionSummary;
+  items: Array<{
+    id: string;
+    bookingId: string;
+    bookingCode: string;
+    bookingDate: string;
+    court: { id: string; name: string };
+    eventType: "COMPLETED" | "NO_SHOW";
+    transactionType: "EARNING" | "REVERSAL";
+    grossAmount: number;
+    commissionRate: number;
+    commissionAmount: number;
+    netAmount: number;
+    createdAt: string;
+  }>;
 };
 
 export type Paginated<T> = {
@@ -103,6 +151,11 @@ export type Voucher = {
   status: string;
   partner: { id: string; businessName: string };
   court?: { id: string; name: string; city: string; district: string; imageUrl?: string | null } | null;
+};
+
+export type PartnerVoucher = Omit<Voucher, "partner"> & {
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type BlogPost = {

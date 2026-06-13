@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
@@ -51,6 +51,7 @@ enum BookingStatus {
 enum PaymentStatus {
   UNPAID
   PAID
+  PARTIALLY_REFUNDED
   REFUNDED
 
   @@map("payment_status")
@@ -119,11 +120,13 @@ model PartnerProfile {
   address                 String
   verificationDocumentUrl String?        @map("verification_document_url")
   approvalStatus          ApprovalStatus @default(PENDING) @map("approval_status")
+  commissionRate          Decimal?       @map("commission_rate") @db.Decimal(5, 2)
   createdAt               DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt               DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  courts Court[]
+  user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courts                 Court[]
+  commissionTransactions CommissionTransaction[]
 
   @@index([userId], map: "idx_partner_profiles_user_id")
   @@index([approvalStatus], map: "idx_partner_profiles_approval_status")
@@ -221,6 +224,7 @@ model CourtImage {
   id        String   @id @default(uuid()) @db.Uuid
   courtId   String   @map("court_id") @db.Uuid
   imageUrl  String   @map("image_url")
+  publicId  String?  @map("public_id")
   sortOrder Int      @default(0) @map("sort_order")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
 
@@ -273,25 +277,30 @@ model CourtService {
 }
 
 model Booking {
-  id             String        @id @default(uuid()) @db.Uuid
-  bookingCode    String        @unique @map("booking_code") @db.VarChar(30)
-  userId         String        @map("user_id") @db.Uuid
-  courtId        String        @map("court_id") @db.Uuid
-  bookingDate    DateTime      @map("booking_date") @db.Date
-  startTime      DateTime      @map("start_time") @db.Time
-  endTime        DateTime      @map("end_time") @db.Time
-  totalPrice     Decimal       @map("total_price") @db.Decimal(12, 2)
-  paymentMethod  PaymentMethod @default(CASH) @map("payment_method")
-  paymentStatus  PaymentStatus @default(UNPAID) @map("payment_status")
-  bookingStatus  BookingStatus @default(PENDING) @map("booking_status")
-  cancelReason   String?       @map("cancel_reason")
-  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt      DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  id                     String        @id @default(uuid()) @db.Uuid
+  bookingCode            String        @unique @map("booking_code") @db.VarChar(30)
+  userId                 String        @map("user_id") @db.Uuid
+  courtId                String        @map("court_id") @db.Uuid
+  bookingDate            DateTime      @map("booking_date") @db.Date
+  startTime              DateTime      @map("start_time") @db.Time
+  endTime                DateTime      @map("end_time") @db.Time
+  totalPrice             Decimal       @map("total_price") @db.Decimal(12, 2)
+  depositAmount          Decimal       @default(0) @map("deposit_amount") @db.Decimal(12, 2)
+  refundAmount           Decimal       @default(0) @map("refund_amount") @db.Decimal(12, 2)
+  platformRetainedAmount Decimal       @default(0) @map("platform_retained_amount") @db.Decimal(12, 2)
+  paymentMethod          PaymentMethod @default(CASH) @map("payment_method")
+  paymentStatus          PaymentStatus @default(UNPAID) @map("payment_status")
+  bookingStatus          BookingStatus @default(PENDING) @map("booking_status")
+  cancelReason           String?       @map("cancel_reason")
+  cancelledAt            DateTime?     @map("cancelled_at") @db.Timestamptz
+  createdAt              DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  user            User             @relation(fields: [userId], references: [id])
-  court           Court            @relation(fields: [courtId], references: [id])
-  bookingServices BookingService[]
-  review          Review?
+  user                   User                    @relation(fields: [userId], references: [id])
+  court                  Court                   @relation(fields: [courtId], references: [id])
+  bookingServices        BookingService[]
+  review                 Review?
+  commissionTransactions CommissionTransaction[]
 
   @@index([userId], map: "idx_bookings_user_id")
   @@index([courtId], map: "idx_bookings_court_id")
@@ -300,6 +309,38 @@ model Booking {
   @@index([paymentStatus], map: "idx_bookings_payment_status")
   @@index([courtId, bookingDate, startTime, endTime, bookingStatus], map: "idx_bookings_schedule_conflict")
   @@map("bookings")
+}
+
+model SystemSetting {
+  key          String   @id @db.VarChar(100)
+  numericValue Decimal? @map("numeric_value") @db.Decimal(12, 4)
+  description  String?
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("system_settings")
+}
+
+model CommissionTransaction {
+  id                    String   @id @default(uuid()) @db.Uuid
+  bookingId             String   @map("booking_id") @db.Uuid
+  partnerId             String   @map("partner_id") @db.Uuid
+  transactionType       String   @default("EARNING") @map("transaction_type") @db.VarChar(20)
+  eventType             String   @map("event_type") @db.VarChar(20)
+  grossAmount           Decimal  @map("gross_amount") @db.Decimal(12, 2)
+  commissionRate        Decimal  @map("commission_rate") @db.Decimal(5, 2)
+  commissionAmount      Decimal  @map("commission_amount") @db.Decimal(12, 2)
+  netAmount             Decimal  @map("net_amount") @db.Decimal(12, 2)
+  originalTransactionId String?  @map("original_transaction_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  booking             Booking                 @relation(fields: [bookingId], references: [id])
+  partner             PartnerProfile          @relation(fields: [partnerId], references: [id])
+  originalTransaction CommissionTransaction?  @relation("CommissionReversal", fields: [originalTransactionId], references: [id])
+  reversals           CommissionTransaction[] @relation("CommissionReversal")
+
+  @@index([bookingId], map: "idx_commission_transactions_booking_id")
+  @@index([partnerId, createdAt], map: "idx_commission_transactions_partner_created_at")
+  @@map("commission_transactions")
 }
 
 model BookingService {

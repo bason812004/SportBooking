@@ -15,3 +15,21 @@ export const categoryUpdateSchema = z.object({
     status: z.enum(["ACTIVE", "INACTIVE"]).optional()
   })
 });
+
+export const commissionRateSchema = z.object({
+  body: z.object({
+    rate: z.number().min(0).max(100).nullable()
+  })
+});
+
+export const defaultCommissionRateSchema = z.object({
+  body: z.object({
+    rate: z.number().min(0).max(100)
+  })
+});
+
+export const commissionReportSchema = z.object({
+  query: z.object({
+    month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional()
+  })
+});

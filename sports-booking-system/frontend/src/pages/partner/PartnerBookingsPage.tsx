@@ -34,7 +34,12 @@ export function PartnerBookingsPage() {
                 <td className="p-3">{booking.bookingStatus}</td>
                 <td className="p-3 text-right">{Number(booking.totalPrice).toLocaleString("vi-VN")} VND</td>
                 <td className="flex gap-2 p-3">
-                  {(["confirm", "complete", "no-show", "reject"] as const).map((action) => (
+                  {(booking.bookingStatus === "PENDING"
+                    ? (["confirm", "reject"] as const)
+                    : booking.bookingStatus === "CONFIRMED"
+                      ? (["complete", "no-show", "reject"] as const)
+                      : []
+                  ).map((action) => (
                     <Button key={action} variant="secondary" onClick={() => status.mutate({ id: booking.id, action })}>{bookingActionLabel(action, t)}</Button>
                   ))}
                 </td>
