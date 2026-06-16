@@ -165,3 +165,23 @@ cd backend
 npx prisma db execute --schema prisma/schema.prisma --file ../database/migrate_commission.sql
 npx prisma generate
 ```
+
+## Migration quan ly Partner
+
+Voi database da ton tai, chay mot lan de bo sung thong tin ngan hang va ma so thue:
+
+```bash
+cd backend
+npx prisma db execute --schema prisma/schema.prisma --file ../database/migrate_partner_management.sql
+npx prisma generate
+```
+
+## Migration quan tri Admin
+
+Voi database da ton tai, chay mot lan de tao audit log, ledger log va lich su kiem duyet:
+
+```bash
+cd backend
+npx prisma db execute --schema prisma/schema.prisma --file ../database/migrate_admin_management.sql
+npx prisma generate
+```

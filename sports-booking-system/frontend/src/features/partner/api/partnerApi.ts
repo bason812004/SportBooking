@@ -1,5 +1,16 @@
 import { api } from "../../../lib/axios";
-import type { ApiResponse, Booking, Court, PartnerRevenueReport, PartnerVoucher } from "../../../types/api";
+import type {
+  ApiResponse,
+  Booking,
+  Court,
+  Paginated,
+  PartnerBlog,
+  PartnerDashboard,
+  PartnerProfile,
+  PartnerRevenueReport,
+  PartnerTournament,
+  PartnerVoucher
+} from "../../../types/api";
 
 export type PartnerVoucherPayload = {
   courtId?: string | null;
@@ -17,7 +28,15 @@ export type PartnerVoucherPayload = {
 
 export const partnerApi = {
   async dashboard() {
-    const { data } = await api.get<ApiResponse<{ courts: number; bookings: number; revenue: number }>>("/partner/dashboard");
+    const { data } = await api.get<ApiResponse<PartnerDashboard>>("/partner/dashboard");
+    return data.data;
+  },
+  async profile() {
+    const { data } = await api.get<ApiResponse<PartnerProfile>>("/partner/profile");
+    return data.data;
+  },
+  async updateProfile(payload: Omit<PartnerProfile, "id" | "approvalStatus" | "user">) {
+    const { data } = await api.put<ApiResponse<PartnerProfile>>("/partner/profile", payload);
     return data.data;
   },
   async courts() {
@@ -32,6 +51,10 @@ export const partnerApi = {
     const { data } = await api.put<ApiResponse<Court>>(`/partner/courts/${id}`, payload);
     return data.data;
   },
+  async courtDetail(id: string) {
+    const { data } = await api.get<ApiResponse<Court>>(`/partner/courts/${id}`);
+    return data.data;
+  },
   async addCourtImage(courtId: string, image: File, sortOrder = 0) {
     const formData = new FormData();
     formData.append("image", image);
@@ -42,8 +65,45 @@ export const partnerApi = {
     );
     return data.data;
   },
-  async bookings() {
-    const { data } = await api.get<ApiResponse<{ items: Booking[] }>>("/partner/bookings");
+  async deleteCourtImage(imageId: string) {
+    const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/images/${imageId}`);
+    return data.data;
+  },
+  async reorderCourtImages(courtId: string, imageIds: string[]) {
+    const { data } = await api.put<ApiResponse<Court>>(`/partner/courts/${courtId}/images/order`, { imageIds });
+    return data.data;
+  },
+  async addPrice(courtId: string, payload: Record<string, unknown>) {
+    const { data } = await api.post<ApiResponse<unknown>>(`/partner/courts/${courtId}/prices`, payload);
+    return data.data;
+  },
+  async updatePrice(id: string, payload: Record<string, unknown>) {
+    const { data } = await api.put<ApiResponse<unknown>>(`/partner/prices/${id}`, payload);
+    return data.data;
+  },
+  async deletePrice(id: string) {
+    const { data } = await api.delete<ApiResponse<unknown>>(`/partner/prices/${id}`);
+    return data.data;
+  },
+  async addService(courtId: string, payload: Record<string, unknown>) {
+    const { data } = await api.post<ApiResponse<unknown>>(`/partner/courts/${courtId}/services`, payload);
+    return data.data;
+  },
+  async updateService(id: string, payload: Record<string, unknown>) {
+    const { data } = await api.put<ApiResponse<unknown>>(`/partner/services/${id}`, payload);
+    return data.data;
+  },
+  async deleteService(id: string) {
+    const { data } = await api.delete<ApiResponse<unknown>>(`/partner/services/${id}`);
+    return data.data;
+  },
+  async bookings(params: Record<string, string | number | undefined> = {}) {
+    const cleanParams = Object.fromEntries(
+      Object.entries(params).filter(([, value]) => value !== "" && value !== undefined)
+    );
+    const { data } = await api.get<ApiResponse<Paginated<Booking>>>("/partner/bookings", {
+      params: cleanParams
+    });
     return data.data;
   },
   async setBookingStatus(id: string, action: "confirm" | "reject" | "complete" | "no-show") {
@@ -54,6 +114,10 @@ export const partnerApi = {
     const { data } = await api.get<ApiResponse<PartnerRevenueReport>>("/partner/statistics/revenue", {
       params: { month }
     });
+    return data.data;
+  },
+  async calendar(params: { fromDate: string; toDate: string; courtId?: string }) {
+    const { data } = await api.get<ApiResponse<Booking[]>>("/partner/calendar", { params });
     return data.data;
   },
   async vouchers() {
@@ -82,6 +146,54 @@ export const partnerApi = {
   },
   async deleteVoucher(id: string) {
     const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/vouchers/${id}`);
+    return data.data;
+  },
+  async blogs() {
+    const { data } = await api.get<ApiResponse<PartnerBlog[]>>("/partner/blogs");
+    return data.data;
+  },
+  async blogDetail(id: string) {
+    const { data } = await api.get<ApiResponse<PartnerBlog>>(`/partner/blogs/${id}`);
+    return data.data;
+  },
+  async createBlog(payload: Record<string, unknown>) {
+    const { data } = await api.post<ApiResponse<PartnerBlog>>("/partner/blogs", payload);
+    return data.data;
+  },
+  async updateBlog(id: string, payload: Record<string, unknown>) {
+    const { data } = await api.put<ApiResponse<PartnerBlog>>(`/partner/blogs/${id}`, payload);
+    return data.data;
+  },
+  async submitBlog(id: string) {
+    const { data } = await api.put<ApiResponse<PartnerBlog>>(`/partner/blogs/${id}/submit`);
+    return data.data;
+  },
+  async deleteBlog(id: string) {
+    const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/blogs/${id}`);
+    return data.data;
+  },
+  async tournaments() {
+    const { data } = await api.get<ApiResponse<PartnerTournament[]>>("/partner/tournaments");
+    return data.data;
+  },
+  async tournamentDetail(id: string) {
+    const { data } = await api.get<ApiResponse<PartnerTournament>>(`/partner/tournaments/${id}`);
+    return data.data;
+  },
+  async createTournament(payload: Record<string, unknown>) {
+    const { data } = await api.post<ApiResponse<PartnerTournament>>("/partner/tournaments", payload);
+    return data.data;
+  },
+  async updateTournament(id: string, payload: Record<string, unknown>) {
+    const { data } = await api.put<ApiResponse<PartnerTournament>>(`/partner/tournaments/${id}`, payload);
+    return data.data;
+  },
+  async submitTournament(id: string) {
+    const { data } = await api.put<ApiResponse<PartnerTournament>>(`/partner/tournaments/${id}/submit`);
+    return data.data;
+  },
+  async deleteTournament(id: string) {
+    const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/tournaments/${id}`);
     return data.data;
   }
 };

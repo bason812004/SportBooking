@@ -30,6 +30,13 @@ import { PartnerStatisticsPage } from "../pages/partner/PartnerStatisticsPage";
 import { PartnerVouchersPage } from "../pages/partner/PartnerVouchersPage";
 import { PartnerVoucherFormPage } from "../pages/partner/PartnerVoucherFormPage";
 import { PartnerPlaceholderPage } from "../pages/partner/PartnerPlaceholderPage";
+import { PartnerCourtResourcesPage } from "../pages/partner/PartnerCourtResourcesPage";
+import { PartnerSettingsPage } from "../pages/partner/PartnerSettingsPage";
+import { PartnerCalendarPage } from "../pages/partner/PartnerCalendarPage";
+import { PartnerBlogsPage } from "../pages/partner/PartnerBlogsPage";
+import { PartnerBlogFormPage } from "../pages/partner/PartnerBlogFormPage";
+import { PartnerTournamentsPage } from "../pages/partner/PartnerTournamentsPage";
+import { PartnerTournamentFormPage } from "../pages/partner/PartnerTournamentFormPage";
 import { AdminDashboardPage } from "../pages/admin/AdminDashboardPage";
 import { AdminUsersPage } from "../pages/admin/AdminUsersPage";
 import { AdminPartnersPage } from "../pages/admin/AdminPartnersPage";
@@ -42,6 +49,9 @@ import { AdminAuditLogsPage } from "../pages/admin/AdminAuditLogsPage";
 import { AdminBlockchainLogsPage } from "../pages/admin/AdminBlockchainLogsPage";
 import { AdminCommissionSettingsPage } from "../pages/admin/AdminCommissionSettingsPage";
 import { AdminPartnerCommissionPage } from "../pages/admin/AdminPartnerCommissionPage";
+import { AdminVouchersPage } from "../pages/admin/AdminVouchersPage";
+import { AdminBlogModerationPage } from "../pages/admin/AdminBlogModerationPage";
+import { AdminTournamentModerationPage } from "../pages/admin/AdminTournamentModerationPage";
 
 export function AppRoutes() {
   return (
@@ -82,17 +92,22 @@ export function AppRoutes() {
           <Route path="partner/courts" element={<PartnerCourtsPage />} />
           <Route path="partner/courts/create" element={<PartnerCourtFormPage />} />
           <Route path="partner/courts/:id/edit" element={<PartnerCourtFormPage />} />
-          <Route path="partner/courts/:id/prices" element={<PartnerPlaceholderPage title="Bảng giá" />} />
-          <Route path="partner/courts/:id/services" element={<PartnerPlaceholderPage title="Dịch vụ đi kèm" />} />
+          <Route path="partner/courts/:id/prices" element={<PartnerCourtResourcesPage mode="prices" />} />
+          <Route path="partner/courts/:id/services" element={<PartnerCourtResourcesPage mode="services" />} />
+          <Route path="partner/courts/:id/images" element={<PartnerCourtResourcesPage mode="images" />} />
           <Route path="partner/bookings" element={<PartnerBookingsPage />} />
           <Route path="partner/vouchers" element={<PartnerVouchersPage />} />
           <Route path="partner/vouchers/create" element={<PartnerVoucherFormPage />} />
           <Route path="partner/vouchers/:id/edit" element={<PartnerVoucherFormPage />} />
-          <Route path="partner/tournaments" element={<PartnerPlaceholderPage title="Giải đấu" />} />
-          <Route path="partner/tournaments/create" element={<PartnerPlaceholderPage title="Đăng giải đấu" />} />
-          <Route path="partner/blogs" element={<PartnerPlaceholderPage title="Bài viết" />} />
-          <Route path="partner/calendar" element={<PartnerPlaceholderPage title="Lịch đặt sân" />} />
+          <Route path="partner/tournaments" element={<PartnerTournamentsPage />} />
+          <Route path="partner/tournaments/create" element={<PartnerTournamentFormPage />} />
+          <Route path="partner/tournaments/:id/edit" element={<PartnerTournamentFormPage />} />
+          <Route path="partner/blogs" element={<PartnerBlogsPage />} />
+          <Route path="partner/blogs/create" element={<PartnerBlogFormPage />} />
+          <Route path="partner/blogs/:id/edit" element={<PartnerBlogFormPage />} />
+          <Route path="partner/calendar" element={<PartnerCalendarPage />} />
           <Route path="partner/statistics" element={<PartnerStatisticsPage />} />
+          <Route path="partner/settings" element={<PartnerSettingsPage />} />
         </Route>
       </Route>
 
@@ -105,9 +120,9 @@ export function AppRoutes() {
           <Route path="admin/courts/pending" element={<AdminPendingCourtsPage />} />
           <Route path="admin/categories" element={<AdminCategoriesPage />} />
           <Route path="admin/reviews" element={<AdminReviewsPage />} />
-          <Route path="admin/vouchers" element={<PartnerPlaceholderPage title="Quản lý voucher" />} />
-          <Route path="admin/blogs/pending" element={<PartnerPlaceholderPage title="Duyệt bài viết" />} />
-          <Route path="admin/tournaments/pending" element={<PartnerPlaceholderPage title="Duyệt giải đấu" />} />
+          <Route path="admin/vouchers" element={<AdminVouchersPage />} />
+          <Route path="admin/blogs/pending" element={<AdminBlogModerationPage />} />
+          <Route path="admin/tournaments/pending" element={<AdminTournamentModerationPage />} />
           <Route path="admin/reports" element={<AdminReportsPage />} />
           <Route path="admin/commission" element={<AdminCommissionSettingsPage />} />
           <Route path="admin/statistics" element={<AdminStatisticsPage />} />

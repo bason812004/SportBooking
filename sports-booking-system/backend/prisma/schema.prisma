@@ -207,14 +207,12 @@ model User {
   createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz
   updatedAt    DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  partnerProfile          PartnerProfile?
-  bookings                Booking[]
-  reviews                 Review[]
-  reports                 Report[]
-  notifications           Notification[]
-  userVouchers            UserVoucher[]
-  tournamentRegistrations TournamentRegistration[]
-  analyticsEvents         AnalyticsEvent[]
+  partnerProfile PartnerProfile?
+  bookings       Booking[]
+  reviews        Review[]
+  reports        Report[]
+  notifications  Notification[]
+  auditLogs      AuditLog[]
 
   @@index([email], map: "idx_users_email")
   @@index([role], map: "idx_users_role")
@@ -230,6 +228,10 @@ model PartnerProfile {
   verificationDocumentUrl String?        @map("verification_document_url")
   approvalStatus          ApprovalStatus @default(PENDING) @map("approval_status")
   commissionRate          Decimal?       @map("commission_rate") @db.Decimal(5, 2)
+  bankName                String?        @map("bank_name") @db.VarChar(120)
+  bankAccountNumber       String?        @map("bank_account_number") @db.VarChar(60)
+  bankAccountHolder       String?        @map("bank_account_holder") @db.VarChar(160)
+  taxCode                 String?        @map("tax_code") @db.VarChar(60)
   createdAt               DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt               DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -620,137 +622,53 @@ model Notification {
   @@map("notifications")
 }
 
-model Voucher {
-  id                String              @id @default(uuid()) @db.Uuid
-  partnerId         String              @map("partner_id") @db.Uuid
-  courtId           String?             @map("court_id") @db.Uuid
-  code              String              @unique @db.VarChar(40)
-  title             String              @db.VarChar(160)
-  description       String?
-  discountType      VoucherDiscountType @map("discount_type")
-  discountValue     Decimal             @map("discount_value") @db.Decimal(12, 2)
-  maxDiscountAmount Decimal?            @map("max_discount_amount") @db.Decimal(12, 2)
-  minBookingAmount  Decimal             @default(0) @map("min_booking_amount") @db.Decimal(12, 2)
-  usageLimit        Int?                @map("usage_limit")
-  usedCount         Int                 @default(0) @map("used_count")
-  startDate         DateTime            @map("start_date") @db.Timestamptz
-  endDate           DateTime            @map("end_date") @db.Timestamptz
-  status            VoucherStatus       @default(DRAFT)
-  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt         DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+model AuditLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  actorId      String   @map("actor_id") @db.Uuid
+  action       String   @db.VarChar(100)
+  entityType   String   @map("entity_type") @db.VarChar(80)
+  entityId     String   @map("entity_id") @db.VarChar(100)
+  metadata     Json?
+  previousHash String?  @map("previous_hash") @db.VarChar(64)
+  currentHash  String   @map("current_hash") @db.VarChar(64)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
 
-  partner         PartnerProfile   @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  court           Court?           @relation(fields: [courtId], references: [id], onDelete: Cascade)
-  userVouchers    UserVoucher[]
-  bookingVouchers BookingVoucher[]
+  actor User @relation(fields: [actorId], references: [id])
 
-  @@index([partnerId], map: "idx_vouchers_partner_id")
-  @@index([courtId], map: "idx_vouchers_court_id")
-  @@index([code], map: "idx_vouchers_code")
-  @@index([status], map: "idx_vouchers_status")
-  @@index([partnerId, courtId, status], map: "idx_vouchers_partner_court_status")
-  @@index([startDate, endDate], map: "idx_vouchers_date_range")
-  @@map("vouchers")
+  @@index([createdAt], map: "idx_audit_logs_created_at")
+  @@index([actorId], map: "idx_audit_logs_actor_id")
+  @@map("audit_logs")
 }
 
-model UserVoucher {
-  id        String            @id @default(uuid()) @db.Uuid
-  userId    String            @map("user_id") @db.Uuid
-  voucherId String            @map("voucher_id") @db.Uuid
-  status    UserVoucherStatus @default(CLAIMED)
-  claimedAt DateTime          @default(now()) @map("claimed_at") @db.Timestamptz
-  usedAt    DateTime?         @map("used_at") @db.Timestamptz
+model BlockchainLog {
+  id          String    @id @default(uuid()) @db.Uuid
+  auditLogId  String?   @map("audit_log_id") @db.Uuid
+  entityType  String    @map("entity_type") @db.VarChar(80)
+  entityId    String    @map("entity_id") @db.VarChar(100)
+  payloadHash String    @map("payload_hash") @db.VarChar(64)
+  network     String    @default("NOT_CONFIGURED") @db.VarChar(80)
+  txHash      String?   @map("tx_hash") @db.VarChar(120)
+  status      String    @default("PENDING") @db.VarChar(30)
+  error       String?
+  attempts    Int       @default(0)
+  confirmedAt DateTime? @map("confirmed_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  voucher Voucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, voucherId])
-  @@index([userId], map: "idx_user_vouchers_user_id")
-  @@index([voucherId], map: "idx_user_vouchers_voucher_id")
-  @@map("user_vouchers")
+  @@index([status], map: "idx_blockchain_logs_status")
+  @@index([createdAt], map: "idx_blockchain_logs_created_at")
+  @@map("blockchain_logs")
 }
 
-model BookingVoucher {
-  id             String   @id @default(uuid()) @db.Uuid
-  bookingId      String   @unique @map("booking_id") @db.Uuid
-  voucherId      String   @map("voucher_id") @db.Uuid
-  discountAmount Decimal  @map("discount_amount") @db.Decimal(12, 2)
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+model ModerationHistory {
+  id         String   @id @default(uuid()) @db.Uuid
+  entityType String   @map("entity_type") @db.VarChar(80)
+  entityId   String   @map("entity_id") @db.VarChar(100)
+  action     String   @db.VarChar(50)
+  reason     String?
+  actorId    String   @map("actor_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
 
-  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  voucher Voucher @relation(fields: [voucherId], references: [id])
-
-  @@index([bookingId], map: "idx_booking_vouchers_booking_id")
-  @@map("booking_vouchers")
-}
-
-model Tournament {
-  id                   String           @id @default(uuid()) @db.Uuid
-  partnerId            String           @map("partner_id") @db.Uuid
-  courtId              String           @map("court_id") @db.Uuid
-  title                String           @db.VarChar(220)
-  slug                 String           @unique @db.VarChar(240)
-  description          String?
-  sportType            String           @map("sport_type") @db.VarChar(80)
-  coverImageUrl        String?          @map("cover_image_url")
-  startDate            DateTime         @map("start_date") @db.Timestamptz
-  endDate              DateTime         @map("end_date") @db.Timestamptz
-  registrationDeadline DateTime         @map("registration_deadline") @db.Timestamptz
-  maxParticipants      Int              @map("max_participants")
-  currentParticipants  Int              @default(0) @map("current_participants")
-  entryFee             Decimal          @default(0) @map("entry_fee") @db.Decimal(12, 2)
-  prizeDescription     String?          @map("prize_description")
-  status               TournamentStatus @default(DRAFT)
-  createdAt            DateTime         @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt            DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-
-  partner       PartnerProfile           @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  court         Court                    @relation(fields: [courtId], references: [id], onDelete: Cascade)
-  registrations TournamentRegistration[]
-
-  @@index([partnerId], map: "idx_tournaments_partner_id")
-  @@index([courtId], map: "idx_tournaments_court_id")
-  @@index([status], map: "idx_tournaments_status")
-  @@index([slug], map: "idx_tournaments_slug")
-  @@index([partnerId, courtId, status], map: "idx_tournaments_partner_court_status")
-  @@map("tournaments")
-}
-
-model TournamentRegistration {
-  id           String                       @id @default(uuid()) @db.Uuid
-  tournamentId String                       @map("tournament_id") @db.Uuid
-  userId       String                       @map("user_id") @db.Uuid
-  teamName     String?                      @map("team_name") @db.VarChar(160)
-  contactPhone String                       @map("contact_phone") @db.VarChar(30)
-  note         String?
-  status       TournamentRegistrationStatus @default(PENDING)
-  createdAt    DateTime                     @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt    DateTime                     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-
-  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([tournamentId, userId])
-  @@index([tournamentId], map: "idx_tournament_registrations_tournament_id")
-  @@index([userId], map: "idx_tournament_registrations_user_id")
-  @@map("tournament_registrations")
-}
-
-model AnalyticsEvent {
-  id           String             @id @default(uuid()) @db.Uuid
-  userId       String?            @map("user_id") @db.Uuid
-  partnerId    String?            @map("partner_id") @db.Uuid
-  eventType    AnalyticsEventType @map("event_type")
-  entityType   String             @map("entity_type") @db.VarChar(80)
-  entityId     String?            @map("entity_id") @db.Uuid
-  metadataJson Json?              @map("metadata_json")
-  createdAt    DateTime           @default(now()) @map("created_at") @db.Timestamptz
-
-  user    User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
-  partner PartnerProfile? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
-
-  @@index([eventType, entityType, createdAt], map: "idx_analytics_events_lookup")
-  @@index([userId], map: "idx_analytics_events_user_id")
-  @@index([partnerId], map: "idx_analytics_events_partner_id")
-  @@map("analytics_events")
+  @@index([entityType, entityId], map: "idx_moderation_history_entity")
+  @@map("moderation_history")
 }

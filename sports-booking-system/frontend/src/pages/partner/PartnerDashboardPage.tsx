@@ -1,87 +1,26 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { CalendarDays, TrendingUp, UserRoundCheck, WalletCards } from "lucide-react";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { partnerApi } from "../../features/partner/api/partnerApi";
 import { LoadingState, ErrorState } from "../../components/common/States";
-import { useLanguage } from "../../lib/i18n";
-
-const bars = [42, 58, 76, 100, 82, 92, 106];
+import { Button } from "../../components/ui/Button";
 
 export function PartnerDashboardPage() {
-  const { t } = useLanguage();
   const dashboard = useQuery({ queryKey: ["partner-dashboard"], queryFn: partnerApi.dashboard });
   if (dashboard.isLoading) return <LoadingState />;
   if (dashboard.isError) return <ErrorState message={dashboard.error.message} />;
-
-  const data = dashboard.data ?? { courts: 0, bookings: 0, revenue: 0 };
+  const data = dashboard.data!;
   const stats = [
-    { label: "Tổng số sân", value: data.courts, note: "Sẵn sàng hoạt động", icon: UserRoundCheck, tone: "bg-[#dcfce7]" },
-    { label: "Booking hôm nay", value: data.bookings, note: `+12% ${t("so với hôm qua")}`, icon: CalendarDays, tone: "bg-blue-100" },
-    { label: "Doanh thu tháng", value: `${Number(data.revenue).toLocaleString("vi-VN")}đ`, note: `+5.2% ${t("so với tháng trước")}`, icon: WalletCards, tone: "bg-red-100" },
-    { label: "Yêu cầu chờ duyệt", value: 7, note: "Cần xử lý ngay", icon: CalendarDays, tone: "bg-[#24c866] text-[#063310]" }
+    { label: "Sân đang hoạt động", value: data.courts, icon: UserRoundCheck },
+    { label: "Booking hôm nay", value: data.bookingsToday, icon: CalendarDays },
+    { label: "Thực nhận tháng", value: `${data.revenue.toLocaleString("vi-VN")} đ`, icon: WalletCards },
+    { label: "Đơn chờ xác nhận", value: data.pendingBookings, icon: CalendarDays }
   ];
-
-  return (
-    <div>
-      <h1 className="text-6xl font-black tracking-tight">{t("Tổng quan")}</h1>
-      <p className="mt-5 text-2xl text-slate-700">{t("Chào mừng trở lại, xem hiệu suất của sân hôm nay.")}</p>
-
-      <div className="mt-16 grid gap-8 lg:grid-cols-4">
-        {stats.map((item) => (
-          <div key={item.label} className={`rounded-3xl border border-[#dfe8dc] p-8 shadow-sm ${item.tone.includes("text") ? item.tone : "bg-white"}`}>
-            <div className="flex justify-between gap-4">
-              <p className="text-2xl leading-snug">{t(item.label)}</p>
-              <span className={`h-max rounded-full p-3 ${item.tone.includes("text") ? "bg-[#42d77a]" : item.tone}`}>
-                <item.icon className="h-6 w-6 text-[#02712a]" />
-              </span>
-            </div>
-            <p className="mt-5 text-5xl font-black">{typeof item.value === "number" ? item.value.toLocaleString("vi-VN") : item.value}</p>
-            <p className="mt-4 flex items-center gap-2 text-[#02712a]">
-              <TrendingUp className="h-4 w-4" />
-              {t(item.note)}
-            </p>
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-16 grid gap-8 lg:grid-cols-[1fr_360px]">
-        <section className="rounded-3xl border border-[#dfe8dc] bg-white p-12 shadow-sm">
-          <div className="flex items-center justify-between">
-            <h2 className="text-4xl font-black">{t("Xu hướng đặt sân (Tuần)")}</h2>
-            <button className="rounded-xl bg-[#f1fbef] px-6 py-3">{t("Tuần này")}</button>
-          </div>
-          <div className="mt-14 flex h-80 items-end gap-5 border-b border-[#c8d8c3] px-6">
-            {bars.map((height, index) => (
-              <div key={index} className="flex flex-1 flex-col items-center gap-5">
-                <div className={`w-full rounded-t-md ${index === 3 ? "bg-[#2f8f57]" : "bg-[#e6f0e2]"}`} style={{ height }} />
-                <span className="font-bold">{["T2", "T3", "T4", "T5", "T6", "T7", "CN"][index]}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="rounded-3xl border border-[#dfe8dc] bg-white p-10 shadow-sm">
-          <h2 className="text-4xl font-black leading-tight">{t("Trạng thái sân nhanh")}</h2>
-          <div className="mt-10 space-y-6">
-            {["Sân Tennis A", "Sân Cầu Lông 1", "Sân Bóng Đá Mini"].map((name, index) => (
-              <div key={name} className="flex items-center gap-5 rounded-2xl bg-[#f1fbef] p-5">
-                <span className="rounded-lg bg-[#c9f7d8] px-4 py-5 font-bold text-[#02712a]">S{index + 1}</span>
-                <div className="flex-1">
-                  <p className="text-xl font-bold">{t(name)}</p>
-                  <p className="text-slate-700">{index === 0 ? t("Đang có khách (Còn 45p)") : index === 1 ? t("Trống") : t("Sắp đến giờ (14:00)")}</p>
-                </div>
-                <span className={`h-3 w-3 rounded-full ${index === 0 ? "bg-red-600" : index === 1 ? "bg-[#24c866]" : "bg-blue-600"}`} />
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-
-      <section className="mt-16 rounded-3xl border border-[#dfe8dc] bg-white p-12 shadow-sm">
-        <div className="flex items-center justify-between">
-          <h2 className="text-4xl font-black">{t("Booking mới nhất")}</h2>
-          <a className="font-bold text-blue-700" href="/partner/bookings">{t("Xem tất cả")}</a>
-        </div>
-      </section>
-    </div>
-  );
+  return <div className="space-y-8"><div><h1 className="text-4xl font-black">Tổng quan đối tác</h1><p className="mt-2 text-slate-600">Số liệu vận hành được cập nhật trực tiếp từ booking và giao dịch hoa hồng.</p></div>
+    <div className="grid gap-4 lg:grid-cols-4">{stats.map(item=><div key={item.label} className="rounded-2xl border bg-white p-5"><div className="flex justify-between"><p className="text-slate-600">{item.label}</p><item.icon className="h-5 w-5 text-emerald-700"/></div><p className="mt-3 text-3xl font-black">{item.value}</p>{item.label==="Thực nhận tháng"&&<p className="mt-2 flex items-center gap-1 text-sm text-emerald-700"><TrendingUp className="h-4 w-4"/>{data.revenueGrowth===null?"Chưa có kỳ trước":`${data.revenueGrowth.toFixed(1)}% so với tháng trước`}</p>}</div>)}</div>
+    <div className="grid gap-6 xl:grid-cols-[1fr_380px]"><section className="rounded-2xl border bg-white p-6"><h2 className="text-xl font-bold">Booking 7 ngày gần nhất</h2><div className="mt-5 h-72"><ResponsiveContainer width="100%" height="100%"><BarChart data={data.trend}><CartesianGrid strokeDasharray="3 3"/><XAxis dataKey="date" tickFormatter={v=>v.slice(5)}/><YAxis allowDecimals={false}/><Tooltip/><Bar dataKey="bookings" fill="#16a34a" radius={[6,6,0,0]}/></BarChart></ResponsiveContainer></div></section>
+      <section className="rounded-2xl border bg-white p-6"><h2 className="text-xl font-bold">Trạng thái sân hôm nay</h2><div className="mt-4 space-y-3">{data.courtStatuses.map(c=><div key={c.id} className="rounded-xl bg-slate-50 p-3"><b>{c.name}</b><p className="text-sm text-slate-600">{c.bookings[0]?`${c.bookings[0].bookingStatus} · ${c.bookings[0].startTime.slice(11,16)}-${c.bookings[0].endTime.slice(11,16)}`:"Không có lịch sắp tới"}</p></div>)}</div></section></div>
+    <section className="rounded-2xl border bg-white p-6"><div className="flex justify-between"><h2 className="text-xl font-bold">Booking mới nhất</h2><Link to="/partner/bookings"><Button variant="secondary">Xem tất cả</Button></Link></div><div className="mt-4 overflow-auto"><table className="w-full min-w-[700px] text-sm"><tbody>{data.recentBookings.map(item=><tr key={item.id} className="border-t"><td className="p-3 font-medium">{item.bookingCode}</td><td>{item.user?.fullName}</td><td>{item.court.name}</td><td>{new Date(item.bookingDate).toLocaleDateString("vi-VN")}</td><td>{item.bookingStatus}</td><td className="text-right">{Number(item.totalPrice).toLocaleString("vi-VN")} đ</td></tr>)}</tbody></table></div></section>
+  </div>;
 }

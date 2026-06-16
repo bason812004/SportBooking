@@ -3,7 +3,7 @@ import { prisma } from "../../config/db.js";
 import { ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { cloudinaryService } from "../../shared/services/cloudinary.service.js";
 import { paginationMeta } from "../../shared/utils/response.js";
-import { bookingStartsAt, parseLimit, parsePage, timeToDate, timeToMinutes } from "../../shared/utils/time.js";
+import { bookingStartsAt, parseLimit, parsePage, timeToDate, timeToMinutes, toDbDate } from "../../shared/utils/time.js";
 import { uniqueSlug } from "../../shared/utils/slug.js";
 import { commissionService } from "../commission/commission.service.js";
 import { voucherService } from "../vouchers/voucher.service.js";
@@ -18,8 +18,47 @@ async function getProfile(userId: string) {
 export const partnerService = {
   async dashboard(userId: string) {
     const profile = await getProfile(userId);
-    const [courts, bookings, revenue] = await partnerRepository.dashboard(profile.id);
-    return { courts, bookings, revenue: Number(revenue._sum.totalPrice ?? 0) };
+    const [courts, bookingsToday, revenue, pendingBookings, trendRows, courtStatuses, recentBookings, previousRevenue] =
+      await partnerRepository.dashboard(profile.id);
+    const trend = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date();
+      date.setUTCDate(date.getUTCDate() - (6 - index));
+      const key = date.toISOString().slice(0, 10);
+      return {
+        date: key,
+        bookings: trendRows.filter((row) => row.bookingDate.toISOString().slice(0, 10) === key).length
+      };
+    });
+    const currentRevenue = Number(revenue._sum.netAmount ?? 0);
+    const previous = Number(previousRevenue._sum.netAmount ?? 0);
+    return {
+      courts,
+      bookingsToday,
+      revenue: currentRevenue,
+      pendingBookings,
+      revenueGrowth: previous > 0 ? ((currentRevenue - previous) / previous) * 100 : null,
+      trend,
+      courtStatuses,
+      recentBookings
+    };
+  },
+
+  async profile(userId: string) {
+    return getProfile(userId);
+  },
+
+  async updateProfile(userId: string, input: any) {
+    const profile = await getProfile(userId);
+    return partnerRepository.updateProfile(profile.id, {
+      businessName: input.businessName,
+      address: input.address,
+      verificationDocumentUrl: input.verificationDocumentUrl || null,
+      bankName: input.bankName || null,
+      bankAccountNumber: input.bankAccountNumber || null,
+      bankAccountHolder: input.bankAccountHolder || null,
+      taxCode: input.taxCode || null,
+      approvalStatus: "PENDING"
+    });
   },
 
   async courts(userId: string) {
@@ -100,6 +139,28 @@ export const partnerService = {
     return image;
   },
 
+  async deleteImage(userId: string, imageId: string) {
+    const profile = await getProfile(userId);
+    const image = await partnerRepository.imageByPartner(imageId, profile.id);
+    if (!image) throw new NotFoundError("Khong tim thay anh san");
+    await cloudinaryService.deleteImage(image.publicId);
+    await partnerRepository.deleteImage(image.id);
+    await partnerRepository.updateCourt(image.courtId, { approvalStatus: "PENDING" });
+    return { id: image.id };
+  },
+
+  async reorderImages(userId: string, courtId: string, imageIds: string[]) {
+    const profile = await getProfile(userId);
+    const court = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!court) throw new NotFoundError("Khong tim thay san cua ban");
+    const ownedIds = new Set(court.images.map((image) => image.id));
+    if (imageIds.some((id) => !ownedIds.has(id)) || imageIds.length !== court.images.length) {
+      throw new ValidationError("Danh sach anh khong hop le");
+    }
+    await partnerRepository.reorderImages(courtId, imageIds);
+    return partnerRepository.courtByPartner(courtId, profile.id);
+  },
+
   async addPrice(userId: string, courtId: string, input: any) {
     const profile = await getProfile(userId);
     const court = await partnerRepository.courtByPartner(courtId, profile.id);
@@ -151,11 +212,22 @@ export const partnerService = {
     return partnerRepository.deleteService(serviceId);
   },
 
-  async bookings(userId: string, query: { page?: string; limit?: string }) {
+  async bookings(
+    userId: string,
+    query: { page?: string; limit?: string; courtId?: string; status?: BookingStatus; fromDate?: string; toDate?: string }
+  ) {
     const profile = await getProfile(userId);
     const page = parsePage(query.page);
     const limit = parseLimit(query.limit);
-    const [items, total] = await partnerRepository.bookings(profile.id, page, limit);
+    if (query.fromDate && query.toDate && query.fromDate > query.toDate) {
+      throw new ValidationError("Khoang ngay khong hop le");
+    }
+    const [items, total] = await partnerRepository.bookings(profile.id, page, limit, {
+      courtId: query.courtId,
+      status: query.status,
+      fromDate: query.fromDate ? toDbDate(query.fromDate) : undefined,
+      toDate: query.toDate ? toDbDate(query.toDate) : undefined
+    });
     return { items, meta: paginationMeta(page, limit, total) };
   },
 
@@ -212,6 +284,12 @@ export const partnerService = {
     return commissionService.partnerReport(profile.id, month);
   },
 
+  async calendar(userId: string, query: { fromDate: string; toDate: string; courtId?: string }) {
+    const profile = await getProfile(userId);
+    if (query.fromDate > query.toDate) throw new ValidationError("Khoang ngay khong hop le");
+    return partnerRepository.calendar(profile.id, toDbDate(query.fromDate), toDbDate(query.toDate), query.courtId);
+  },
+
   async vouchers(userId: string) {
     const profile = await getProfile(userId);
     return voucherService.listForPartner(profile.id);
@@ -245,5 +323,97 @@ export const partnerService = {
   async deleteVoucher(userId: string, voucherId: string) {
     const profile = await getProfile(userId);
     return voucherService.deleteForPartner(profile.id, voucherId);
+  },
+
+  async blogs(userId: string) {
+    await getProfile(userId);
+    return partnerRepository.listBlogs(userId);
+  },
+
+  async blogDetail(userId: string, id: string) {
+    await getProfile(userId);
+    const [blog] = await partnerRepository.findBlog(id, userId);
+    if (!blog) throw new NotFoundError("Khong tim thay bai viet cua ban");
+    return blog;
+  },
+
+  async createBlog(userId: string, input: any) {
+    await getProfile(userId);
+    const [blog] = await partnerRepository.createBlog(userId, { ...input, slug: uniqueSlug(input.title) });
+    return blog;
+  },
+
+  async updateBlog(userId: string, id: string, input: any) {
+    await this.blogDetail(userId, id);
+    const [blog] = await partnerRepository.updateBlog(id, userId, { ...input, slug: uniqueSlug(input.title) });
+    if (!blog) throw new ValidationError("Chi co the sua bai viet nhap");
+    return blog;
+  },
+
+  async submitBlog(userId: string, id: string) {
+    await this.blogDetail(userId, id);
+    if (!(await partnerRepository.submitBlog(id, userId))) throw new ValidationError("Chi co the gui duyet bai viet nhap");
+    return this.blogDetail(userId, id);
+  },
+
+  async deleteBlog(userId: string, id: string) {
+    await getProfile(userId);
+    if (!(await partnerRepository.deleteBlog(id, userId))) throw new ValidationError("Chi co the xoa bai viet nhap");
+    return { id };
+  },
+
+  async tournaments(userId: string) {
+    const profile = await getProfile(userId);
+    return partnerRepository.listTournaments(profile.id);
+  },
+
+  async tournamentDetail(userId: string, id: string) {
+    const profile = await getProfile(userId);
+    const [tournament] = await partnerRepository.findTournament(id, profile.id);
+    if (!tournament) throw new NotFoundError("Khong tim thay giai dau cua ban");
+    return tournament;
+  },
+
+  async createTournament(userId: string, input: any) {
+    const profile = await getProfile(userId);
+    await validateTournament(profile.id, input);
+    const [created] = await partnerRepository.createTournament(profile.id, { ...input, slug: uniqueSlug(input.title) });
+    return this.tournamentDetail(userId, created.id);
+  },
+
+  async updateTournament(userId: string, id: string, input: any) {
+    const profile = await getProfile(userId);
+    await this.tournamentDetail(userId, id);
+    await validateTournament(profile.id, input);
+    if (!(await partnerRepository.updateTournament(id, profile.id, { ...input, slug: uniqueSlug(input.title) }))) {
+      throw new ValidationError("Chi co the sua giai dau nhap");
+    }
+    return this.tournamentDetail(userId, id);
+  },
+
+  async submitTournament(userId: string, id: string) {
+    const profile = await getProfile(userId);
+    await this.tournamentDetail(userId, id);
+    if (!(await partnerRepository.submitTournament(id, profile.id))) {
+      throw new ValidationError("Chi co the gui duyet giai dau nhap");
+    }
+    return this.tournamentDetail(userId, id);
+  },
+
+  async deleteTournament(userId: string, id: string) {
+    const profile = await getProfile(userId);
+    if (!(await partnerRepository.deleteTournament(id, profile.id))) {
+      throw new ValidationError("Chi co the xoa giai dau nhap");
+    }
+    return { id };
   }
 };
+
+async function validateTournament(partnerId: string, input: any) {
+  const court = await partnerRepository.courtByPartner(input.courtId, partnerId);
+  if (!court) throw new ValidationError("San khong thuoc doi tac");
+  const deadline = new Date(input.registrationDeadline);
+  const start = new Date(input.startDate);
+  const end = new Date(input.endDate);
+  if (deadline > start || start > end) throw new ValidationError("Thoi gian giai dau khong hop le");
+}

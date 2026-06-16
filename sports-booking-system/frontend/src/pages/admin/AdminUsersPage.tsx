@@ -1,36 +1,8 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation,useQuery,useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
-import { LoadingState, ErrorState } from "../../components/common/States";
-import { Button } from "../../components/ui/Button";
-import { useLanguage } from "../../lib/i18n";
-
-export function AdminUsersPage() {
-  const { t } = useLanguage();
-  const queryClient = useQueryClient();
-  const users = useQuery({ queryKey: ["admin-users"], queryFn: adminApi.users });
-  const toggle = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: string }) => (status === "ACTIVE" ? adminApi.lockUser(id) : adminApi.unlockUser(id)),
-    onSuccess: () => {
-      toast.success(t("Đã cập nhật tài khoản"));
-      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
-    }
-  });
-  if (users.isLoading) return <LoadingState />;
-  if (users.isError) return <ErrorState message={users.error.message} />;
-  return (
-    <div className="overflow-auto rounded-md border border-line bg-white">
-      <table className="w-full min-w-[760px] text-sm">
-        <thead className="bg-field text-left"><tr><th className="p-3">{t("Họ tên")}</th><th>Email</th><th>{t("Vai trò")}</th><th>{t("Trạng thái")}</th><th></th></tr></thead>
-        <tbody>
-          {users.data?.items.map((user) => (
-            <tr key={user.id} className="border-t border-line">
-              <td className="p-3 font-medium">{user.fullName}</td><td>{user.email}</td><td>{user.role}</td><td>{user.status}</td>
-              <td className="p-3 text-right"><Button variant="secondary" onClick={() => toggle.mutate({ id: user.id, status: user.status })}>{user.status === "ACTIVE" ? t("Khóa") : t("Mở khóa")}</Button></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+import { useAuth } from "../../features/auth/hooks/useAuth";
+import { Button } from "../../components/ui/Button";import { Input } from "../../components/ui/Input";import { Select } from "../../components/ui/Select";import { ErrorState,LoadingState } from "../../components/common/States";
+export function AdminUsersPage(){const {user:me}=useAuth();const qc=useQueryClient();const[page,setPage]=useState(1);const[f,setF]=useState({search:"",role:"",status:""});const users=useQuery({queryKey:["admin-users",page,f],queryFn:()=>adminApi.users({page,limit:10,...f})});const toggle=useMutation({mutationFn:({id,status}:{id:string;status:string})=>status==="ACTIVE"?adminApi.lockUser(id):adminApi.unlockUser(id),onSuccess:async()=>{toast.success("Đã cập nhật tài khoản");await qc.invalidateQueries({queryKey:["admin-users"]})},onError:e=>toast.error(e.message)});if(users.isLoading)return <LoadingState/>;if(users.isError)return <ErrorState message={users.error.message}/>;return <div className="space-y-5"><h1 className="text-3xl font-bold">Người dùng</h1><div className="grid gap-3 rounded-2xl border bg-white p-4 md:grid-cols-3"><Input label="Tìm kiếm" value={f.search} onChange={e=>{setPage(1);setF({...f,search:e.target.value})}}/><Select label="Vai trò" value={f.role} onChange={e=>setF({...f,role:e.target.value})} options={[{value:"",label:"Tất cả"},...["USER","PARTNER","ADMIN"].map(x=>({value:x,label:x}))]}/><Select label="Trạng thái" value={f.status} onChange={e=>setF({...f,status:e.target.value})} options={[{value:"",label:"Tất cả"},{value:"ACTIVE",label:"ACTIVE"},{value:"LOCKED",label:"LOCKED"}]}/></div><div className="overflow-auto rounded-2xl border bg-white"><table className="w-full min-w-[800px] text-sm"><thead><tr className="bg-slate-50 text-left"><th className="p-3">Họ tên</th><th>Email</th><th>Vai trò</th><th>Trạng thái</th><th></th></tr></thead><tbody>{users.data?.items.map(u=><tr key={u.id} className="border-t"><td className="p-3">{u.fullName}</td><td>{u.email}</td><td>{u.role}</td><td>{u.status}</td><td className="text-right"><Button variant={u.status==="ACTIVE"?"danger":"secondary"} disabled={u.id===me?.id||toggle.isPending} onClick={()=>toggle.mutate({id:u.id,status:u.status})}>{u.id===me?.id?"Tài khoản hiện tại":u.status==="ACTIVE"?"Khóa":"Mở khóa"}</Button></td></tr>)}</tbody></table></div><Pager page={page} total={users.data?.meta.totalPages??1} setPage={setPage}/></div>}
+function Pager({page,total,setPage}:{page:number;total:number;setPage:(v:number)=>void}){return <div className="flex justify-end gap-3"><Button variant="secondary" disabled={page<=1} onClick={()=>setPage(page-1)}>Trước</Button><span className="py-2">{page}/{Math.max(total,1)}</span><Button variant="secondary" disabled={page>=total} onClick={()=>setPage(page+1)}>Sau</Button></div>}

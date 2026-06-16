@@ -1,10 +1,2 @@
-import { useQuery } from "@tanstack/react-query";
-import { adminApi } from "../../features/admin/api/adminApi";
-import { LoadingState, ErrorState } from "../../components/common/States";
-
-export function AdminReportsPage() {
-  const reports = useQuery({ queryKey: ["admin-reports"], queryFn: adminApi.reports });
-  if (reports.isLoading) return <LoadingState />;
-  if (reports.isError) return <ErrorState message={reports.error.message} />;
-  return <pre className="overflow-auto rounded-md border border-line bg-white p-4 text-xs">{JSON.stringify(reports.data, null, 2)}</pre>;
-}
+import { useMutation,useQuery,useQueryClient } from "@tanstack/react-query";import { toast } from "sonner";import { adminApi } from "../../features/admin/api/adminApi";import { Button } from "../../components/ui/Button";import { ErrorState,LoadingState } from "../../components/common/States";
+export function AdminReportsPage(){const qc=useQueryClient();const q=useQuery({queryKey:["admin-reports"],queryFn:adminApi.reports});const action=useMutation({mutationFn:({id,type}:{id:string;type:"resolve"|"reject"})=>adminApi.setReportStatus(id,type),onSuccess:async()=>{toast.success("Đã xử lý báo cáo");await qc.invalidateQueries({queryKey:["admin-reports"]})},onError:e=>toast.error(e.message)});if(q.isLoading)return <LoadingState/>;if(q.isError)return <ErrorState message={q.error.message}/>;return <div className="space-y-4"><h1 className="text-3xl font-bold">Báo cáo vi phạm</h1>{(q.data as any[])?.map(r=><div key={r.id} className="rounded-2xl border bg-white p-5"><div className="flex flex-wrap justify-between gap-3"><div><b>{r.reason}</b> · {r.court.name}<p>{r.description}</p><p className="text-sm text-slate-500">Người báo cáo: {r.user.fullName} · {r.status}</p></div>{r.status==="PENDING"&&<div className="flex gap-2"><Button onClick={()=>action.mutate({id:r.id,type:"resolve"})}>Đã xử lý</Button><Button variant="danger" onClick={()=>action.mutate({id:r.id,type:"reject"})}>Bác bỏ</Button></div>}</div></div>)}</div>}

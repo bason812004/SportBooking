@@ -17,6 +17,7 @@ const menus = {
     { to: "/partner/dashboard", label: "Bảng điều khiển", icon: Grid2X2 },
     { to: "/partner/courts", label: "Quản lý sân", icon: UserRoundCheck },
     { to: "/partner/bookings", label: "Đơn đặt", icon: CalendarDays },
+    { to: "/partner/calendar", label: "Lịch đặt sân", icon: CalendarDays },
     { to: "/partner/vouchers", label: "Voucher", icon: Gift },
     { to: "/partner/blogs", label: "Bài viết", icon: FileText },
     { to: "/partner/tournaments", label: "Giải đấu", icon: Trophy },
@@ -80,7 +81,7 @@ export function DashboardLayout() {
           ))}
         </nav>
         {!isAdmin && (
-          <Button className="mt-auto h-14 rounded-lg bg-[#24c866] text-lg text-[#05270e] hover:bg-[#16a34a]">
+          <Button className="mt-auto h-14 rounded-lg bg-[#24c866] text-lg text-[#05270e] hover:bg-[#16a34a]" onClick={() => window.location.assign("/partner/courts/create")}>
             <Plus className="h-5 w-5" />
             {t("Thêm sân mới")}
           </Button>

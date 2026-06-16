@@ -5,6 +5,43 @@ export const rejectSchema = z.object({
   body: z.object({ reason: z.string().min(3) })
 });
 
+const optionalQuery = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((value) => value === "" ? undefined : value, schema.optional());
+
+export const userQuerySchema = z.object({
+  query: z.object({
+    page: z.string().optional(),
+    limit: z.string().optional(),
+    search: optionalQuery(z.string().trim().max(160)),
+    role: optionalQuery(z.enum(["USER", "PARTNER", "ADMIN"])),
+    status: optionalQuery(z.enum(["ACTIVE", "LOCKED"]))
+  })
+});
+
+export const partnerQuerySchema = z.object({
+  query: z.object({
+    page: z.string().optional(),
+    limit: z.string().optional(),
+    search: optionalQuery(z.string().trim().max(180)),
+    status: optionalQuery(z.enum(["PENDING", "APPROVED", "REJECTED"]))
+  })
+});
+
+export const listQuerySchema = z.object({
+  query: z.object({
+    page: z.string().optional(),
+    limit: z.string().optional(),
+    search: optionalQuery(z.string().trim().max(180)),
+    status: optionalQuery(z.string().trim().max(50))
+  })
+});
+
+export const moderationSchema = z.object({
+  body: z.object({
+    reason: z.string().trim().max(1000).optional()
+  })
+});
+
 export const categoryCreateSchema = categoryWriteSchema;
 
 export const categoryUpdateSchema = z.object({
