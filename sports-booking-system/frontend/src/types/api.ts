@@ -59,7 +59,7 @@ export type Court = {
   averageRating?: number;
   reviewCount?: number;
   category: Category;
-  images: Array<{ id: string; imageUrl: string; sortOrder: number }>;
+  images: Array<{ id: string; imageUrl: string; publicId?: string; sortOrder: number }>;
   surfaces?: Array<{ id: string; code: string; name: string; capacity?: string; surface?: string; size?: string; imageUrl?: string; sortOrder: number }>;
   amenities: Array<{ id: string; name: string }>;
   prices: Array<{ id: string; dayType: string; startTime: string; endTime: string; price: string; note?: string }>;
@@ -83,6 +83,105 @@ export type Booking = {
   refundAmount?: string;
   platformRetainedAmount?: string;
   court: Court;
+  user?: { id?: string; fullName: string; email?: string; phone?: string };
+};
+
+export type PartnerProfile = {
+  id: string;
+  businessName: string;
+  address: string;
+  verificationDocumentUrl?: string | null;
+  approvalStatus: "PENDING" | "APPROVED" | "REJECTED";
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankAccountHolder?: string | null;
+  taxCode?: string | null;
+  user: { fullName: string; email: string; phone?: string; avatarUrl?: string };
+};
+
+export type PartnerDashboard = {
+  courts: number;
+  bookingsToday: number;
+  revenue: number;
+  pendingBookings: number;
+  revenueGrowth: number | null;
+  trend: Array<{ date: string; bookings: number }>;
+  courtStatuses: Array<{
+    id: string;
+    name: string;
+    bookings: Array<{ bookingStatus: string; startTime: string; endTime: string }>;
+  }>;
+  recentBookings: Booking[];
+};
+
+export type PartnerBlog = {
+  id: string;
+  title: string;
+  slug: string;
+  excerpt?: string | null;
+  content: string;
+  coverImageUrl?: string | null;
+  status: string;
+  visibility: "PUBLIC" | "PRIVATE";
+  createdAt: string;
+  updatedAt: string;
+  publishedAt?: string | null;
+};
+
+export type PartnerTournament = {
+  id: string;
+  courtId: string;
+  courtName: string;
+  title: string;
+  slug: string;
+  description?: string | null;
+  sportType: string;
+  coverImageUrl?: string | null;
+  startDate: string;
+  endDate: string;
+  registrationDeadline: string;
+  maxParticipants: number;
+  currentParticipants: number;
+  entryFee: number;
+  prizeDescription?: string | null;
+  status: string;
+  createdAt: string;
+};
+
+export type AdminDashboard = {
+  users: number;
+  partners: number;
+  courts: number;
+  bookings: number;
+  pendingCourts: number;
+  pendingPartners: number;
+  financials: { gmv: number; refunds: number; platformCommission: number; partnerPayout: number };
+  trend: Array<{ date: string; bookings: number; gmv: number }>;
+  pendingItems: Court[];
+};
+
+export type AdminPartner = PartnerProfile & {
+  commissionRate?: string | null;
+  courts?: Array<{ id: string; name: string; approvalStatus: string; activeStatus: string }>;
+  history?: Array<{ id: string; action: string; reason?: string; createdAt: string }>;
+};
+
+export type AdminVoucher = {
+  id: string; code: string; title: string; discountType: string; discountValue: number;
+  usedCount: number; usageLimit?: number | null; startDate: string; endDate: string;
+  status: string; businessName: string; courtName?: string | null;
+};
+
+export type AuditLog = {
+  id: string; action: string; entityType: string; entityId: string;
+  previousHash?: string | null; currentHash: string; createdAt: string;
+  actor: { fullName: string; email: string; role: string };
+};
+
+export type BlockchainLog = {
+  id: string; entityType: string; entityId: string; payloadHash: string;
+  network: string; txHash?: string | null; status: string; error?: string | null;
+  attempts: number; confirmedAt?: string | null; createdAt: string;
 };
 
 export type CommissionRateConfig = {

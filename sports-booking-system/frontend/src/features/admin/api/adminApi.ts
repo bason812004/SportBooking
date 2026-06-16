@@ -1,6 +1,11 @@
 import { api } from "../../../lib/axios";
 import type {
   ApiResponse,
+  AdminDashboard,
+  AdminPartner,
+  AdminVoucher,
+  AuditLog,
+  BlockchainLog,
   Category,
   CommissionRateConfig,
   CommissionReport,
@@ -11,11 +16,11 @@ import type {
 
 export const adminApi = {
   async dashboard() {
-    const { data } = await api.get<ApiResponse<Record<string, number>>>("/admin/dashboard");
+    const { data } = await api.get<ApiResponse<AdminDashboard>>("/admin/dashboard");
     return data.data;
   },
-  async users() {
-    const { data } = await api.get<ApiResponse<Paginated<User>>>("/admin/users");
+  async users(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<User>>>("/admin/users", { params: clean(params) });
     return data.data;
   },
   async lockUser(id: string) {
@@ -26,16 +31,20 @@ export const adminApi = {
     const { data } = await api.put<ApiResponse<User>>(`/admin/users/${id}/unlock`);
     return data.data;
   },
-  async partners() {
-    const { data } = await api.get<ApiResponse<Paginated<unknown>>>("/admin/partners");
+  async partners(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<AdminPartner>>>("/admin/partners", { params: clean(params) });
     return data.data;
   },
-  async approvePartner(id: string) {
-    const { data } = await api.put<ApiResponse<unknown>>(`/admin/partners/${id}/approve`);
+  async partnerDetail(id: string) {
+    const { data } = await api.get<ApiResponse<AdminPartner>>(`/admin/partners/${id}`);
     return data.data;
   },
-  async rejectPartner(id: string) {
-    const { data } = await api.put<ApiResponse<unknown>>(`/admin/partners/${id}/reject`);
+  async approvePartner(id: string, reason?: string) {
+    const { data } = await api.put<ApiResponse<unknown>>(`/admin/partners/${id}/approve`, { reason });
+    return data.data;
+  },
+  async rejectPartner(id: string, reason: string) {
+    const { data } = await api.put<ApiResponse<unknown>>(`/admin/partners/${id}/reject`, { reason });
     return data.data;
   },
   async commissionDefault() {
@@ -83,16 +92,80 @@ export const adminApi = {
     const { data } = await api.post<ApiResponse<Category>>("/admin/categories", payload);
     return data.data;
   },
+  async updateCategory(id: string, payload: Partial<Category>) {
+    const { data } = await api.put<ApiResponse<Category>>(`/admin/categories/${id}`, payload);
+    return data.data;
+  },
+  async disableCategory(id: string) {
+    const { data } = await api.delete<ApiResponse<Category>>(`/admin/categories/${id}`);
+    return data.data;
+  },
   async reviews() {
     const { data } = await api.get<ApiResponse<unknown[]>>("/admin/reviews");
+    return data.data;
+  },
+  async setReviewStatus(id: string, action: "hide" | "show") {
+    const { data } = await api.put<ApiResponse<unknown>>(`/admin/reviews/${id}/${action}`);
+    return data.data;
+  },
+  async deleteReview(id: string) {
+    const { data } = await api.delete<ApiResponse<unknown>>(`/admin/reviews/${id}`);
     return data.data;
   },
   async reports() {
     const { data } = await api.get<ApiResponse<unknown[]>>("/admin/reports");
     return data.data;
   },
+  async setReportStatus(id: string, action: "resolve" | "reject") {
+    const { data } = await api.put<ApiResponse<unknown>>(`/admin/reports/${id}/${action}`);
+    return data.data;
+  },
   async statistics() {
     const { data } = await api.get<ApiResponse<Record<string, unknown>>>("/admin/statistics");
     return data.data;
+  },
+  async vouchers(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<AdminVoucher>>>("/admin/vouchers", { params: clean(params) });
+    return data.data;
+  },
+  async setVoucherStatus(id: string, action: "activate" | "disable", reason?: string) {
+    const { data } = await api.put<ApiResponse<unknown>>(`/admin/vouchers/${id}/${action}`, { reason });
+    return data.data;
+  },
+  async pendingBlogs(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<any>>>("/admin/blogs/pending", { params: clean(params) });
+    return data.data;
+  },
+  async moderateBlog(id: string, action: "approve" | "reject", reason?: string) {
+    const { data } = await api.put<ApiResponse<unknown>>(`/admin/blogs/${id}/${action}`, { reason });
+    return data.data;
+  },
+  async pendingTournaments(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<any>>>("/admin/tournaments/pending", { params: clean(params) });
+    return data.data;
+  },
+  async moderateTournament(id: string, action: "approve" | "reject", reason?: string) {
+    const { data } = await api.put<ApiResponse<unknown>>(`/admin/tournaments/${id}/${action}`, { reason });
+    return data.data;
+  },
+  async auditLogs(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<AuditLog>>>("/admin/audit-logs", { params: clean(params) });
+    return data.data;
+  },
+  async verifyAuditLogs() {
+    const { data } = await api.get<ApiResponse<{ valid: boolean; checked: number; brokenAt?: string | null }>>("/admin/audit-logs/verify");
+    return data.data;
+  },
+  async blockchainLogs(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<BlockchainLog>>>("/admin/blockchain-logs", { params: clean(params) });
+    return data.data;
+  },
+  async retryBlockchainLog(id: string) {
+    const { data } = await api.put<ApiResponse<BlockchainLog>>(`/admin/blockchain-logs/${id}/retry`);
+    return data.data;
   }
 };
+
+function clean(params: Record<string, string | number | undefined>) {
+  return Object.fromEntries(Object.entries(params).filter(([, value]) => value !== "" && value !== undefined));
+}

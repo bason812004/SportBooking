@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Image, Plus, Wrench } from "lucide-react";
 import { partnerApi } from "../../features/partner/api/partnerApi";
 import { LoadingState, ErrorState, EmptyState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
@@ -20,13 +20,12 @@ export function PartnerCourtsPage() {
       {courts.data?.length === 0 && <EmptyState title={t("Chưa có sân")} />}
       <div className="overflow-hidden rounded-md border border-line bg-white">
         {courts.data?.map((court) => (
-          <Link key={court.id} to={`/partner/courts/${court.id}/edit`} className="grid gap-2 border-b border-line p-4 text-sm last:border-0 md:grid-cols-5">
+          <div key={court.id} className="grid items-center gap-2 border-b border-line p-4 text-sm last:border-0 md:grid-cols-[1fr_1fr_1fr_auto]">
             <span className="font-medium">{court.name}</span>
-            <span>{court.category.name}</span>
-            <span>{court.city}</span>
-            <span>{court.approvalStatus}</span>
-            <span>{court.activeStatus}</span>
-          </Link>
+            <span>{court.category.name} · {court.city}</span>
+            <span>{court.approvalStatus} · {court.activeStatus}</span>
+            <div className="flex flex-wrap gap-2"><Link to={`/partner/courts/${court.id}/edit`}><Button variant="secondary">Sửa</Button></Link><Link to={`/partner/courts/${court.id}/prices`}><Button variant="secondary"><Wrench className="h-4 w-4"/>Giá & dịch vụ</Button></Link><Link to={`/partner/courts/${court.id}/images`}><Button variant="secondary"><Image className="h-4 w-4"/>Ảnh</Button></Link></div>
+          </div>
         ))}
       </div>
     </div>

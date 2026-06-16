@@ -1,10 +1,2 @@
-import { useQuery } from "@tanstack/react-query";
-import { adminApi } from "../../features/admin/api/adminApi";
-import { LoadingState, ErrorState } from "../../components/common/States";
-
-export function AdminReviewsPage() {
-  const reviews = useQuery({ queryKey: ["admin-reviews"], queryFn: adminApi.reviews });
-  if (reviews.isLoading) return <LoadingState />;
-  if (reviews.isError) return <ErrorState message={reviews.error.message} />;
-  return <pre className="overflow-auto rounded-md border border-line bg-white p-4 text-xs">{JSON.stringify(reviews.data, null, 2)}</pre>;
-}
+import { useMutation,useQuery,useQueryClient } from "@tanstack/react-query";import { toast } from "sonner";import { adminApi } from "../../features/admin/api/adminApi";import { Button } from "../../components/ui/Button";import { ErrorState,LoadingState } from "../../components/common/States";
+export function AdminReviewsPage(){const qc=useQueryClient();const q=useQuery({queryKey:["admin-reviews"],queryFn:adminApi.reviews});const action=useMutation({mutationFn:({id,type}:{id:string;type:"hide"|"show"|"delete"})=>type==="delete"?adminApi.deleteReview(id):adminApi.setReviewStatus(id,type),onSuccess:async()=>{toast.success("Đã cập nhật đánh giá");await qc.invalidateQueries({queryKey:["admin-reviews"]})},onError:e=>toast.error(e.message)});if(q.isLoading)return <LoadingState/>;if(q.isError)return <ErrorState message={q.error.message}/>;return <div className="space-y-4"><h1 className="text-3xl font-bold">Đánh giá</h1>{(q.data as any[])?.map(r=><div key={r.id} className="rounded-2xl border bg-white p-5"><div className="flex flex-wrap justify-between gap-3"><div><b>{r.user.fullName}</b> đánh giá <b>{r.court.name}</b> · {r.rating}/5<p className="mt-2">{r.comment||"Không có nội dung"}</p><p className="text-sm text-slate-500">{r.displayStatus}</p></div><div className="flex gap-2"><Button variant="secondary" onClick={()=>action.mutate({id:r.id,type:r.displayStatus==="VISIBLE"?"hide":"show"})}>{r.displayStatus==="VISIBLE"?"Ẩn":"Hiện"}</Button><Button variant="danger" onClick={()=>action.mutate({id:r.id,type:"delete"})}>Xóa</Button></div></div></div>)}</div>}

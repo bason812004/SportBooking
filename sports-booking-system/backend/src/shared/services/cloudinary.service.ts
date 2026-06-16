@@ -61,5 +61,15 @@ export const cloudinaryService = {
       format: result.format,
       bytes: result.bytes
     };
+  },
+
+  async deleteImage(publicId?: string | null) {
+    if (!publicId || !isCloudinaryConfigured) return;
+    try {
+      await cloudinary.uploader.destroy(publicId, { resource_type: "image", invalidate: true });
+    } catch (error) {
+      console.error("Cloudinary delete failed", error);
+      throw new ValidationError("Khong the xoa anh tren Cloudinary");
+    }
   }
 };

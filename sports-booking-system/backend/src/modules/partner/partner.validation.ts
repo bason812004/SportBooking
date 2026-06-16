@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 const time = z.string().regex(/^\d{2}:\d{2}$/);
+const optionalQuery = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((value) => value === "" ? undefined : value, schema.optional());
 
 export const courtWriteSchema = z.object({
   body: z.object({
@@ -41,6 +43,69 @@ export const imageSchema = z.object({
   body: z.object({
     imageUrl: z.string().url().optional(),
     sortOrder: z.coerce.number().int().min(0).optional()
+  })
+});
+
+export const imageOrderSchema = z.object({
+  body: z.object({
+    imageIds: z.array(z.string().uuid()).min(1).max(20)
+  })
+});
+
+export const bookingQuerySchema = z.object({
+  query: z.object({
+    page: z.string().optional(),
+    limit: z.string().optional(),
+    courtId: optionalQuery(z.string().uuid()),
+    status: optionalQuery(z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"])),
+    fromDate: optionalQuery(z.string().date()),
+    toDate: optionalQuery(z.string().date())
+  })
+});
+
+export const calendarQuerySchema = z.object({
+  query: z.object({
+    fromDate: z.string().date(),
+    toDate: z.string().date(),
+    courtId: z.string().uuid().optional()
+  })
+});
+
+export const profileUpdateSchema = z.object({
+  body: z.object({
+    businessName: z.string().trim().min(2).max(180),
+    address: z.string().trim().min(5),
+    verificationDocumentUrl: z.union([z.string().url(), z.literal(""), z.null()]).optional(),
+    bankName: z.string().trim().max(120).optional(),
+    bankAccountNumber: z.string().trim().max(60).optional(),
+    bankAccountHolder: z.string().trim().max(160).optional(),
+    taxCode: z.string().trim().max(60).optional()
+  })
+});
+
+export const blogWriteSchema = z.object({
+  body: z.object({
+    title: z.string().trim().min(3).max(220),
+    excerpt: z.string().trim().max(1000).optional(),
+    content: z.string().trim().min(20),
+    coverImageUrl: z.union([z.string().url(), z.literal(""), z.null()]).optional(),
+    visibility: z.enum(["PUBLIC", "PRIVATE"]).default("PUBLIC")
+  })
+});
+
+export const tournamentWriteSchema = z.object({
+  body: z.object({
+    courtId: z.string().uuid(),
+    title: z.string().trim().min(3).max(220),
+    description: z.string().trim().max(5000).optional(),
+    sportType: z.string().trim().min(2).max(80),
+    coverImageUrl: z.union([z.string().url(), z.literal(""), z.null()]).optional(),
+    startDate: z.string().datetime(),
+    endDate: z.string().datetime(),
+    registrationDeadline: z.string().datetime(),
+    maxParticipants: z.number().int().positive(),
+    entryFee: z.number().nonnegative(),
+    prizeDescription: z.string().trim().max(2000).optional()
   })
 });
 
