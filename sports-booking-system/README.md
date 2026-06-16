@@ -155,3 +155,13 @@ Backend Render/Railway:
 - Login sample fail: chua chay `database/supabase_schema.sql` hoac database khong co seed.
 - CORS fail: `FRONTEND_URL` backend khong khop domain frontend.
 - Upload anh fail: chua tao bucket Supabase Storage hoac thieu service role key.
+
+## Migration hoa hong
+
+Voi database da ton tai, chay mot lan:
+
+```bash
+cd backend
+npx prisma db execute --schema prisma/schema.prisma --file ../database/migrate_commission.sql
+npx prisma generate
+```

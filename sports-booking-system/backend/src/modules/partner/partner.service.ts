@@ -1,10 +1,12 @@
 import { BookingStatus } from "@prisma/client";
-import { supabaseStorage } from "../../config/storage.js";
-import { env } from "../../config/env.js";
+import { prisma } from "../../config/db.js";
 import { ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
+import { cloudinaryService } from "../../shared/services/cloudinary.service.js";
 import { paginationMeta } from "../../shared/utils/response.js";
-import { parseLimit, parsePage, timeToDate, timeToMinutes } from "../../shared/utils/time.js";
+import { bookingStartsAt, parseLimit, parsePage, timeToDate, timeToMinutes } from "../../shared/utils/time.js";
 import { uniqueSlug } from "../../shared/utils/slug.js";
+import { commissionService } from "../commission/commission.service.js";
+import { voucherService } from "../vouchers/voucher.service.js";
 import { partnerRepository } from "./partner.repository.js";
 
 async function getProfile(userId: string) {
@@ -80,21 +82,20 @@ export const partnerService = {
     if (!court) throw new NotFoundError("Khong tim thay san cua ban");
 
     let imageUrl = input.imageUrl;
+    let publicId: string | undefined;
     if (file) {
-      if (!supabaseStorage) throw new ValidationError("Chua cau hinh Supabase Storage");
-      if (!file.mimetype.startsWith("image/")) throw new ValidationError("File phai la anh");
-      if (file.size > 3 * 1024 * 1024) throw new ValidationError("Anh toi da 3MB");
-      const path = `${courtId}/${Date.now()}-${file.originalname}`;
-      const { error } = await supabaseStorage.storage.from(env.SUPABASE_STORAGE_BUCKET).upload(path, file.buffer, {
-        contentType: file.mimetype,
-        upsert: false
-      });
-      if (error) throw new ValidationError(error.message);
-      imageUrl = supabaseStorage.storage.from(env.SUPABASE_STORAGE_BUCKET).getPublicUrl(path).data.publicUrl;
+      const uploaded = await cloudinaryService.uploadCourtImage(file, courtId);
+      imageUrl = uploaded.imageUrl;
+      publicId = uploaded.publicId;
     }
 
     if (!imageUrl) throw new ValidationError("Can imageUrl hoac file anh");
-    const image = await partnerRepository.addImage({ courtId, imageUrl, sortOrder: input.sortOrder ?? 0 });
+    const image = await partnerRepository.addImage({
+      courtId,
+      imageUrl,
+      publicId,
+      sortOrder: input.sortOrder ?? 0
+    });
     await partnerRepository.updateCourt(courtId, { approvalStatus: "PENDING" });
     return image;
   },
@@ -160,12 +161,89 @@ export const partnerService = {
 
   async updateBookingStatus(userId: string, bookingId: string, status: BookingStatus) {
     const profile = await getProfile(userId);
-    if (!(await partnerRepository.bookingByPartner(bookingId, profile.id))) throw new NotFoundError("Khong tim thay don cua san ban");
-    return partnerRepository.updateBookingStatus(bookingId, status);
+    const booking = await partnerRepository.bookingByPartner(bookingId, profile.id);
+    if (!booking) throw new NotFoundError("Khong tim thay don cua san ban");
+
+    const transitions: Record<BookingStatus, BookingStatus[]> = {
+      PENDING: [BookingStatus.CONFIRMED, BookingStatus.CANCELLED],
+      CONFIRMED: [BookingStatus.COMPLETED, BookingStatus.NO_SHOW, BookingStatus.CANCELLED],
+      COMPLETED: [],
+      CANCELLED: [],
+      NO_SHOW: []
+    };
+    if (!transitions[booking.bookingStatus].includes(status)) {
+      throw new ValidationError("Khong the chuyen trang thai don theo thao tac nay");
+    }
+    if (
+      (status === BookingStatus.COMPLETED || status === BookingStatus.NO_SHOW) &&
+      new Date() < bookingStartsAt(booking.bookingDate, booking.endTime)
+    ) {
+      throw new ValidationError("Chi co the ket thuc don sau gio dat san");
+    }
+
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.booking.update({
+        where: { id: booking.id },
+        data:
+          status === BookingStatus.CANCELLED
+            ? {
+                bookingStatus: status,
+                cancelReason: "Doi tac tu choi",
+                cancelledAt: new Date(),
+                refundAmount: booking.paymentStatus === "PAID" ? booking.totalPrice : 0,
+                platformRetainedAmount: 0,
+                paymentStatus: booking.paymentStatus === "PAID" ? "REFUNDED" : booking.paymentStatus
+              }
+            : {
+                bookingStatus: status
+              },
+        include: { court: { include: { partner: true } } }
+      });
+
+      if (status === BookingStatus.COMPLETED || status === BookingStatus.NO_SHOW) {
+        await commissionService.createEarning(updated, status, tx);
+      }
+      return updated;
+    });
   },
 
-  async revenue(userId: string) {
+  async revenue(userId: string, month?: string) {
     const profile = await getProfile(userId);
-    return partnerRepository.revenue(profile.id);
+    return commissionService.partnerReport(profile.id, month);
+  },
+
+  async vouchers(userId: string) {
+    const profile = await getProfile(userId);
+    return voucherService.listForPartner(profile.id);
+  },
+
+  async voucherDetail(userId: string, voucherId: string) {
+    const profile = await getProfile(userId);
+    return voucherService.detailForPartner(profile.id, voucherId);
+  },
+
+  async createVoucher(userId: string, input: any) {
+    const profile = await getProfile(userId);
+    return voucherService.createForPartner(profile.id, input);
+  },
+
+  async updateVoucher(userId: string, voucherId: string, input: any) {
+    const profile = await getProfile(userId);
+    return voucherService.updateForPartner(profile.id, voucherId, input);
+  },
+
+  async activateVoucher(userId: string, voucherId: string) {
+    const profile = await getProfile(userId);
+    return voucherService.activateForPartner(profile.id, voucherId);
+  },
+
+  async disableVoucher(userId: string, voucherId: string) {
+    const profile = await getProfile(userId);
+    return voucherService.disableForPartner(profile.id, voucherId);
+  },
+
+  async deleteVoucher(userId: string, voucherId: string) {
+    const profile = await getProfile(userId);
+    return voucherService.deleteForPartner(profile.id, voucherId);
   }
 };

@@ -88,7 +88,10 @@ export const partnerRepository = {
   },
 
   bookingByPartner(bookingId: string, partnerId: string) {
-    return prisma.booking.findFirst({ where: { id: bookingId, court: { partnerId } } });
+    return prisma.booking.findFirst({
+      where: { id: bookingId, court: { partnerId } },
+      include: { court: { include: { partner: true } } }
+    });
   },
 
   updateBookingStatus(bookingId: string, status: BookingStatus) {

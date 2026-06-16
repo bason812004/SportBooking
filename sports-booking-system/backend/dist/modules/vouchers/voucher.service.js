@@ -16,10 +16,12 @@ export const voucherService = {
         const voucher = await voucherRepository.findActiveVoucher(voucherId);
         if (!voucher)
             throw new NotFoundError("Khong tim thay voucher kha dung");
-        if (voucher.usageLimit != null && voucher.usedCount >= voucher.usageLimit)
+        if (voucher.usageLimit != null && voucher.usedCount >= voucher.usageLimit) {
             throw new ValidationError("Voucher da het luot su dung");
-        if (await voucherRepository.userVoucher(userId, voucherId))
+        }
+        if (await voucherRepository.userVoucher(userId, voucherId)) {
             throw new ConflictError("Ban da nhan voucher nay", "VOUCHER_ALREADY_CLAIMED");
+        }
         const claimed = await voucherRepository.claim(userId, voucherId);
         await trackEvent({ userId, partnerId: voucher.partnerId, eventType: "VOUCHER_CLAIMED", entityType: "VOUCHER", entityId: voucherId });
         return claimed;
@@ -31,11 +33,12 @@ export const voucherService = {
         const voucher = await voucherRepository.findUsable({ voucherId: input.voucherId, code: input.code, courtId: input.courtId });
         if (!voucher)
             throw new NotFoundError("Voucher khong hop le");
-        const court = input.courtId ? await voucherRepository.partnerCourt(input.courtId, voucher.partnerId) : null;
+        const court = await voucherRepository.partnerCourt(input.courtId, voucher.partnerId);
         if (!court)
             throw new ValidationError("Voucher khong ap dung cho san nay");
-        if (voucher.usageLimit != null && voucher.usedCount >= voucher.usageLimit)
+        if (voucher.usageLimit != null && voucher.usedCount >= voucher.usageLimit) {
             throw new ValidationError("Voucher da het luot su dung");
+        }
         const discount = calculateVoucherDiscount({
             subtotal: input.subtotal,
             discountType: voucher.discountType,
@@ -53,43 +56,86 @@ export const voucherService = {
         });
         return { voucherId: voucher.id, code: voucher.code, ...discount };
     },
+    async listForPartner(partnerId) {
+        return voucherRepository.listForPartner(partnerId);
+    },
+    async detailForPartner(partnerId, id) {
+        const [voucher] = await voucherRepository.findForPartner(id, partnerId);
+        if (!voucher)
+            throw new NotFoundError("Khong tim thay voucher cua ban");
+        return voucher;
+    },
+    async createForPartner(partnerId, input) {
+        const normalized = await validatePartnerVoucher(partnerId, input);
+        const created = await voucherRepository.createForPartner(partnerId, normalized);
+        return this.detailForPartner(partnerId, created.id);
+    },
+    async updateForPartner(partnerId, id, input) {
+        const current = await this.detailForPartner(partnerId, id);
+        if (current.status !== "DRAFT") {
+            throw new ValidationError("Chi co the sua voucher dang nhap");
+        }
+        const normalized = await validatePartnerVoucher(partnerId, input, id);
+        await voucherRepository.updateForPartner(id, partnerId, normalized);
+        return this.detailForPartner(partnerId, id);
+    },
+    async activateForPartner(partnerId, id) {
+        const voucher = await this.detailForPartner(partnerId, id);
+        if (!["DRAFT", "DISABLED"].includes(voucher.status)) {
+            throw new ValidationError("Voucher khong the kich hoat");
+        }
+        if (new Date(voucher.endDate) <= new Date()) {
+            throw new ValidationError("Voucher da het han");
+        }
+        if (voucher.usageLimit !== null && voucher.usedCount >= voucher.usageLimit) {
+            throw new ValidationError("Voucher da het luot su dung");
+        }
+        await voucherRepository.setStatus(id, partnerId, ["DRAFT", "DISABLED"], "ACTIVE");
+        return this.detailForPartner(partnerId, id);
+    },
+    async disableForPartner(partnerId, id) {
+        const voucher = await this.detailForPartner(partnerId, id);
+        if (voucher.status !== "ACTIVE")
+            throw new ValidationError("Voucher khong dang hoat dong");
+        await voucherRepository.setStatus(id, partnerId, ["ACTIVE"], "DISABLED");
+        return this.detailForPartner(partnerId, id);
+    },
+    async deleteForPartner(partnerId, id) {
+        await this.detailForPartner(partnerId, id);
+        const deleted = await voucherRepository.deleteDraft(id, partnerId);
+        if (!deleted)
+            throw new ValidationError("Chi co the xoa voucher nhap chua duoc su dung");
+        return { id };
+    },
     async listPartner(userId) {
         const profile = await voucherRepository.partnerProfile(userId);
         if (!profile)
             throw new ForbiddenError("Tai khoan doi tac chua co ho so");
-        return voucherRepository.listPartner(profile.id);
+        return this.listForPartner(profile.id);
     },
     async createPartner(userId, input) {
         const profile = await voucherRepository.partnerProfile(userId);
         if (!profile)
             throw new ForbiddenError("Tai khoan doi tac chua co ho so");
-        if (input.courtId && !(await voucherRepository.partnerCourt(input.courtId, profile.id))) {
-            throw new ForbiddenError("Chi duoc tao voucher cho san cua ban");
-        }
-        return voucherRepository.createPartner(profile.id, input);
+        return this.createForPartner(profile.id, input);
     },
     async updatePartner(userId, id, input) {
         const profile = await voucherRepository.partnerProfile(userId);
         if (!profile)
             throw new ForbiddenError("Tai khoan doi tac chua co ho so");
-        const existing = await voucherRepository.findPartnerVoucher(id, profile.id);
-        if (!existing)
-            throw new NotFoundError("Khong tim thay voucher cua ban");
-        if (input.courtId && !(await voucherRepository.partnerCourt(input.courtId, profile.id))) {
-            throw new ForbiddenError("Chi duoc cap nhat voucher cho san cua ban");
-        }
-        return voucherRepository.updatePartner(id, input);
-    },
-    async setPartnerStatus(userId, id, status) {
-        return this.updatePartner(userId, id, { status });
+        return this.updateForPartner(profile.id, id, input);
     },
     async deletePartner(userId, id) {
         const profile = await voucherRepository.partnerProfile(userId);
         if (!profile)
             throw new ForbiddenError("Tai khoan doi tac chua co ho so");
-        if (!(await voucherRepository.findPartnerVoucher(id, profile.id)))
-            throw new NotFoundError("Khong tim thay voucher cua ban");
-        return voucherRepository.deletePartner(id);
+        return this.deleteForPartner(profile.id, id);
+    },
+    async setPartnerStatus(userId, id, status) {
+        const profile = await voucherRepository.partnerProfile(userId);
+        if (!profile)
+            throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+        return status === "ACTIVE" ? this.activateForPartner(profile.id, id) : this.disableForPartner(profile.id, id);
     },
     listAdmin() {
         return voucherRepository.listAdmin();
@@ -98,3 +144,28 @@ export const voucherService = {
         return voucherRepository.disableAdmin(id);
     }
 };
+async function validatePartnerVoucher(partnerId, input, excludeId) {
+    const code = input.code.trim().toUpperCase();
+    const startDate = new Date(input.startDate);
+    const endDate = new Date(input.endDate);
+    if (startDate >= endDate)
+        throw new ValidationError("Ngay bat dau phai truoc ngay ket thuc");
+    if (input.discountType === "PERCENTAGE" && input.discountValue > 100) {
+        throw new ValidationError("Voucher phan tram khong duoc vuot qua 100%");
+    }
+    if (input.courtId && !(await voucherRepository.courtBelongsToPartner(input.courtId, partnerId))) {
+        throw new ValidationError("San ap dung khong thuoc doi tac");
+    }
+    const [duplicate] = await voucherRepository.codeExists(code, excludeId);
+    if (duplicate.exists)
+        throw new ConflictError("Ma voucher da ton tai", "VOUCHER_CODE_EXISTS");
+    return {
+        ...input,
+        code,
+        courtId: input.courtId || null,
+        maxDiscountAmount: input.discountType === "PERCENTAGE" ? input.maxDiscountAmount ?? null : null,
+        usageLimit: input.usageLimit ?? null,
+        startDate,
+        endDate
+    };
+}

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { Link } from "react-router-dom";
 import { adminApi } from "../../features/admin/api/adminApi";
 import { LoadingState, ErrorState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
@@ -25,7 +26,13 @@ export function AdminPartnersPage() {
         <div key={partner.id} className="rounded-md border border-line bg-white p-4">
           <div className="flex items-center justify-between gap-3">
             <div><h2 className="font-semibold">{partner.businessName}</h2><p className="text-sm text-slate-600">{partner.user.email} - {partner.approvalStatus}</p></div>
-            <div className="flex gap-2"><Button onClick={() => action.mutate({ id: partner.id, approve: true })}>{t("Duyệt")}</Button><Button variant="danger" onClick={() => action.mutate({ id: partner.id, approve: false })}>{t("Từ chối")}</Button></div>
+            <div className="flex flex-wrap gap-2">
+              <Link to={`/admin/partners/${partner.id}/commission`}>
+                <Button variant="secondary">Hoa hồng</Button>
+              </Link>
+              <Button onClick={() => action.mutate({ id: partner.id, approve: true })}>{t("Duyệt")}</Button>
+              <Button variant="danger" onClick={() => action.mutate({ id: partner.id, approve: false })}>{t("Từ chối")}</Button>
+            </div>
           </div>
         </div>
       ))}

@@ -35,10 +35,25 @@ export const bookingRepository = {
     });
   },
 
-  cancel(id: string, cancelReason?: string) {
+  cancel(
+    id: string,
+    data: {
+      cancelReason?: string;
+      refundAmount: number;
+      platformRetainedAmount: number;
+      paymentStatus: "UNPAID" | "PARTIALLY_REFUNDED" | "REFUNDED";
+    }
+  ) {
     return prisma.booking.update({
       where: { id },
-      data: { bookingStatus: "CANCELLED", cancelReason },
+      data: {
+        bookingStatus: "CANCELLED",
+        cancelReason: data.cancelReason,
+        refundAmount: data.refundAmount,
+        platformRetainedAmount: data.platformRetainedAmount,
+        paymentStatus: data.paymentStatus,
+        cancelledAt: new Date()
+      },
       include: { court: true }
     });
   },
@@ -66,9 +81,10 @@ export const bookingRepository = {
     subtotal: number;
     voucherDiscountAmount: number;
     totalPrice: number;
+    depositAmount: number;
     paymentMethod: PaymentMethod;
     voucherId?: string;
-    demandPredictionSnapshot?: Prisma.InputJsonValue;
+    demandPredictionSnapshot?: Prisma.InputJsonValue | null;
     services: Array<{ serviceId: string; quantity: number; price: number }>;
   }) {
     return prisma.$transaction(async (tx) => {
@@ -84,8 +100,9 @@ export const bookingRepository = {
           dynamicAdjustmentAmount: input.dynamicAdjustmentAmount,
           subtotal: input.subtotal,
           voucherDiscountAmount: input.voucherDiscountAmount,
-          demandPredictionSnapshot: input.demandPredictionSnapshot,
+          demandPredictionSnapshot: input.demandPredictionSnapshot ?? undefined,
           totalPrice: input.totalPrice,
+          depositAmount: input.depositAmount,
           paymentMethod: input.paymentMethod,
           bookingServices: {
             create: input.services.map((service) => ({
@@ -100,9 +117,16 @@ export const bookingRepository = {
 
       if (input.voucherId && input.voucherDiscountAmount > 0) {
         await tx.bookingVoucher.create({
-          data: { bookingId: booking.id, voucherId: input.voucherId, discountAmount: input.voucherDiscountAmount }
+          data: {
+            bookingId: booking.id,
+            voucherId: input.voucherId,
+            discountAmount: input.voucherDiscountAmount
+          }
         });
-        await tx.voucher.update({ where: { id: input.voucherId }, data: { usedCount: { increment: 1 } } });
+        await tx.voucher.update({
+          where: { id: input.voucherId },
+          data: { usedCount: { increment: 1 } }
+        });
         await tx.userVoucher.updateMany({
           where: { userId: input.userId, voucherId: input.voucherId, status: "CLAIMED" },
           data: { status: "USED", usedAt: new Date() }

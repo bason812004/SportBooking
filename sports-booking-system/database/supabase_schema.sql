@@ -59,6 +59,7 @@ drop table if exists user_vouchers cascade;
 drop table if exists vouchers cascade;
 drop table if exists reviews cascade;
 drop table if exists booking_services cascade;
+drop table if exists commission_transactions cascade;
 drop table if exists bookings cascade;
 drop table if exists court_services cascade;
 drop table if exists court_prices cascade;
@@ -68,6 +69,7 @@ drop table if exists court_images cascade;
 drop table if exists courts cascade;
 drop table if exists court_categories cascade;
 drop table if exists partner_profiles cascade;
+drop table if exists system_settings cascade;
 drop table if exists users cascade;
 
 drop type if exists report_status cascade;
@@ -221,6 +223,7 @@ create table partner_profiles (
   address text not null,
   verification_document_url text,
   approval_status approval_status not null default 'PENDING',
+  commission_rate numeric(5, 2) check (commission_rate is null or commission_rate between 0 and 100),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -288,6 +291,7 @@ create table court_images (
   id varchar(20) primary key default ('ci' || lpad(nextval('seq_court_images')::text, 4, '0')),
   court_id varchar(20) not null references courts(id) on delete cascade,
   image_url text not null,
+  public_id text,
   sort_order integer not null default 0,
   created_at timestamptz not null default now()
 );
@@ -376,6 +380,7 @@ create table bookings (
   payment_status payment_status not null default 'UNPAID',
   booking_status booking_status not null default 'PENDING',
   cancel_reason text,
+  cancelled_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint bookings_time_check check (start_time < end_time)
@@ -637,6 +642,7 @@ create trigger trg_court_base_prices_updated_at before update on court_base_pric
 create trigger trg_dynamic_pricing_rules_updated_at before update on dynamic_pricing_rules for each row execute function set_updated_at();
 create trigger trg_court_services_updated_at before update on court_services for each row execute function set_updated_at();
 create trigger trg_bookings_updated_at before update on bookings for each row execute function set_updated_at();
+create trigger trg_system_settings_updated_at before update on system_settings for each row execute function set_updated_at();
 create trigger trg_reviews_updated_at before update on reviews for each row execute function set_updated_at();
 create trigger trg_demand_predictions_updated_at before update on demand_predictions for each row execute function set_updated_at();
 create trigger trg_demand_features_updated_at before update on demand_features for each row execute function set_updated_at();

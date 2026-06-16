@@ -33,6 +33,7 @@ const menus = {
     { to: "/admin/blogs/pending", label: "Duyệt bài viết", icon: FileText },
     { to: "/admin/tournaments/pending", label: "Duyệt giải đấu", icon: Trophy },
     { to: "/admin/reports", label: "Báo cáo", icon: BarChart3 },
+    { to: "/admin/commission", label: "Hoa hồng", icon: WalletCards },
     { to: "/admin/audit-logs", label: "Nhật ký kiểm toán", icon: CalendarDays, group: "LOGS & SECURITY" },
     { to: "/admin/blockchain-logs", label: "Nhật ký blockchain", icon: Link2, group: "LOGS & SECURITY" }
   ]

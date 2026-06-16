@@ -22,5 +22,26 @@ export const partnerController = {
   reject: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.CANCELLED))),
   complete: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.COMPLETED))),
   noShow: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.NO_SHOW))),
-  revenue: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.revenue(req.user!.id)))
+  revenue: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.revenue(req.user!.id, req.query.month as string | undefined))
+  ),
+  vouchers: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.vouchers(req.user!.id))),
+  voucherDetail: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.voucherDetail(req.user!.id, req.params.id))
+  ),
+  createVoucher: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.createVoucher(req.user!.id, req.body), 201)
+  ),
+  updateVoucher: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.updateVoucher(req.user!.id, req.params.id, req.body))
+  ),
+  activateVoucher: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.activateVoucher(req.user!.id, req.params.id))
+  ),
+  disableVoucher: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.disableVoucher(req.user!.id, req.params.id))
+  ),
+  deleteVoucher: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.deleteVoucher(req.user!.id, req.params.id))
+  )
 };

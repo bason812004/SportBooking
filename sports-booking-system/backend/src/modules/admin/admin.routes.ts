@@ -4,7 +4,14 @@ import { authMiddleware } from "../../middlewares/auth.middleware.js";
 import { requireRole } from "../../middlewares/role.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
 import { adminController } from "./admin.controller.js";
-import { categoryCreateSchema, categoryUpdateSchema, rejectSchema } from "./admin.validation.js";
+import {
+  categoryCreateSchema,
+  categoryUpdateSchema,
+  commissionRateSchema,
+  commissionReportSchema,
+  defaultCommissionRateSchema,
+  rejectSchema
+} from "./admin.validation.js";
 
 export const adminRoutes = Router();
 
@@ -16,6 +23,11 @@ adminRoutes.put("/users/:id/unlock", adminController.unlockUser);
 adminRoutes.get("/partners", adminController.partners);
 adminRoutes.put("/partners/:id/approve", adminController.approvePartner);
 adminRoutes.put("/partners/:id/reject", adminController.rejectPartner);
+adminRoutes.get("/commission/default", adminController.commissionDefault);
+adminRoutes.patch("/commission/default", validate(defaultCommissionRateSchema), adminController.updateCommissionDefault);
+adminRoutes.get("/commission/partner/:id", adminController.partnerCommission);
+adminRoutes.patch("/commission/partner/:id", validate(commissionRateSchema), adminController.updatePartnerCommission);
+adminRoutes.get("/commission/report", validate(commissionReportSchema), adminController.commissionReport);
 adminRoutes.get("/courts/pending", adminController.pendingCourts);
 adminRoutes.put("/courts/:id/approve", adminController.approveCourt);
 adminRoutes.put("/courts/:id/reject", validate(rejectSchema), adminController.rejectCourt);

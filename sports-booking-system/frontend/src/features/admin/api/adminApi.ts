@@ -1,5 +1,13 @@
 import { api } from "../../../lib/axios";
-import type { ApiResponse, Category, Court, Paginated, User } from "../../../types/api";
+import type {
+  ApiResponse,
+  Category,
+  CommissionRateConfig,
+  CommissionReport,
+  Court,
+  Paginated,
+  User
+} from "../../../types/api";
 
 export const adminApi = {
   async dashboard() {
@@ -28,6 +36,31 @@ export const adminApi = {
   },
   async rejectPartner(id: string) {
     const { data } = await api.put<ApiResponse<unknown>>(`/admin/partners/${id}/reject`);
+    return data.data;
+  },
+  async commissionDefault() {
+    const { data } = await api.get<ApiResponse<{ rate: number }>>("/admin/commission/default");
+    return data.data;
+  },
+  async updateCommissionDefault(rate: number) {
+    const { data } = await api.patch<ApiResponse<{ rate: number }>>("/admin/commission/default", { rate });
+    return data.data;
+  },
+  async partnerCommission(id: string) {
+    const { data } = await api.get<ApiResponse<CommissionRateConfig>>(`/admin/commission/partner/${id}`);
+    return data.data;
+  },
+  async updatePartnerCommission(id: string, rate: number | null) {
+    const { data } = await api.patch<ApiResponse<CommissionRateConfig>>(
+      `/admin/commission/partner/${id}`,
+      { rate }
+    );
+    return data.data;
+  },
+  async commissionReport(month: string) {
+    const { data } = await api.get<ApiResponse<CommissionReport>>("/admin/commission/report", {
+      params: { month }
+    });
     return data.data;
   },
   async pendingCourts() {

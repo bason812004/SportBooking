@@ -1,4 +1,4 @@
-import { BookingStatus } from "@prisma/client";
+import { BookingStatus, type Prisma } from "@prisma/client";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
 import {
@@ -11,6 +11,7 @@ import {
   toDbDate
 } from "../../shared/utils/time.js";
 import { courtRepository } from "../courts/court.repository.js";
+import { commissionService } from "../commission/commission.service.js";
 import { trackEvent } from "../analytics/analytics.service.js";
 import { demandPredictionService } from "../demand-prediction/demandPrediction.service.js";
 import { dynamicPricingService } from "../dynamic-pricing/dynamicPricing.service.js";
@@ -63,19 +64,21 @@ export const bookingService = {
     let voucherId = input.voucherId;
     if (voucherId) {
       const claimed = await voucherRepository.userVoucher(userId, voucherId);
-      if (!claimed || claimed.status !== "CLAIMED") throw new ValidationError("Ban chua nhan voucher nay hoac voucher da duoc su dung");
+      if (!claimed || claimed.status !== "CLAIMED") {
+        throw new ValidationError("Ban chua nhan voucher nay hoac voucher da duoc su dung");
+      }
       const voucherResult = await voucherService.apply({ userId, voucherId, courtId: input.courtId, subtotal });
       voucherDiscountAmount = voucherResult.discountAmount;
       voucherId = voucherResult.voucherId;
     }
 
-    let demandPredictionSnapshot: any = null;
+    let demandPredictionSnapshot: Prisma.InputJsonValue | null = null;
     try {
       demandPredictionSnapshot = await demandPredictionService.predict(input.courtId, {
         date: input.bookingDate,
         startTime: input.startTime,
         endTime: input.endTime
-      });
+      }) as Prisma.InputJsonValue;
     } catch {
       demandPredictionSnapshot = {
         courtId: input.courtId,
@@ -86,6 +89,9 @@ export const bookingService = {
         status: "INSUFFICIENT_DATA"
       };
     }
+
+    const totalPrice = subtotal - voucherDiscountAmount;
+    const depositRate = await commissionService.depositRate();
 
     const booking = await bookingRepository.createWithServices({
       bookingCode: bookingCode(),
@@ -98,7 +104,8 @@ export const bookingService = {
       dynamicAdjustmentAmount,
       subtotal,
       voucherDiscountAmount,
-      totalPrice: subtotal - voucherDiscountAmount,
+      totalPrice,
+      depositAmount: Math.round(totalPrice * (depositRate / 100) * 100) / 100,
       paymentMethod: input.paymentMethod,
       voucherId,
       demandPredictionSnapshot,
@@ -147,11 +154,24 @@ export const bookingService = {
     }
 
     const startAt = bookingStartsAt(booking.bookingDate, booking.startTime);
-    const minCancelAt = new Date(startAt.getTime() - 2 * 60 * 60 * 1000);
-    if (new Date() > minCancelAt) throw new ValidationError("Chi duoc huy truoc gio bat dau it nhat 2 gio");
+    if (new Date() >= startAt) throw new ValidationError("Khong the huy sau gio bat dau");
 
-    const cancelled = await bookingRepository.cancel(bookingId, cancelReason);
-    await trackEvent({ userId, partnerId: cancelled.court.partnerId, eventType: "BOOKING_CANCELLED", entityType: "BOOKING", entityId: bookingId });
-    return cancelled;
+    const hoursUntilStart = (startAt.getTime() - Date.now()) / (60 * 60 * 1000);
+    const paidAmount = booking.paymentStatus === "PAID" ? Number(booking.totalPrice) : 0;
+    const refundAmount = hoursUntilStart >= 24 ? paidAmount : paidAmount * 0.5;
+    const platformRetainedAmount = paidAmount - refundAmount;
+    const paymentStatus =
+      paidAmount === 0
+        ? "UNPAID"
+        : refundAmount === paidAmount
+          ? "REFUNDED"
+          : "PARTIALLY_REFUNDED";
+
+    return bookingRepository.cancel(bookingId, {
+      cancelReason,
+      refundAmount,
+      platformRetainedAmount,
+      paymentStatus
+    });
   }
 };
