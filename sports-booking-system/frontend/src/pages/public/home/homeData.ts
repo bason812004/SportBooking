@@ -64,9 +64,9 @@ export const liveFeeds = [
 ];
 
 export const tournaments = [
-  { title: "Giải bóng đá sân 7 cuối tuần", sport: "Bóng đá", time: "15/06", location: "Quận 7", image: fallbackCourts[3].image },
-  { title: "Badminton Open Night", sport: "Cầu lông", time: "18/06", location: "Bình Tân", image: fallbackCourts[0].image },
-  { title: "Pickleball Rookie Cup", sport: "Pickleball", time: "22/06", location: "Thủ Đức", image: fallbackCourts[2].image }
+  { title: "Giải bóng đá sân 7 cuối tuần", slug: "sala-football-cup-thang-7", sport: "Bóng đá", time: "15/06", location: "Quận 7", image: fallbackCourts[3].image },
+  { title: "Badminton Open Night", slug: "phu-nhuan-badminton-open", sport: "Cầu lông", time: "18/06", location: "Bình Tân", image: fallbackCourts[0].image },
+  { title: "Pickleball Rookie Cup", slug: "pickleball-tan-binh-challenge", sport: "Pickleball", time: "22/06", location: "Thủ Đức", image: fallbackCourts[2].image }
 ];
 
 export const teammatePosts = [
@@ -90,10 +90,10 @@ export const whyChooseUs: Array<{ title: string; description: string; icon: Luci
 ];
 
 export const blogs = [
-  { title: "5 mẹo chơi tennis bền sức hơn", category: "Tennis", image: fallbackCourts[1].image },
-  { title: "Kinh nghiệm đá bóng sân 7 cho đội mới", category: "Bóng đá", image: fallbackCourts[3].image },
-  { title: "Kỹ thuật pickleball cơ bản cho người mới", category: "Pickleball", image: fallbackCourts[2].image },
-  { title: "Dinh dưỡng thể thao trước giờ thi đấu", category: "Sức khỏe", image: "https://images.unsplash.com/photo-1490645935967-10de6ba17061?auto=format&fit=crop&w=900&q=80" }
+  { title: "5 mẹo chơi tennis bền sức hơn", slug: "3-bai-tap-khoi-dong-truoc-khi-choi-tennis", category: "Tennis", image: fallbackCourts[1].image },
+  { title: "Kinh nghiệm đá bóng sân 7 cho đội mới", slug: "5-buoc-chon-san-bong-phu-hop", category: "Bóng đá", image: fallbackCourts[3].image },
+  { title: "Kỹ thuật pickleball cơ bản cho người mới", slug: "pickleball-vi-sao-dang-bung-no", category: "Pickleball", image: fallbackCourts[2].image },
+  { title: "Dinh dưỡng thể thao trước giờ thi đấu", slug: "an-gi-truoc-khi-da-bong-buoi-toi", category: "Sức khỏe", image: "https://images.unsplash.com/photo-1490645935967-10de6ba17061?auto=format&fit=crop&w=900&q=80" }
 ];
 
 export const faqItems = [

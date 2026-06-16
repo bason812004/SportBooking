@@ -17,8 +17,8 @@ export function TournamentSection() {
                 <p className="mt-4 flex items-center gap-2 text-sm text-slate-500"><CalendarDays className="h-4 w-4" /> {item.time}</p>
                 <p className="mt-2 flex items-center gap-2 text-sm text-slate-500"><MapPin className="h-4 w-4" /> {item.location}</p>
                 <div className="mt-6 flex gap-3">
-                  <Link className="rounded-xl bg-[#0f766e] px-4 py-3 text-sm font-black text-white" to="/courts">Đăng ký</Link>
-                  <Link className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-black" to="/courts">Xem chi tiết</Link>
+                  <Link className="rounded-xl bg-[#0f766e] px-4 py-3 text-sm font-black text-white" to={`/tournaments/${item.slug}`}>Đăng ký</Link>
+                  <Link className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-black" to={`/tournaments/${item.slug}`}>Xem chi tiết</Link>
                 </div>
               </div>
             </article>

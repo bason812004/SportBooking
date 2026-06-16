@@ -6,7 +6,8 @@ export type BookingPayload = {
   bookingDate: string;
   startTime: string;
   endTime: string;
-  paymentMethod: "CASH" | "BANK_TRANSFER" | "E_WALLET" | "MOCK_PAYMENT";
+  paymentMethod: "CASH" | "BANK_TRANSFER" | "E_WALLET";
+  voucherId?: string;
   services: Array<{ serviceId: string; quantity: number }>;
 };
 

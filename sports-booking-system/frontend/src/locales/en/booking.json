@@ -6,5 +6,19 @@
   "payment": "Payment",
   "total": "Total",
   "success": "Booking created successfully",
-  "history": "Booking history"
+  "history": "Booking history",
+  "cash": "Cash",
+  "bankTransfer": "Bank transfer",
+  "eWallet": "E-wallet",
+  "voucherId": "Voucher code",
+  "submitting": "Booking",
+  "confirm": "Confirm booking",
+  "dynamicPrice": "Dynamic price",
+  "basePrice": "Base price",
+  "dynamicAdjustment": "Dynamic adjustment",
+  "finalPrice": "Final price",
+  "selectSlotForPrice": "Choose a date and time to view price.",
+  "demandPrediction": "Demand prediction",
+  "selectSlotForPrediction": "Choose a date and time to view prediction.",
+  "backendCalculatedTotal": "The final total is calculated and returned by the backend."
 }

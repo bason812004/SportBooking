@@ -80,10 +80,57 @@ Frontend mac dinh chay tai `http://localhost:5173` va goi backend `http://localh
 ## Logic quan trong
 
 - Backend kiem tra trung lich bang dieu kien `newStart < existingEnd && newEnd > existingStart`.
-- Backend tinh tong tien dua tren bang gia, thoi luong va dich vu di kem.
+- Backend tinh tong tien dua tren bang gia, dynamic pricing, voucher discount, thoi luong va dich vu di kem.
 - San chi public khi `approval_status = APPROVED` va `active_status = ACTIVE`.
 - Partner chi sua san, gia, dich vu va don thuoc san cua minh.
 - Admin co API khoa/mo khoa user, duyet partner, duyet san, quan ly category, review, report va thong ke.
+- Frontend khong tu quyet dinh final price. Booking API luon tinh lai tren backend.
+- Demand prediction khong tra ket qua AI gia. Neu thieu lich su booking, API tra `INSUFFICIENT_DATA`.
+
+## Module moi
+
+- Dynamic Pricing: `dynamic_pricing_rules`, `court_base_prices`, `GET /api/courts/:courtId/dynamic-price`, partner CRUD tai `/api/partner/dynamic-pricing/rules`.
+- Demand Prediction: rule-based demand scoring, `demand_predictions`, `demand_features`, public API `/api/courts/:courtId/demand-prediction`, partner overview tai `/api/partner/demand-prediction/*`.
+- Voucher Engine: claim, user vouchers, apply voucher, partner CRUD, admin disable.
+- Tournament Platform: public registration, partner management, registration approval/rejection, admin pending approval.
+- Analytics Dashboard API: partner `/api/partner/analytics/*`, admin `/api/admin/analytics/*`.
+
+## API chinh
+
+- `GET /api/courts/:courtId/dynamic-price?date=&startTime=&endTime=`
+- `GET /api/courts/:courtId/demand-prediction?date=&startTime=&endTime=`
+- `POST /api/vouchers/:id/claim`
+- `GET /api/users/me/vouchers`
+- `POST /api/bookings/apply-voucher`
+- `POST /api/tournaments/:id/register`
+- `GET /api/partner/analytics/overview`
+- `GET /api/admin/analytics/overview`
+
+## Prisma va migration
+
+Sau khi cap nhat database:
+
+```bash
+cd backend
+npx prisma generate
+npm run build
+npm test
+```
+
+`database/supabase_schema.sql` co ca schema day du cho database moi va cac block `create table if not exists` / `alter table add column if not exists` de bo sung an toan cho database cu. Khong xoa bang cu khi chay migration tren database dang co du lieu.
+
+## ML-ready
+
+Tai lieu nghien cuu nam o `docs/RESEARCH_DIRECTION.md`.
+
+Folder `ml/` gom:
+
+- `README_ML.md`
+- `scripts/export_training_data.py`
+- `scripts/train_demand_model.py`
+- `scripts/evaluate_model.py`
+
+Giai doan hien tai dung rule-based model that su chay tren du lieu booking. Chi train/deploy ML model khi co du lieu lich su du lon va co ket qua danh gia MAE/RMSE/accuracy.
 
 ## Deploy
 

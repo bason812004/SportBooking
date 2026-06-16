@@ -4,5 +4,6 @@ export const bookingSchema = z.object({
   bookingDate: z.string().min(1),
   startTime: z.string().min(1),
   endTime: z.string().min(1),
-  paymentMethod: z.enum(["CASH", "BANK_TRANSFER", "E_WALLET", "MOCK_PAYMENT"])
+  paymentMethod: z.enum(["CASH", "BANK_TRANSFER", "E_WALLET"]),
+  voucherId: z.string().uuid().optional().or(z.literal(""))
 });

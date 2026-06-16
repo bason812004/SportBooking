@@ -79,5 +79,92 @@ export const tournamentRepository = {
         and t.status in ('OPEN'::tournament_status, 'APPROVED'::tournament_status)
       limit 1
     `;
+    },
+    findPublicById(id) {
+        return prisma.tournament.findFirst({ where: { id, status: { in: ["OPEN", "APPROVED"] } } });
+    },
+    registration(tournamentId, userId) {
+        return prisma.tournamentRegistration.findUnique({ where: { tournamentId_userId: { tournamentId, userId } } });
+    },
+    register(input) {
+        return prisma.$transaction(async (tx) => {
+            const registration = await tx.tournamentRegistration.create({ data: input });
+            await tx.tournament.update({ where: { id: input.tournamentId }, data: { currentParticipants: { increment: 1 } } });
+            return registration;
+        });
+    },
+    partnerProfile(userId) {
+        return prisma.partnerProfile.findUnique({ where: { userId } });
+    },
+    partnerCourt(courtId, partnerId) {
+        return prisma.court.findFirst({ where: { id: courtId, partnerId } });
+    },
+    listPartner(partnerId) {
+        return prisma.tournament.findMany({ where: { partnerId }, include: { court: true }, orderBy: { createdAt: "desc" } });
+    },
+    findPartnerTournament(id, partnerId) {
+        return prisma.tournament.findFirst({ where: { id, partnerId } });
+    },
+    createPartner(partnerId, slug, input) {
+        return prisma.tournament.create({
+            data: {
+                partnerId,
+                courtId: input.courtId,
+                title: input.title,
+                slug,
+                description: input.description,
+                sportType: input.sportType,
+                coverImageUrl: input.coverImageUrl,
+                startDate: new Date(input.startDate),
+                endDate: new Date(input.endDate),
+                registrationDeadline: new Date(input.registrationDeadline),
+                maxParticipants: input.maxParticipants,
+                entryFee: input.entryFee,
+                prizeDescription: input.prizeDescription,
+                status: input.status
+            }
+        });
+    },
+    updatePartner(id, slug, input) {
+        return prisma.tournament.update({
+            where: { id },
+            data: {
+                courtId: input.courtId,
+                title: input.title,
+                slug,
+                description: input.description,
+                sportType: input.sportType,
+                coverImageUrl: input.coverImageUrl,
+                startDate: input.startDate ? new Date(input.startDate) : undefined,
+                endDate: input.endDate ? new Date(input.endDate) : undefined,
+                registrationDeadline: input.registrationDeadline ? new Date(input.registrationDeadline) : undefined,
+                maxParticipants: input.maxParticipants,
+                entryFee: input.entryFee,
+                prizeDescription: input.prizeDescription,
+                status: input.status
+            }
+        });
+    },
+    deletePartner(id) {
+        return prisma.tournament.update({ where: { id }, data: { status: "CANCELLED" } });
+    },
+    registrations(tournamentId, partnerId) {
+        return prisma.tournamentRegistration.findMany({
+            where: { tournamentId, tournament: { partnerId } },
+            include: { user: { select: { id: true, fullName: true, email: true, phone: true } } },
+            orderBy: { createdAt: "desc" }
+        });
+    },
+    updateRegistration(id, status) {
+        return prisma.tournamentRegistration.update({ where: { id }, data: { status } });
+    },
+    registrationByPartner(id, partnerId) {
+        return prisma.tournamentRegistration.findFirst({ where: { id, tournament: { partnerId } } });
+    },
+    listPendingAdmin() {
+        return prisma.tournament.findMany({ where: { status: "PENDING" }, include: { court: true, partner: true }, orderBy: { createdAt: "desc" } });
+    },
+    setAdminStatus(id, status) {
+        return prisma.tournament.update({ where: { id }, data: { status } });
     }
 };

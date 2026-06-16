@@ -75,7 +75,12 @@ export type Booking = {
   bookingDate: string;
   startTime: string;
   endTime: string;
+  basePrice?: string;
+  dynamicAdjustmentAmount?: string;
+  subtotal?: string;
+  voucherDiscountAmount?: string;
   totalPrice: string;
+  demandPredictionSnapshot?: DemandPrediction | null;
   paymentMethod: string;
   paymentStatus: string;
   bookingStatus: string;
@@ -103,6 +108,25 @@ export type Voucher = {
   status: string;
   partner: { id: string; businessName: string };
   court?: { id: string; name: string; city: string; district: string; imageUrl?: string | null } | null;
+};
+
+export type DynamicPrice = {
+  courtId: string;
+  basePrice: number;
+  adjustments: Array<{ ruleName: string; type: "PERCENTAGE" | "FIXED_AMOUNT"; value: number; amount: number }>;
+  dynamicAdjustmentAmount: number;
+  finalPrice: number;
+  currency: "VND";
+};
+
+export type DemandPrediction = {
+  courtId: string;
+  predictedDemandScore: number | null;
+  predictedOccupancyRate: number | null;
+  predictionLevel: "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH" | null;
+  confidenceScore: number;
+  status: "GENERATED" | "INSUFFICIENT_DATA" | "FAILED";
+  message?: { vi: string; en: string };
 };
 
 export type BlogPost = {
@@ -137,4 +161,44 @@ export type Tournament = {
   status: string;
   partner: { id: string; businessName: string };
   court: { id: string; name: string; city: string; district: string; imageUrl?: string | null };
+};
+
+export type TeamRecruitmentPost = {
+  id: string;
+  title: string;
+  sportType: string;
+  courtName: string;
+  address: string;
+  currentPlayers: number;
+  maxPlayers: number;
+  missingPlayers: number;
+  playingDate?: string | null;
+  startTime: string;
+  endTime: string;
+  pricePerPerson: number;
+  extraServices?: string | null;
+  note?: string | null;
+  zaloGroupLink?: string | null;
+  zaloQrImage?: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: { id: string; fullName: string; avatarUrl?: string | null };
+};
+
+export type TeamRecruitmentInput = {
+  title: string;
+  sportType: string;
+  courtName: string;
+  address: string;
+  currentPlayers: number;
+  maxPlayers: number;
+  playingDate?: string | null;
+  startTime: string;
+  endTime: string;
+  pricePerPerson: number;
+  extraServices?: string | null;
+  note?: string | null;
+  zaloGroupLink?: string | null;
+  zaloQrImage?: string | null;
 };

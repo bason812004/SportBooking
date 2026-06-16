@@ -105,5 +105,113 @@ export const voucherRepository = {
         and now() between v.start_date and v.end_date
       limit 1
     `;
+  },
+
+  findUsable(input: { voucherId?: string; code?: string; courtId: string }) {
+    return prisma.voucher.findFirst({
+      where: {
+        id: input.voucherId,
+        code: input.code,
+        status: "ACTIVE",
+        startDate: { lte: new Date() },
+        endDate: { gte: new Date() },
+        OR: [{ courtId: input.courtId }, { courtId: null }]
+      }
+    });
+  },
+
+  findActiveVoucher(id: string) {
+    return prisma.voucher.findFirst({
+      where: {
+        id,
+        status: "ACTIVE",
+        startDate: { lte: new Date() },
+        endDate: { gte: new Date() }
+      }
+    });
+  },
+
+  userVoucher(userId: string, voucherId: string) {
+    return prisma.userVoucher.findUnique({ where: { userId_voucherId: { userId, voucherId } } });
+  },
+
+  claim(userId: string, voucherId: string) {
+    return prisma.userVoucher.create({ data: { userId, voucherId } });
+  },
+
+  listForUser(userId: string) {
+    return prisma.userVoucher.findMany({
+      where: { userId },
+      include: { voucher: { include: { court: true, partner: true } } },
+      orderBy: { claimedAt: "desc" }
+    });
+  },
+
+  partnerProfile(userId: string) {
+    return prisma.partnerProfile.findUnique({ where: { userId } });
+  },
+
+  partnerCourt(courtId: string, partnerId: string) {
+    return prisma.court.findFirst({ where: { id: courtId, partnerId } });
+  },
+
+  listPartner(partnerId: string) {
+    return prisma.voucher.findMany({ where: { partnerId }, include: { court: true }, orderBy: { createdAt: "desc" } });
+  },
+
+  createPartner(partnerId: string, input: any) {
+    return prisma.voucher.create({
+      data: {
+        partnerId,
+        courtId: input.courtId,
+        code: input.code,
+        title: input.title,
+        description: input.description,
+        discountType: input.discountType,
+        discountValue: input.discountValue,
+        maxDiscountAmount: input.maxDiscountAmount,
+        minBookingAmount: input.minBookingAmount,
+        usageLimit: input.usageLimit,
+        startDate: new Date(input.startDate),
+        endDate: new Date(input.endDate),
+        status: input.status
+      }
+    });
+  },
+
+  findPartnerVoucher(id: string, partnerId: string) {
+    return prisma.voucher.findFirst({ where: { id, partnerId } });
+  },
+
+  updatePartner(id: string, input: any) {
+    return prisma.voucher.update({
+      where: { id },
+      data: {
+        courtId: input.courtId,
+        code: input.code,
+        title: input.title,
+        description: input.description,
+        discountType: input.discountType,
+        discountValue: input.discountValue,
+        maxDiscountAmount: input.maxDiscountAmount,
+        minBookingAmount: input.minBookingAmount,
+        usageLimit: input.usageLimit,
+        startDate: input.startDate ? new Date(input.startDate) : undefined,
+        endDate: input.endDate ? new Date(input.endDate) : undefined,
+        status: input.status
+      }
+    });
+  },
+
+  deletePartner(id: string) {
+    return prisma.voucher.update({ where: { id }, data: { status: "DISABLED" } });
+  },
+
+  listAdmin() {
+    return prisma.voucher.findMany({ include: { court: true, partner: true }, orderBy: { createdAt: "desc" } });
+  },
+
+  disableAdmin(id: string) {
+    return prisma.voucher.update({ where: { id }, data: { status: "DISABLED" } });
   }
 };

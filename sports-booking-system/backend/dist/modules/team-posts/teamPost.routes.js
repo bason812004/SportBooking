@@ -1,0 +1,12 @@
+import { Router } from "express";
+import { authMiddleware } from "../../middlewares/auth.middleware.js";
+import { validate } from "../../middlewares/validate.middleware.js";
+import { teamPostController } from "./teamPost.controller.js";
+import { teamPostIdSchema, teamPostSchema } from "./teamPost.validation.js";
+export const teamPostRoutes = Router();
+teamPostRoutes.get("/", teamPostController.list);
+teamPostRoutes.get("/:id", validate(teamPostIdSchema), teamPostController.detail);
+teamPostRoutes.post("/", authMiddleware, validate(teamPostSchema), teamPostController.create);
+teamPostRoutes.put("/:id", authMiddleware, validate(teamPostIdSchema.merge(teamPostSchema)), teamPostController.update);
+teamPostRoutes.delete("/:id", authMiddleware, validate(teamPostIdSchema), teamPostController.delete);
+teamPostRoutes.post("/:id/join", authMiddleware, validate(teamPostIdSchema), teamPostController.join);

@@ -5,7 +5,8 @@ export const createBookingSchema = z.object({
         bookingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         startTime: z.string().regex(/^\d{2}:\d{2}$/),
         endTime: z.string().regex(/^\d{2}:\d{2}$/),
-        paymentMethod: z.enum(["CASH", "BANK_TRANSFER", "E_WALLET", "MOCK_PAYMENT"]),
+        paymentMethod: z.enum(["CASH", "BANK_TRANSFER", "E_WALLET"]),
+        voucherId: z.string().uuid().optional(),
         services: z.array(z.object({ serviceId: z.string().uuid(), quantity: z.number().int().positive() })).default([])
     })
 });

@@ -1,8 +1,13 @@
 import { BookingStatus } from "@prisma/client";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
-import { bookingStartsAt, dayTypeFor, durationHours, parseLimit, parsePage, timeToDate, timeToMinutes, toDbDate } from "../../shared/utils/time.js";
+import { bookingStartsAt, durationHours, parseLimit, parsePage, timeToDate, timeToMinutes, toDbDate } from "../../shared/utils/time.js";
 import { courtRepository } from "../courts/court.repository.js";
+import { trackEvent } from "../analytics/analytics.service.js";
+import { demandPredictionService } from "../demand-prediction/demandPrediction.service.js";
+import { dynamicPricingService } from "../dynamic-pricing/dynamicPricing.service.js";
+import { voucherService } from "../vouchers/voucher.service.js";
+import { voucherRepository } from "../vouchers/voucher.repository.js";
 import { bookingRepository } from "./booking.repository.js";
 function bookingCode() {
     const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
@@ -20,12 +25,6 @@ export const bookingService = {
         const court = await bookingRepository.courtWithPricing(input.courtId);
         if (!court)
             throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
-        const dayType = dayTypeFor(input.bookingDate);
-        const matchingPrice = court.prices.find((price) => price.dayType === dayType &&
-            timeToMinutes(price.startTime.toISOString().slice(11, 16)) <= timeToMinutes(input.startTime) &&
-            timeToMinutes(price.endTime.toISOString().slice(11, 16)) >= timeToMinutes(input.endTime));
-        if (!matchingPrice)
-            throw new ValidationError("Khung gio nay chua co bang gia");
         const serviceIds = input.services.map((service) => service.serviceId);
         const services = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
         if (services.length !== serviceIds.length)
@@ -34,19 +33,77 @@ export const bookingService = {
             const service = services.find((item) => item.id === line.serviceId);
             return { serviceId: line.serviceId, quantity: line.quantity, price: Number(service.price) };
         });
-        const courtTotal = Number(matchingPrice.price) * durationHours(input.startTime, input.endTime);
+        const dynamicPrice = await dynamicPricingService.calculate(input.courtId, {
+            date: input.bookingDate,
+            startTime: input.startTime,
+            endTime: input.endTime
+        });
+        const hours = durationHours(input.startTime, input.endTime);
+        const courtTotal = dynamicPrice.finalPrice * hours;
+        const basePriceTotal = dynamicPrice.basePrice * hours;
+        const dynamicAdjustmentAmount = dynamicPrice.dynamicAdjustmentAmount * hours;
         const serviceTotal = serviceLines.reduce((sum, line) => sum + line.price * line.quantity, 0);
-        return bookingRepository.createWithServices({
+        const subtotal = courtTotal + serviceTotal;
+        let voucherDiscountAmount = 0;
+        let voucherId = input.voucherId;
+        if (voucherId) {
+            const claimed = await voucherRepository.userVoucher(userId, voucherId);
+            if (!claimed || claimed.status !== "CLAIMED")
+                throw new ValidationError("Ban chua nhan voucher nay hoac voucher da duoc su dung");
+            const voucherResult = await voucherService.apply({ userId, voucherId, courtId: input.courtId, subtotal });
+            voucherDiscountAmount = voucherResult.discountAmount;
+            voucherId = voucherResult.voucherId;
+        }
+        let demandPredictionSnapshot = null;
+        try {
+            demandPredictionSnapshot = await demandPredictionService.predict(input.courtId, {
+                date: input.bookingDate,
+                startTime: input.startTime,
+                endTime: input.endTime
+            });
+        }
+        catch {
+            demandPredictionSnapshot = {
+                courtId: input.courtId,
+                predictedDemandScore: null,
+                predictedOccupancyRate: null,
+                predictionLevel: null,
+                confidenceScore: 0,
+                status: "INSUFFICIENT_DATA"
+            };
+        }
+        const booking = await bookingRepository.createWithServices({
             bookingCode: bookingCode(),
             userId,
             courtId: input.courtId,
             bookingDate: toDbDate(input.bookingDate),
             startTime: timeToDate(input.startTime),
             endTime: timeToDate(input.endTime),
-            totalPrice: courtTotal + serviceTotal,
+            basePrice: basePriceTotal,
+            dynamicAdjustmentAmount,
+            subtotal,
+            voucherDiscountAmount,
+            totalPrice: subtotal - voucherDiscountAmount,
             paymentMethod: input.paymentMethod,
+            voucherId,
+            demandPredictionSnapshot,
             services: serviceLines
         });
+        await trackEvent({
+            userId,
+            partnerId: court.partnerId,
+            eventType: "BOOKING_CREATED",
+            entityType: "BOOKING",
+            entityId: booking.id,
+            metadataJson: {
+                courtId: input.courtId,
+                bookingDate: input.bookingDate,
+                startTime: input.startTime,
+                endTime: input.endTime,
+                totalPrice: subtotal - voucherDiscountAmount
+            }
+        });
+        return booking;
     },
     async getForUser(userId, bookingId) {
         const booking = await bookingRepository.findById(bookingId);
@@ -76,6 +133,8 @@ export const bookingService = {
         const minCancelAt = new Date(startAt.getTime() - 2 * 60 * 60 * 1000);
         if (new Date() > minCancelAt)
             throw new ValidationError("Chi duoc huy truoc gio bat dau it nhat 2 gio");
-        return bookingRepository.cancel(bookingId, cancelReason);
+        const cancelled = await bookingRepository.cancel(bookingId, cancelReason);
+        await trackEvent({ userId, partnerId: cancelled.court.partnerId, eventType: "BOOKING_CANCELLED", entityType: "BOOKING", entityId: bookingId });
+        return cancelled;
     }
 };

@@ -1,0 +1,23 @@
+import { Router } from "express";
+import { UserRole } from "@prisma/client";
+import { authMiddleware } from "../../middlewares/auth.middleware.js";
+import { requireRole } from "../../middlewares/role.middleware.js";
+import { analyticsController } from "./analytics.controller.js";
+
+export const partnerAnalyticsRoutes = Router();
+partnerAnalyticsRoutes.use(authMiddleware, requireRole(UserRole.PARTNER));
+partnerAnalyticsRoutes.get("/overview", analyticsController.partnerOverview);
+partnerAnalyticsRoutes.get("/revenue", analyticsController.partnerRevenue);
+partnerAnalyticsRoutes.get("/occupancy", analyticsController.partnerOccupancy);
+partnerAnalyticsRoutes.get("/vouchers", analyticsController.partnerVouchers);
+partnerAnalyticsRoutes.get("/tournaments", analyticsController.partnerTournaments);
+partnerAnalyticsRoutes.get("/peak-hours", analyticsController.partnerPeakHours);
+
+export const adminAnalyticsRoutes = Router();
+adminAnalyticsRoutes.use(authMiddleware, requireRole(UserRole.ADMIN));
+adminAnalyticsRoutes.get("/overview", analyticsController.adminOverview);
+adminAnalyticsRoutes.get("/revenue", analyticsController.adminRevenue);
+adminAnalyticsRoutes.get("/bookings", analyticsController.adminBookings);
+adminAnalyticsRoutes.get("/vouchers", analyticsController.adminVouchers);
+adminAnalyticsRoutes.get("/tournaments", analyticsController.adminTournaments);
+adminAnalyticsRoutes.get("/demand-prediction", analyticsController.adminDemandPrediction);

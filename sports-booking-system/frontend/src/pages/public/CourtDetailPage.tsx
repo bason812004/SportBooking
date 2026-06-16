@@ -10,7 +10,6 @@ import { AvailabilityCalendar } from "./detail/AvailabilityCalendar";
 import { PricingSection } from "./detail/PricingSection";
 import { HeatmapSection } from "./detail/HeatmapSection";
 import { AmenitiesSection } from "./detail/AmenitiesSection";
-import { ServicesSection } from "./detail/ServicesSection";
 import { PartnerSection } from "./detail/PartnerSection";
 import { PolicySection } from "./detail/PolicySection";
 import { ReviewSection } from "./detail/ReviewSection";
@@ -80,7 +79,6 @@ export function CourtDetailPage() {
             <PricingSection />
             <HeatmapSection />
             <AmenitiesSection />
-            <ServicesSection />
             <PartnerSection />
             <PolicySection />
             <ReviewAnalytics breakdown={court.data?.ratingBreakdown ?? []} />
