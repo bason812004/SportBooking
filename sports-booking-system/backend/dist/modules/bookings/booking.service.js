@@ -9,6 +9,9 @@ import { demandPredictionService } from "../demand-prediction/demandPrediction.s
 import { dynamicPricingService } from "../dynamic-pricing/dynamicPricing.service.js";
 import { voucherService } from "../vouchers/voucher.service.js";
 import { voucherRepository } from "../vouchers/voucher.repository.js";
+import { notificationService } from "../notifications/notification.service.js";
+import { realtimeEvents } from "../realtime/realtime.events.js";
+import { realtimeService } from "../realtime/realtime.service.js";
 import { bookingRepository } from "./booking.repository.js";
 function bookingCode() {
     const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
@@ -56,6 +59,11 @@ export const bookingService = {
             voucherDiscountAmount = voucherResult.discountAmount;
             voucherId = voucherResult.voucherId;
         }
+        else if (input.voucherCode) {
+            const voucherResult = await voucherService.apply({ userId, code: input.voucherCode, courtId: input.courtId, subtotal });
+            voucherDiscountAmount = voucherResult.discountAmount;
+            voucherId = voucherResult.voucherId;
+        }
         let demandPredictionSnapshot = null;
         try {
             demandPredictionSnapshot = await demandPredictionService.predict(input.courtId, {
@@ -91,6 +99,7 @@ export const bookingService = {
             depositAmount: Math.round(totalPrice * (depositRate / 100) * 100) / 100,
             paymentMethod: input.paymentMethod,
             voucherId,
+            note: input.note,
             demandPredictionSnapshot,
             services: serviceLines
         });
@@ -108,6 +117,21 @@ export const bookingService = {
                 totalPrice: subtotal - voucherDiscountAmount
             }
         });
+        await notificationService.create({
+            userId,
+            title: "Dat san thanh cong",
+            content: `Don ${booking.bookingCode} da duoc tao thanh cong.`,
+            type: "BOOKING_CREATED",
+            metadata: { bookingId: booking.id, courtId: input.courtId }
+        });
+        realtimeService.toUser(userId, realtimeEvents.bookingCreated, booking);
+        realtimeService.toCourt(input.courtId, realtimeEvents.courtAvailabilityUpdated, {
+            courtId: input.courtId,
+            bookingDate: input.bookingDate,
+            startTime: input.startTime,
+            endTime: input.endTime
+        });
+        realtimeService.toPartner(court.partnerId, "partner:booking-created", booking);
         return booking;
     },
     async getForUser(userId, bookingId) {
@@ -146,11 +170,27 @@ export const bookingService = {
             : refundAmount === paidAmount
                 ? "REFUNDED"
                 : "PARTIALLY_REFUNDED";
-        return bookingRepository.cancel(bookingId, {
+        const cancelled = await bookingRepository.cancel(bookingId, {
             cancelReason,
             refundAmount,
             platformRetainedAmount,
             paymentStatus
         });
+        await notificationService.create({
+            userId,
+            title: "Don dat san da huy",
+            content: `Don ${cancelled.bookingCode} da duoc huy.`,
+            type: "BOOKING_CANCELLED",
+            metadata: { bookingId: cancelled.id, courtId: cancelled.courtId }
+        });
+        realtimeService.toUser(userId, realtimeEvents.bookingCancelled, cancelled);
+        realtimeService.toBooking(bookingId, realtimeEvents.bookingCancelled, cancelled);
+        realtimeService.toCourt(cancelled.courtId, realtimeEvents.courtAvailabilityUpdated, {
+            courtId: cancelled.courtId,
+            bookingDate: cancelled.bookingDate,
+            startTime: cancelled.startTime,
+            endTime: cancelled.endTime
+        });
+        return cancelled;
     }
 };

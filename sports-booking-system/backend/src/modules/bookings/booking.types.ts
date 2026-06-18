@@ -7,5 +7,7 @@ export type CreateBookingInput = {
   endTime: string;
   paymentMethod: PaymentMethod;
   voucherId?: string;
+  voucherCode?: string;
+  note?: string;
   services: Array<{ serviceId: string; quantity: number }>;
 };

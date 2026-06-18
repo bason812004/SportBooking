@@ -84,6 +84,7 @@ export const bookingRepository = {
     depositAmount: number;
     paymentMethod: PaymentMethod;
     voucherId?: string;
+    note?: string;
     demandPredictionSnapshot?: Prisma.InputJsonValue | null;
     services: Array<{ serviceId: string; quantity: number; price: number }>;
   }) {
@@ -104,6 +105,7 @@ export const bookingRepository = {
           totalPrice: input.totalPrice,
           depositAmount: input.depositAmount,
           paymentMethod: input.paymentMethod,
+          note: input.note,
           bookingServices: {
             create: input.services.map((service) => ({
               serviceId: service.serviceId,

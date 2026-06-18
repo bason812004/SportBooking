@@ -71,6 +71,7 @@ export const bookingRepository = {
                     totalPrice: input.totalPrice,
                     depositAmount: input.depositAmount,
                     paymentMethod: input.paymentMethod,
+                    note: input.note,
                     bookingServices: {
                         create: input.services.map((service) => ({
                             serviceId: service.serviceId,

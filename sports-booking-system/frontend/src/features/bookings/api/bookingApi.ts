@@ -8,6 +8,8 @@ export type BookingPayload = {
   endTime: string;
   paymentMethod: "CASH" | "BANK_TRANSFER" | "E_WALLET";
   voucherId?: string;
+  voucherCode?: string;
+  note?: string;
   services: Array<{ serviceId: string; quantity: number }>;
 };
 
@@ -21,11 +23,11 @@ export const bookingApi = {
     return data.data;
   },
   async detail(id: string) {
-    const { data } = await api.get<ApiResponse<Booking>>(`/bookings/${id}`);
+    const { data } = await api.get<ApiResponse<Booking>>(`/users/me/bookings/${id}`);
     return data.data;
   },
   async cancel(id: string, cancelReason?: string) {
-    const { data } = await api.put<ApiResponse<Booking>>(`/bookings/${id}/cancel`, { cancelReason });
+    const { data } = await api.put<ApiResponse<Booking>>(`/users/me/bookings/${id}/cancel`, { cancelReason });
     return data.data;
   }
 };

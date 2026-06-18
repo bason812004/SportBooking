@@ -38,6 +38,31 @@ Mat khau goc cho tat ca tai khoan mau: `123456`. Trong database chi luu bcrypt h
 - Partner 2: `partner2@sportsbooking.com`
 - User 1: `user1@sportsbooking.com`
 
+## Auth, Google OAuth va realtime
+
+Backend env can co:
+
+```env
+JWT_SECRET=replace-with-legacy-or-shared-secret-at-least-24-chars
+JWT_ACCESS_SECRET=replace-with-access-secret-at-least-24-chars
+JWT_REFRESH_SECRET=replace-with-refresh-secret-at-least-24-chars
+ACCESS_TOKEN_EXPIRES_IN=15m
+REFRESH_TOKEN_EXPIRES_IN=7d
+GOOGLE_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
+FRONTEND_URL=http://localhost:5173
+```
+
+Frontend env can co:
+
+```env
+VITE_API_BASE_URL=http://localhost:8080/api
+VITE_GOOGLE_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
+```
+
+Email/password auth dung bcrypt va backend JWT access/refresh token. Google sign-in dung Google Identity Services o frontend, gui ID token den `POST /api/auth/google`, backend verify bang `google-auth-library`, sau do cap JWT cua he thong.
+
+Realtime dung Socket.IO. Frontend chi connect sau khi dang nhap voi access token va lang nghe booking, court availability, notification events.
+
 ## Chay backend
 
 ```bash

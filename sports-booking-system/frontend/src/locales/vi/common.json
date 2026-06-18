@@ -34,5 +34,24 @@
     "district": "Quận/Huyện",
     "ward": "Phường/Xã",
     "note": "Ghi chú"
+  },
+  "auth": {
+    "login": "Dang nhap",
+    "register": "Dang ky",
+    "userRegister": "Dang ky nguoi dung",
+    "processing": "Dang xu ly",
+    "loginSuccess": "Dang nhap thanh cong",
+    "registerSuccess": "Dang ky thanh cong",
+    "googleFailed": "Khong the dang nhap voi Google",
+    "noAccount": "Chua co tai khoan?",
+    "partnerPrompt": "Muon dang san?",
+    "partnerRegister": "Dang ky doi tac"
+  },
+  "errors": {
+    "invalidEmail": "Email khong hop le",
+    "passwordMin8": "Mat khau toi thieu 8 ky tu",
+    "fullNameRequired": "Nhap ho va ten",
+    "businessNameRequired": "Nhap ten don vi",
+    "addressRequired": "Nhap dia chi"
   }
 }

@@ -2,8 +2,16 @@ export type CourtListQuery = {
   page?: string;
   limit?: string;
   q?: string;
+  keyword?: string;
+  sportType?: string;
+  province?: string;
   city?: string;
   district?: string;
+  minPrice?: string;
+  maxPrice?: string;
+  rating?: string;
   categoryId?: string;
+  sortBy?: string;
+  sortOrder?: "asc" | "desc";
   sort?: "newest" | "price_asc" | "price_desc";
 };

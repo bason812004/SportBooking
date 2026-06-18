@@ -75,6 +75,25 @@ export function checkBookingOverlap(input) {
     const end = timeToMinutes(input.endTime);
     return input.existing.some((booking) => start < timeToMinutes(booking.endTime) && end > timeToMinutes(booking.startTime));
 }
+export function calculateBookingPrice(input) {
+    const courtTotal = (input.basePrice + (input.dynamicAdjustmentAmount ?? 0)) * input.hours;
+    const subtotal = Math.max(0, Math.round(courtTotal + (input.serviceTotal ?? 0)));
+    const totalPrice = Math.max(0, Math.round(subtotal - (input.voucherDiscountAmount ?? 0)));
+    return {
+        basePrice: Math.round(input.basePrice * input.hours),
+        dynamicAdjustmentAmount: Math.round((input.dynamicAdjustmentAmount ?? 0) * input.hours),
+        subtotal,
+        voucherDiscountAmount: Math.min(subtotal, Math.max(0, input.voucherDiscountAmount ?? 0)),
+        totalPrice
+    };
+}
+export function canCancelBooking(input) {
+    const now = input.now ?? new Date();
+    return (input.startsAt.getTime() - now.getTime()) / (60 * 60 * 1000) >= input.minimumHoursBeforeStart;
+}
+export function canCreateReview(input) {
+    return input.bookingStatus === "COMPLETED" && !input.existingReviewForBooking;
+}
 export function isTournamentRegistrationAllowed(input) {
     const now = input.now ?? new Date();
     if (input.alreadyRegistered)

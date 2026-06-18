@@ -34,5 +34,24 @@
     "district": "District",
     "ward": "Ward",
     "note": "Note"
+  },
+  "auth": {
+    "login": "Login",
+    "register": "Register",
+    "userRegister": "User registration",
+    "processing": "Processing",
+    "loginSuccess": "Login successful",
+    "registerSuccess": "Registration successful",
+    "googleFailed": "Could not continue with Google",
+    "noAccount": "Do not have an account?",
+    "partnerPrompt": "Want to list your venue?",
+    "partnerRegister": "Partner registration"
+  },
+  "errors": {
+    "invalidEmail": "Invalid email",
+    "passwordMin8": "Password must be at least 8 characters",
+    "fullNameRequired": "Enter full name",
+    "businessNameRequired": "Enter business name",
+    "addressRequired": "Enter address"
   }
 }

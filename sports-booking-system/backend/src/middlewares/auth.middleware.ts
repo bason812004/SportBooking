@@ -1,8 +1,7 @@
-import jwt from "jsonwebtoken";
-import { env } from "../config/env.js";
 import { AuthError } from "../shared/errors/AppError.js";
 import type { NextFunction, Request, Response } from "express";
 import type { UserRole } from "@prisma/client";
+import { verifyAccessToken } from "../modules/auth/auth.security.js";
 
 type JwtPayload = {
   sub: string;
@@ -18,7 +17,7 @@ export function authMiddleware(req: Request, _res: Response, next: NextFunction)
   }
 
   try {
-    const payload = jwt.verify(token, env.JWT_SECRET) as JwtPayload;
+    const payload = verifyAccessToken(token) as JwtPayload;
     req.user = { id: payload.sub, role: payload.role };
     return next();
   } catch {

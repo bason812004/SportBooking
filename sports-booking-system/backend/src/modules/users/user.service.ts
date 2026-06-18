@@ -15,5 +15,11 @@ export const userService = {
   },
   bookings(userId: string, query: { page?: string; limit?: string }) {
     return bookingService.listForUser(userId, query);
+  },
+  bookingDetail(userId: string, bookingId: string) {
+    return bookingService.getForUser(userId, bookingId);
+  },
+  cancelBooking(userId: string, bookingId: string, cancelReason?: string) {
+    return bookingService.cancel(userId, bookingId, cancelReason);
   }
 };

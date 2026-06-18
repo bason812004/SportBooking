@@ -1,14 +1,16 @@
-import { createContext, useContext, useMemo, useState, type PropsWithChildren } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type PropsWithChildren } from "react";
 import { useNavigate } from "react-router-dom";
-import { TOKEN_KEY, USER_KEY } from "../../../lib/constants";
+import { REFRESH_TOKEN_KEY, TOKEN_KEY, USER_KEY } from "../../../lib/constants";
 import type { Role, User } from "../../../types/api";
+import { authApi } from "../api/authApi";
 
 type AuthContextValue = {
   user: User | null;
   token: string | null;
+  refreshToken: string | null;
   isAuthenticated: boolean;
   hasRole: (roles: Role[]) => boolean;
-  setSession: (user: User, token: string) => void;
+  setSession: (user: User, token: string, refreshToken?: string) => void;
   logout: () => void;
 };
 
@@ -23,28 +25,60 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const navigate = useNavigate();
   const [user, setUser] = useState<User | null>(() => readUser());
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
+  const [refreshToken, setRefreshToken] = useState<string | null>(() => localStorage.getItem(REFRESH_TOKEN_KEY));
+
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    authApi.me()
+      .then((nextUser) => {
+        if (active) {
+          localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
+          setUser(nextUser);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          localStorage.removeItem(USER_KEY);
+          localStorage.removeItem(TOKEN_KEY);
+          localStorage.removeItem(REFRESH_TOKEN_KEY);
+          setUser(null);
+          setToken(null);
+          setRefreshToken(null);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
       token,
+      refreshToken,
       isAuthenticated: Boolean(user && token),
       hasRole: (roles) => Boolean(user && roles.includes(user.role)),
-      setSession: (nextUser, nextToken) => {
+      setSession: (nextUser, nextToken, nextRefreshToken) => {
         localStorage.setItem(USER_KEY, JSON.stringify(nextUser));
         localStorage.setItem(TOKEN_KEY, nextToken);
+        if (nextRefreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, nextRefreshToken);
         setUser(nextUser);
         setToken(nextToken);
+        if (nextRefreshToken) setRefreshToken(nextRefreshToken);
       },
       logout: () => {
+        void authApi.logout(localStorage.getItem(REFRESH_TOKEN_KEY));
         localStorage.removeItem(USER_KEY);
         localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(REFRESH_TOKEN_KEY);
         setUser(null);
         setToken(null);
+        setRefreshToken(null);
         navigate("/login");
       }
     }),
-    [navigate, token, user]
+    [navigate, refreshToken, token, user]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

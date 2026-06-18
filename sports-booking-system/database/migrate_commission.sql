@@ -42,6 +42,13 @@ alter table bookings
   add constraint bookings_refund_amount_check check (refund_amount >= 0 and refund_amount <= total_price),
   add constraint bookings_platform_retained_amount_check check (platform_retained_amount >= 0 and platform_retained_amount <= total_price);
 
+alter table bookings
+  add column if not exists base_price numeric(12, 2) not null default 0,
+  add column if not exists dynamic_adjustment_amount numeric(12, 2) not null default 0,
+  add column if not exists subtotal numeric(12, 2) not null default 0,
+  add column if not exists voucher_discount_amount numeric(12, 2) not null default 0,
+  add column if not exists demand_prediction_snapshot jsonb;
+
 create table if not exists commission_transactions (
   id uuid primary key default uuid_generate_v4(),
   booking_id uuid not null references bookings(id),

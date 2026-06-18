@@ -20,8 +20,8 @@ export function RegisterPartnerPage() {
   const form = useForm<FormValues>({ resolver: zodResolver(registerPartnerSchema) });
   const mutation = useMutation({
     mutationFn: authApi.registerPartner,
-    onSuccess: ({ user, token }) => {
-      auth.setSession(user, token);
+    onSuccess: ({ user, accessToken, refreshToken, token }) => {
+      auth.setSession(user, accessToken ?? token!, refreshToken);
       toast.success(t("Đã tạo tài khoản đối tác"));
       navigate("/partner/dashboard");
     },

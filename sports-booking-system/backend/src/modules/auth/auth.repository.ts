@@ -17,6 +17,27 @@ export const authRepository = {
     return prisma.user.create({ data });
   },
 
+  upsertGoogleUser(input: { email: string; fullName: string; avatarUrl?: string | null; providerId: string }) {
+    return prisma.user.upsert({
+      where: { email: input.email },
+      create: {
+        email: input.email,
+        fullName: input.fullName,
+        avatarUrl: input.avatarUrl,
+        provider: "GOOGLE",
+        providerId: input.providerId,
+        emailVerified: true,
+        role: "USER"
+      },
+      update: {
+        provider: "GOOGLE",
+        providerId: input.providerId,
+        emailVerified: true,
+        avatarUrl: input.avatarUrl ?? undefined
+      }
+    });
+  },
+
   createPartner(input: {
     user: Omit<Prisma.UserCreateInput, "role">;
     businessName: string;
@@ -41,5 +62,23 @@ export const authRepository = {
 
   updatePassword(id: string, passwordHash: string) {
     return prisma.user.update({ where: { id }, data: { passwordHash } });
+  },
+
+  createRefreshToken(data: { userId: string; tokenHash: string; expiresAt: Date }) {
+    return prisma.refreshToken.create({ data });
+  },
+
+  findRefreshToken(tokenHash: string) {
+    return prisma.refreshToken.findFirst({
+      where: { tokenHash, revokedAt: null, expiresAt: { gt: new Date() } },
+      include: { user: true }
+    });
+  },
+
+  revokeRefreshToken(tokenHash: string) {
+    return prisma.refreshToken.updateMany({
+      where: { tokenHash, revokedAt: null },
+      data: { revokedAt: new Date() }
+    });
   }
 };

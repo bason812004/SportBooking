@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { calculateDemandScore, calculateDynamicPrice, calculateOccupancyRate, calculateRevenueLift, calculateVoucherDiscount, checkBookingOverlap, isTournamentRegistrationAllowed } from "./businessRules.js";
+import { calculateDemandScore, calculateBookingPrice, calculateDynamicPrice, calculateOccupancyRate, calculateRevenueLift, calculateVoucherDiscount, checkBookingOverlap, canCancelBooking, canCreateReview, isTournamentRegistrationAllowed } from "./businessRules.js";
 describe("business rules", () => {
     it("calculates dynamic pricing with a peak-hour percentage rule", () => {
         const result = calculateDynamicPrice({
@@ -55,6 +55,21 @@ describe("business rules", () => {
     it("detects booking overlap", () => {
         assert.equal(checkBookingOverlap({ existing: [{ startTime: "18:00", endTime: "20:00" }], startTime: "19:00", endTime: "21:00" }), true);
         assert.equal(checkBookingOverlap({ existing: [{ startTime: "18:00", endTime: "20:00" }], startTime: "20:00", endTime: "21:00" }), false);
+    });
+    it("calculates booking price totals", () => {
+        assert.deepEqual(calculateBookingPrice({ basePrice: 100000, dynamicAdjustmentAmount: 20000, hours: 2, serviceTotal: 30000, voucherDiscountAmount: 50000 }), { basePrice: 200000, dynamicAdjustmentAmount: 40000, subtotal: 270000, voucherDiscountAmount: 50000, totalPrice: 220000 });
+    });
+    it("allows cancellation when policy window is satisfied", () => {
+        assert.equal(canCancelBooking({
+            startsAt: new Date("2026-06-18T21:00:00.000Z"),
+            now: new Date("2026-06-18T18:00:00.000Z"),
+            minimumHoursBeforeStart: 2
+        }), true);
+    });
+    it("allows one review only for completed bookings", () => {
+        assert.equal(canCreateReview({ bookingStatus: "COMPLETED", existingReviewForBooking: false }), true);
+        assert.equal(canCreateReview({ bookingStatus: "PENDING", existingReviewForBooking: false }), false);
+        assert.equal(canCreateReview({ bookingStatus: "COMPLETED", existingReviewForBooking: true }), false);
     });
     it("calculates occupancy and revenue lift", () => {
         assert.equal(calculateOccupancyRate({ bookedSlots: 5, totalSlots: 10 }), 0.5);

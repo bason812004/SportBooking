@@ -36,25 +36,41 @@ const courtDetailInclude = {
 
 export const courtRepository = {
   async list(query: CourtListQuery, page: number, limit: number) {
+    const categoryFilter: Prisma.CourtCategoryWhereInput = { status: "ACTIVE" };
     const where: Prisma.CourtWhereInput = {
       approvalStatus: "APPROVED",
       activeStatus: "ACTIVE",
-      category: { status: "ACTIVE" }
+      category: categoryFilter
     };
 
-    if (query.q) {
+    const keyword = query.keyword ?? query.q;
+    if (keyword) {
       where.OR = [
-        { name: { contains: query.q, mode: "insensitive" } },
-        { description: { contains: query.q, mode: "insensitive" } },
-        { address: { contains: query.q, mode: "insensitive" } }
+        { name: { contains: keyword, mode: "insensitive" } },
+        { description: { contains: keyword, mode: "insensitive" } },
+        { address: { contains: keyword, mode: "insensitive" } }
       ];
     }
-    if (query.city) where.city = { contains: query.city, mode: "insensitive" };
+    const city = query.province ?? query.city;
+    if (city) where.city = { contains: city, mode: "insensitive" };
     if (query.district) where.district = { contains: query.district, mode: "insensitive" };
     if (query.categoryId) where.categoryId = query.categoryId;
+    if (query.sportType) categoryFilter.name = { contains: query.sportType, mode: "insensitive" };
+    const minPrice = Number(query.minPrice);
+    const maxPrice = Number(query.maxPrice);
+    if (Number.isFinite(minPrice) || Number.isFinite(maxPrice)) {
+      where.prices = {
+        some: {
+          price: {
+            gte: Number.isFinite(minPrice) ? minPrice : undefined,
+            lte: Number.isFinite(maxPrice) ? maxPrice : undefined
+          }
+        }
+      };
+    }
 
     const orderBy: Prisma.CourtOrderByWithRelationInput =
-      query.sort === "newest" || !query.sort ? { createdAt: "desc" } : { name: "asc" };
+      query.sortBy === "name" ? { name: query.sortOrder ?? "asc" } : query.sort === "newest" || !query.sort ? { createdAt: "desc" } : { name: "asc" };
 
     const [items, total] = await prisma.$transaction([
       prisma.court.findMany({
@@ -105,6 +121,14 @@ export const courtRepository = {
         bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] }
       },
       select: { id: true, bookingCode: true, startTime: true, endTime: true, bookingStatus: true },
+      orderBy: { startTime: "asc" }
+    });
+  },
+
+  availabilityBlocks(courtId: string, date: string) {
+    return prisma.courtAvailabilityBlock.findMany({
+      where: { courtId, blockDate: toDbDate(date) },
+      select: { id: true, startTime: true, endTime: true, reason: true },
       orderBy: { startTime: "asc" }
     });
   },

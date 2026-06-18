@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const password = z.string().min(6, "Mat khau toi thieu 6 ky tu");
+const password = z.string().min(8, "Mat khau toi thieu 8 ky tu");
 
 export const registerSchema = z.object({
   body: z.object({
@@ -34,5 +34,17 @@ export const changePasswordSchema = z.object({
   body: z.object({
     currentPassword: z.string().min(1),
     newPassword: password
+  })
+});
+
+export const googleAuthSchema = z.object({
+  body: z.object({
+    credential: z.string().min(10)
+  })
+});
+
+export const refreshTokenSchema = z.object({
+  body: z.object({
+    refreshToken: z.string().min(10)
   })
 });

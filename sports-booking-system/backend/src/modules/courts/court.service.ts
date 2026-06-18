@@ -1,6 +1,6 @@
 import { NotFoundError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
-import { parseLimit, parsePage } from "../../shared/utils/time.js";
+import { parseLimit, parsePage, timeToMinutes } from "../../shared/utils/time.js";
 import { courtRepository } from "./court.repository.js";
 import type { CourtListQuery } from "./court.types.js";
 
@@ -17,6 +17,20 @@ function ratingBreakdown(reviews: { rating: number }[]) {
     const count = reviews.filter((review) => review.rating === rating).length;
     return { rating, count, percent: total ? Math.round((count / total) * 100) : 0 };
   });
+}
+
+function timeText(value: Date) {
+  return value.toISOString().slice(11, 16);
+}
+
+function minutesToTime(totalMinutes: number) {
+  const hours = Math.floor(totalMinutes / 60).toString().padStart(2, "0");
+  const minutes = (totalMinutes % 60).toString().padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+function overlaps(slot: { startTime: string; endTime: string }, item: { startTime: Date; endTime: Date }) {
+  return timeToMinutes(slot.startTime) < timeToMinutes(timeText(item.endTime)) && timeToMinutes(slot.endTime) > timeToMinutes(timeText(item.startTime));
 }
 
 export const courtService = {
@@ -41,7 +55,21 @@ export const courtService = {
   async availability(id: string, date: string) {
     const court = await courtRepository.findPublicById(id);
     if (!court) throw new NotFoundError("Khong tim thay san");
-    const bookings = await courtRepository.availability(id, date);
-    return { date, bookedSlots: bookings };
+    const [bookings, blocks] = await Promise.all([
+      courtRepository.availability(id, date),
+      courtRepository.availabilityBlocks(id, date)
+    ]);
+    const slots = [];
+    const opening = timeToMinutes(timeText(court.openingTime));
+    const closing = timeToMinutes(timeText(court.closingTime));
+
+    for (let cursor = opening; cursor < closing; cursor += 60) {
+      const slot = { startTime: minutesToTime(cursor), endTime: minutesToTime(Math.min(cursor + 60, closing)) };
+      const isBooked = bookings.some((booking) => overlaps(slot, booking));
+      const isBlocked = blocks.some((block) => overlaps(slot, block));
+      slots.push({ ...slot, status: isBooked ? "BOOKED" : isBlocked ? "BLOCKED" : "AVAILABLE" });
+    }
+
+    return { courtId: id, date, slots, bookedSlots: bookings };
   }
 };
