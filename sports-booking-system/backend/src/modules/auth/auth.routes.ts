@@ -7,14 +7,22 @@ import {
   googleAuthSchema,
   loginSchema,
   refreshTokenSchema,
+  resendRegistrationCodeSchema,
   registerPartnerSchema,
-  registerSchema
+  registerSchema,
+  verifyRegistrationCodeSchema
 } from "./auth.validation.js";
 
 export const authRoutes = Router();
 
-authRoutes.post("/register", validate(registerSchema), authController.register);
-authRoutes.post("/register-partner", validate(registerPartnerSchema), authController.registerPartner);
+authRoutes.post("/register", validate(registerSchema), authController.requestRegistrationCode);
+authRoutes.post("/register/request-code", validate(registerSchema), authController.requestRegistrationCode);
+authRoutes.post("/register/verify-code", validate(verifyRegistrationCodeSchema), authController.verifyRegistrationCode);
+authRoutes.post("/register/resend-code", validate(resendRegistrationCodeSchema), authController.resendRegistrationCode);
+authRoutes.post("/register-partner", validate(registerPartnerSchema), authController.requestPartnerRegistrationCode);
+authRoutes.post("/register-partner/request-code", validate(registerPartnerSchema), authController.requestPartnerRegistrationCode);
+authRoutes.post("/register-partner/verify-code", validate(verifyRegistrationCodeSchema), authController.verifyRegistrationCode);
+authRoutes.post("/register-partner/resend-code", validate(resendRegistrationCodeSchema), authController.resendRegistrationCode);
 authRoutes.post("/login", validate(loginSchema), authController.login);
 authRoutes.post("/google", validate(googleAuthSchema), authController.google);
 authRoutes.post("/refresh-token", validate(refreshTokenSchema), authController.refreshToken);

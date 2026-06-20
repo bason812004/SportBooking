@@ -59,6 +59,7 @@ export function AppRoutes() {
       <Route element={<PublicLayout />}>
         <Route index element={<HomePage />} />
         <Route path="login" element={<LoginPage />} />
+        <Route path="partner/login" element={<LoginPage mode="partner" />} />
         <Route path="register" element={<RegisterPage />} />
         <Route path="register-partner" element={<RegisterPartnerPage />} />
         <Route path="partner" element={<PartnersLandingPage />} />

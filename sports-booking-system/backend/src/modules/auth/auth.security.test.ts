@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { comparePassword, generateAccessToken, hashPassword, verifyAccessToken } from "./auth.security.js";
+import { compareOtp, comparePassword, generateAccessToken, generateOtp, hashOtp, hashPassword, verifyAccessToken } from "./auth.security.js";
 
 describe("auth security", () => {
   it("hashes and compares passwords", async () => {
@@ -15,5 +15,14 @@ describe("auth security", () => {
     const payload = verifyAccessToken(token);
     assert.equal(payload.sub, "00000000-0000-0000-0000-000000000001");
     assert.equal(payload.role, "USER");
+  });
+
+  it("generates a random six-digit OTP and stores only a comparable hash", async () => {
+    const code = generateOtp();
+    assert.match(code, /^\d{6}$/);
+    const hash = await hashOtp(code);
+    assert.notEqual(hash, code);
+    assert.equal(await compareOtp(code, hash), true);
+    assert.equal(await compareOtp("000000", hash), code === "000000");
   });
 });

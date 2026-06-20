@@ -68,6 +68,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         if (nextRefreshToken) setRefreshToken(nextRefreshToken);
       },
       logout: () => {
+        const loginPath = user?.role === "PARTNER" ? "/partner/login" : "/login";
         void authApi.logout(localStorage.getItem(REFRESH_TOKEN_KEY));
         localStorage.removeItem(USER_KEY);
         localStorage.removeItem(TOKEN_KEY);
@@ -75,7 +76,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setUser(null);
         setToken(null);
         setRefreshToken(null);
-        navigate("/login");
+        navigate(loginPath);
       }
     }),
     [navigate, refreshToken, token, user]

@@ -36,7 +36,7 @@ export const teamPostRepository = {
     findById(id) {
         return prisma.$queryRawUnsafe(`
         ${selectPost}
-        where p.id = $1::uuid
+        where p.id = $1
         limit 1
       `, id);
     },
@@ -48,7 +48,7 @@ export const teamPostRepository = {
           current_players, max_players, playing_date, start_time, end_time,
           price_per_person, extra_services, note, zalo_group_link, zalo_qr_image
         ) values (
-          $1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::date, $10::time, $11::time,
+          $1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10::time, $11::time,
           $12, $13, $14, $15, $16
         )
         returning id
@@ -63,7 +63,7 @@ export const teamPostRepository = {
       with updated as (
         update team_recruitment_posts
         set
-          court_id = $3::uuid,
+          court_id = $3,
           title = $4,
           sport_type = $5,
           court_name = $6,
@@ -78,8 +78,8 @@ export const teamPostRepository = {
           note = $15,
           zalo_group_link = $16,
           zalo_qr_image = $17
-        where id = $1::uuid
-          and user_id = $2::uuid
+        where id = $1
+          and user_id = $2
         returning id
       )
       ${selectPost}
@@ -90,8 +90,8 @@ export const teamPostRepository = {
     delete(id, userId) {
         return prisma.$executeRaw `
       delete from team_recruitment_posts
-      where id = ${id}::uuid
-        and user_id = ${userId}::uuid
+      where id = ${id}
+        and user_id = ${userId}
     `;
     },
     join(id) {
@@ -99,7 +99,7 @@ export const teamPostRepository = {
       with joined as (
         update team_recruitment_posts
         set current_players = current_players + 1
-        where id = $1::uuid
+        where id = $1
           and status = 'OPEN'::team_recruitment_status
           and current_players < max_players
         returning id

@@ -13,6 +13,18 @@ export function hashPassword(password: string) {
   return bcrypt.hash(password, env.BCRYPT_SALT_ROUNDS);
 }
 
+export function generateOtp() {
+  return crypto.randomInt(100000, 1000000).toString();
+}
+
+export function hashOtp(code: string) {
+  return bcrypt.hash(code, env.BCRYPT_SALT_ROUNDS);
+}
+
+export function compareOtp(code: string, otpHash: string) {
+  return bcrypt.compare(code, otpHash);
+}
+
 export function comparePassword(password: string, passwordHash: string) {
   return bcrypt.compare(password, passwordHash);
 }

@@ -35,7 +35,7 @@ export const partnerApi = {
     const { data } = await api.get<ApiResponse<PartnerProfile>>("/partner/profile");
     return data.data;
   },
-  async updateProfile(payload: Omit<PartnerProfile, "id" | "approvalStatus" | "user">) {
+  async updateProfile(payload: Omit<PartnerProfile, "id" | "approvalStatus" | "user"> & { fullName: string; phone?: string; avatarUrl?: string }) {
     const { data } = await api.put<ApiResponse<PartnerProfile>>("/partner/profile", payload);
     return data.data;
   },

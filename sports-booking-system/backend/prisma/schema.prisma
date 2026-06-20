@@ -32,6 +32,14 @@ enum AccountStatus {
   @@map("account_status")
 }
 
+enum VerificationPurpose {
+  REGISTER
+  FORGOT_PASSWORD
+  CHANGE_EMAIL
+
+  @@map("verification_purpose")
+}
+
 enum ApprovalStatus {
   PENDING
   APPROVED
@@ -205,31 +213,31 @@ enum AnalyticsEventType {
 }
 
 model User {
-  id           String        @id @default(uuid()) @db.Uuid
-  fullName     String        @map("full_name") @db.VarChar(120)
-  email        String        @unique @db.VarChar(160)
-  phone        String?       @db.VarChar(30)
-  passwordHash String?       @map("password_hash")
-  role         UserRole      @default(USER)
-  provider     AuthProvider  @default(LOCAL)
-  providerId   String?       @map("provider_id") @db.VarChar(160)
-  emailVerified Boolean      @default(false) @map("email_verified")
-  avatarUrl    String?       @map("avatar_url")
-  status       AccountStatus @default(ACTIVE)
-  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt    DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  id            String        @id @default(uuid()) @db.Uuid
+  fullName      String        @map("full_name") @db.VarChar(120)
+  email         String        @unique @db.VarChar(160)
+  phone         String?       @db.VarChar(30)
+  passwordHash  String?       @map("password_hash")
+  role          UserRole      @default(USER)
+  provider      AuthProvider  @default(LOCAL)
+  providerId    String?       @map("provider_id") @db.VarChar(160)
+  emailVerified Boolean       @default(false) @map("email_verified")
+  avatarUrl     String?       @map("avatar_url")
+  status        AccountStatus @default(ACTIVE)
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  partnerProfile PartnerProfile?
-  bookings       Booking[]
-  reviews        Review[]
-  reports        Report[]
-  notifications  Notification[]
-  refreshTokens  RefreshToken[]
-  favorites      Favorite[]
-  userVouchers   UserVoucher[]
-  analyticsEvents AnalyticsEvent[]
+  partnerProfile          PartnerProfile?
+  bookings                Booking[]
+  reviews                 Review[]
+  reports                 Report[]
+  notifications           Notification[]
+  refreshTokens           RefreshToken[]
+  favorites               Favorite[]
+  userVouchers            UserVoucher[]
+  analyticsEvents         AnalyticsEvent[]
   tournamentRegistrations TournamentRegistration[]
-  auditLogs      AuditLog[]
+  auditLogs               AuditLog[]
 
   @@index([email], map: "idx_users_email")
   @@index([provider, providerId], map: "idx_users_provider_provider_id")
@@ -251,6 +259,32 @@ model RefreshToken {
   @@index([userId], map: "idx_refresh_tokens_user_id")
   @@index([tokenHash], map: "idx_refresh_tokens_token_hash")
   @@map("refresh_tokens")
+}
+
+model EmailVerificationCode {
+  id           String              @id @default(uuid()) @db.Uuid
+  email        String              @db.VarChar(160)
+  fullName     String              @map("full_name") @db.VarChar(120)
+  phone        String?             @db.VarChar(30)
+  passwordHash String              @map("password_hash")
+  otpHash      String              @map("otp_hash")
+  purpose      VerificationPurpose @default(REGISTER)
+  expiresAt    DateTime            @map("expires_at") @db.Timestamptz
+  verifiedAt   DateTime?           @map("verified_at") @db.Timestamptz
+  attemptCount Int                 @default(0) @map("attempt_count")
+  maxAttempts  Int                 @default(5) @map("max_attempts")
+  resendCount  Int                 @default(0) @map("resend_count")
+  lastSentAt   DateTime            @default(now()) @map("last_sent_at") @db.Timestamptz
+  accountType  String              @default("USER") @map("account_type") @db.VarChar(20)
+  businessName String?             @map("business_name") @db.VarChar(180)
+  address      String?
+  verificationDocumentUrl String?  @map("verification_document_url")
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([email, purpose], map: "uq_email_verification_codes_email_purpose")
+  @@index([expiresAt], map: "idx_email_verification_codes_expires_at")
+  @@map("email_verification_codes")
 }
 
 model PartnerProfile {
@@ -328,8 +362,8 @@ model Court {
   createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
   updatedAt       DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  partner             PartnerProfile       @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  category            CourtCategory        @relation(fields: [categoryId], references: [id])
+  partner             PartnerProfile           @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  category            CourtCategory            @relation(fields: [categoryId], references: [id])
   images              CourtImage[]
   surfaces            CourtSurface[]
   amenities           CourtAmenity[]
@@ -492,30 +526,30 @@ model CourtService {
 }
 
 model Booking {
-  id                     String        @id @default(uuid()) @db.Uuid
-  bookingCode            String        @unique @map("booking_code") @db.VarChar(30)
-  userId                 String        @map("user_id") @db.Uuid
-  courtId                String        @map("court_id") @db.Uuid
-  bookingDate            DateTime      @map("booking_date") @db.Date
-  startTime              DateTime      @map("start_time") @db.Time
-  endTime                DateTime      @map("end_time") @db.Time
-  totalPrice             Decimal       @map("total_price") @db.Decimal(12, 2)
-  basePrice              Decimal       @default(0) @map("base_price") @db.Decimal(12, 2)
-  dynamicAdjustmentAmount Decimal      @default(0) @map("dynamic_adjustment_amount") @db.Decimal(12, 2)
-  subtotal               Decimal       @default(0) @db.Decimal(12, 2)
-  voucherDiscountAmount  Decimal       @default(0) @map("voucher_discount_amount") @db.Decimal(12, 2)
-  demandPredictionSnapshot Json?       @map("demand_prediction_snapshot")
-  depositAmount          Decimal       @default(0) @map("deposit_amount") @db.Decimal(12, 2)
-  refundAmount           Decimal       @default(0) @map("refund_amount") @db.Decimal(12, 2)
-  platformRetainedAmount Decimal       @default(0) @map("platform_retained_amount") @db.Decimal(12, 2)
-  paymentMethod          PaymentMethod @default(CASH) @map("payment_method")
-  paymentStatus          PaymentStatus @default(UNPAID) @map("payment_status")
-  bookingStatus          BookingStatus @default(PENDING) @map("booking_status")
-  cancelReason           String?       @map("cancel_reason")
-  note                   String?
-  cancelledAt            DateTime?     @map("cancelled_at") @db.Timestamptz
-  createdAt              DateTime      @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt              DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  id                       String        @id @default(uuid()) @db.Uuid
+  bookingCode              String        @unique @map("booking_code") @db.VarChar(30)
+  userId                   String        @map("user_id") @db.Uuid
+  courtId                  String        @map("court_id") @db.Uuid
+  bookingDate              DateTime      @map("booking_date") @db.Date
+  startTime                DateTime      @map("start_time") @db.Time
+  endTime                  DateTime      @map("end_time") @db.Time
+  totalPrice               Decimal       @map("total_price") @db.Decimal(12, 2)
+  basePrice                Decimal       @default(0) @map("base_price") @db.Decimal(12, 2)
+  dynamicAdjustmentAmount  Decimal       @default(0) @map("dynamic_adjustment_amount") @db.Decimal(12, 2)
+  subtotal                 Decimal       @default(0) @db.Decimal(12, 2)
+  voucherDiscountAmount    Decimal       @default(0) @map("voucher_discount_amount") @db.Decimal(12, 2)
+  demandPredictionSnapshot Json?         @map("demand_prediction_snapshot")
+  depositAmount            Decimal       @default(0) @map("deposit_amount") @db.Decimal(12, 2)
+  refundAmount             Decimal       @default(0) @map("refund_amount") @db.Decimal(12, 2)
+  platformRetainedAmount   Decimal       @default(0) @map("platform_retained_amount") @db.Decimal(12, 2)
+  paymentMethod            PaymentMethod @default(CASH) @map("payment_method")
+  paymentStatus            PaymentStatus @default(UNPAID) @map("payment_status")
+  bookingStatus            BookingStatus @default(PENDING) @map("booking_status")
+  cancelReason             String?       @map("cancel_reason")
+  note                     String?
+  cancelledAt              DateTime?     @map("cancelled_at") @db.Timestamptz
+  createdAt                DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   user                   User                    @relation(fields: [userId], references: [id])
   court                  Court                   @relation(fields: [courtId], references: [id])
@@ -642,8 +676,8 @@ model Voucher {
   createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz
   updatedAt         DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  partner        PartnerProfile  @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  court          Court?          @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  partner        PartnerProfile   @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  court          Court?           @relation(fields: [courtId], references: [id], onDelete: Cascade)
   userVouchers   UserVoucher[]
   bookingVoucher BookingVoucher[]
 
@@ -724,8 +758,8 @@ model Tournament {
   createdAt            DateTime         @default(now()) @map("created_at") @db.Timestamptz
   updatedAt            DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  partner      PartnerProfile          @relation(fields: [partnerId], references: [id], onDelete: Cascade)
-  court        Court                   @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  partner       PartnerProfile           @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  court         Court                    @relation(fields: [courtId], references: [id], onDelete: Cascade)
   registrations TournamentRegistration[]
 
   @@index([partnerId], map: "idx_tournaments_partner_id")

@@ -6,7 +6,7 @@ export const teamPostSchema = z
   .object({
     body: z
       .object({
-        courtId: z.string().uuid().nullable().optional(),
+        courtId: z.string().min(1).nullable().optional(),
         title: z.string().trim().min(1, "Tieu de khong duoc rong").max(220),
         sportType: z.string().trim().min(1).max(80),
         courtName: z.string().trim().min(1, "Ten san khong duoc rong").max(180),
@@ -33,5 +33,5 @@ export const teamPostSchema = z
   });
 
 export const teamPostIdSchema = z.object({
-  params: z.object({ id: z.string().uuid() })
+  params: z.object({ id: z.string().min(1) })
 });

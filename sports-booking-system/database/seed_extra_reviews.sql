@@ -34,6 +34,22 @@ insert into users (id, full_name, email, phone, password_hash, role, status) val
 ('u0031', 'Huynh Duc Anh', 'user11@sportsbooking.com', '0900000031', crypt('123456', gen_salt('bf', 10)), 'USER', 'ACTIVE'),
 ('u0032', 'Mai Phuong Nam', 'user12@sportsbooking.com', '0900000032', crypt('123456', gen_salt('bf', 10)), 'USER', 'ACTIVE');
 
+-- Keep the four documented demo accounts ready for password login.
+-- Only a bcrypt hash is stored; the original demo password is 123456.
+update users
+set password_hash = crypt('123456', gen_salt('bf', 10)),
+    provider = 'LOCAL',
+    provider_id = null,
+    email_verified = true,
+    status = 'ACTIVE',
+    updated_at = now()
+where lower(email) in (
+  'admin@sportsbooking.com',
+  'partner1@sportsbooking.com',
+  'partner2@sportsbooking.com',
+  'user1@sportsbooking.com'
+);
+
 -- ══════════════════════════════════════════════════════════════════════
 -- 2. PARTNER PROFILES
 -- ══════════════════════════════════════════════════════════════════════
@@ -138,9 +154,9 @@ insert into team_recruitment_posts (
   current_players, max_players, playing_date, start_time, end_time,
   price_per_person, extra_services, note, zalo_group_link, zalo_qr_image, status
 ) values
-('tp0001','u0021','c0001','Can tuyen 3 ban da bong san 5 toi thu 7','Bong da','San bong Mini Binh Thanh','25 Nguyen Xi, Binh Thanh, TP.HCM',7,10,'2026-06-15','19:00','21:00',70000,'Ao bib, nuoc uong, gui xe','Uu tien cac ban di dung gio, da vui ve, khong qua cang.','https://zalo.me/g/example-football','https://quickchart.io/qr?text=https%3A%2F%2Fzalo.me%2Fg%2Fexample-football&size=260','OPEN'),
+('tp0001','u0021','c0001','Cần tuyển 3 bạn đá bóng sân 5 tối thứ 7','Bóng đá','Sân bóng Mini Bình Thạnh','25 Nguyễn Xí, Bình Thạnh, TP.HCM',7,10,'2026-06-15','19:00','21:00',70000,'Áo bib, nước uống, gửi xe','Ưu tiên các bạn đi đúng giờ, đá vui vẻ, không quá căng.','https://zalo.me/g/example-football','https://quickchart.io/qr?text=https%3A%2F%2Fzalo.me%2Fg%2Fexample-football&size=260','OPEN'),
 ('tp0002','u0022','c0012','Tim them 2 ban danh cau long buoi sang','Cau long','San cau long Tan Phu','88 Luy Ban Bich, Tan Phu, TP.HCM',2,4,'2026-06-16','06:00','08:00',50000,'Thue vot, nuoc uong','Trinh do trung binh, choi ren suc khoe la chinh.',null,'https://quickchart.io/qr?text=badminton-morning-group&size=260','OPEN'),
-('tp0003','u0023','c0015','Tuyen nguoi choi bong chuyen cuoi tuan','Bong chuyen','San bong chuyen Phu Nhuan','12 Hoa Phuong, Phu Nhuan, TP.HCM',8,12,'2026-06-20','17:00','19:00',40000,'Nuoc uong, gui xe','Choi giao luu, vui ve, co the tham gia lau dai.','https://zalo.me/g/example-volleyball',null,'OPEN');
+('tp0003','u0023','c0015','Tuyển người chơi bóng chuyền cuối tuần','Bóng chuyền','Sân bóng chuyền Phú Nhuận','12 Hoa Phượng, Phú Nhuận, TP.HCM',8,12,'2026-06-20','17:00','19:00',40000,'Nước uống, gửi xe','Chơi giao lưu, vui vẻ, có thể tham gia lâu dài.','https://zalo.me/g/example-volleyball',null,'OPEN');
 
 -- ══════════════════════════════════════════════════════════════════════
 -- 7. BOOKINGS – chính (b0001 – b0014)

@@ -73,6 +73,9 @@ export const calendarQuerySchema = z.object({
 
 export const profileUpdateSchema = z.object({
   body: z.object({
+    fullName: z.string().trim().min(2).max(120),
+    phone: z.string().trim().max(30).optional(),
+    avatarUrl: z.union([z.string().url(), z.literal(""), z.null()]).optional(),
     businessName: z.string().trim().min(2).max(180),
     address: z.string().trim().min(5),
     verificationDocumentUrl: z.union([z.string().url(), z.literal(""), z.null()]).optional(),

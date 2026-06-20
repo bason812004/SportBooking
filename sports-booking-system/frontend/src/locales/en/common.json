@@ -45,13 +45,24 @@
     "googleFailed": "Could not continue with Google",
     "noAccount": "Do not have an account?",
     "partnerPrompt": "Want to list your venue?",
-    "partnerRegister": "Partner registration"
+    "partnerRegister": "Partner registration",
+    "sendVerificationCode": "Send verification code",
+    "enterVerificationCode": "Enter verification code",
+    "codeSent": "A verification code has been sent to your email.",
+    "checkInbox": "Please check your inbox or spam folder.",
+    "verifyEmail": "Verify email",
+    "resendCode": "Resend code",
+    "resendAfter": "Resend in {{seconds}} seconds",
+    "codeExpiresAfter": "Code expires in {{time}}",
+    "verificationSuccess": "Verification successful. Your account has been created.",
+    "changeRegistrationInfo": "Change registration details"
   },
   "errors": {
     "invalidEmail": "Invalid email",
     "passwordMin8": "Password must be at least 8 characters",
     "fullNameRequired": "Enter full name",
     "businessNameRequired": "Enter business name",
-    "addressRequired": "Enter address"
+    "addressRequired": "Enter address",
+    "otpSixDigits": "Verification code must contain exactly 6 digits"
   }
 }

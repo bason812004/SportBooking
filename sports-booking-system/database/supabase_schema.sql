@@ -43,6 +43,7 @@ create extension if not exists "pgcrypto";
 drop table if exists notifications cascade;
 drop table if exists favorites cascade;
 drop table if exists refresh_tokens cascade;
+drop table if exists email_verification_codes cascade;
 drop table if exists reports cascade;
 drop table if exists analytics_events cascade;
 drop table if exists demand_features cascade;
@@ -97,6 +98,7 @@ drop type if exists court_active_status cascade;
 drop type if exists approval_status cascade;
 drop type if exists account_status cascade;
 drop type if exists auth_provider cascade;
+drop type if exists verification_purpose cascade;
 drop type if exists user_role cascade;
 
 -- Drop sequences
@@ -133,6 +135,7 @@ drop sequence if exists seq_team_recruitment_posts cascade;
 -- ── ENUM types ────────────────────────────────────────────────────────
 create type user_role as enum ('USER', 'PARTNER', 'ADMIN');
 create type auth_provider as enum ('LOCAL', 'GOOGLE');
+create type verification_purpose as enum ('REGISTER', 'FORGOT_PASSWORD', 'CHANGE_EMAIL');
 create type account_status as enum ('ACTIVE', 'LOCKED', 'INACTIVE', 'BLOCKED');
 create type approval_status as enum ('PENDING', 'APPROVED', 'REJECTED');
 create type court_active_status as enum ('ACTIVE', 'INACTIVE');
@@ -230,6 +233,32 @@ create table refresh_tokens (
   revoked_at timestamptz,
   created_at timestamptz not null default now()
 );
+
+create table email_verification_codes (
+  id uuid primary key default gen_random_uuid(),
+  email varchar(160) not null,
+  full_name varchar(120) not null,
+  phone varchar(30),
+  password_hash text not null,
+  otp_hash text not null,
+  purpose verification_purpose not null default 'REGISTER',
+  expires_at timestamptz not null,
+  verified_at timestamptz,
+  attempt_count integer not null default 0 check (attempt_count >= 0),
+  max_attempts integer not null default 5 check (max_attempts > 0),
+  resend_count integer not null default 0 check (resend_count >= 0),
+  last_sent_at timestamptz not null default now(),
+  account_type varchar(20) not null default 'USER',
+  business_name varchar(180),
+  address text,
+  verification_document_url text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint uq_email_verification_codes_email_purpose unique (email, purpose)
+);
+
+create index if not exists idx_email_verification_codes_expires_at
+  on email_verification_codes(expires_at);
 
 create table partner_profiles (
   id varchar(20) primary key default ('pp' || lpad(nextval('seq_partner_profiles')::text, 4, '0')),

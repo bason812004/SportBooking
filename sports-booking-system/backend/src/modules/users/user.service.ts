@@ -11,6 +11,7 @@ export const userService = {
   },
   async updateMe(userId: string, data: { fullName?: string; phone?: string; avatarUrl?: string }) {
     const user = await userRepository.updateMe(userId, data);
+    if (!user) throw new NotFoundError("Khong tim thay tai khoan");
     return omitPassword(user);
   },
   bookings(userId: string, query: { page?: string; limit?: string }) {

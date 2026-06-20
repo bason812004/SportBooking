@@ -50,9 +50,9 @@ alter table bookings
   add column if not exists demand_prediction_snapshot jsonb;
 
 create table if not exists commission_transactions (
-  id uuid primary key default uuid_generate_v4(),
-  booking_id uuid not null references bookings(id),
-  partner_id uuid not null references partner_profiles(id),
+  id uuid primary key default gen_random_uuid(),
+  booking_id varchar(20) not null references bookings(id),
+  partner_id varchar(20) not null references partner_profiles(id),
   transaction_type varchar(20) not null default 'EARNING' check (transaction_type in ('EARNING', 'REVERSAL')),
   event_type varchar(20) not null check (event_type in ('COMPLETED', 'NO_SHOW', 'REFUND')),
   gross_amount numeric(12, 2) not null check (gross_amount >= 0),
@@ -67,6 +67,18 @@ create table if not exists commission_transactions (
     (transaction_type = 'REVERSAL' and commission_amount <= 0 and net_amount <= 0)
   )
 );
+
+alter table commission_transactions
+  drop constraint if exists commission_transactions_booking_id_fkey,
+  drop constraint if exists commission_transactions_partner_id_fkey;
+
+alter table commission_transactions
+  alter column booking_id type varchar(20) using booking_id::text,
+  alter column partner_id type varchar(20) using partner_id::text;
+
+alter table commission_transactions
+  add constraint commission_transactions_booking_id_fkey foreign key (booking_id) references bookings(id),
+  add constraint commission_transactions_partner_id_fkey foreign key (partner_id) references partner_profiles(id);
 
 create index if not exists idx_commission_transactions_booking_id
   on commission_transactions(booking_id);

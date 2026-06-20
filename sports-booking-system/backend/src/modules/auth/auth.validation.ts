@@ -11,6 +11,17 @@ export const registerSchema = z.object({
   })
 });
 
+export const verifyRegistrationCodeSchema = z.object({
+  body: z.object({
+    email: z.string().email(),
+    code: z.string().regex(/^\d{6}$/, "Mã xác thực phải gồm đúng 6 chữ số")
+  })
+});
+
+export const resendRegistrationCodeSchema = z.object({
+  body: z.object({ email: z.string().email() })
+});
+
 export const registerPartnerSchema = z.object({
   body: z.object({
     fullName: z.string().min(2),
@@ -39,7 +50,8 @@ export const changePasswordSchema = z.object({
 
 export const googleAuthSchema = z.object({
   body: z.object({
-    credential: z.string().min(10)
+    credential: z.string().min(10),
+    accountType: z.enum(["USER", "PARTNER"]).default("USER")
   })
 });
 

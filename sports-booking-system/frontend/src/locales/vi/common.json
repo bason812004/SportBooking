@@ -36,22 +36,33 @@
     "note": "Ghi chú"
   },
   "auth": {
-    "login": "Dang nhap",
-    "register": "Dang ky",
-    "userRegister": "Dang ky nguoi dung",
-    "processing": "Dang xu ly",
-    "loginSuccess": "Dang nhap thanh cong",
-    "registerSuccess": "Dang ky thanh cong",
-    "googleFailed": "Khong the dang nhap voi Google",
-    "noAccount": "Chua co tai khoan?",
-    "partnerPrompt": "Muon dang san?",
-    "partnerRegister": "Dang ky doi tac"
+    "login": "Đăng nhập",
+    "register": "Đăng ký",
+    "userRegister": "Đăng ký người dùng",
+    "processing": "Đang xử lý",
+    "loginSuccess": "Đăng nhập thành công",
+    "registerSuccess": "Đăng ký thành công",
+    "googleFailed": "Không thể đăng nhập với Google",
+    "noAccount": "Chưa có tài khoản?",
+    "partnerPrompt": "Muốn đăng sân?",
+    "partnerRegister": "Đăng ký đối tác",
+    "sendVerificationCode": "Gửi mã xác thực",
+    "enterVerificationCode": "Nhập mã xác thực",
+    "codeSent": "Mã xác thực đã được gửi đến email của bạn.",
+    "checkInbox": "Vui lòng kiểm tra hộp thư đến hoặc thư rác.",
+    "verifyEmail": "Xác thực email",
+    "resendCode": "Gửi lại mã",
+    "resendAfter": "Gửi lại sau {{seconds}} giây",
+    "codeExpiresAfter": "Mã hết hạn sau {{time}}",
+    "verificationSuccess": "Xác thực thành công. Tài khoản đã được tạo.",
+    "changeRegistrationInfo": "Thay đổi thông tin đăng ký"
   },
   "errors": {
-    "invalidEmail": "Email khong hop le",
-    "passwordMin8": "Mat khau toi thieu 8 ky tu",
-    "fullNameRequired": "Nhap ho va ten",
-    "businessNameRequired": "Nhap ten don vi",
-    "addressRequired": "Nhap dia chi"
+    "invalidEmail": "Email không hợp lệ",
+    "passwordMin8": "Mật khẩu tối thiểu 8 ký tự",
+    "fullNameRequired": "Nhập họ và tên",
+    "businessNameRequired": "Nhập tên đơn vị",
+    "addressRequired": "Nhập địa chỉ",
+    "otpSixDigits": "Mã xác thực phải gồm đúng 6 chữ số"
   }
 }

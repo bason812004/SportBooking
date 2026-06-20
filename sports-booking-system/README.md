@@ -210,3 +210,15 @@ cd backend
 npx prisma db execute --schema prisma/schema.prisma --file ../database/migrate_admin_management.sql
 npx prisma generate
 ```
+# Xác thực email khi đăng ký
+
+Đăng ký tài khoản LOCAL dùng luồng OTP hai bước. Chạy
+`database/migrate_email_verification.sql` trên Supabase trước khi khởi động backend,
+sau đó cấu hình SMTP theo `backend/.env.example`. Với Gmail, dùng App Password thay
+cho mật khẩu Gmail thông thường.
+
+Các API:
+
+- `POST /api/auth/register/request-code`
+- `POST /api/auth/register/verify-code`
+- `POST /api/auth/register/resend-code`

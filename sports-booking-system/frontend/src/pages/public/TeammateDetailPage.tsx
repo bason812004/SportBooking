@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { CalendarDays, MapPin, QrCode, UserRound, UsersRound, WalletCards, X } from "lucide-react";
+import { toast } from "sonner";
+import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { contentApi } from "../../features/content/api/contentApi";
 import { useTeamPost } from "../../features/content/hooks/useContent";
 import { useAuth } from "../../features/auth/hooks/useAuth";
-import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 
 const currency = new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 });
 const dateFormat = new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -17,9 +18,15 @@ export function TeammateDetailPage() {
   const [qrOpen, setQrOpen] = useState(false);
   const [joining, setJoining] = useState(false);
 
-  if (post.isLoading) return <div className="px-4 py-16"><LoadingState /></div>;
-  if (post.isError) return <div className="px-4 py-16"><ErrorState message={post.error.message} /></div>;
-  if (!post.data) return <div className="px-4 py-16"><EmptyState title="Không tìm thấy bài đăng." /></div>;
+  if (post.isLoading) return <div className="px-4 py-16"><LoadingState label="Đang tải bài đăng..." /></div>;
+  if (post.isError) {
+    return (
+      <div className="px-4 py-16">
+        <ErrorState message={post.error.message || "Không thể tải dữ liệu. Vui lòng thử lại."} onRetry={() => void post.refetch()} />
+      </div>
+    );
+  }
+  if (!post.data) return <div className="px-4 py-16"><EmptyState title="Không tìm thấy bài đăng tìm đồng đội." /></div>;
 
   const item = post.data;
   const playingDate = item.playingDate ? dateFormat.format(new Date(item.playingDate)) : "Linh hoạt";
@@ -29,11 +36,19 @@ export function TeammateDetailPage() {
       navigate("/login");
       return;
     }
+
     setJoining(true);
     try {
       if (id) await contentApi.joinTeamPost(id);
-      if (item.zaloGroupLink) window.open(item.zaloGroupLink, "_blank", "noopener,noreferrer");
-      else if (item.zaloQrImage) setQrOpen(true);
+      if (item.zaloGroupLink) {
+        window.open(item.zaloGroupLink, "_blank", "noopener,noreferrer");
+      } else if (item.zaloQrImage) {
+        setQrOpen(true);
+      } else {
+        toast.info("Chưa có thông tin nhóm.");
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không thể tham gia nhóm.");
     } finally {
       setJoining(false);
     }
@@ -42,7 +57,9 @@ export function TeammateDetailPage() {
   return (
     <section className="bg-[#f5f7fb] px-4 py-10 text-slate-950">
       <div className="mx-auto max-w-6xl space-y-6">
-        <Link to="/teammates" className="text-sm font-black text-emerald-700 hover:text-emerald-900">Quay lại danh sách</Link>
+        <Link to="/teammates" className="text-sm font-black text-emerald-700 hover:text-emerald-900">
+          Quay lại danh sách
+        </Link>
 
         <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
           <main className="space-y-6">
@@ -52,7 +69,10 @@ export function TeammateDetailPage() {
                 <span className="rounded-full bg-lime-100 px-3 py-1 text-xs font-black text-emerald-900">{item.status}</span>
               </div>
               <h1 className="mt-5 text-4xl font-black leading-tight md:text-5xl">{item.title}</h1>
-              <p className="mt-4 flex items-center gap-2 text-slate-600"><MapPin className="h-5 w-5 text-emerald-700" />{item.courtName} - {item.address}</p>
+              <p className="mt-4 flex items-center gap-2 text-slate-600">
+                <MapPin className="h-5 w-5 text-emerald-700" />
+                {item.courtName} - {item.address}
+              </p>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
