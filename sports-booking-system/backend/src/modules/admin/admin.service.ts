@@ -88,9 +88,7 @@ export const adminService = {
       partnerId: query.partnerId || undefined,
       userId: query.userId || undefined,
       bookingStatus: query.bookingStatus || undefined,
-      paymentStatus: query.paymentStatus || undefined,
-      disputeStatus: query.disputeStatus || undefined,
-      flagStatus: query.flagStatus || undefined
+      paymentStatus: query.paymentStatus || undefined
     });
     return { items, meta: paginationMeta(page, limit, total) };
   },
@@ -115,8 +113,6 @@ export const adminService = {
     }
 
     const action =
-      input.disputeStatus && input.disputeStatus !== current.disputeStatus ? "DISPUTE_UPDATED" :
-      input.flagStatus && input.flagStatus !== current.flagStatus ? "FLAG_UPDATED" :
       input.refundAmount !== undefined || input.paymentStatus ? "REFUND_OR_PAYMENT_UPDATED" :
       "BOOKING_ADMIN_UPDATED";
 
@@ -125,8 +121,6 @@ export const adminService = {
     await recordAdminAction(actorId, action, "BOOKING", id, {
       bookingStatus: input.bookingStatus,
       paymentStatus: input.paymentStatus,
-      disputeStatus: input.disputeStatus,
-      flagStatus: input.flagStatus,
       refundAmount: input.refundAmount,
       platformRetainedAmount: input.platformRetainedAmount
     });

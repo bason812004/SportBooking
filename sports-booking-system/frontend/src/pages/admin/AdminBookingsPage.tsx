@@ -11,8 +11,6 @@ import { ErrorState, LoadingState } from "../../components/common/States";
 
 const bookingStatuses = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"];
 const paymentStatuses = ["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"];
-const disputeStatuses = ["NONE", "OPEN", "UNDER_REVIEW", "RESOLVED", "REJECTED"];
-const flagStatuses = ["NORMAL", "FLAGGED", "CLEARED"];
 
 const bookingStatusLabels: Record<string, string> = {
   PENDING: "Chờ xác nhận",
@@ -29,20 +27,6 @@ const paymentStatusLabels: Record<string, string> = {
   REFUNDED: "Đã hoàn tiền"
 };
 
-const disputeStatusLabels: Record<string, string> = {
-  NONE: "Không tranh chấp",
-  OPEN: "Đang mở",
-  UNDER_REVIEW: "Đang xem xét",
-  RESOLVED: "Đã xử lý",
-  REJECTED: "Đã từ chối"
-};
-
-const flagStatusLabels: Record<string, string> = {
-  NORMAL: "Bình thường",
-  FLAGGED: "Bất thường",
-  CLEARED: "Đã kiểm tra"
-};
-
 type Filters = {
   search: string;
   fromDate: string;
@@ -52,15 +36,11 @@ type Filters = {
   userId: string;
   paymentStatus: string;
   bookingStatus: string;
-  disputeStatus: string;
-  flagStatus: string;
 };
 
 type BookingAdminForm = {
   bookingStatus: string;
   paymentStatus: string;
-  disputeStatus: string;
-  flagStatus: string;
   adminNote: string;
   cancelReason: string;
   refundAmount: string;
@@ -76,9 +56,7 @@ const emptyFilters: Filters = {
   partnerId: "",
   userId: "",
   paymentStatus: "",
-  bookingStatus: "",
-  disputeStatus: "",
-  flagStatus: ""
+  bookingStatus: ""
 };
 
 export function AdminBookingsPage() {
@@ -112,7 +90,7 @@ export function AdminBookingsPage() {
         </Button>
       </div>
 
-      <div className="grid gap-3 rounded-lg border bg-white p-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-3 rounded-lg border bg-white p-4 md:grid-cols-2 xl:grid-cols-4">
         <Input label="Tìm kiếm" value={filters.search} onChange={(event) => updateFilter(setPage, setFilters, "search", event.target.value)} placeholder="Mã đơn, khách, sân, đối tác" />
         <Input label="Từ ngày" type="date" value={filters.fromDate} onChange={(event) => updateFilter(setPage, setFilters, "fromDate", event.target.value)} />
         <Input label="Đến ngày" type="date" value={filters.toDate} onChange={(event) => updateFilter(setPage, setFilters, "toDate", event.target.value)} />
@@ -121,12 +99,10 @@ export function AdminBookingsPage() {
         <Input label="ID người dùng" value={filters.userId} onChange={(event) => updateFilter(setPage, setFilters, "userId", event.target.value)} placeholder="u0001" />
         <Select label="Thanh toán" value={filters.paymentStatus} onChange={(event) => updateFilter(setPage, setFilters, "paymentStatus", event.target.value)} options={withAll(paymentStatuses, paymentStatusLabels)} />
         <Select label="Trạng thái đơn" value={filters.bookingStatus} onChange={(event) => updateFilter(setPage, setFilters, "bookingStatus", event.target.value)} options={withAll(bookingStatuses, bookingStatusLabels)} />
-        <Select label="Tranh chấp" value={filters.disputeStatus} onChange={(event) => updateFilter(setPage, setFilters, "disputeStatus", event.target.value)} options={withAll(disputeStatuses, disputeStatusLabels)} />
-        <Select label="Bất thường" value={filters.flagStatus} onChange={(event) => updateFilter(setPage, setFilters, "flagStatus", event.target.value)} options={withAll(flagStatuses, flagStatusLabels)} />
       </div>
 
       <div className="overflow-auto rounded-lg border bg-white">
-        <table className="w-full min-w-[1180px] text-sm">
+        <table className="w-full min-w-[980px] text-sm">
           <thead>
             <tr className="bg-slate-50 text-left">
               <th className="p-3">Mã đơn</th>
@@ -136,8 +112,6 @@ export function AdminBookingsPage() {
               <th>Tổng tiền</th>
               <th>Đơn</th>
               <th>Thanh toán</th>
-              <th>Tranh chấp</th>
-              <th>Bất thường</th>
               <th></th>
             </tr>
           </thead>
@@ -151,8 +125,6 @@ export function AdminBookingsPage() {
                 <td>{formatMoney(booking.totalPrice)}</td>
                 <td><StatusBadge value={booking.bookingStatus} labels={bookingStatusLabels} /></td>
                 <td><StatusBadge value={booking.paymentStatus} labels={paymentStatusLabels} /></td>
-                <td><StatusBadge value={booking.disputeStatus} labels={disputeStatusLabels} /></td>
-                <td><StatusBadge value={booking.flagStatus} labels={flagStatusLabels} /></td>
                 <td className="p-3 text-right">
                   <Button variant="secondary" onClick={() => setSelected(booking.id)}>
                     Chi tiết
@@ -205,8 +177,6 @@ function BookingDetail({ booking, onUpdated }: { booking: AdminBooking; onUpdate
   const [form, setForm] = useState<BookingAdminForm>({
     bookingStatus: booking.bookingStatus,
     paymentStatus: booking.paymentStatus,
-    disputeStatus: booking.disputeStatus,
-    flagStatus: booking.flagStatus,
     adminNote: booking.adminNote ?? "",
     cancelReason: booking.cancelReason ?? "",
     refundAmount: numberText(booking.refundAmount),
@@ -218,8 +188,6 @@ function BookingDetail({ booking, onUpdated }: { booking: AdminBooking; onUpdate
     setForm({
       bookingStatus: booking.bookingStatus,
       paymentStatus: booking.paymentStatus,
-      disputeStatus: booking.disputeStatus,
-      flagStatus: booking.flagStatus,
       adminNote: booking.adminNote ?? "",
       cancelReason: booking.cancelReason ?? "",
       refundAmount: numberText(booking.refundAmount),
@@ -232,8 +200,6 @@ function BookingDetail({ booking, onUpdated }: { booking: AdminBooking; onUpdate
     mutationFn: () => adminApi.updateBookingAdmin(booking.id, {
       bookingStatus: form.bookingStatus,
       paymentStatus: form.paymentStatus,
-      disputeStatus: form.disputeStatus,
-      flagStatus: form.flagStatus,
       adminNote: form.adminNote || undefined,
       cancelReason: form.cancelReason || undefined,
       refundAmount: form.refundAmount === "" ? undefined : Number(form.refundAmount),
@@ -292,8 +258,6 @@ function BookingDetail({ booking, onUpdated }: { booking: AdminBooking; onUpdate
           <div className="mt-4 grid gap-2.5">
             <Select label="Trạng thái đơn" value={form.bookingStatus} onChange={(event) => setForm({ ...form, bookingStatus: event.target.value })} options={toOptions(bookingStatuses, bookingStatusLabels)} />
             <Select label="Trạng thái thanh toán" value={form.paymentStatus} onChange={(event) => setForm({ ...form, paymentStatus: event.target.value })} options={toOptions(paymentStatuses, paymentStatusLabels)} />
-            <Select label="Trạng thái tranh chấp" value={form.disputeStatus} onChange={(event) => setForm({ ...form, disputeStatus: event.target.value })} options={toOptions(disputeStatuses, disputeStatusLabels)} />
-            <Select label="Đánh dấu bất thường" value={form.flagStatus} onChange={(event) => setForm({ ...form, flagStatus: event.target.value })} options={toOptions(flagStatuses, flagStatusLabels)} />
             <Input label="Số tiền hoàn" type="number" min="0" value={form.refundAmount} onChange={(event) => setForm({ ...form, refundAmount: event.target.value })} />
             <Input label="Nền tảng giữ lại" type="number" min="0" value={form.platformRetainedAmount} onChange={(event) => setForm({ ...form, platformRetainedAmount: event.target.value })} />
             <Input label="Lý do hủy / xử lý" value={form.cancelReason} onChange={(event) => setForm({ ...form, cancelReason: event.target.value })} />
@@ -336,28 +300,29 @@ function Pager({ page, total, setPage }: { page: number; total: number; setPage:
 }
 
 function StatusBadge({ value, labels }: { value: string; labels?: Record<string, string> }) {
-  const tone = value.includes("CANCEL") || value.includes("REFUND") || value === "NO_SHOW" || value === "OPEN" || value === "FLAGGED"
+  const tone = value.includes("CANCEL") || value.includes("REFUND") || value === "NO_SHOW"
     ? "bg-red-50 text-red-700"
-    : value.includes("PAID") || value === "CONFIRMED" || value === "COMPLETED" || value === "RESOLVED" || value === "CLEARED"
+    : value.includes("PAID") || value === "CONFIRMED" || value === "COMPLETED"
       ? "bg-emerald-50 text-emerald-700"
       : "bg-amber-50 text-amber-700";
-  return <span className={`inline-flex rounded-full px-2 py-1 text-xs font-bold ${tone}`}>{labels?.[value] ?? value}</span>;
+  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${tone}`}>{labels?.[value] ?? value}</span>;
 }
 
-function Info({ title, lines }: { title: string; lines: Array<string | undefined | null> }) {
+function Info({ title, lines }: { title: string; lines: Array<string | null | undefined> }) {
+  const values = lines.filter(Boolean);
   return (
     <div className="rounded-lg border p-4">
       <p className="font-bold">{title}</p>
-      {lines.filter(Boolean).map((line, index) => <p key={`${line}-${index}`} className="mt-1 text-sm text-slate-600">{line}</p>)}
+      {values.length ? values.map((line, index) => <p key={index} className="mt-1 text-sm text-slate-600">{line}</p>) : <p className="mt-1 text-sm text-slate-500">-</p>}
     </div>
   );
 }
 
 function Metric({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return (
-    <div className="rounded-lg border p-3">
+    <div className="rounded-lg border bg-white p-3">
       <p className="text-slate-500">{label}</p>
-      <p className={strong ? "text-lg font-bold" : "font-semibold"}>{value}</p>
+      <p className={`mt-1 text-lg ${strong ? "font-bold" : "font-semibold"}`}>{value}</p>
     </div>
   );
 }
@@ -370,19 +335,21 @@ function toOptions(values: string[], labels: Record<string, string>) {
   return values.map((value) => ({ value, label: labels[value] ?? value }));
 }
 
-function formatDate(value: string) {
+function formatMoney(value?: number | string | null) {
+  return `${Number(value ?? 0).toLocaleString("vi-VN")} đ`;
+}
+
+function formatDate(value?: string | Date | null) {
+  if (!value) return "-";
   return new Date(value).toLocaleDateString("vi-VN");
 }
 
-function formatTime(value: string) {
-  return new Date(value).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+function formatTime(value?: string | Date | null) {
+  if (!value) return "-";
+  return String(value).slice(0, 5);
 }
 
-function formatMoney(value: string | number | undefined | null) {
-  return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 }).format(Number(value ?? 0));
-}
-
-function numberText(value: string | number | undefined | null) {
-  const number = Number(value ?? 0);
-  return number > 0 ? String(number) : "";
+function numberText(value?: string | number | null) {
+  if (value === null || value === undefined) return "";
+  return String(Number(value));
 }

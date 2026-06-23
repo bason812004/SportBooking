@@ -42,8 +42,6 @@ export const adminApi = {
     payload: {
       bookingStatus?: string;
       paymentStatus?: string;
-      disputeStatus?: string;
-      flagStatus?: string;
       adminNote?: string;
       cancelReason?: string;
       refundAmount?: number;

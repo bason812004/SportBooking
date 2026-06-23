@@ -303,9 +303,7 @@ model Booking {
   paymentStatus          PaymentStatus @default(UNPAID) @map("payment_status")
   bookingStatus          BookingStatus @default(PENDING) @map("booking_status")
   cancelReason           String?       @map("cancel_reason")
-  disputeStatus          String        @default("NONE") @map("dispute_status") @db.VarChar(30)
   adminNote              String?       @map("admin_note")
-  flagStatus             String        @default("NORMAL") @map("flag_status") @db.VarChar(30)
   cancelledAt            DateTime?     @map("cancelled_at") @db.Timestamptz
   createdAt              DateTime      @default(now()) @map("created_at") @db.Timestamptz
   updatedAt              DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz

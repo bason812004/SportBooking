@@ -181,8 +181,6 @@ export type AdminBooking = Omit<Booking, "court"> & {
   updatedAt?: string;
   cancelReason?: string | null;
   adminNote?: string | null;
-  disputeStatus: "NONE" | "OPEN" | "UNDER_REVIEW" | "RESOLVED" | "REJECTED";
-  flagStatus: "NORMAL" | "FLAGGED" | "CLEARED";
   court: {
     id: string;
     name: string;

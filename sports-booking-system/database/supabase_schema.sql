@@ -411,14 +411,10 @@ create table bookings (
   payment_status payment_status not null default 'UNPAID',
   booking_status booking_status not null default 'PENDING',
   cancel_reason text,
-  dispute_status varchar(30) not null default 'NONE',
   admin_note text,
-  flag_status varchar(30) not null default 'NORMAL',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint bookings_time_check check (start_time < end_time),
-  constraint bookings_dispute_status_check check (dispute_status in ('NONE', 'OPEN', 'UNDER_REVIEW', 'RESOLVED', 'REJECTED')),
-  constraint bookings_flag_status_check check (flag_status in ('NORMAL', 'FLAGGED', 'CLEARED'))
+  constraint bookings_time_check check (start_time < end_time)
 );
 
 create table booking_admin_actions (
@@ -753,8 +749,6 @@ create index if not exists idx_bookings_court_id on bookings(court_id);
 create index if not exists idx_bookings_booking_date on bookings(booking_date);
 create index if not exists idx_bookings_booking_status on bookings(booking_status);
 create index if not exists idx_bookings_payment_status on bookings(payment_status);
-create index if not exists idx_bookings_dispute_status on bookings(dispute_status);
-create index if not exists idx_bookings_flag_status on bookings(flag_status);
 create index if not exists idx_bookings_schedule_conflict on bookings(court_id, booking_date, start_time, end_time, booking_status);
 create index if not exists idx_booking_admin_actions_booking_id on booking_admin_actions(booking_id, created_at desc);
 create index if not exists idx_booking_admin_actions_actor_id on booking_admin_actions(actor_id, created_at desc);

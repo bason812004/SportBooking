@@ -10,8 +10,6 @@ function bookingWhere(filters: {
   userId?: string;
   bookingStatus?: string;
   paymentStatus?: string;
-  disputeStatus?: string;
-  flagStatus?: string;
 }) {
   const clauses: string[] = [];
   const values: unknown[] = [];
@@ -38,8 +36,6 @@ function bookingWhere(filters: {
   if (filters.userId) add("b.user_id = ?", filters.userId);
   if (filters.bookingStatus) add("b.booking_status::text = ?", filters.bookingStatus);
   if (filters.paymentStatus) add("b.payment_status::text = ?", filters.paymentStatus);
-  if (filters.disputeStatus) add("b.dispute_status = ?", filters.disputeStatus);
-  if (filters.flagStatus) add("b.flag_status = ?", filters.flagStatus);
 
   return {
     where: clauses.length ? `where ${clauses.join(" and ")}` : "",
@@ -142,8 +138,6 @@ export const adminRepository = {
     userId?: string;
     bookingStatus?: string;
     paymentStatus?: string;
-    disputeStatus?: string;
-    flagStatus?: string;
   }) {
     const { where, values } = bookingWhere(filters);
     const listValues = [...values, limit, (page - 1) * limit];
@@ -164,9 +158,7 @@ export const adminRepository = {
         b.payment_status::text as "paymentStatus",
         b.booking_status::text as "bookingStatus",
         b.cancel_reason as "cancelReason",
-        b.dispute_status as "disputeStatus",
         b.admin_note as "adminNote",
-        b.flag_status as "flagStatus",
         b.created_at as "createdAt",
         json_build_object('id', u.id, 'fullName', u.full_name, 'email', u.email, 'phone', u.phone) as "user",
         json_build_object(
@@ -212,9 +204,7 @@ export const adminRepository = {
         b.payment_status::text as "paymentStatus",
         b.booking_status::text as "bookingStatus",
         b.cancel_reason as "cancelReason",
-        b.dispute_status as "disputeStatus",
         b.admin_note as "adminNote",
-        b.flag_status as "flagStatus",
         b.created_at as "createdAt",
         b.updated_at as "updatedAt",
         json_build_object('id', u.id, 'fullName', u.full_name, 'email', u.email, 'phone', u.phone, 'status', u.status::text) as "user",
@@ -272,7 +262,7 @@ export const adminRepository = {
     return prisma.$transaction(async (tx) => {
       const beforeRows = await tx.$queryRawUnsafe<any[]>(`
         select booking_status::text as "bookingStatus", payment_status::text as "paymentStatus",
-          dispute_status as "disputeStatus", flag_status as "flagStatus", refund_amount::float as "refundAmount",
+          refund_amount::float as "refundAmount",
           platform_retained_amount::float as "platformRetainedAmount", admin_note as "adminNote",
           total_price::float as "totalPrice", cancel_reason as "cancelReason"
         from bookings where id = $1 for update
@@ -288,8 +278,6 @@ export const adminRepository = {
       };
       if (input.bookingStatus !== undefined) add("booking_status", input.bookingStatus, "::booking_status");
       if (input.paymentStatus !== undefined) add("payment_status", input.paymentStatus, "::payment_status");
-      if (input.disputeStatus !== undefined) add("dispute_status", input.disputeStatus);
-      if (input.flagStatus !== undefined) add("flag_status", input.flagStatus);
       if (input.adminNote !== undefined) add("admin_note", input.adminNote);
       if (input.cancelReason !== undefined) add("cancel_reason", input.cancelReason);
       if (input.refundAmount !== undefined) add("refund_amount", input.refundAmount);
@@ -303,8 +291,7 @@ export const adminRepository = {
         set ${sets.join(", ")}, updated_at = now()
         where id = $${idIndex}
         returning id, booking_code as "bookingCode", booking_status::text as "bookingStatus",
-          payment_status::text as "paymentStatus", dispute_status as "disputeStatus",
-          flag_status as "flagStatus", admin_note as "adminNote", refund_amount::float as "refundAmount",
+          payment_status::text as "paymentStatus", admin_note as "adminNote", refund_amount::float as "refundAmount",
           platform_retained_amount::float as "platformRetainedAmount"
       `, ...values);
       const updated = updatedRows[0];

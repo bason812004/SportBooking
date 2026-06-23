@@ -47,9 +47,7 @@ export const bookingQuerySchema = z.object({
     partnerId: optionalQuery(z.string().trim().max(40)),
     userId: optionalQuery(z.string().trim().max(40)),
     bookingStatus: optionalQuery(z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"])),
-    paymentStatus: optionalQuery(z.enum(["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"])),
-    disputeStatus: optionalQuery(z.enum(["NONE", "OPEN", "UNDER_REVIEW", "RESOLVED", "REJECTED"])),
-    flagStatus: optionalQuery(z.enum(["NORMAL", "FLAGGED", "CLEARED"]))
+    paymentStatus: optionalQuery(z.enum(["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"]))
   })
 });
 
@@ -57,8 +55,6 @@ export const bookingAdminUpdateSchema = z.object({
   body: z.object({
     bookingStatus: z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"]).optional(),
     paymentStatus: z.enum(["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"]).optional(),
-    disputeStatus: z.enum(["NONE", "OPEN", "UNDER_REVIEW", "RESOLVED", "REJECTED"]).optional(),
-    flagStatus: z.enum(["NORMAL", "FLAGGED", "CLEARED"]).optional(),
     adminNote: z.string().trim().max(2000).optional(),
     cancelReason: z.string().trim().max(500).optional(),
     refundAmount: z.number().min(0).optional(),
@@ -68,8 +64,6 @@ export const bookingAdminUpdateSchema = z.object({
     (value) => [
       value.bookingStatus,
       value.paymentStatus,
-      value.disputeStatus,
-      value.flagStatus,
       value.adminNote,
       value.cancelReason,
       value.refundAmount,
