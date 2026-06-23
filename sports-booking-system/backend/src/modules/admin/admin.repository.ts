@@ -908,11 +908,30 @@ export const adminRepository = {
   },
 
   moderationHistory(entityType: string, entityId: string) {
-    return prisma.moderationHistory.findMany({ where: { entityType, entityId }, orderBy: { createdAt: "desc" } });
+    return prisma.$queryRawUnsafe<any[]>(`
+      select
+        mh.id,
+        mh.entity_type as "entityType",
+        mh.entity_id as "entityId",
+        mh.action,
+        mh.reason,
+        mh.actor_id as "actorId",
+        mh.created_at as "createdAt",
+        json_build_object('id', u.id, 'fullName', u.full_name, 'email', u.email) as "actor"
+      from moderation_history mh
+      left join users u on u.id = mh.actor_id
+      where mh.entity_type = $1 and mh.entity_id = $2
+      order by mh.created_at desc
+    `, entityType, entityId);
   },
 
   addModerationHistory(data: { entityType: string; entityId: string; action: string; reason?: string; actorId: string }) {
-    return prisma.moderationHistory.create({ data });
+    return prisma.$queryRawUnsafe<any[]>(`
+      insert into moderation_history (entity_type, entity_id, action, reason, actor_id)
+      values ($1, $2, $3, $4, $5)
+      returning id, entity_type as "entityType", entity_id as "entityId",
+        action, reason, actor_id as "actorId", created_at as "createdAt"
+    `, data.entityType, data.entityId, data.action, data.reason ?? null, data.actorId);
   },
 
   vouchers(page: number, limit: number, filters: { search?: string; status?: string }) {
