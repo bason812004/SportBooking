@@ -41,7 +41,9 @@ create extension if not exists "pgcrypto";
 
 -- ── DROP all ──────────────────────────────────────────────────────────
 drop table if exists notifications cascade;
+drop table if exists notification_campaigns cascade;
 drop table if exists reports cascade;
+drop table if exists partner_payouts cascade;
 drop table if exists analytics_events cascade;
 drop table if exists demand_features cascade;
 drop table if exists demand_predictions cascade;
@@ -59,6 +61,7 @@ drop table if exists user_vouchers cascade;
 drop table if exists vouchers cascade;
 drop table if exists reviews cascade;
 drop table if exists booking_services cascade;
+drop table if exists booking_admin_actions cascade;
 drop table if exists bookings cascade;
 drop table if exists court_services cascade;
 drop table if exists court_prices cascade;
@@ -98,6 +101,7 @@ drop type if exists user_role cascade;
 -- Drop sequences
 drop sequence if exists seq_users cascade;
 drop sequence if exists seq_partner_profiles cascade;
+drop sequence if exists seq_partner_payouts cascade;
 drop sequence if exists seq_court_categories cascade;
 drop sequence if exists seq_courts cascade;
 drop sequence if exists seq_court_surfaces cascade;
@@ -108,12 +112,14 @@ drop sequence if exists seq_court_base_prices cascade;
 drop sequence if exists seq_dynamic_pricing_rules cascade;
 drop sequence if exists seq_court_services cascade;
 drop sequence if exists seq_bookings cascade;
+drop sequence if exists seq_booking_admin_actions cascade;
 drop sequence if exists seq_demand_predictions cascade;
 drop sequence if exists seq_demand_features cascade;
 drop sequence if exists seq_booking_services cascade;
 drop sequence if exists seq_reviews cascade;
 drop sequence if exists seq_reports cascade;
 drop sequence if exists seq_notifications cascade;
+drop sequence if exists seq_notification_campaigns cascade;
 drop sequence if exists seq_analytics_events cascade;
 drop sequence if exists seq_vouchers cascade;
 drop sequence if exists seq_user_vouchers cascade;
@@ -132,7 +138,7 @@ create type account_status as enum ('ACTIVE', 'LOCKED');
 create type approval_status as enum ('PENDING', 'APPROVED', 'REJECTED');
 create type court_active_status as enum ('ACTIVE', 'INACTIVE');
 create type booking_status as enum ('PENDING', 'CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW');
-create type payment_status as enum ('UNPAID', 'PAID', 'REFUNDED');
+create type payment_status as enum ('UNPAID', 'PAID', 'PARTIALLY_REFUNDED', 'REFUNDED');
 create type payment_method as enum ('CASH', 'BANK_TRANSFER', 'E_WALLET');
 create type day_type as enum ('WEEKDAY', 'WEEKEND', 'HOLIDAY');
 create type review_display_status as enum ('VISIBLE', 'HIDDEN');
@@ -169,6 +175,7 @@ create type tournament_registration_status as enum ('PENDING', 'APPROVED', 'REJE
 -- ── Sequences cho auto-generate ID ────────────────────────────────────
 create sequence seq_users;
 create sequence seq_partner_profiles;
+create sequence seq_partner_payouts;
 create sequence seq_court_categories;
 create sequence seq_courts;
 create sequence seq_court_surfaces;
@@ -179,12 +186,14 @@ create sequence seq_court_base_prices;
 create sequence seq_dynamic_pricing_rules;
 create sequence seq_court_services;
 create sequence seq_bookings;
+create sequence seq_booking_admin_actions;
 create sequence seq_demand_predictions;
 create sequence seq_demand_features;
 create sequence seq_booking_services;
 create sequence seq_reviews;
 create sequence seq_reports;
 create sequence seq_notifications;
+create sequence seq_notification_campaigns;
 create sequence seq_analytics_events;
 create sequence seq_vouchers;
 create sequence seq_user_vouchers;
@@ -225,6 +234,28 @@ create table partner_profiles (
   updated_at timestamptz not null default now()
 );
 
+create table partner_payouts (
+  id varchar(20) primary key default ('po' || lpad(nextval('seq_partner_payouts')::text, 4, '0')),
+  partner_id varchar(20) not null references partner_profiles(id) on delete cascade,
+  payout_month char(7) not null check (payout_month ~ '^\d{4}-(0[1-9]|1[0-2])$'),
+  status varchar(20) not null default 'PENDING' check (status in ('PENDING', 'PROCESSING', 'PAID', 'FAILED', 'CANCELLED')),
+  gross_amount numeric(12, 2) not null default 0,
+  commission_amount numeric(12, 2) not null default 0,
+  net_amount numeric(12, 2) not null default 0,
+  transaction_count integer not null default 0,
+  note text,
+  paid_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint partner_payouts_amount_check check (
+    gross_amount >= 0
+    and commission_amount >= 0
+    and net_amount >= 0
+    and transaction_count >= 0
+  ),
+  constraint partner_payouts_partner_month_unique unique (partner_id, payout_month)
+);
+
 create table court_categories (
   id varchar(20) primary key default ('cc' || lpad(nextval('seq_court_categories')::text, 4, '0')),
   name varchar(100) not null unique,
@@ -256,6 +287,10 @@ create table courts (
   facebook_url text,
   source_url text,
   verified boolean not null default false,
+  featured boolean not null default false,
+  admin_note text,
+  update_request_note text,
+  update_requested_at timestamptz,
   court_count integer not null default 1 check (court_count > 0),
   price_note varchar(120),
   golden_price_note varchar(120),
@@ -376,9 +411,25 @@ create table bookings (
   payment_status payment_status not null default 'UNPAID',
   booking_status booking_status not null default 'PENDING',
   cancel_reason text,
+  dispute_status varchar(30) not null default 'NONE',
+  admin_note text,
+  flag_status varchar(30) not null default 'NORMAL',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint bookings_time_check check (start_time < end_time)
+  constraint bookings_time_check check (start_time < end_time),
+  constraint bookings_dispute_status_check check (dispute_status in ('NONE', 'OPEN', 'UNDER_REVIEW', 'RESOLVED', 'REJECTED')),
+  constraint bookings_flag_status_check check (flag_status in ('NORMAL', 'FLAGGED', 'CLEARED'))
+);
+
+create table booking_admin_actions (
+  id varchar(20) primary key default ('baa' || lpad(nextval('seq_booking_admin_actions')::text, 4, '0')),
+  booking_id varchar(20) not null references bookings(id) on delete cascade,
+  actor_id varchar(20) not null references users(id),
+  action varchar(80) not null,
+  note text,
+  previous_status jsonb,
+  new_status jsonb,
+  created_at timestamptz not null default now()
 );
 
 create table demand_predictions (
@@ -451,13 +502,36 @@ create table reports (
   resolved_at timestamptz
 );
 
+create table notification_campaigns (
+  id varchar(20) primary key default ('nc' || lpad(nextval('seq_notification_campaigns')::text, 4, '0')),
+  title varchar(160) not null,
+  content text not null,
+  type varchar(80) not null,
+  target_type varchar(30) not null check (target_type in ('ALL', 'ROLE', 'USER', 'PARTNER')),
+  target_role varchar(20) check (target_role is null or target_role in ('USER', 'PARTNER', 'ADMIN')),
+  target_user_id varchar(20) references users(id) on delete set null,
+  target_partner_id varchar(20) references partner_profiles(id) on delete set null,
+  sent_by varchar(20) references users(id) on delete set null,
+  recipient_count integer not null default 0 check (recipient_count >= 0),
+  metadata_json jsonb,
+  created_at timestamptz not null default now(),
+  constraint notification_campaign_target_check check (
+    (target_type = 'ALL' and target_role is null and target_user_id is null and target_partner_id is null)
+    or (target_type = 'ROLE' and target_role is not null and target_user_id is null and target_partner_id is null)
+    or (target_type = 'USER' and target_user_id is not null and target_role is null and target_partner_id is null)
+    or (target_type = 'PARTNER' and target_partner_id is not null and target_role is null and target_user_id is null)
+  )
+);
+
 create table notifications (
   id varchar(20) primary key default ('nf' || lpad(nextval('seq_notifications')::text, 4, '0')),
   user_id varchar(20) not null references users(id) on delete cascade,
+  campaign_id varchar(20) references notification_campaigns(id) on delete set null,
   title varchar(160) not null,
   content text not null,
   type varchar(80) not null,
   is_read boolean not null default false,
+  metadata_json jsonb,
   created_at timestamptz not null default now()
 );
 
@@ -630,6 +704,7 @@ $$ language plpgsql;
 
 create trigger trg_users_updated_at before update on users for each row execute function set_updated_at();
 create trigger trg_partner_profiles_updated_at before update on partner_profiles for each row execute function set_updated_at();
+create trigger trg_partner_payouts_updated_at before update on partner_payouts for each row execute function set_updated_at();
 create trigger trg_court_categories_updated_at before update on court_categories for each row execute function set_updated_at();
 create trigger trg_courts_updated_at before update on courts for each row execute function set_updated_at();
 create trigger trg_court_prices_updated_at before update on court_prices for each row execute function set_updated_at();
@@ -657,12 +732,17 @@ create index if not exists idx_users_role on users(role);
 create index if not exists idx_users_status on users(status);
 create index if not exists idx_partner_profiles_user_id on partner_profiles(user_id);
 create index if not exists idx_partner_profiles_approval_status on partner_profiles(approval_status);
+create index if not exists idx_partner_payouts_month_status on partner_payouts(payout_month, status);
+create index if not exists idx_partner_payouts_partner_month on partner_payouts(partner_id, payout_month);
 create index if not exists idx_courts_partner_id on courts(partner_id);
 create index if not exists idx_courts_category_id on courts(category_id);
 create index if not exists idx_courts_city on courts(city);
 create index if not exists idx_courts_district on courts(district);
 create index if not exists idx_courts_approval_status on courts(approval_status);
 create index if not exists idx_courts_active_status on courts(active_status);
+create index if not exists idx_courts_featured on courts(featured);
+create index if not exists idx_courts_verified on courts(verified);
+create index if not exists idx_courts_update_requested_at on courts(update_requested_at desc);
 create index if not exists idx_courts_slug on courts(slug);
 create index if not exists idx_court_surfaces_court_id on court_surfaces(court_id);
 create index if not exists idx_court_base_prices_lookup on court_base_prices(court_id, day_type, start_time, end_time);
@@ -673,10 +753,19 @@ create index if not exists idx_bookings_court_id on bookings(court_id);
 create index if not exists idx_bookings_booking_date on bookings(booking_date);
 create index if not exists idx_bookings_booking_status on bookings(booking_status);
 create index if not exists idx_bookings_payment_status on bookings(payment_status);
+create index if not exists idx_bookings_dispute_status on bookings(dispute_status);
+create index if not exists idx_bookings_flag_status on bookings(flag_status);
 create index if not exists idx_bookings_schedule_conflict on bookings(court_id, booking_date, start_time, end_time, booking_status);
+create index if not exists idx_booking_admin_actions_booking_id on booking_admin_actions(booking_id, created_at desc);
+create index if not exists idx_booking_admin_actions_actor_id on booking_admin_actions(actor_id, created_at desc);
 create index if not exists idx_reviews_court_id on reviews(court_id);
 create index if not exists idx_reports_status on reports(status);
+create index if not exists idx_notification_campaigns_created_at on notification_campaigns(created_at desc);
+create index if not exists idx_notification_campaigns_sent_by on notification_campaigns(sent_by);
 create index if not exists idx_notifications_user_id on notifications(user_id);
+create index if not exists idx_notifications_campaign_id on notifications(campaign_id);
+create index if not exists idx_notifications_type on notifications(type);
+create index if not exists idx_notifications_created_at on notifications(created_at desc);
 create index if not exists idx_demand_predictions_lookup on demand_predictions(court_id, prediction_date, start_time);
 create index if not exists idx_demand_features_lookup on demand_features(court_id, feature_date, hour_of_day);
 create index if not exists idx_analytics_events_lookup on analytics_events(event_type, entity_type, created_at);

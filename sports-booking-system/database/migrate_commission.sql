@@ -42,10 +42,27 @@ alter table bookings
   add constraint bookings_refund_amount_check check (refund_amount >= 0 and refund_amount <= total_price),
   add constraint bookings_platform_retained_amount_check check (platform_retained_amount >= 0 and platform_retained_amount <= total_price);
 
+do $$
+declare
+  current_booking_id_type text;
+begin
+  select data_type
+  into current_booking_id_type
+  from information_schema.columns
+  where table_schema = 'public'
+    and table_name = 'commission_transactions'
+    and column_name = 'booking_id';
+
+  if current_booking_id_type = 'uuid' then
+    drop trigger if exists trg_commission_transactions_immutable on commission_transactions;
+    drop table commission_transactions cascade;
+  end if;
+end $$;
+
 create table if not exists commission_transactions (
   id uuid primary key default uuid_generate_v4(),
-  booking_id uuid not null references bookings(id),
-  partner_id uuid not null references partner_profiles(id),
+  booking_id varchar(20) not null references bookings(id),
+  partner_id varchar(20) not null references partner_profiles(id),
   transaction_type varchar(20) not null default 'EARNING' check (transaction_type in ('EARNING', 'REVERSAL')),
   event_type varchar(20) not null check (event_type in ('COMPLETED', 'NO_SHOW', 'REFUND')),
   gross_amount numeric(12, 2) not null check (gross_amount >= 0),

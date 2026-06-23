@@ -2,7 +2,7 @@ import { NotFoundError, ValidationError } from "../../shared/errors/AppError.js"
 import { paginationMeta } from "../../shared/utils/response.js";
 import { parseLimit, parsePage } from "../../shared/utils/time.js";
 import { slugify } from "../../shared/utils/slug.js";
-import { commissionService } from "../commission/commission.service.js";
+import { commissionService, monthRange } from "../commission/commission.service.js";
 import { recordAdminAction, verifyAuditChain } from "./admin.audit.js";
 import { adminRepository } from "./admin.repository.js";
 
@@ -10,6 +10,33 @@ const paginatedRaw = (items: any[], countRows: Array<{ count: bigint }>, page: n
   items,
   meta: paginationMeta(page, limit, Number(countRows[0]?.count ?? 0))
 });
+
+const financeSummary = (items: any[]) =>
+  items.reduce(
+    (total, item) => ({
+      grossAmount: total.grossAmount + Number(item.grossAmount ?? 0),
+      commissionAmount: total.commissionAmount + Number(item.commissionAmount ?? 0),
+      netAmount: total.netAmount + Number(item.netAmount ?? 0),
+      refundAmount: total.refundAmount + Number(item.refundAmount ?? 0),
+      platformRetainedAmount: total.platformRetainedAmount + Number(item.platformRetainedAmount ?? 0),
+      transactionCount: total.transactionCount + Number(item.transactionCount ?? 0),
+      refundCount: total.refundCount + Number(item.refundCount ?? 0)
+    }),
+    {
+      grossAmount: 0,
+      commissionAmount: 0,
+      netAmount: 0,
+      refundAmount: 0,
+      platformRetainedAmount: 0,
+      transactionCount: 0,
+      refundCount: 0
+    }
+  );
+
+const csvCell = (value: unknown) => {
+  const text = value === null || value === undefined ? "" : String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
 
 export const adminService = {
   async dashboard() {
@@ -48,6 +75,62 @@ export const adminService = {
       status: query.status || undefined
     });
     return { items, meta: paginationMeta(page, limit, total) };
+  },
+
+  async bookings(query: any) {
+    const page = parsePage(query.page);
+    const limit = parseLimit(query.limit);
+    const [items, total] = await adminRepository.bookings(page, limit, {
+      search: query.search || undefined,
+      fromDate: query.fromDate || undefined,
+      toDate: query.toDate || undefined,
+      courtId: query.courtId || undefined,
+      partnerId: query.partnerId || undefined,
+      userId: query.userId || undefined,
+      bookingStatus: query.bookingStatus || undefined,
+      paymentStatus: query.paymentStatus || undefined,
+      disputeStatus: query.disputeStatus || undefined,
+      flagStatus: query.flagStatus || undefined
+    });
+    return { items, meta: paginationMeta(page, limit, total) };
+  },
+
+  async bookingDetail(id: string) {
+    const booking = await adminRepository.bookingDetail(id);
+    if (!booking) throw new NotFoundError("Khong tim thay don dat san");
+    return booking;
+  },
+
+  async updateBookingAdmin(actorId: string, id: string, input: any) {
+    const current = await adminRepository.bookingDetail(id);
+    if (!current) throw new NotFoundError("Khong tim thay don dat san");
+    if (input.bookingStatus === "CANCELLED" && !input.cancelReason && !current.cancelReason) {
+      throw new ValidationError("Can nhap ly do khi huy don");
+    }
+    if (input.refundAmount !== undefined && input.refundAmount > Number(current.totalPrice)) {
+      throw new ValidationError("So tien hoan khong duoc lon hon tong tien don");
+    }
+    if (input.platformRetainedAmount !== undefined && input.platformRetainedAmount > Number(current.totalPrice)) {
+      throw new ValidationError("So tien giu lai khong duoc lon hon tong tien don");
+    }
+
+    const action =
+      input.disputeStatus && input.disputeStatus !== current.disputeStatus ? "DISPUTE_UPDATED" :
+      input.flagStatus && input.flagStatus !== current.flagStatus ? "FLAG_UPDATED" :
+      input.refundAmount !== undefined || input.paymentStatus ? "REFUND_OR_PAYMENT_UPDATED" :
+      "BOOKING_ADMIN_UPDATED";
+
+    const result = await adminRepository.updateBookingAdmin(actorId, id, input, action);
+    if (!result) throw new NotFoundError("Khong tim thay don dat san");
+    await recordAdminAction(actorId, action, "BOOKING", id, {
+      bookingStatus: input.bookingStatus,
+      paymentStatus: input.paymentStatus,
+      disputeStatus: input.disputeStatus,
+      flagStatus: input.flagStatus,
+      refundAmount: input.refundAmount,
+      platformRetainedAmount: input.platformRetainedAmount
+    });
+    return result;
   },
 
   async lockUser(actorId: string, id: string) {
@@ -111,6 +194,191 @@ export const adminService = {
     return result;
   },
   commissionReport(month?: string) { return commissionService.adminReport(month); },
+
+  async financeTransactions(query: any) {
+    const page = parsePage(query.page);
+    const limit = parseLimit(query.limit);
+    const range = monthRange(query.month);
+    const [items, total] = await adminRepository.financeTransactions(page, limit, {
+      month: range.month,
+      from: range.from,
+      to: range.to,
+      search: query.search || undefined,
+      partnerId: query.partnerId || undefined,
+      transactionType: query.transactionType || undefined,
+      eventType: query.eventType || undefined,
+      payoutStatus: query.payoutStatus || undefined
+    });
+    return { items, meta: paginationMeta(page, limit, total) };
+  },
+
+  async financeRefunds(query: any) {
+    const page = parsePage(query.page);
+    const limit = parseLimit(query.limit);
+    const range = monthRange(query.month);
+    const [items, total] = await adminRepository.financeRefunds(page, limit, {
+      from: range.from,
+      to: range.to,
+      search: query.search || undefined,
+      partnerId: query.partnerId || undefined,
+      paymentStatus: query.paymentStatus || undefined
+    });
+    return { items, meta: paginationMeta(page, limit, total) };
+  },
+
+  async financeReconciliation(month?: string) {
+    const range = monthRange(month);
+    const partners = await adminRepository.financeReconciliation(range.month, range.from, range.to);
+    return {
+      month: range.month,
+      summary: financeSummary(partners),
+      partners
+    };
+  },
+
+  async updatePayout(actorId: string, partnerId: string, month: string | undefined, input: any) {
+    const range = monthRange(month);
+    const result = await adminRepository.upsertPartnerPayout(actorId, partnerId, range.month, range.from, range.to, input);
+    if (!result) throw new NotFoundError("Khong tim thay doi tac");
+    await recordAdminAction(actorId, "PAYOUT_STATUS_UPDATED", "PAYOUT", result.id, {
+      partnerId,
+      month: range.month,
+      status: input.status,
+      note: input.note
+    });
+    return result;
+  },
+
+  async financeExport(month?: string) {
+    const report = await this.financeReconciliation(month);
+    const header = [
+      "month",
+      "partner_id",
+      "business_name",
+      "gross_amount",
+      "commission_amount",
+      "net_amount",
+      "transaction_count",
+      "refund_amount",
+      "platform_retained_amount",
+      "refund_count",
+      "payout_status",
+      "paid_at",
+      "payout_note"
+    ];
+    const lines = [
+      header.join(","),
+      ...report.partners.map((item: any) => [
+        report.month,
+        item.partnerId,
+        item.businessName,
+        item.grossAmount,
+        item.commissionAmount,
+        item.netAmount,
+        item.transactionCount,
+        item.refundAmount,
+        item.platformRetainedAmount,
+        item.refundCount,
+        item.payoutStatus,
+        item.paidAt ? new Date(item.paidAt).toISOString() : "",
+        item.payoutNote ?? ""
+      ].map(csvCell).join(","))
+    ];
+    return {
+      filename: `finance-report-${report.month}.csv`,
+      content: `\ufeff${lines.join("\n")}`
+    };
+  },
+
+  async notificationCampaigns(query: any) {
+    const page = parsePage(query.page);
+    const limit = parseLimit(query.limit);
+    const [items, total] = await adminRepository.notificationCampaigns(page, limit, {
+      search: query.search || undefined,
+      type: query.type || undefined,
+      targetType: query.targetType || undefined
+    });
+    return { items, meta: paginationMeta(page, limit, total) };
+  },
+
+  async notificationCampaignDetail(id: string) {
+    const campaign = await adminRepository.notificationCampaignDetail(id);
+    if (!campaign) throw new NotFoundError("Khong tim thay lich su thong bao");
+    return campaign;
+  },
+
+  async createNotificationCampaign(actorId: string, input: any) {
+    if (input.targetType === "ALL") {
+      input.targetRole = undefined;
+      input.targetUserId = undefined;
+      input.targetPartnerId = undefined;
+    }
+    if (input.targetType === "ROLE") {
+      input.targetUserId = undefined;
+      input.targetPartnerId = undefined;
+    }
+    if (input.targetType === "USER") {
+      input.targetRole = undefined;
+      input.targetPartnerId = undefined;
+    }
+    if (input.targetType === "PARTNER") {
+      input.targetRole = undefined;
+      input.targetUserId = undefined;
+    }
+    const campaign = await adminRepository.createNotificationCampaign(actorId, input);
+    if (!campaign) throw new ValidationError("Khong tim thay nguoi nhan phu hop");
+    await recordAdminAction(actorId, "NOTIFICATION_CAMPAIGN_SENT", "NOTIFICATION_CAMPAIGN", campaign.id, {
+      targetType: input.targetType,
+      targetRole: input.targetRole,
+      targetUserId: input.targetUserId,
+      targetPartnerId: input.targetPartnerId,
+      recipientCount: campaign.recipientCount
+    });
+    return campaign;
+  },
+
+  async courts(query: any) {
+    const page = parsePage(query.page);
+    const limit = parseLimit(query.limit);
+    const [items, total] = await adminRepository.adminCourts(page, limit, {
+      search: query.search || undefined,
+      partnerId: query.partnerId || undefined,
+      city: query.city || undefined,
+      district: query.district || undefined,
+      approvalStatus: query.approvalStatus || undefined,
+      activeStatus: query.activeStatus || undefined,
+      verified: query.verified || undefined,
+      featured: query.featured || undefined
+    });
+    return { items, meta: paginationMeta(page, limit, total) };
+  },
+
+  async courtDetail(id: string) {
+    const court = await adminRepository.adminCourtDetail(id);
+    if (!court) throw new NotFoundError("Khong tim thay san");
+    return court;
+  },
+
+  async updateCourtAdmin(actorId: string, id: string, input: any) {
+    const current = await adminRepository.adminCourtDetail(id);
+    if (!current) throw new NotFoundError("Khong tim thay san");
+    const result = await adminRepository.updateAdminCourt(id, input);
+    if (!result) throw new NotFoundError("Khong tim thay san");
+    await recordAdminAction(actorId, "COURT_ADMIN_UPDATED", "COURT", id, {
+      activeStatus: input.activeStatus,
+      verified: input.verified,
+      featured: input.featured,
+      adminNote: input.adminNote
+    });
+    return result;
+  },
+
+  async requestCourtUpdate(actorId: string, id: string, note: string) {
+    const result = await adminRepository.requestCourtUpdate(id, actorId, note);
+    if (!result) throw new NotFoundError("Khong tim thay san");
+    await recordAdminAction(actorId, "COURT_UPDATE_REQUESTED", "COURT", id, { note });
+    return result;
+  },
 
   pendingCourts() { return adminRepository.pendingCourts(); },
   async approveCourt(actorId: string, id: string) {

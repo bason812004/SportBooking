@@ -1,7 +1,13 @@
 import { api } from "../../../lib/axios";
 import type {
   ApiResponse,
+  AdminBooking,
+  AdminCourt,
   AdminDashboard,
+  AdminFinanceReport,
+  AdminFinanceTransaction,
+  AdminNotificationCampaign,
+  AdminRefund,
   AdminPartner,
   AdminVoucher,
   AuditLog,
@@ -21,6 +27,31 @@ export const adminApi = {
   },
   async users(params: Record<string, string | number | undefined> = {}) {
     const { data } = await api.get<ApiResponse<Paginated<User>>>("/admin/users", { params: clean(params) });
+    return data.data;
+  },
+  async bookings(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<AdminBooking>>>("/admin/bookings", { params: clean(params) });
+    return data.data;
+  },
+  async bookingDetail(id: string) {
+    const { data } = await api.get<ApiResponse<AdminBooking>>(`/admin/bookings/${id}`);
+    return data.data;
+  },
+  async updateBookingAdmin(
+    id: string,
+    payload: {
+      bookingStatus?: string;
+      paymentStatus?: string;
+      disputeStatus?: string;
+      flagStatus?: string;
+      adminNote?: string;
+      cancelReason?: string;
+      refundAmount?: number;
+      platformRetainedAmount?: number;
+      actionNote?: string;
+    }
+  ) {
+    const { data } = await api.patch<ApiResponse<AdminBooking>>(`/admin/bookings/${id}/admin`, payload);
     return data.data;
   },
   async lockUser(id: string) {
@@ -70,6 +101,62 @@ export const adminApi = {
     const { data } = await api.get<ApiResponse<CommissionReport>>("/admin/commission/report", {
       params: { month }
     });
+    return data.data;
+  },
+  async financeTransactions(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<AdminFinanceTransaction>>>("/admin/finance/transactions", { params: clean(params) });
+    return data.data;
+  },
+  async financeRefunds(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<AdminRefund>>>("/admin/finance/refunds", { params: clean(params) });
+    return data.data;
+  },
+  async financeReconciliation(month: string) {
+    const { data } = await api.get<ApiResponse<AdminFinanceReport>>("/admin/finance/reconciliation", { params: { month } });
+    return data.data;
+  },
+  async updatePayout(partnerId: string, month: string, payload: { status: string; note?: string }) {
+    const { data } = await api.patch<ApiResponse<unknown>>(`/admin/finance/payouts/${partnerId}`, payload, { params: { month } });
+    return data.data;
+  },
+  async exportFinanceReport(month: string) {
+    const { data } = await api.get<Blob>("/admin/finance/export", { params: { month }, responseType: "blob" });
+    return data;
+  },
+  async notificationCampaigns(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<AdminNotificationCampaign>>>("/admin/notifications/campaigns", { params: clean(params) });
+    return data.data;
+  },
+  async notificationCampaignDetail(id: string) {
+    const { data } = await api.get<ApiResponse<AdminNotificationCampaign>>(`/admin/notifications/campaigns/${id}`);
+    return data.data;
+  },
+  async createNotificationCampaign(payload: {
+    title: string;
+    content: string;
+    type: string;
+    targetType: string;
+    targetRole?: string;
+    targetUserId?: string;
+    targetPartnerId?: string;
+  }) {
+    const { data } = await api.post<ApiResponse<AdminNotificationCampaign>>("/admin/notifications/campaigns", payload);
+    return data.data;
+  },
+  async courts(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<AdminCourt>>>("/admin/courts", { params: clean(params) });
+    return data.data;
+  },
+  async courtDetail(id: string) {
+    const { data } = await api.get<ApiResponse<AdminCourt>>(`/admin/courts/${id}`);
+    return data.data;
+  },
+  async updateCourtAdmin(id: string, payload: { activeStatus?: string; verified?: boolean; featured?: boolean; adminNote?: string }) {
+    const { data } = await api.patch<ApiResponse<AdminCourt>>(`/admin/courts/${id}/admin`, payload);
+    return data.data;
+  },
+  async requestCourtUpdate(id: string, note: string) {
+    const { data } = await api.post<ApiResponse<AdminCourt>>(`/admin/courts/${id}/request-update`, { note });
     return data.data;
   },
   async pendingCourts() {

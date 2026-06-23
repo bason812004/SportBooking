@@ -106,6 +106,7 @@ model User {
   reviews        Review[]
   reports        Report[]
   notifications  Notification[]
+  sentNotificationCampaigns NotificationCampaign[] @relation("NotificationCampaignSender")
   auditLogs      AuditLog[]
 
   @@index([email], map: "idx_users_email")
@@ -132,6 +133,7 @@ model PartnerProfile {
   user                   User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   courts                 Court[]
   commissionTransactions CommissionTransaction[]
+  payouts                PartnerPayout[]
 
   @@index([userId], map: "idx_partner_profiles_user_id")
   @@index([approvalStatus], map: "idx_partner_profiles_approval_status")
@@ -173,6 +175,10 @@ model Court {
   facebookUrl     String?           @map("facebook_url")
   sourceUrl       String?           @map("source_url")
   verified        Boolean           @default(false)
+  featured        Boolean           @default(false)
+  adminNote       String?           @map("admin_note")
+  updateRequestNote String?         @map("update_request_note")
+  updateRequestedAt DateTime?       @map("update_requested_at") @db.Timestamptz
   courtCount      Int               @default(1) @map("court_count")
   priceNote       String?           @map("price_note") @db.VarChar(120)
   goldenPriceNote String?           @map("golden_price_note") @db.VarChar(120)
@@ -297,6 +303,9 @@ model Booking {
   paymentStatus          PaymentStatus @default(UNPAID) @map("payment_status")
   bookingStatus          BookingStatus @default(PENDING) @map("booking_status")
   cancelReason           String?       @map("cancel_reason")
+  disputeStatus          String        @default("NONE") @map("dispute_status") @db.VarChar(30)
+  adminNote              String?       @map("admin_note")
+  flagStatus             String        @default("NORMAL") @map("flag_status") @db.VarChar(30)
   cancelledAt            DateTime?     @map("cancelled_at") @db.Timestamptz
   createdAt              DateTime      @default(now()) @map("created_at") @db.Timestamptz
   updatedAt              DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
@@ -314,6 +323,21 @@ model Booking {
   @@index([paymentStatus], map: "idx_bookings_payment_status")
   @@index([courtId, bookingDate, startTime, endTime, bookingStatus], map: "idx_bookings_schedule_conflict")
   @@map("bookings")
+}
+
+model BookingAdminAction {
+  id             String   @id @db.VarChar(20)
+  bookingId      String   @map("booking_id") @db.VarChar(20)
+  actorId        String   @map("actor_id") @db.VarChar(20)
+  action         String   @db.VarChar(80)
+  note           String?
+  previousStatus Json?    @map("previous_status")
+  newStatus      Json?    @map("new_status")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([bookingId, createdAt], map: "idx_booking_admin_actions_booking_id")
+  @@index([actorId, createdAt], map: "idx_booking_admin_actions_actor_id")
+  @@map("booking_admin_actions")
 }
 
 model SystemSetting {
@@ -346,6 +370,28 @@ model CommissionTransaction {
   @@index([bookingId], map: "idx_commission_transactions_booking_id")
   @@index([partnerId, createdAt], map: "idx_commission_transactions_partner_created_at")
   @@map("commission_transactions")
+}
+
+model PartnerPayout {
+  id               String   @id @default(uuid()) @db.Uuid
+  partnerId        String   @map("partner_id") @db.Uuid
+  payoutMonth      String   @map("payout_month") @db.Char(7)
+  status           String   @default("PENDING") @db.VarChar(20)
+  grossAmount      Decimal  @default(0) @map("gross_amount") @db.Decimal(12, 2)
+  commissionAmount Decimal  @default(0) @map("commission_amount") @db.Decimal(12, 2)
+  netAmount        Decimal  @default(0) @map("net_amount") @db.Decimal(12, 2)
+  transactionCount Int      @default(0) @map("transaction_count")
+  note             String?
+  paidAt           DateTime? @map("paid_at") @db.Timestamptz
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  partner PartnerProfile @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  @@unique([partnerId, payoutMonth], map: "partner_payouts_partner_month_unique")
+  @@index([payoutMonth, status], map: "idx_partner_payouts_month_status")
+  @@index([partnerId, payoutMonth], map: "idx_partner_payouts_partner_month")
+  @@map("partner_payouts")
 }
 
 model BookingService {
@@ -401,16 +447,44 @@ model Report {
 model Notification {
   id        String   @id @default(uuid()) @db.Uuid
   userId    String   @map("user_id") @db.Uuid
+  campaignId String? @map("campaign_id") @db.Uuid
   title     String   @db.VarChar(160)
   content   String
   type      String   @db.VarChar(80)
   isRead    Boolean  @default(false) @map("is_read")
+  metadata  Json?    @map("metadata_json")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign NotificationCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
 
   @@index([userId], map: "idx_notifications_user_id")
+  @@index([campaignId], map: "idx_notifications_campaign_id")
+  @@index([type], map: "idx_notifications_type")
+  @@index([createdAt], map: "idx_notifications_created_at")
   @@map("notifications")
+}
+
+model NotificationCampaign {
+  id              String   @id @default(uuid()) @db.Uuid
+  title           String   @db.VarChar(160)
+  content         String
+  type            String   @db.VarChar(80)
+  targetType      String   @map("target_type") @db.VarChar(30)
+  targetRole      String?  @map("target_role") @db.VarChar(20)
+  targetUserId    String?  @map("target_user_id") @db.Uuid
+  targetPartnerId String?  @map("target_partner_id") @db.Uuid
+  sentBy          String?  @map("sent_by") @db.Uuid
+  recipientCount  Int      @default(0) @map("recipient_count")
+  metadata        Json?    @map("metadata_json")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  sender User? @relation("NotificationCampaignSender", fields: [sentBy], references: [id], onDelete: SetNull)
+  notifications Notification[]
+
+  @@index([createdAt], map: "idx_notification_campaigns_created_at")
+  @@index([sentBy], map: "idx_notification_campaigns_sent_by")
+  @@map("notification_campaigns")
 }
 
 model AuditLog {

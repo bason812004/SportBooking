@@ -166,6 +166,53 @@ export type AdminPartner = PartnerProfile & {
   history?: Array<{ id: string; action: string; reason?: string; createdAt: string }>;
 };
 
+export type BookingAdminAction = {
+  id: string;
+  action: string;
+  note?: string | null;
+  previousStatus?: Record<string, unknown> | null;
+  newStatus?: Record<string, unknown> | null;
+  createdAt: string;
+  actor: { id: string; fullName: string; email: string };
+};
+
+export type AdminBooking = Omit<Booking, "court"> & {
+  createdAt: string;
+  updatedAt?: string;
+  cancelReason?: string | null;
+  adminNote?: string | null;
+  disputeStatus: "NONE" | "OPEN" | "UNDER_REVIEW" | "RESOLVED" | "REJECTED";
+  flagStatus: "NORMAL" | "FLAGGED" | "CLEARED";
+  court: {
+    id: string;
+    name: string;
+    address?: string;
+    city?: string;
+    district?: string;
+    partner?: { id: string; businessName: string; address?: string; user?: { id: string; fullName: string; email: string; phone?: string } };
+  };
+  bookingServices?: Array<{ id: string; quantity: number; price: number; service: { id: string; name: string; price: number } }>;
+  adminActions?: BookingAdminAction[];
+};
+
+export type AdminCourt = Omit<Court, "category" | "images" | "prices" | "services" | "amenities"> & {
+  featured?: boolean;
+  adminNote?: string | null;
+  updateRequestNote?: string | null;
+  updateRequestedAt?: string | null;
+  imageUrl?: string | null;
+  category?: Category;
+  partner: {
+    id: string;
+    businessName: string;
+    address?: string | null;
+    user: { id?: string; fullName: string; email: string; phone?: string | null };
+  };
+  images?: Array<{ id: string; imageUrl: string; sortOrder: number }>;
+  prices?: Array<{ id: string; dayType: string; startTime: string; endTime: string; price: number | string; note?: string | null }>;
+  services?: Array<{ id: string; name: string; description?: string | null; price: number | string; status: string }>;
+};
+
 export type AdminVoucher = {
   id: string; code: string; title: string; discountType: string; discountValue: number;
   usedCount: number; usageLimit?: number | null; startDate: string; endDate: string;
@@ -208,6 +255,88 @@ export type CommissionReport = {
       businessName: string;
     }
   >;
+};
+
+export type AdminFinanceTransaction = {
+  id: string;
+  bookingId: string;
+  bookingCode: string;
+  bookingDate: string;
+  courtId: string;
+  courtName: string;
+  partnerId: string;
+  businessName: string;
+  transactionType: "EARNING" | "REVERSAL";
+  eventType: "COMPLETED" | "NO_SHOW" | "REFUND";
+  grossAmount: number;
+  commissionRate: number;
+  commissionAmount: number;
+  netAmount: number;
+  payoutStatus: string;
+  createdAt: string;
+};
+
+export type AdminRefund = {
+  id: string;
+  bookingCode: string;
+  bookingDate: string;
+  totalPrice: number;
+  depositAmount: number;
+  refundAmount: number;
+  platformRetainedAmount: number;
+  paymentStatus: string;
+  cancelReason?: string | null;
+  refundedAt: string;
+  user: { id: string; fullName: string; email: string };
+  court: { id: string; name: string; partner: { id: string; businessName: string } };
+};
+
+export type AdminFinancePartner = CommissionSummary & {
+  partnerId: string;
+  businessName: string;
+  refundAmount: number;
+  platformRetainedAmount: number;
+  refundCount: number;
+  payoutId?: string | null;
+  payoutStatus: "PENDING" | "PROCESSING" | "PAID" | "FAILED" | "CANCELLED";
+  payoutNote?: string | null;
+  paidAt?: string | null;
+  payoutUpdatedAt?: string | null;
+};
+
+export type AdminFinanceReport = {
+  month: string;
+  summary: CommissionSummary & {
+    refundAmount: number;
+    platformRetainedAmount: number;
+    refundCount: number;
+  };
+  partners: AdminFinancePartner[];
+};
+
+export type NotificationTargetType = "ALL" | "ROLE" | "USER" | "PARTNER";
+
+export type AdminNotificationCampaign = {
+  id: string;
+  title: string;
+  content: string;
+  type: string;
+  targetType: NotificationTargetType;
+  targetRole?: Role | null;
+  targetUserId?: string | null;
+  targetPartnerId?: string | null;
+  targetUserEmail?: string | null;
+  targetPartnerName?: string | null;
+  recipientCount: number;
+  metadata?: Record<string, unknown> | null;
+  createdAt: string;
+  sender?: { id: string; fullName: string; email: string } | null;
+  recipients?: Array<{
+    id: string;
+    isRead: boolean;
+    createdAt: string;
+    user: { id: string; fullName: string; email: string; role: Role };
+  }>;
 };
 
 export type PartnerRevenueReport = {

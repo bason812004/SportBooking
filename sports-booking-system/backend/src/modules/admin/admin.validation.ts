@@ -36,6 +36,79 @@ export const listQuerySchema = z.object({
   })
 });
 
+export const bookingQuerySchema = z.object({
+  query: z.object({
+    page: z.string().optional(),
+    limit: z.string().optional(),
+    search: optionalQuery(z.string().trim().max(180)),
+    fromDate: optionalQuery(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
+    toDate: optionalQuery(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
+    courtId: optionalQuery(z.string().trim().max(40)),
+    partnerId: optionalQuery(z.string().trim().max(40)),
+    userId: optionalQuery(z.string().trim().max(40)),
+    bookingStatus: optionalQuery(z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"])),
+    paymentStatus: optionalQuery(z.enum(["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"])),
+    disputeStatus: optionalQuery(z.enum(["NONE", "OPEN", "UNDER_REVIEW", "RESOLVED", "REJECTED"])),
+    flagStatus: optionalQuery(z.enum(["NORMAL", "FLAGGED", "CLEARED"]))
+  })
+});
+
+export const bookingAdminUpdateSchema = z.object({
+  body: z.object({
+    bookingStatus: z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"]).optional(),
+    paymentStatus: z.enum(["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"]).optional(),
+    disputeStatus: z.enum(["NONE", "OPEN", "UNDER_REVIEW", "RESOLVED", "REJECTED"]).optional(),
+    flagStatus: z.enum(["NORMAL", "FLAGGED", "CLEARED"]).optional(),
+    adminNote: z.string().trim().max(2000).optional(),
+    cancelReason: z.string().trim().max(500).optional(),
+    refundAmount: z.number().min(0).optional(),
+    platformRetainedAmount: z.number().min(0).optional(),
+    actionNote: z.string().trim().max(1000).optional()
+  }).refine(
+    (value) => [
+      value.bookingStatus,
+      value.paymentStatus,
+      value.disputeStatus,
+      value.flagStatus,
+      value.adminNote,
+      value.cancelReason,
+      value.refundAmount,
+      value.platformRetainedAmount
+    ].some((item) => item !== undefined && item !== ""),
+    "Can cap nhat it nhat mot truong"
+  )
+});
+
+export const adminCourtQuerySchema = z.object({
+  query: z.object({
+    page: z.string().optional(),
+    limit: z.string().optional(),
+    search: optionalQuery(z.string().trim().max(180)),
+    partnerId: optionalQuery(z.string().trim().max(40)),
+    city: optionalQuery(z.string().trim().max(80)),
+    district: optionalQuery(z.string().trim().max(80)),
+    approvalStatus: optionalQuery(z.enum(["PENDING", "APPROVED", "REJECTED"])),
+    activeStatus: optionalQuery(z.enum(["ACTIVE", "INACTIVE"])),
+    verified: optionalQuery(z.enum(["true", "false"])),
+    featured: optionalQuery(z.enum(["true", "false"]))
+  })
+});
+
+export const adminCourtUpdateSchema = z.object({
+  body: z.object({
+    activeStatus: z.enum(["ACTIVE", "INACTIVE"]).optional(),
+    verified: z.boolean().optional(),
+    featured: z.boolean().optional(),
+    adminNote: z.string().trim().max(2000).optional()
+  }).refine((value) => Object.values(value).some((item) => item !== undefined), "Can cap nhat it nhat mot truong")
+});
+
+export const adminCourtRequestUpdateSchema = z.object({
+  body: z.object({
+    note: z.string().trim().min(3).max(2000)
+  })
+});
+
 export const moderationSchema = z.object({
   body: z.object({
     reason: z.string().trim().max(1000).optional()
@@ -68,5 +141,75 @@ export const defaultCommissionRateSchema = z.object({
 export const commissionReportSchema = z.object({
   query: z.object({
     month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional()
+  })
+});
+
+export const financeTransactionQuerySchema = z.object({
+  query: z.object({
+    page: z.string().optional(),
+    limit: z.string().optional(),
+    month: optionalQuery(z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)),
+    search: optionalQuery(z.string().trim().max(180)),
+    partnerId: optionalQuery(z.string().trim().max(40)),
+    transactionType: optionalQuery(z.enum(["EARNING", "REVERSAL"])),
+    eventType: optionalQuery(z.enum(["COMPLETED", "NO_SHOW", "REFUND"])),
+    payoutStatus: optionalQuery(z.enum(["PENDING", "PROCESSING", "PAID", "FAILED", "CANCELLED"]))
+  })
+});
+
+export const financeRefundQuerySchema = z.object({
+  query: z.object({
+    page: z.string().optional(),
+    limit: z.string().optional(),
+    month: optionalQuery(z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)),
+    search: optionalQuery(z.string().trim().max(180)),
+    partnerId: optionalQuery(z.string().trim().max(40)),
+    paymentStatus: optionalQuery(z.enum(["PARTIALLY_REFUNDED", "REFUNDED"]))
+  })
+});
+
+export const financeMonthSchema = z.object({
+  query: z.object({
+    month: optionalQuery(z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/))
+  })
+});
+
+export const payoutUpdateSchema = z.object({
+  body: z.object({
+    status: z.enum(["PENDING", "PROCESSING", "PAID", "FAILED", "CANCELLED"]),
+    note: z.string().trim().max(1000).optional()
+  })
+});
+
+export const notificationCampaignQuerySchema = z.object({
+  query: z.object({
+    page: z.string().optional(),
+    limit: z.string().optional(),
+    search: optionalQuery(z.string().trim().max(180)),
+    type: optionalQuery(z.string().trim().max(80)),
+    targetType: optionalQuery(z.enum(["ALL", "ROLE", "USER", "PARTNER"]))
+  })
+});
+
+export const notificationCampaignCreateSchema = z.object({
+  body: z.object({
+    title: z.string().trim().min(3).max(160),
+    content: z.string().trim().min(3).max(4000),
+    type: z.enum(["SYSTEM", "APPROVAL", "REJECTION", "FINANCE", "INCIDENT", "COURT_UPDATE_REQUESTED"]),
+    targetType: z.enum(["ALL", "ROLE", "USER", "PARTNER"]),
+    targetRole: z.enum(["USER", "PARTNER", "ADMIN"]).optional(),
+    targetUserId: z.string().trim().max(40).optional(),
+    targetPartnerId: z.string().trim().max(40).optional(),
+    metadata: z.record(z.unknown()).optional()
+  }).superRefine((value, ctx) => {
+    if (value.targetType === "ROLE" && !value.targetRole) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["targetRole"], message: "Can chon vai tro nhan thong bao" });
+    }
+    if (value.targetType === "USER" && !value.targetUserId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["targetUserId"], message: "Can nhap user id" });
+    }
+    if (value.targetType === "PARTNER" && !value.targetPartnerId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["targetPartnerId"], message: "Can nhap partner id" });
+    }
   })
 });

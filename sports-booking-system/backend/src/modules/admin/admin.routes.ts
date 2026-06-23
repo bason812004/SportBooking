@@ -5,13 +5,24 @@ import { requireRole } from "../../middlewares/role.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
 import { adminController } from "./admin.controller.js";
 import {
+  adminCourtQuerySchema,
+  adminCourtRequestUpdateSchema,
+  adminCourtUpdateSchema,
+  bookingAdminUpdateSchema,
+  bookingQuerySchema,
   categoryCreateSchema,
   categoryUpdateSchema,
   commissionRateSchema,
   commissionReportSchema,
   defaultCommissionRateSchema,
+  financeMonthSchema,
+  financeRefundQuerySchema,
+  financeTransactionQuerySchema,
   listQuerySchema,
   moderationSchema,
+  notificationCampaignCreateSchema,
+  notificationCampaignQuerySchema,
+  payoutUpdateSchema,
   partnerQuerySchema,
   rejectSchema
   ,userQuerySchema
@@ -24,6 +35,9 @@ adminRoutes.get("/dashboard", adminController.dashboard);
 adminRoutes.get("/users", validate(userQuerySchema), adminController.users);
 adminRoutes.put("/users/:id/lock", adminController.lockUser);
 adminRoutes.put("/users/:id/unlock", adminController.unlockUser);
+adminRoutes.get("/bookings", validate(bookingQuerySchema), adminController.bookings);
+adminRoutes.get("/bookings/:id", adminController.bookingDetail);
+adminRoutes.patch("/bookings/:id/admin", validate(bookingAdminUpdateSchema), adminController.updateBookingAdmin);
 adminRoutes.get("/partners", validate(partnerQuerySchema), adminController.partners);
 adminRoutes.get("/partners/:id", adminController.partnerDetail);
 adminRoutes.put("/partners/:id/approve", validate(moderationSchema), adminController.approvePartner);
@@ -33,7 +47,19 @@ adminRoutes.patch("/commission/default", validate(defaultCommissionRateSchema), 
 adminRoutes.get("/commission/partner/:id", adminController.partnerCommission);
 adminRoutes.patch("/commission/partner/:id", validate(commissionRateSchema), adminController.updatePartnerCommission);
 adminRoutes.get("/commission/report", validate(commissionReportSchema), adminController.commissionReport);
+adminRoutes.get("/finance/transactions", validate(financeTransactionQuerySchema), adminController.financeTransactions);
+adminRoutes.get("/finance/refunds", validate(financeRefundQuerySchema), adminController.financeRefunds);
+adminRoutes.get("/finance/reconciliation", validate(financeMonthSchema), adminController.financeReconciliation);
+adminRoutes.get("/finance/export", validate(financeMonthSchema), adminController.financeExport);
+adminRoutes.patch("/finance/payouts/:partnerId", validate(financeMonthSchema), validate(payoutUpdateSchema), adminController.updatePayout);
+adminRoutes.get("/notifications/campaigns", validate(notificationCampaignQuerySchema), adminController.notificationCampaigns);
+adminRoutes.post("/notifications/campaigns", validate(notificationCampaignCreateSchema), adminController.createNotificationCampaign);
+adminRoutes.get("/notifications/campaigns/:id", adminController.notificationCampaignDetail);
 adminRoutes.get("/courts/pending", adminController.pendingCourts);
+adminRoutes.get("/courts", validate(adminCourtQuerySchema), adminController.courts);
+adminRoutes.get("/courts/:id", adminController.courtDetail);
+adminRoutes.patch("/courts/:id/admin", validate(adminCourtUpdateSchema), adminController.updateCourtAdmin);
+adminRoutes.post("/courts/:id/request-update", validate(adminCourtRequestUpdateSchema), adminController.requestCourtUpdate);
 adminRoutes.put("/courts/:id/approve", adminController.approveCourt);
 adminRoutes.put("/courts/:id/reject", validate(rejectSchema), adminController.rejectCourt);
 adminRoutes.get("/categories", adminController.categories);
