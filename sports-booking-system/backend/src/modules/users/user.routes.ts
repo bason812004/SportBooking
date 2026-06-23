@@ -5,6 +5,7 @@ import { requireRole } from "../../middlewares/role.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
 import { userController } from "./user.controller.js";
 import { updateMeSchema } from "./user.validation.js";
+import { cancelBookingSchema } from "../bookings/booking.validation.js";
 
 export const userRoutes = Router();
 
@@ -12,3 +13,5 @@ userRoutes.use(authMiddleware, requireRole(UserRole.USER, UserRole.PARTNER, User
 userRoutes.get("/me", userController.me);
 userRoutes.put("/me", validate(updateMeSchema), userController.updateMe);
 userRoutes.get("/me/bookings", requireRole(UserRole.USER), userController.bookings);
+userRoutes.get("/me/bookings/:id", requireRole(UserRole.USER), userController.bookingDetail);
+userRoutes.put("/me/bookings/:id/cancel", requireRole(UserRole.USER), validate(cancelBookingSchema), userController.cancelBooking);

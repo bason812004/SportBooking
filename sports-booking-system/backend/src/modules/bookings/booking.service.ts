@@ -1,9 +1,8 @@
-import { BookingStatus } from "@prisma/client";
+import { BookingStatus, type Prisma } from "@prisma/client";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
 import {
   bookingStartsAt,
-  dayTypeFor,
   durationHours,
   parseLimit,
   parsePage,
@@ -13,6 +12,14 @@ import {
 } from "../../shared/utils/time.js";
 import { courtRepository } from "../courts/court.repository.js";
 import { commissionService } from "../commission/commission.service.js";
+import { trackEvent } from "../analytics/analytics.service.js";
+import { demandPredictionService } from "../demand-prediction/demandPrediction.service.js";
+import { dynamicPricingService } from "../dynamic-pricing/dynamicPricing.service.js";
+import { voucherService } from "../vouchers/voucher.service.js";
+import { voucherRepository } from "../vouchers/voucher.repository.js";
+import { notificationService } from "../notifications/notification.service.js";
+import { realtimeEvents } from "../realtime/realtime.events.js";
+import { realtimeService } from "../realtime/realtime.service.js";
 import { bookingRepository } from "./booking.repository.js";
 import type { CreateBookingInput } from "./booking.types.js";
 
@@ -35,16 +42,6 @@ export const bookingService = {
     const court = await bookingRepository.courtWithPricing(input.courtId);
     if (!court) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
 
-    const dayType = dayTypeFor(input.bookingDate);
-    const matchingPrice = court.prices.find(
-      (price) =>
-        price.dayType === dayType &&
-        timeToMinutes(price.startTime.toISOString().slice(11, 16)) <= timeToMinutes(input.startTime) &&
-        timeToMinutes(price.endTime.toISOString().slice(11, 16)) >= timeToMinutes(input.endTime)
-    );
-
-    if (!matchingPrice) throw new ValidationError("Khung gio nay chua co bang gia");
-
     const serviceIds = input.services.map((service) => service.serviceId);
     const services = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
     if (services.length !== serviceIds.length) throw new ValidationError("Dich vu khong hop le");
@@ -54,23 +51,107 @@ export const bookingService = {
       return { serviceId: line.serviceId, quantity: line.quantity, price: Number(service.price) };
     });
 
-    const courtTotal = Number(matchingPrice.price) * durationHours(input.startTime, input.endTime);
+    const dynamicPrice = await dynamicPricingService.calculate(input.courtId, {
+      date: input.bookingDate,
+      startTime: input.startTime,
+      endTime: input.endTime
+    });
+    const hours = durationHours(input.startTime, input.endTime);
+    const courtTotal = dynamicPrice.finalPrice * hours;
+    const basePriceTotal = dynamicPrice.basePrice * hours;
+    const dynamicAdjustmentAmount = dynamicPrice.dynamicAdjustmentAmount * hours;
     const serviceTotal = serviceLines.reduce((sum, line) => sum + line.price * line.quantity, 0);
-    const totalPrice = courtTotal + serviceTotal;
+    const subtotal = courtTotal + serviceTotal;
+
+    let voucherDiscountAmount = 0;
+    let voucherId = input.voucherId;
+    if (voucherId) {
+      const claimed = await voucherRepository.userVoucher(userId, voucherId);
+      if (!claimed || claimed.status !== "CLAIMED") {
+        throw new ValidationError("Ban chua nhan voucher nay hoac voucher da duoc su dung");
+      }
+      const voucherResult = await voucherService.apply({ userId, voucherId, courtId: input.courtId, subtotal });
+      voucherDiscountAmount = voucherResult.discountAmount;
+      voucherId = voucherResult.voucherId;
+    } else if (input.voucherCode) {
+      const voucherResult = await voucherService.apply({ userId, code: input.voucherCode, courtId: input.courtId, subtotal });
+      voucherDiscountAmount = voucherResult.discountAmount;
+      voucherId = voucherResult.voucherId;
+    }
+
+    let demandPredictionSnapshot: Prisma.InputJsonValue | null = null;
+    try {
+      demandPredictionSnapshot = await demandPredictionService.predict(input.courtId, {
+        date: input.bookingDate,
+        startTime: input.startTime,
+        endTime: input.endTime
+      }) as Prisma.InputJsonValue;
+    } catch {
+      demandPredictionSnapshot = {
+        courtId: input.courtId,
+        predictedDemandScore: null,
+        predictedOccupancyRate: null,
+        predictionLevel: null,
+        confidenceScore: 0,
+        status: "INSUFFICIENT_DATA"
+      };
+    }
+
+    const totalPrice = subtotal - voucherDiscountAmount;
     const depositRate = await commissionService.depositRate();
 
-    return bookingRepository.createWithServices({
+    const booking = await bookingRepository.createWithServices({
       bookingCode: bookingCode(),
       userId,
       courtId: input.courtId,
       bookingDate: toDbDate(input.bookingDate),
       startTime: timeToDate(input.startTime),
       endTime: timeToDate(input.endTime),
+      basePrice: basePriceTotal,
+      dynamicAdjustmentAmount,
+      subtotal,
+      voucherDiscountAmount,
       totalPrice,
       depositAmount: Math.round(totalPrice * (depositRate / 100) * 100) / 100,
       paymentMethod: input.paymentMethod,
+      voucherId,
+      note: input.note,
+      demandPredictionSnapshot,
       services: serviceLines
     });
+
+    await trackEvent({
+      userId,
+      partnerId: court.partnerId,
+      eventType: "BOOKING_CREATED",
+      entityType: "BOOKING",
+      entityId: booking.id,
+      metadataJson: {
+        courtId: input.courtId,
+        bookingDate: input.bookingDate,
+        startTime: input.startTime,
+        endTime: input.endTime,
+        totalPrice: subtotal - voucherDiscountAmount
+      }
+    });
+
+    await notificationService.create({
+      userId,
+      title: "Dat san thanh cong",
+      content: `Don ${booking.bookingCode} da duoc tao thanh cong.`,
+      type: "BOOKING_CREATED",
+      metadata: { bookingId: booking.id, courtId: input.courtId }
+    });
+    realtimeService.toUser(userId, realtimeEvents.bookingCreated, booking);
+    realtimeService.toCourt(input.courtId, realtimeEvents.courtAvailabilityUpdated, {
+      courtId: input.courtId,
+      bookingDate: input.bookingDate,
+      startTime: input.startTime,
+      endTime: input.endTime
+    });
+    realtimeService.toPartner(court.partnerId, "partner:booking-created", booking);
+
+    return booking;
   },
 
   async getForUser(userId: string, bookingId: string) {
@@ -110,11 +191,27 @@ export const bookingService = {
           ? "REFUNDED"
           : "PARTIALLY_REFUNDED";
 
-    return bookingRepository.cancel(bookingId, {
+    const cancelled = await bookingRepository.cancel(bookingId, {
       cancelReason,
       refundAmount,
       platformRetainedAmount,
       paymentStatus
     });
+    await notificationService.create({
+      userId,
+      title: "Don dat san da huy",
+      content: `Don ${cancelled.bookingCode} da duoc huy.`,
+      type: "BOOKING_CANCELLED",
+      metadata: { bookingId: cancelled.id, courtId: cancelled.courtId }
+    });
+    realtimeService.toUser(userId, realtimeEvents.bookingCancelled, cancelled);
+    realtimeService.toBooking(bookingId, realtimeEvents.bookingCancelled, cancelled);
+    realtimeService.toCourt(cancelled.courtId, realtimeEvents.courtAvailabilityUpdated, {
+      courtId: cancelled.courtId,
+      bookingDate: cancelled.bookingDate,
+      startTime: cancelled.startTime,
+      endTime: cancelled.endTime
+    });
+    return cancelled;
   }
 };

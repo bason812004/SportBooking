@@ -1,4 +1,6 @@
-import { ConflictError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
+import { calculateVoucherDiscount } from "../../shared/utils/businessRules.js";
+import { trackEvent } from "../analytics/analytics.service.js";
 import { voucherRepository } from "./voucher.repository.js";
 
 export const voucherService = {
@@ -10,6 +12,53 @@ export const voucherService = {
     const [voucher] = await voucherRepository.findActiveById(id);
     if (!voucher) throw new NotFoundError("Khong tim thay voucher");
     return voucher;
+  },
+
+  async claim(userId: string, voucherId: string) {
+    const voucher = await voucherRepository.findActiveVoucher(voucherId);
+    if (!voucher) throw new NotFoundError("Khong tim thay voucher kha dung");
+    if (voucher.usageLimit != null && voucher.usedCount >= voucher.usageLimit) {
+      throw new ValidationError("Voucher da het luot su dung");
+    }
+    if (await voucherRepository.userVoucher(userId, voucherId)) {
+      throw new ConflictError("Ban da nhan voucher nay", "VOUCHER_ALREADY_CLAIMED");
+    }
+    const claimed = await voucherRepository.claim(userId, voucherId);
+    await trackEvent({ userId, partnerId: voucher.partnerId, eventType: "VOUCHER_CLAIMED", entityType: "VOUCHER", entityId: voucherId });
+    return claimed;
+  },
+
+  listForUser(userId: string) {
+    return voucherRepository.listForUser(userId);
+  },
+
+  async apply(input: { userId?: string; voucherId?: string; code?: string; courtId: string; subtotal: number }) {
+    const voucher = await voucherRepository.findUsable({ voucherId: input.voucherId, code: input.code, courtId: input.courtId });
+    if (!voucher) throw new NotFoundError("Voucher khong hop le");
+    const court = await voucherRepository.partnerCourt(input.courtId, voucher.partnerId);
+    if (!court) throw new ValidationError("Voucher khong ap dung cho san nay");
+    if (voucher.usageLimit != null && voucher.usedCount >= voucher.usageLimit) {
+      throw new ValidationError("Voucher da het luot su dung");
+    }
+
+    const discount = calculateVoucherDiscount({
+      subtotal: input.subtotal,
+      discountType: voucher.discountType,
+      discountValue: Number(voucher.discountValue),
+      maxDiscountAmount: voucher.maxDiscountAmount == null ? null : Number(voucher.maxDiscountAmount),
+      minBookingAmount: Number(voucher.minBookingAmount)
+    });
+
+    await trackEvent({
+      userId: input.userId,
+      partnerId: voucher.partnerId,
+      eventType: "VOUCHER_APPLIED",
+      entityType: "VOUCHER",
+      entityId: voucher.id,
+      metadataJson: { courtId: input.courtId, subtotal: input.subtotal, discountAmount: discount.discountAmount }
+    });
+
+    return { voucherId: voucher.id, code: voucher.code, ...discount };
   },
 
   async listForPartner(partnerId: string) {
@@ -65,6 +114,44 @@ export const voucherService = {
     const deleted = await voucherRepository.deleteDraft(id, partnerId);
     if (!deleted) throw new ValidationError("Chi co the xoa voucher nhap chua duoc su dung");
     return { id };
+  },
+
+  async listPartner(userId: string) {
+    const profile = await voucherRepository.partnerProfile(userId);
+    if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+    return this.listForPartner(profile.id);
+  },
+
+  async createPartner(userId: string, input: PartnerVoucherInput) {
+    const profile = await voucherRepository.partnerProfile(userId);
+    if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+    return this.createForPartner(profile.id, input);
+  },
+
+  async updatePartner(userId: string, id: string, input: PartnerVoucherInput) {
+    const profile = await voucherRepository.partnerProfile(userId);
+    if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+    return this.updateForPartner(profile.id, id, input);
+  },
+
+  async deletePartner(userId: string, id: string) {
+    const profile = await voucherRepository.partnerProfile(userId);
+    if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+    return this.deleteForPartner(profile.id, id);
+  },
+
+  async setPartnerStatus(userId: string, id: string, status: "ACTIVE" | "DISABLED") {
+    const profile = await voucherRepository.partnerProfile(userId);
+    if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+    return status === "ACTIVE" ? this.activateForPartner(profile.id, id) : this.disableForPartner(profile.id, id);
+  },
+
+  listAdmin() {
+    return voucherRepository.listAdmin();
+  },
+
+  disableAdmin(id: string) {
+    return voucherRepository.disableAdmin(id);
   }
 };
 

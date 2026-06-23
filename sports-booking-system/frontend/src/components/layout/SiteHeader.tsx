@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink } from "react-router-dom";
-import { BarChart3, ChevronDown, FileText, Gift, LogOut, Menu, Search, ShieldCheck, Trophy, User, X } from "lucide-react";
+import { CalendarCheck, FileText, Gift, LogOut, Menu, Search, ShieldCheck, User, UsersRound, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { APP_NAME } from "../../lib/constants";
 import { useAuth } from "../../features/auth/hooks/useAuth";
@@ -15,7 +15,8 @@ export function SiteHeader() {
       { label: t("nav.home"), to: "/" },
       { label: t("nav.explore"), to: "/courts" },
       { label: t("nav.vouchers"), to: "/vouchers" },
-      { label: t("nav.blog"), to: "/blog" },
+      { label: t("nav.teammates"), to: "/teammates" },
+      { label: t("nav.blog"), to: "/blogs" },
       { label: t("nav.tournaments"), to: "/tournaments" }
     ],
     [t]
@@ -45,7 +46,7 @@ export function SiteHeader() {
         </form>
 
         <div className="hidden items-center justify-end gap-2 lg:flex">
-          <PartnerMenu isPartner={user?.role === "PARTNER"} />
+          <PartnerLink isPartner={user?.role === "PARTNER"} />
           {isAuthenticated ? (
             <UserMenu role={user?.role} onLogout={logout} />
           ) : (
@@ -73,7 +74,7 @@ export function SiteHeader() {
                 {item.label}
               </NavLink>
             ))}
-            <NavLink onClick={() => setMobileOpen(false)} className={({ isActive }) => mobileNavClass(isActive)} to={user?.role === "PARTNER" ? "/partner/dashboard" : "/partners"}>
+            <NavLink onClick={() => setMobileOpen(false)} className={({ isActive }) => mobileNavClass(isActive)} to={user?.role === "PARTNER" ? "/partner/dashboard" : "/partner"}>
               {t("partnerArea.title")}
             </NavLink>
             <NavLink onClick={() => setMobileOpen(false)} className={({ isActive }) => mobileNavClass(isActive)} to={isAuthenticated ? "/user/profile" : "/login"}>
@@ -89,57 +90,79 @@ export function SiteHeader() {
   );
 }
 
-function PartnerMenu({ isPartner }: { isPartner: boolean }) {
+function PartnerLink({ isPartner }: { isPartner: boolean }) {
   const { t } = useTranslation("header");
-  const items = isPartner
-    ? [
-        { label: t("partnerArea.manageCourts"), to: "/partner/courts", icon: ShieldCheck },
-        { label: t("partnerArea.createVoucher"), to: "/partner/vouchers/create", icon: Gift },
-        { label: t("partnerArea.createTournament"), to: "/partner/tournaments/create", icon: Trophy },
-        { label: t("partnerArea.revenueAnalytics"), to: "/partner/statistics", icon: BarChart3 }
-      ]
-    : [{ label: t("partnerArea.registerCta"), to: "/partners", icon: ShieldCheck }];
-
   return (
-    <div className="group relative">
-      <button className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-4 py-2 text-sm font-black hover:border-teal-600 hover:text-teal-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500">
-        {t("partnerArea.title")} <ChevronDown className="h-4 w-4" aria-hidden="true" />
-      </button>
-      <div className="invisible absolute right-0 top-full w-72 translate-y-3 rounded-[1.25rem] border border-slate-200 bg-white p-3 opacity-0 shadow-2xl transition group-hover:visible group-hover:translate-y-2 group-hover:opacity-100">
-        {items.map((item) => (
-          <Link key={item.label} to={item.to} className="flex items-center gap-3 rounded-2xl px-3 py-2 text-sm font-bold hover:bg-slate-50">
-            <item.icon className="h-4 w-4 text-teal-700" aria-hidden="true" />
-            {item.label}
-          </Link>
-        ))}
-      </div>
-    </div>
+    <Link
+      to={isPartner ? "/partner/dashboard" : "/partner"}
+      className="inline-flex items-center gap-2 rounded-full bg-emerald-700 px-4 py-2 text-sm font-black text-white shadow-sm transition hover:-translate-y-0.5 hover:bg-emerald-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+    >
+      <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+      {t("partnerArea.title")}
+    </Link>
   );
 }
 
 function UserMenu({ role, onLogout }: { role?: string; onLogout: () => void }) {
   const { t } = useTranslation("header");
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<number | null>(null);
   const profilePath = role === "USER" ? "/user/profile" : `/${role?.toLowerCase()}/dashboard`;
   const items = [
     { label: t("user.profile"), to: profilePath, icon: User },
-    { label: t("user.bookingHistory"), to: "/user/bookings", icon: Trophy },
+    { label: t("user.bookingHistory"), to: "/user/bookings", icon: CalendarCheck },
     { label: t("user.myVouchers"), to: "/user/vouchers", icon: Gift },
+    { label: t("user.myTeammatePosts"), to: "/user/teammates", icon: UsersRound },
     { label: t("user.myPosts"), to: "/user/blogs", icon: FileText }
   ];
 
+  useEffect(() => {
+    function handleClick(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    };
+  }, []);
+
+  function openMenu() {
+    if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    setOpen(true);
+  }
+
+  function closeMenuSoon() {
+    if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    closeTimer.current = window.setTimeout(() => setOpen(false), 160);
+  }
+
   return (
-    <div className="group relative">
-      <button className="rounded-full border border-slate-200 bg-white p-3 hover:border-teal-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500" aria-label={t("user.account")}>
+    <div ref={menuRef} className="group relative" onMouseEnter={openMenu} onMouseLeave={closeMenuSoon}>
+      <button
+        onClick={() => setOpen((current) => !current)}
+        className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-black transition hover:border-teal-500 hover:bg-teal-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+        aria-expanded={open}
+        aria-label={t("user.account")}
+      >
         <User className="h-4 w-4" aria-hidden="true" />
+        <span className="hidden max-w-28 truncate xl:inline">{t("user.account")}</span>
       </button>
-      <div className="invisible absolute right-0 top-full w-64 translate-y-3 rounded-[1.25rem] border border-slate-200 bg-white p-3 opacity-0 shadow-2xl transition group-hover:visible group-hover:translate-y-2 group-hover:opacity-100">
+      <div className={`absolute right-0 top-full z-40 h-3 w-72 ${open ? "block" : "hidden"}`} aria-hidden="true" />
+      <div
+        onMouseEnter={openMenu}
+        className={`absolute right-0 top-full z-50 mt-2 w-72 rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl transition duration-150 ${
+          open ? "visible translate-y-0 opacity-100" : "invisible translate-y-2 opacity-0"
+        }`}
+      >
         {items.map((item) => (
-          <Link key={item.label} to={item.to} className="flex items-center gap-3 rounded-2xl px-3 py-2 text-sm font-bold hover:bg-slate-50">
-            <item.icon className="h-4 w-4" aria-hidden="true" />
+          <Link key={item.label} to={item.to} onClick={() => setOpen(false)} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 hover:text-teal-800">
+            <item.icon className="h-4 w-4 text-teal-700" aria-hidden="true" />
             {item.label}
           </Link>
         ))}
-        <button onClick={onLogout} className="mt-2 flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-sm font-bold text-rose-600 hover:bg-rose-50">
+        <button onClick={onLogout} className="mt-2 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-bold text-rose-600 transition hover:bg-rose-50">
           <LogOut className="h-4 w-4" aria-hidden="true" />
           {t("user.logout")}
         </button>

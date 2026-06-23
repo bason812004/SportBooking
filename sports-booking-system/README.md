@@ -38,6 +38,31 @@ Mat khau goc cho tat ca tai khoan mau: `123456`. Trong database chi luu bcrypt h
 - Partner 2: `partner2@sportsbooking.com`
 - User 1: `user1@sportsbooking.com`
 
+## Auth, Google OAuth va realtime
+
+Backend env can co:
+
+```env
+JWT_SECRET=replace-with-legacy-or-shared-secret-at-least-24-chars
+JWT_ACCESS_SECRET=replace-with-access-secret-at-least-24-chars
+JWT_REFRESH_SECRET=replace-with-refresh-secret-at-least-24-chars
+ACCESS_TOKEN_EXPIRES_IN=15m
+REFRESH_TOKEN_EXPIRES_IN=7d
+GOOGLE_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
+FRONTEND_URL=http://localhost:5173
+```
+
+Frontend env can co:
+
+```env
+VITE_API_BASE_URL=http://localhost:8080/api
+VITE_GOOGLE_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
+```
+
+Email/password auth dung bcrypt va backend JWT access/refresh token. Google sign-in dung Google Identity Services o frontend, gui ID token den `POST /api/auth/google`, backend verify bang `google-auth-library`, sau do cap JWT cua he thong.
+
+Realtime dung Socket.IO. Frontend chi connect sau khi dang nhap voi access token va lang nghe booking, court availability, notification events.
+
 ## Chay backend
 
 ```bash
@@ -80,17 +105,57 @@ Frontend mac dinh chay tai `http://localhost:5173` va goi backend `http://localh
 ## Logic quan trong
 
 - Backend kiem tra trung lich bang dieu kien `newStart < existingEnd && newEnd > existingStart`.
-- Backend tinh tong tien dua tren bang gia, thoi luong va dich vu di kem.
-- Hoa hong mac dinh luu trong `system_settings`; `partner_profiles.commission_rate` co the override theo doi tac.
-- Khi booking chuyen `COMPLETED`, he thong snapshot doanh thu goc, ty le hoa hong, phi va thuc nhan vao `commission_transactions`.
-- Khi `NO_SHOW`, hoa hong duoc tinh tren tien coc. Huy truoc 24 gio hoan 100%; huy trong 24 gio hoan 50%.
-- `commission_transactions` la immutable; dieu chinh sau nay phai them ban ghi `REVERSAL`.
-- Partner co the tao voucher nhap, sua/xoa khi chua phat hanh, kich hoat va vo hieu hoa voucher.
-- Voucher co the ap dung cho tat ca san cua partner hoac mot san cu the; backend kiem tra ownership.
-- Voucher `ACTIVE` con han moi duoc hien thi tren trang voucher public.
+- Backend tinh tong tien dua tren bang gia, dynamic pricing, voucher discount, thoi luong va dich vu di kem.
 - San chi public khi `approval_status = APPROVED` va `active_status = ACTIVE`.
 - Partner chi sua san, gia, dich vu va don thuoc san cua minh.
 - Admin co API khoa/mo khoa user, duyet partner, duyet san, quan ly category, review, report va thong ke.
+- Frontend khong tu quyet dinh final price. Booking API luon tinh lai tren backend.
+- Demand prediction khong tra ket qua AI gia. Neu thieu lich su booking, API tra `INSUFFICIENT_DATA`.
+
+## Module moi
+
+- Dynamic Pricing: `dynamic_pricing_rules`, `court_base_prices`, `GET /api/courts/:courtId/dynamic-price`, partner CRUD tai `/api/partner/dynamic-pricing/rules`.
+- Demand Prediction: rule-based demand scoring, `demand_predictions`, `demand_features`, public API `/api/courts/:courtId/demand-prediction`, partner overview tai `/api/partner/demand-prediction/*`.
+- Voucher Engine: claim, user vouchers, apply voucher, partner CRUD, admin disable.
+- Tournament Platform: public registration, partner management, registration approval/rejection, admin pending approval.
+- Analytics Dashboard API: partner `/api/partner/analytics/*`, admin `/api/admin/analytics/*`.
+
+## API chinh
+
+- `GET /api/courts/:courtId/dynamic-price?date=&startTime=&endTime=`
+- `GET /api/courts/:courtId/demand-prediction?date=&startTime=&endTime=`
+- `POST /api/vouchers/:id/claim`
+- `GET /api/users/me/vouchers`
+- `POST /api/bookings/apply-voucher`
+- `POST /api/tournaments/:id/register`
+- `GET /api/partner/analytics/overview`
+- `GET /api/admin/analytics/overview`
+
+## Prisma va migration
+
+Sau khi cap nhat database:
+
+```bash
+cd backend
+npx prisma generate
+npm run build
+npm test
+```
+
+`database/supabase_schema.sql` co ca schema day du cho database moi va cac block `create table if not exists` / `alter table add column if not exists` de bo sung an toan cho database cu. Khong xoa bang cu khi chay migration tren database dang co du lieu.
+
+## ML-ready
+
+Tai lieu nghien cuu nam o `docs/RESEARCH_DIRECTION.md`.
+
+Folder `ml/` gom:
+
+- `README_ML.md`
+- `scripts/export_training_data.py`
+- `scripts/train_demand_model.py`
+- `scripts/evaluate_model.py`
+
+Giai doan hien tai dung rule-based model that su chay tren du lieu booking. Chi train/deploy ML model khi co du lieu lich su du lon va co ket qua danh gia MAE/RMSE/accuracy.
 
 ## Deploy
 
@@ -145,3 +210,15 @@ cd backend
 npx prisma db execute --schema prisma/schema.prisma --file ../database/migrate_admin_management.sql
 npx prisma generate
 ```
+# Xác thực email khi đăng ký
+
+Đăng ký tài khoản LOCAL dùng luồng OTP hai bước. Chạy
+`database/migrate_email_verification.sql` trên Supabase trước khi khởi động backend,
+sau đó cấu hình SMTP theo `backend/.env.example`. Với Gmail, dùng App Password thay
+cho mật khẩu Gmail thông thường.
+
+Các API:
+
+- `POST /api/auth/register/request-code`
+- `POST /api/auth/register/verify-code`
+- `POST /api/auth/register/resend-code`

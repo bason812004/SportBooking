@@ -8,7 +8,12 @@ import { CourtDetailPage } from "../pages/public/CourtDetailPage";
 import { PartnersLandingPage } from "../pages/public/PartnersLandingPage";
 import { VouchersPage } from "../pages/public/VouchersPage";
 import { BlogPage } from "../pages/public/BlogPage";
+import { BlogDetailPage } from "../pages/public/BlogDetailPage";
 import { TournamentsPage } from "../pages/public/TournamentsPage";
+import { TournamentDetailPage } from "../pages/public/TournamentDetailPage";
+import { TeammateCreatePage } from "../pages/public/TeammateCreatePage";
+import { TeammateDetailPage } from "../pages/public/TeammateDetailPage";
+import { TeammatesPage } from "../pages/public/TeammatesPage";
 import { LoginPage } from "../pages/auth/LoginPage";
 import { RegisterPage } from "../pages/auth/RegisterPage";
 import { RegisterPartnerPage } from "../pages/auth/RegisterPartnerPage";
@@ -58,21 +63,30 @@ export function AppRoutes() {
       <Route element={<PublicLayout />}>
         <Route index element={<HomePage />} />
         <Route path="login" element={<LoginPage />} />
+        <Route path="partner/login" element={<LoginPage mode="partner" />} />
         <Route path="register" element={<RegisterPage />} />
         <Route path="register-partner" element={<RegisterPartnerPage />} />
+        <Route path="partner" element={<PartnersLandingPage />} />
         <Route path="partners" element={<PartnersLandingPage />} />
         <Route path="vouchers" element={<VouchersPage />} />
         <Route path="blog" element={<BlogPage />} />
+        <Route path="blogs" element={<BlogPage />} />
+        <Route path="blogs/:slug" element={<BlogDetailPage />} />
         <Route path="tournaments" element={<TournamentsPage />} />
+        <Route path="tournaments/:slug" element={<TournamentDetailPage />} />
+        <Route path="teammates" element={<TeammatesPage />} />
+        <Route path="teammates/:id" element={<TeammateDetailPage />} />
         <Route path="courts" element={<CourtsPage />} />
         <Route path="courts/:id" element={<CourtDetailPage />} />
         <Route element={<ProtectedRoute roles={["USER"]} />}>
+          <Route path="teammates/create" element={<TeammateCreatePage />} />
           <Route path="booking/:courtId" element={<BookingPage />} />
           <Route path="payment/:bookingId" element={<PaymentPage />} />
           <Route path="user/profile" element={<UserProfilePage />} />
           <Route path="user/bookings" element={<UserBookingsPage />} />
           <Route path="user/bookings/:id" element={<UserBookingDetailPage />} />
           <Route path="user/vouchers" element={<PartnerPlaceholderPage title="Voucher" />} />
+          <Route path="user/teammates" element={<PartnerPlaceholderPage title="Bài đăng tìm đồng đội của tôi" />} />
           <Route path="user/blogs" element={<PartnerPlaceholderPage title="Bài viết của tôi" />} />
         </Route>
       </Route>

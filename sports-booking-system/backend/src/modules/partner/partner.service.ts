@@ -7,6 +7,7 @@ import { bookingStartsAt, parseLimit, parsePage, timeToDate, timeToMinutes, toDb
 import { uniqueSlug } from "../../shared/utils/slug.js";
 import { commissionService } from "../commission/commission.service.js";
 import { voucherService } from "../vouchers/voucher.service.js";
+import { userRepository } from "../users/user.repository.js";
 import { partnerRepository } from "./partner.repository.js";
 
 async function getProfile(userId: string) {
@@ -49,7 +50,12 @@ export const partnerService = {
 
   async updateProfile(userId: string, input: any) {
     const profile = await getProfile(userId);
-    return partnerRepository.updateProfile(profile.id, {
+    await userRepository.updateMe(userId, {
+      fullName: input.fullName,
+      phone: input.phone ?? "",
+      avatarUrl: input.avatarUrl || undefined
+    });
+    await partnerRepository.updateProfile(profile.id, {
       businessName: input.businessName,
       address: input.address,
       verificationDocumentUrl: input.verificationDocumentUrl || null,
@@ -59,6 +65,7 @@ export const partnerService = {
       taxCode: input.taxCode || null,
       approvalStatus: "PENDING"
     });
+    return getProfile(userId);
   },
 
   async courts(userId: string) {

@@ -1,4 +1,8 @@
 import { NotFoundError } from "../../shared/errors/AppError.js";
+import { ConflictError, ForbiddenError, ValidationError } from "../../shared/errors/AppError.js";
+import { isTournamentRegistrationAllowed } from "../../shared/utils/businessRules.js";
+import { uniqueSlug } from "../../shared/utils/slug.js";
+import { trackEvent } from "../analytics/analytics.service.js";
 import { tournamentRepository } from "./tournament.repository.js";
 
 export const tournamentService = {
@@ -10,5 +14,89 @@ export const tournamentService = {
     const [tournament] = await tournamentRepository.findPublicBySlug(slug);
     if (!tournament) throw new NotFoundError("Khong tim thay giai dau");
     return tournament;
+  },
+
+  async register(userId: string, id: string, input: { teamName?: string; contactPhone: string; note?: string }) {
+    const tournament = await tournamentRepository.findPublicById(id);
+    if (!tournament) throw new NotFoundError("Khong tim thay giai dau");
+    const existing = await tournamentRepository.registration(id, userId);
+    const allowed = isTournamentRegistrationAllowed({
+      status: tournament.status,
+      registrationDeadline: tournament.registrationDeadline,
+      currentParticipants: tournament.currentParticipants,
+      maxParticipants: tournament.maxParticipants,
+      alreadyRegistered: Boolean(existing)
+    });
+    if (!allowed.allowed) {
+      if (allowed.reason === "ALREADY_REGISTERED") throw new ConflictError("Ban da dang ky giai dau nay", "TOURNAMENT_ALREADY_REGISTERED");
+      throw new ValidationError(`Khong the dang ky giai dau: ${allowed.reason}`);
+    }
+    const registration = await tournamentRepository.register({ tournamentId: id, userId, ...input });
+    await trackEvent({ userId, partnerId: tournament.partnerId, eventType: "TOURNAMENT_REGISTERED", entityType: "TOURNAMENT", entityId: id });
+    return registration;
+  },
+
+  async listPartner(userId: string) {
+    const profile = await tournamentRepository.partnerProfile(userId);
+    if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+    return tournamentRepository.listPartner(profile.id);
+  },
+
+  async createPartner(userId: string, input: any) {
+    const profile = await tournamentRepository.partnerProfile(userId);
+    if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+    if (!(await tournamentRepository.partnerCourt(input.courtId, profile.id))) throw new ForbiddenError("Chi duoc tao giai cho san cua ban");
+    const tournament = await tournamentRepository.createPartner(profile.id, uniqueSlug(input.title), input);
+    await trackEvent({ partnerId: profile.id, eventType: "TOURNAMENT_CREATED", entityType: "TOURNAMENT", entityId: tournament.id });
+    return tournament;
+  },
+
+  async getPartner(userId: string, id: string) {
+    const profile = await tournamentRepository.partnerProfile(userId);
+    if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+    const tournament = await tournamentRepository.findPartnerTournament(id, profile.id);
+    if (!tournament) throw new NotFoundError("Khong tim thay giai dau cua ban");
+    return tournament;
+  },
+
+  async updatePartner(userId: string, id: string, input: any) {
+    const profile = await tournamentRepository.partnerProfile(userId);
+    if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+    if (!(await tournamentRepository.findPartnerTournament(id, profile.id))) throw new NotFoundError("Khong tim thay giai dau cua ban");
+    if (input.courtId && !(await tournamentRepository.partnerCourt(input.courtId, profile.id))) {
+      throw new ForbiddenError("Chi duoc cap nhat giai cho san cua ban");
+    }
+    return tournamentRepository.updatePartner(id, input.title ? uniqueSlug(input.title) : undefined, input);
+  },
+
+  async deletePartner(userId: string, id: string) {
+    await this.getPartner(userId, id);
+    return tournamentRepository.deletePartner(id);
+  },
+
+  async registrations(userId: string, id: string) {
+    const profile = await tournamentRepository.partnerProfile(userId);
+    if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+    if (!(await tournamentRepository.findPartnerTournament(id, profile.id))) throw new NotFoundError("Khong tim thay giai dau cua ban");
+    return tournamentRepository.registrations(id, profile.id);
+  },
+
+  async updateRegistration(userId: string, id: string, status: "APPROVED" | "REJECTED") {
+    const profile = await tournamentRepository.partnerProfile(userId);
+    if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+    if (!(await tournamentRepository.registrationByPartner(id, profile.id))) throw new NotFoundError("Khong tim thay dang ky");
+    return tournamentRepository.updateRegistration(id, status);
+  },
+
+  pendingAdmin() {
+    return tournamentRepository.listPendingAdmin();
+  },
+
+  approveAdmin(id: string) {
+    return tournamentRepository.setAdminStatus(id, "APPROVED");
+  },
+
+  rejectAdmin(id: string) {
+    return tournamentRepository.setAdminStatus(id, "REJECTED");
   }
 };

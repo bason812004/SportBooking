@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { CalendarDays, FileText, UserRound } from "lucide-react";
+import { Link } from "react-router-dom";
 import { EmptyState, ErrorState } from "../../components/common/States";
 import { useBlogs } from "../../features/content/hooks/useContent";
 
@@ -63,7 +64,7 @@ export function BlogPage() {
                 transition={{ delay: index * 0.04 }}
                 className="overflow-hidden rounded-[1.5rem] bg-white shadow-sm ring-1 ring-stone-200 transition hover:-translate-y-1 hover:shadow-xl"
               >
-                <div className="h-52 bg-stone-200">
+                <Link to={`/blogs/${post.slug}`} className="block h-52 bg-stone-200">
                   {post.coverImageUrl ? (
                     <img src={post.coverImageUrl} alt={post.title} className="h-full w-full object-cover" loading="lazy" />
                   ) : (
@@ -71,7 +72,7 @@ export function BlogPage() {
                       <FileText className="h-12 w-12" />
                     </div>
                   )}
-                </div>
+                </Link>
                 <div className="space-y-4 p-5">
                   <div className="flex flex-wrap gap-2">
                     {post.category && (
@@ -79,7 +80,9 @@ export function BlogPage() {
                     )}
                     <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">Đã xuất bản</span>
                   </div>
-                  <h2 className="line-clamp-2 text-xl font-black leading-tight text-slate-950">{post.title}</h2>
+                  <Link to={`/blogs/${post.slug}`} className="block">
+                    <h2 className="line-clamp-2 text-xl font-black leading-tight text-slate-950 hover:text-emerald-800">{post.title}</h2>
+                  </Link>
                   <p className="line-clamp-3 text-sm leading-6 text-slate-600">{post.excerpt}</p>
                   <div className="flex items-center justify-between border-t border-stone-100 pt-4 text-xs font-semibold text-slate-500">
                     <span className="flex items-center gap-1.5">
@@ -91,6 +94,9 @@ export function BlogPage() {
                       {dateFormat.format(new Date(post.publishedAt ?? post.createdAt))}
                     </span>
                   </div>
+                  <Link to={`/blogs/${post.slug}`} className="inline-flex rounded-xl bg-emerald-700 px-4 py-2 text-sm font-black text-white hover:bg-emerald-800">
+                    Đọc thêm
+                  </Link>
                 </div>
               </motion.article>
             ))}

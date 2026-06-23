@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import type { PaymentMethod, Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 import { toDbDate } from "../../shared/utils/time.js";
 
@@ -76,31 +76,66 @@ export const bookingRepository = {
     bookingDate: Date;
     startTime: Date;
     endTime: Date;
+    basePrice: number;
+    dynamicAdjustmentAmount: number;
+    subtotal: number;
+    voucherDiscountAmount: number;
     totalPrice: number;
     depositAmount: number;
-    paymentMethod: "CASH" | "BANK_TRANSFER" | "E_WALLET" | "MOCK_PAYMENT";
+    paymentMethod: PaymentMethod;
+    voucherId?: string;
+    note?: string;
+    demandPredictionSnapshot?: Prisma.InputJsonValue | null;
     services: Array<{ serviceId: string; quantity: number; price: number }>;
   }) {
-    return prisma.booking.create({
-      data: {
-        bookingCode: input.bookingCode,
-        userId: input.userId,
-        courtId: input.courtId,
-        bookingDate: input.bookingDate,
-        startTime: input.startTime,
-        endTime: input.endTime,
-        totalPrice: input.totalPrice,
-        depositAmount: input.depositAmount,
-        paymentMethod: input.paymentMethod,
-        bookingServices: {
-          create: input.services.map((service) => ({
-            serviceId: service.serviceId,
-            quantity: service.quantity,
-            price: service.price
-          }))
-        }
-      },
-      include: { court: true, bookingServices: { include: { service: true } } }
+    return prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.create({
+        data: {
+          bookingCode: input.bookingCode,
+          userId: input.userId,
+          courtId: input.courtId,
+          bookingDate: input.bookingDate,
+          startTime: input.startTime,
+          endTime: input.endTime,
+          basePrice: input.basePrice,
+          dynamicAdjustmentAmount: input.dynamicAdjustmentAmount,
+          subtotal: input.subtotal,
+          voucherDiscountAmount: input.voucherDiscountAmount,
+          demandPredictionSnapshot: input.demandPredictionSnapshot ?? undefined,
+          totalPrice: input.totalPrice,
+          depositAmount: input.depositAmount,
+          paymentMethod: input.paymentMethod,
+          note: input.note,
+          bookingServices: {
+            create: input.services.map((service) => ({
+              serviceId: service.serviceId,
+              quantity: service.quantity,
+              price: service.price
+            }))
+          }
+        },
+        include: { court: true, bookingServices: { include: { service: true } } }
+      });
+
+      if (input.voucherId && input.voucherDiscountAmount > 0) {
+        await tx.bookingVoucher.create({
+          data: {
+            bookingId: booking.id,
+            voucherId: input.voucherId,
+            discountAmount: input.voucherDiscountAmount
+          }
+        });
+        await tx.voucher.update({
+          where: { id: input.voucherId },
+          data: { usedCount: { increment: 1 } }
+        });
+        await tx.userVoucher.updateMany({
+          where: { userId: input.userId, voucherId: input.voucherId, status: "CLAIMED" },
+          data: { status: "USED", usedAt: new Date() }
+        });
+      }
+
+      return booking;
     });
   },
 

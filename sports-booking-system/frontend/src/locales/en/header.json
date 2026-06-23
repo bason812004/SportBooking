@@ -14,6 +14,7 @@
     "home": "Home",
     "explore": "Explore Courts",
     "vouchers": "Vouchers",
+    "teammates": "Find Teammates",
     "blog": "Blog",
     "tournaments": "Tournaments"
   },
@@ -60,6 +61,7 @@
     "rewardPoints": "Reward Points",
     "favorites": "Favorites",
     "myVouchers": "My Vouchers",
+    "myTeammatePosts": "My Recruitment Posts",
     "myPosts": "My Posts",
     "logout": "Logout"
   },

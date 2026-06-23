@@ -1,5 +1,17 @@
-backend/.env
-frontend/.env
+# Environment variables
+.env
+.env.*
+**/.env
+**/.env.*
+!backend/.env.example
+
+# Dependencies
+node_modules/
 **/node_modules/
+
+# Build output
+dist/
 **/dist/
+
+# TypeScript cache
 *.tsbuildinfo

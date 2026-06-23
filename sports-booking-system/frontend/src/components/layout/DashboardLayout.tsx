@@ -91,9 +91,9 @@ export function DashboardLayout() {
               )}
               <NavLink
                 to={item.to}
+                end={item.to === "/admin/courts"}
                 className={({ isActive }) =>
-                  `flex h-12 items-center gap-3 rounded-lg px-4 text-base font-bold tracking-wide transition ${
-                    isActive ? "bg-blue-600 text-white shadow-lg" : "text-[#26352b] hover:bg-white/70"
+                  `flex h-12 items-center gap-3 rounded-lg px-4 text-base font-bold tracking-wide transition ${isActive ? "bg-blue-600 text-white shadow-lg" : "text-[#26352b] hover:bg-white/70"
                   }`
                 }
               >

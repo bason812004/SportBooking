@@ -100,5 +100,107 @@ export const tournamentRepository = {
         and t.status in ('OPEN'::tournament_status, 'APPROVED'::tournament_status)
       limit 1
     `;
+  },
+
+  findPublicById(id: string) {
+    return prisma.tournament.findFirst({ where: { id, status: { in: ["OPEN", "APPROVED"] } } });
+  },
+
+  registration(tournamentId: string, userId: string) {
+    return prisma.tournamentRegistration.findUnique({ where: { tournamentId_userId: { tournamentId, userId } } });
+  },
+
+  register(input: { tournamentId: string; userId: string; teamName?: string; contactPhone: string; note?: string }) {
+    return prisma.$transaction(async (tx) => {
+      const registration = await tx.tournamentRegistration.create({ data: input });
+      await tx.tournament.update({ where: { id: input.tournamentId }, data: { currentParticipants: { increment: 1 } } });
+      return registration;
+    });
+  },
+
+  partnerProfile(userId: string) {
+    return prisma.partnerProfile.findUnique({ where: { userId } });
+  },
+
+  partnerCourt(courtId: string, partnerId: string) {
+    return prisma.court.findFirst({ where: { id: courtId, partnerId } });
+  },
+
+  listPartner(partnerId: string) {
+    return prisma.tournament.findMany({ where: { partnerId }, include: { court: true }, orderBy: { createdAt: "desc" } });
+  },
+
+  findPartnerTournament(id: string, partnerId: string) {
+    return prisma.tournament.findFirst({ where: { id, partnerId } });
+  },
+
+  createPartner(partnerId: string, slug: string, input: any) {
+    return prisma.tournament.create({
+      data: {
+        partnerId,
+        courtId: input.courtId,
+        title: input.title,
+        slug,
+        description: input.description,
+        sportType: input.sportType,
+        coverImageUrl: input.coverImageUrl,
+        startDate: new Date(input.startDate),
+        endDate: new Date(input.endDate),
+        registrationDeadline: new Date(input.registrationDeadline),
+        maxParticipants: input.maxParticipants,
+        entryFee: input.entryFee,
+        prizeDescription: input.prizeDescription,
+        status: input.status
+      }
+    });
+  },
+
+  updatePartner(id: string, slug: string | undefined, input: any) {
+    return prisma.tournament.update({
+      where: { id },
+      data: {
+        courtId: input.courtId,
+        title: input.title,
+        slug,
+        description: input.description,
+        sportType: input.sportType,
+        coverImageUrl: input.coverImageUrl,
+        startDate: input.startDate ? new Date(input.startDate) : undefined,
+        endDate: input.endDate ? new Date(input.endDate) : undefined,
+        registrationDeadline: input.registrationDeadline ? new Date(input.registrationDeadline) : undefined,
+        maxParticipants: input.maxParticipants,
+        entryFee: input.entryFee,
+        prizeDescription: input.prizeDescription,
+        status: input.status
+      }
+    });
+  },
+
+  deletePartner(id: string) {
+    return prisma.tournament.update({ where: { id }, data: { status: "CANCELLED" } });
+  },
+
+  registrations(tournamentId: string, partnerId: string) {
+    return prisma.tournamentRegistration.findMany({
+      where: { tournamentId, tournament: { partnerId } },
+      include: { user: { select: { id: true, fullName: true, email: true, phone: true } } },
+      orderBy: { createdAt: "desc" }
+    });
+  },
+
+  updateRegistration(id: string, status: "APPROVED" | "REJECTED") {
+    return prisma.tournamentRegistration.update({ where: { id }, data: { status } });
+  },
+
+  registrationByPartner(id: string, partnerId: string) {
+    return prisma.tournamentRegistration.findFirst({ where: { id, tournament: { partnerId } } });
+  },
+
+  listPendingAdmin() {
+    return prisma.tournament.findMany({ where: { status: "PENDING" }, include: { court: true, partner: true }, orderBy: { createdAt: "desc" } });
+  },
+
+  setAdminStatus(id: string, status: "APPROVED" | "REJECTED") {
+    return prisma.tournament.update({ where: { id }, data: { status } });
   }
 };

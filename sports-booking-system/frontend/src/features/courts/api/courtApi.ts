@@ -20,7 +20,12 @@ export const courtApi = {
     return data.data;
   },
   async availability(id: string, date: string) {
-    const { data } = await api.get<ApiResponse<{ bookedSlots: Array<{ id: string; startTime: string; endTime: string }> }>>(
+    const { data } = await api.get<ApiResponse<{
+      courtId: string;
+      date: string;
+      slots: Array<{ startTime: string; endTime: string; status: "AVAILABLE" | "BOOKED" | "BLOCKED" | "MAINTENANCE" }>;
+      bookedSlots: Array<{ id: string; startTime: string; endTime: string }>;
+    }>>(
       `/courts/${id}/availability`,
       { params: { date } }
     );

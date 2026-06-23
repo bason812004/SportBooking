@@ -11,9 +11,16 @@ export const userService = {
   },
   async updateMe(userId: string, data: { fullName?: string; phone?: string; avatarUrl?: string }) {
     const user = await userRepository.updateMe(userId, data);
+    if (!user) throw new NotFoundError("Khong tim thay tai khoan");
     return omitPassword(user);
   },
   bookings(userId: string, query: { page?: string; limit?: string }) {
     return bookingService.listForUser(userId, query);
+  },
+  bookingDetail(userId: string, bookingId: string) {
+    return bookingService.getForUser(userId, bookingId);
+  },
+  cancelBooking(userId: string, bookingId: string, cancelReason?: string) {
+    return bookingService.cancel(userId, bookingId, cancelReason);
   }
 };

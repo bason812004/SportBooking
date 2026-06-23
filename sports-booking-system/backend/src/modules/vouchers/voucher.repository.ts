@@ -154,6 +154,54 @@ export const voucherRepository = {
     `;
   },
 
+  findUsable(input: { voucherId?: string; code?: string; courtId: string }) {
+    return prisma.voucher.findFirst({
+      where: {
+        id: input.voucherId,
+        code: input.code,
+        status: "ACTIVE",
+        startDate: { lte: new Date() },
+        endDate: { gte: new Date() },
+        OR: [{ courtId: input.courtId }, { courtId: null }]
+      }
+    });
+  },
+
+  findActiveVoucher(id: string) {
+    return prisma.voucher.findFirst({
+      where: {
+        id,
+        status: "ACTIVE",
+        startDate: { lte: new Date() },
+        endDate: { gte: new Date() }
+      }
+    });
+  },
+
+  userVoucher(userId: string, voucherId: string) {
+    return prisma.userVoucher.findUnique({ where: { userId_voucherId: { userId, voucherId } } });
+  },
+
+  claim(userId: string, voucherId: string) {
+    return prisma.userVoucher.create({ data: { userId, voucherId } });
+  },
+
+  listForUser(userId: string) {
+    return prisma.userVoucher.findMany({
+      where: { userId },
+      include: { voucher: { include: { court: true, partner: true } } },
+      orderBy: { claimedAt: "desc" }
+    });
+  },
+
+  partnerProfile(userId: string) {
+    return prisma.partnerProfile.findUnique({ where: { userId } });
+  },
+
+  partnerCourt(courtId: string, partnerId: string) {
+    return prisma.court.findFirst({ where: { id: courtId, partnerId } });
+  },
+
   listForPartner(partnerId: string) {
     return prisma.$queryRaw<PartnerVoucherRow[]>`
       ${partnerVoucherSelect}
@@ -286,5 +334,16 @@ export const voucherRepository = {
         and status = 'DRAFT'::voucher_status
         and used_count = 0
     `;
+  },
+
+  listAdmin() {
+    return prisma.voucher.findMany({
+      include: { court: true, partner: true },
+      orderBy: { createdAt: "desc" }
+    });
+  },
+
+  disableAdmin(id: string) {
+    return prisma.voucher.update({ where: { id }, data: { status: "DISABLED" } });
   }
 };

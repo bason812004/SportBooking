@@ -34,5 +34,35 @@
     "district": "Quận/Huyện",
     "ward": "Phường/Xã",
     "note": "Ghi chú"
+  },
+  "auth": {
+    "login": "Đăng nhập",
+    "register": "Đăng ký",
+    "userRegister": "Đăng ký người dùng",
+    "processing": "Đang xử lý",
+    "loginSuccess": "Đăng nhập thành công",
+    "registerSuccess": "Đăng ký thành công",
+    "googleFailed": "Không thể đăng nhập với Google",
+    "noAccount": "Chưa có tài khoản?",
+    "partnerPrompt": "Muốn đăng sân?",
+    "partnerRegister": "Đăng ký đối tác",
+    "sendVerificationCode": "Gửi mã xác thực",
+    "enterVerificationCode": "Nhập mã xác thực",
+    "codeSent": "Mã xác thực đã được gửi đến email của bạn.",
+    "checkInbox": "Vui lòng kiểm tra hộp thư đến hoặc thư rác.",
+    "verifyEmail": "Xác thực email",
+    "resendCode": "Gửi lại mã",
+    "resendAfter": "Gửi lại sau {{seconds}} giây",
+    "codeExpiresAfter": "Mã hết hạn sau {{time}}",
+    "verificationSuccess": "Xác thực thành công. Tài khoản đã được tạo.",
+    "changeRegistrationInfo": "Thay đổi thông tin đăng ký"
+  },
+  "errors": {
+    "invalidEmail": "Email không hợp lệ",
+    "passwordMin8": "Mật khẩu tối thiểu 8 ký tự",
+    "fullNameRequired": "Nhập họ và tên",
+    "businessNameRequired": "Nhập tên đơn vị",
+    "addressRequired": "Nhập địa chỉ",
+    "otpSixDigits": "Mã xác thực phải gồm đúng 6 chữ số"
   }
 }

@@ -1,7 +1,7 @@
 import type { Response } from "express";
 
-export function sendSuccess<T>(res: Response, data: T, statusCode = 200) {
-  return res.status(statusCode).json({ success: true, data });
+export function sendSuccess<T>(res: Response, data: T, statusCode = 200, message = "Success") {
+  return res.status(statusCode).json({ success: true, message, data });
 }
 
 export function omitPassword<T extends { passwordHash?: string | null }>(record: T) {
