@@ -77,7 +77,7 @@ export function AppRoutes() {
         <Route element={<ProtectedRoute roles={["USER"]} />}>
           <Route path="teammates/create" element={<TeammateCreatePage />} />
           <Route path="booking/:courtId" element={<BookingPage />} />
-          <Route path="payment/:bookingId" element={<PaymentPage />} />
+          <Route path="payment/:paymentId" element={<PaymentPage />} />
           <Route path="user/profile" element={<UserProfilePage />} />
           <Route path="user/bookings" element={<UserBookingsPage />} />
           <Route path="user/bookings/:id" element={<UserBookingDetailPage />} />

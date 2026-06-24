@@ -20,3 +20,7 @@ export function useCourtAvailability(id?: string, date?: string) {
 export function useCategories() {
   return useQuery({ queryKey: ["categories"], queryFn: courtApi.categories });
 }
+
+export function useSportTypes() {
+  return useQuery({ queryKey: ["sport-types"], queryFn: courtApi.sportTypes });
+}

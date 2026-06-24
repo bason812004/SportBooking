@@ -1,5 +1,5 @@
 import { prisma } from "../../config/db.js";
-import { toDbDate } from "../../shared/utils/time.js";
+import { timeToDate, toDbDate } from "../../shared/utils/time.js";
 export const bookingRepository = {
     findById(id) {
         return prisma.booking.findUnique({
@@ -47,7 +47,7 @@ export const bookingRepository = {
     courtWithPricing(id) {
         return prisma.court.findFirst({
             where: { id, approvalStatus: "APPROVED", activeStatus: "ACTIVE" },
-            include: { prices: true, services: true }
+            include: { prices: true, services: true, images: { orderBy: { sortOrder: "asc" } } }
         });
     },
     services(ids) {
@@ -101,6 +101,98 @@ export const bookingRepository = {
             }
             return booking;
         });
+    },
+    findConflictsInTransaction(tx, courtId, date, slots) {
+        const activeStatuses = ["PENDING", "CONFIRMED", "COMPLETED"];
+        return Promise.all(slots.map(async (slot) => {
+            const legacyBooking = await tx.booking.findFirst({
+                where: {
+                    courtId,
+                    bookingDate: toDbDate(date),
+                    bookingStatus: { in: activeStatuses },
+                    startTime: { lt: timeToDate(slot.endTime) },
+                    endTime: { gt: timeToDate(slot.startTime) }
+                }
+            });
+            const slotBooking = await tx.bookingSlot.findFirst({
+                where: {
+                    courtId,
+                    bookingDate: toDbDate(date),
+                    startTime: { lt: timeToDate(slot.endTime) },
+                    endTime: { gt: timeToDate(slot.startTime) },
+                    booking: { bookingStatus: { in: activeStatuses } }
+                }
+            });
+            return legacyBooking ?? slotBooking;
+        }));
+    },
+    createCheckout(input) {
+        return prisma.$transaction(async (tx) => {
+            const conflicts = await this.findConflictsInTransaction(tx, input.courtId, input.bookingDate, input.slots);
+            if (conflicts.some(Boolean))
+                return { conflict: true };
+            const sortedSlots = [...input.slots].sort((left, right) => left.startTime.localeCompare(right.startTime));
+            const firstSlot = sortedSlots[0];
+            const lastSlot = sortedSlots[sortedSlots.length - 1];
+            const booking = await tx.booking.create({
+                data: {
+                    bookingCode: input.bookingCode,
+                    userId: input.userId,
+                    courtId: input.courtId,
+                    bookingDate: toDbDate(input.bookingDate),
+                    startTime: timeToDate(firstSlot.startTime),
+                    endTime: timeToDate(lastSlot.endTime),
+                    basePrice: input.subtotal,
+                    dynamicAdjustmentAmount: 0,
+                    subtotal: input.subtotal,
+                    voucherDiscountAmount: input.voucherDiscountAmount,
+                    totalPrice: input.totalAmount,
+                    depositAmount: input.depositAmount,
+                    paymentMethod: "QR_TRANSFER",
+                    paymentStatus: "UNPAID",
+                    bookingStatus: "PENDING",
+                    note: input.note,
+                    bookingSlots: {
+                        create: sortedSlots.map((slot) => ({
+                            courtId: input.courtId,
+                            bookingDate: toDbDate(input.bookingDate),
+                            startTime: timeToDate(slot.startTime),
+                            endTime: timeToDate(slot.endTime),
+                            slotPrice: slot.price
+                        }))
+                    }
+                },
+                include: { court: true, bookingSlots: true }
+            });
+            if (input.voucherId && input.voucherDiscountAmount > 0) {
+                await tx.bookingVoucher.create({
+                    data: {
+                        bookingId: booking.id,
+                        voucherId: input.voucherId,
+                        discountAmount: input.voucherDiscountAmount
+                    }
+                });
+                await tx.voucher.update({ where: { id: input.voucherId }, data: { usedCount: { increment: 1 } } });
+            }
+            const payment = await tx.payment.create({
+                data: {
+                    bookingId: booking.id,
+                    userId: input.userId,
+                    provider: input.provider,
+                    paymentMethod: "QR_TRANSFER",
+                    paymentType: input.paymentType,
+                    amount: input.paymentAmount,
+                    currency: "VND",
+                    status: "UNPAID",
+                    externalOrderId: input.externalOrderId,
+                    qrCodeUrl: input.qrCodeUrl ?? undefined,
+                    qrPayload: input.qrPayload ?? undefined,
+                    paymentReference: input.paymentReference,
+                    expiresAt: input.expiresAt
+                }
+            });
+            return { conflict: false, booking, payment };
+        }, { isolationLevel: "Serializable" });
     },
     toDbDate
 };

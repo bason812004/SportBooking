@@ -55,7 +55,15 @@ export const courtRepository = {
     if (city) where.city = { contains: city, mode: "insensitive" };
     if (query.district) where.district = { contains: query.district, mode: "insensitive" };
     if (query.categoryId) where.categoryId = query.categoryId;
-    if (query.sportType) categoryFilter.name = { contains: query.sportType, mode: "insensitive" };
+    if (query.sportType) {
+      const sportType = query.sportType.trim();
+      categoryFilter.OR = [
+        { id: sportType },
+        { slug: { equals: sportType.toLowerCase(), mode: "insensitive" } },
+        { slug: { contains: sportType.toLowerCase().replace(/_/g, "-"), mode: "insensitive" } },
+        { name: { contains: sportType.replace(/_/g, " "), mode: "insensitive" } }
+      ];
+    }
     const minPrice = Number(query.minPrice);
     const maxPrice = Number(query.maxPrice);
     if (Number.isFinite(minPrice) || Number.isFinite(maxPrice)) {
@@ -69,8 +77,28 @@ export const courtRepository = {
       };
     }
 
+    const latitude = Number(query.latitude);
+    const longitude = Number(query.longitude);
+    const radiusKm = Number(query.radiusKm || 25);
+    const hasLocation = Number.isFinite(latitude) && Number.isFinite(longitude);
+    if (hasLocation) {
+      const latitudeDelta = radiusKm / 111;
+      const longitudeDelta = radiusKm / (111 * Math.cos((latitude * Math.PI) / 180));
+      where.latitude = { not: null, gte: latitude - latitudeDelta, lte: latitude + latitudeDelta };
+      where.longitude = { not: null, gte: longitude - longitudeDelta, lte: longitude + longitudeDelta };
+    }
+
     const orderBy: Prisma.CourtOrderByWithRelationInput =
       query.sortBy === "name" ? { name: query.sortOrder ?? "asc" } : query.sort === "newest" || !query.sort ? { createdAt: "desc" } : { name: "asc" };
+
+    if (hasLocation || query.sortBy === "distance") {
+      const candidates = await prisma.court.findMany({
+        where,
+        include: courtInclude,
+        orderBy
+      });
+      return { items: candidates, total: candidates.length };
+    }
 
     const [items, total] = await prisma.$transaction([
       prisma.court.findMany({
@@ -120,15 +148,36 @@ export const courtRepository = {
         bookingDate: toDbDate(date),
         bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] }
       },
-      select: { id: true, bookingCode: true, startTime: true, endTime: true, bookingStatus: true },
+      select: { id: true, bookingCode: true, startTime: true, endTime: true, bookingStatus: true, payments: { select: { expiresAt: true, status: true } } },
+      orderBy: { startTime: "asc" }
+    });
+  },
+
+  bookingSlots(courtId: string, date: string) {
+    return prisma.bookingSlot.findMany({
+      where: {
+        courtId,
+        bookingDate: toDbDate(date),
+        booking: {
+          bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] }
+        }
+      },
+      select: {
+        id: true,
+        bookingId: true,
+        startTime: true,
+        endTime: true,
+        slotPrice: true,
+        booking: { select: { bookingStatus: true, payments: { select: { expiresAt: true, status: true } } } }
+      },
       orderBy: { startTime: "asc" }
     });
   },
 
   availabilityBlocks(courtId: string, date: string) {
     return prisma.courtAvailabilityBlock.findMany({
-      where: { courtId, blockDate: toDbDate(date) },
-      select: { id: true, startTime: true, endTime: true, reason: true },
+      where: { courtId, blockDate: toDbDate(date), status: "ACTIVE" },
+      select: { id: true, startTime: true, endTime: true, reason: true, status: true },
       orderBy: { startTime: "asc" }
     });
   },

@@ -3,11 +3,33 @@ import type { ApiResponse, Category, Court, Paginated } from "../../../types/api
 
 export type CourtFilters = {
   q?: string;
+  keyword?: string;
+  sportType?: string;
   city?: string;
+  province?: string;
   district?: string;
   categoryId?: string;
+  latitude?: number;
+  longitude?: number;
+  radiusKm?: number;
+  sortBy?: string;
+  sortOrder?: "asc" | "desc";
   page?: number;
   limit?: number;
+};
+
+export type SportTypeOption = {
+  value: string;
+  label: string;
+  categoryId?: string;
+};
+
+export type AvailabilitySlot = {
+  startTime: string;
+  endTime: string;
+  status: "AVAILABLE" | "BOOKED" | "PENDING_PAYMENT" | "BLOCKED" | "MAINTENANCE" | "CLOSED";
+  price: number;
+  bookingId: string | null;
 };
 
 export const courtApi = {
@@ -23,7 +45,10 @@ export const courtApi = {
     const { data } = await api.get<ApiResponse<{
       courtId: string;
       date: string;
-      slots: Array<{ startTime: string; endTime: string; status: "AVAILABLE" | "BOOKED" | "BLOCKED" | "MAINTENANCE" }>;
+      openingTime: string;
+      closingTime: string;
+      slotDurationMinutes: number;
+      slots: AvailabilitySlot[];
       bookedSlots: Array<{ id: string; startTime: string; endTime: string }>;
     }>>(
       `/courts/${id}/availability`,
@@ -33,6 +58,10 @@ export const courtApi = {
   },
   async categories() {
     const { data } = await api.get<ApiResponse<Category[]>>("/categories");
+    return data.data;
+  },
+  async sportTypes() {
+    const { data } = await api.get<ApiResponse<SportTypeOption[]>>("/sport-types");
     return data.data;
   },
   async reviews(id: string) {

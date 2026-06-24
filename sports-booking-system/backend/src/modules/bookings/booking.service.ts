@@ -1,4 +1,5 @@
 import { BookingStatus, type Prisma } from "@prisma/client";
+import { env } from "../../config/env.js";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
 import {
@@ -20,15 +21,158 @@ import { voucherRepository } from "../vouchers/voucher.repository.js";
 import { notificationService } from "../notifications/notification.service.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
+import { paymentProvider } from "../payments/providers/index.js";
 import { bookingRepository } from "./booking.repository.js";
-import type { CreateBookingInput } from "./booking.types.js";
+import {
+  calculateBookingQuote,
+  canCreateBookingCheckout,
+  checkBookingOverlap,
+  validateSelectedSlots
+} from "./booking.calculations.js";
+import type { BookingCheckoutInput, BookingQuoteInput, CreateBookingInput } from "./booking.types.js";
 
 function bookingCode() {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
   return `BK${stamp}${Math.floor(Math.random() * 900 + 100)}`;
 }
 
+function paymentReference() {
+  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  return `SBK-${stamp}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+}
+
+function minutesRange(slots: Array<{ startTime: string; endTime: string }>) {
+  const sorted = [...slots].sort((left, right) => left.startTime.localeCompare(right.startTime));
+  return { startTime: sorted[0].startTime, endTime: sorted[sorted.length - 1].endTime };
+}
+
+async function buildQuote(userId: string, input: BookingQuoteInput) {
+  if (!validateSelectedSlots(input.slots)) throw new ValidationError("Khung gio da chon khong hop le");
+  const duplicateOverlap = input.slots.some((slot, index) => input.slots.some((other, otherIndex) => index !== otherIndex && checkBookingOverlap(slot, other)));
+  if (duplicateOverlap) throw new ValidationError("Cac khung gio da chon bi trung nhau");
+
+  const court = await bookingRepository.courtWithPricing(input.courtId);
+  if (!court) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
+
+  const [blocks, legacyBookings, bookingSlots] = await Promise.all([
+    courtRepository.availabilityBlocks(input.courtId, input.bookingDate),
+    courtRepository.availability(input.courtId, input.bookingDate),
+    courtRepository.bookingSlots(input.courtId, input.bookingDate)
+  ]);
+
+  for (const slot of input.slots) {
+    const blocked = blocks.some((block) => checkBookingOverlap(slot, { startTime: block.startTime.toISOString().slice(11, 16), endTime: block.endTime.toISOString().slice(11, 16) }));
+    const booked = legacyBookings.some((booking) => checkBookingOverlap(slot, { startTime: booking.startTime.toISOString().slice(11, 16), endTime: booking.endTime.toISOString().slice(11, 16) }));
+    const bookedSlot = bookingSlots.some((bookingSlot) =>
+      checkBookingOverlap(slot, { startTime: bookingSlot.startTime.toISOString().slice(11, 16), endTime: bookingSlot.endTime.toISOString().slice(11, 16) })
+    );
+    if (blocked || booked || bookedSlot) throw new ConflictError("Mot hoac nhieu khung gio da duoc dat hoac bi khoa", "BOOKING_CONFLICT");
+  }
+
+  const pricedSlots = await Promise.all(
+    input.slots.map(async (slot) => {
+      const dynamicPrice = await dynamicPricingService.calculate(input.courtId, {
+        date: input.bookingDate,
+        startTime: slot.startTime,
+        endTime: slot.endTime
+      });
+      const hours = durationHours(slot.startTime, slot.endTime);
+      return { ...slot, price: dynamicPrice.finalPrice * hours };
+    })
+  );
+  const subtotal = pricedSlots.reduce((sum, slot) => sum + slot.price, 0);
+  let voucherDiscountAmount = 0;
+  let voucherId: string | undefined;
+  if (input.voucherCode) {
+    const voucherResult = await voucherService.apply({ userId, code: input.voucherCode, courtId: input.courtId, subtotal });
+    voucherDiscountAmount = voucherResult.discountAmount;
+    voucherId = voucherResult.voucherId;
+  }
+  const quote = calculateBookingQuote(pricedSlots, voucherDiscountAmount);
+  return {
+    court: {
+      id: court.id,
+      name: court.name,
+      address: [court.address, court.district, court.city].filter(Boolean).join(", "),
+      imageUrl: court.images?.[0]?.imageUrl ?? null
+    },
+    bookingDate: input.bookingDate,
+    slots: pricedSlots,
+    voucherId,
+    currency: "VND" as const,
+    quoteExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
+    ...quote
+  };
+}
+
 export const bookingService = {
+  async quote(userId: string, input: BookingQuoteInput) {
+    return buildQuote(userId, input);
+  },
+
+  async checkout(userId: string, input: BookingCheckoutInput) {
+    const quote = await buildQuote(userId, input);
+    if (!canCreateBookingCheckout({ totalAmount: quote.totalAmount, paymentType: input.paymentType })) {
+      throw new ValidationError("Lua chon thanh toan khong hop le");
+    }
+
+    const paymentAmount = input.paymentType === "DEPOSIT" ? quote.minimumDepositAmount : quote.totalAmount;
+    const remainingAmount = quote.totalAmount - paymentAmount;
+    const expiresAt = new Date(Date.now() + env.BOOKING_HOLD_EXPIRES_MINUTES * 60 * 1000);
+    const reference = paymentReference();
+    const orderId = `${reference}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const providerResult = await paymentProvider.createQrPayment({
+      amount: paymentAmount,
+      currency: "VND",
+      orderId,
+      paymentReference: reference,
+      description: `Thanh toan dat san ${quote.court.name}`,
+      expiresAt
+    });
+
+    const result = await bookingRepository.createCheckout({
+      bookingCode: bookingCode(),
+      userId,
+      courtId: input.courtId,
+      bookingDate: input.bookingDate,
+      slots: quote.slots,
+      subtotal: quote.subtotal,
+      voucherDiscountAmount: quote.voucherDiscountAmount,
+      totalAmount: quote.totalAmount,
+      depositAmount: quote.minimumDepositAmount,
+      paymentType: input.paymentType,
+      paymentAmount,
+      voucherId: quote.voucherId,
+      note: input.note,
+      provider: providerResult.provider,
+      externalOrderId: providerResult.externalOrderId,
+      qrCodeUrl: providerResult.qrCodeUrl,
+      qrPayload: providerResult.qrPayload,
+      paymentReference: reference,
+      expiresAt
+    });
+    if (result.conflict) throw new ConflictError("Mot hoac nhieu khung gio vua duoc dat boi nguoi khac", "BOOKING_CONFLICT");
+
+    realtimeService.toUser(userId, realtimeEvents.bookingPendingPayment, result.booking);
+    realtimeService.toCourt(input.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: input.courtId, bookingDate: input.bookingDate });
+
+    return {
+      bookingId: result.booking.id,
+      paymentId: result.payment.id,
+      bookingStatus: result.booking.bookingStatus,
+      paymentStatus: result.payment.status,
+      paymentType: input.paymentType,
+      totalAmount: quote.totalAmount,
+      paymentAmount,
+      remainingAmount,
+      qrCodeUrl: result.payment.qrCodeUrl,
+      qrPayload: result.payment.qrPayload,
+      paymentReference: result.payment.paymentReference,
+      expiresAt: result.payment.expiresAt,
+      providerConfigured: providerResult.providerConfigured
+    };
+  },
+
   async create(userId: string, input: CreateBookingInput) {
     if (timeToMinutes(input.startTime) >= timeToMinutes(input.endTime)) {
       throw new ValidationError("Gio bat dau phai nho hon gio ket thuc");

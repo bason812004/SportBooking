@@ -58,6 +58,9 @@ drop table if exists blog_comments cascade;
 drop table if exists blog_posts cascade;
 drop table if exists blog_categories cascade;
 drop table if exists booking_vouchers cascade;
+drop table if exists payment_transactions cascade;
+drop table if exists payments cascade;
+drop table if exists booking_slots cascade;
 drop table if exists user_vouchers cascade;
 drop table if exists vouchers cascade;
 drop table if exists reviews cascade;
@@ -92,8 +95,10 @@ drop type if exists voucher_discount_type cascade;
 drop type if exists review_display_status cascade;
 drop type if exists day_type cascade;
 drop type if exists payment_method cascade;
+drop type if exists payment_type cascade;
 drop type if exists payment_status cascade;
 drop type if exists booking_status cascade;
+drop type if exists availability_block_status cascade;
 drop type if exists court_active_status cascade;
 drop type if exists approval_status cascade;
 drop type if exists account_status cascade;
@@ -139,9 +144,11 @@ create type verification_purpose as enum ('REGISTER', 'FORGOT_PASSWORD', 'CHANGE
 create type account_status as enum ('ACTIVE', 'LOCKED', 'INACTIVE', 'BLOCKED');
 create type approval_status as enum ('PENDING', 'APPROVED', 'REJECTED');
 create type court_active_status as enum ('ACTIVE', 'INACTIVE');
+create type availability_block_status as enum ('ACTIVE', 'INACTIVE');
 create type booking_status as enum ('PENDING', 'CONFIRMED', 'COMPLETED', 'CANCELLED', 'NO_SHOW');
-create type payment_status as enum ('UNPAID', 'PAID', 'REFUNDED');
-create type payment_method as enum ('CASH', 'BANK_TRANSFER', 'E_WALLET');
+create type payment_status as enum ('UNPAID', 'PAID', 'PARTIALLY_REFUNDED', 'REFUNDED');
+create type payment_method as enum ('CASH', 'QR_TRANSFER', 'BANK_TRANSFER', 'E_WALLET', 'ONLINE_GATEWAY');
+create type payment_type as enum ('DEPOSIT', 'FULL_PAYMENT', 'REMAINING_PAYMENT');
 create type day_type as enum ('WEEKDAY', 'WEEKEND', 'HOLIDAY');
 create type review_display_status as enum ('VISIBLE', 'HIDDEN');
 create type report_status as enum ('PENDING', 'RESOLVED', 'REJECTED');
@@ -411,6 +418,7 @@ create table court_availability_blocks (
   start_time time not null,
   end_time time not null,
   reason text,
+  status availability_block_status not null default 'ACTIVE',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint court_availability_blocks_time_check check (start_time < end_time)
@@ -438,6 +446,53 @@ create table bookings (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint bookings_time_check check (start_time < end_time)
+);
+
+create table booking_slots (
+  id uuid primary key default gen_random_uuid(),
+  booking_id varchar(20) not null references bookings(id) on delete cascade,
+  court_id varchar(20) not null references courts(id) on delete cascade,
+  booking_date date not null,
+  start_time time not null,
+  end_time time not null,
+  slot_price numeric(12, 2) not null check (slot_price >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint booking_slots_time_check check (start_time < end_time)
+);
+
+create table payments (
+  id uuid primary key default gen_random_uuid(),
+  booking_id varchar(20) not null references bookings(id) on delete cascade,
+  user_id varchar(20) not null references users(id) on delete cascade,
+  provider varchar(60) not null,
+  payment_method payment_method not null,
+  payment_type payment_type not null,
+  amount numeric(12, 2) not null check (amount >= 0),
+  currency varchar(3) not null default 'VND',
+  status payment_status not null default 'UNPAID',
+  external_order_id varchar(80) not null unique,
+  external_transaction_id varchar(120),
+  qr_code_url text,
+  qr_payload text,
+  payment_reference varchar(80) not null,
+  expires_at timestamptz not null,
+  paid_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table payment_transactions (
+  id uuid primary key default gen_random_uuid(),
+  payment_id uuid not null references payments(id) on delete cascade,
+  provider varchar(60) not null,
+  provider_transaction_id varchar(120) not null,
+  provider_status varchar(40) not null,
+  amount numeric(12, 2) not null check (amount >= 0),
+  raw_payload_json jsonb not null,
+  verified boolean not null default false,
+  created_at timestamptz not null default now(),
+  constraint uq_payment_transactions_provider_tx unique(provider, provider_transaction_id)
 );
 
 create table demand_predictions (
@@ -706,6 +761,8 @@ create trigger trg_dynamic_pricing_rules_updated_at before update on dynamic_pri
 create trigger trg_court_services_updated_at before update on court_services for each row execute function set_updated_at();
 create trigger trg_court_availability_blocks_updated_at before update on court_availability_blocks for each row execute function set_updated_at();
 create trigger trg_bookings_updated_at before update on bookings for each row execute function set_updated_at();
+create trigger trg_booking_slots_updated_at before update on booking_slots for each row execute function set_updated_at();
+create trigger trg_payments_updated_at before update on payments for each row execute function set_updated_at();
 create trigger trg_reviews_updated_at before update on reviews for each row execute function set_updated_at();
 create trigger trg_demand_predictions_updated_at before update on demand_predictions for each row execute function set_updated_at();
 create trigger trg_demand_features_updated_at before update on demand_features for each row execute function set_updated_at();
@@ -738,7 +795,7 @@ create index if not exists idx_courts_active_status on courts(active_status);
 create index if not exists idx_courts_slug on courts(slug);
 create index if not exists idx_court_surfaces_court_id on court_surfaces(court_id);
 create index if not exists idx_court_base_prices_lookup on court_base_prices(court_id, day_type, start_time, end_time);
-create index if not exists idx_court_availability_blocks_lookup on court_availability_blocks(court_id, block_date, start_time, end_time);
+create index if not exists idx_court_availability_blocks_lookup on court_availability_blocks(court_id, block_date, start_time, end_time, status);
 create index if not exists idx_dynamic_pricing_rules_lookup on dynamic_pricing_rules(court_id, status, priority);
 create index if not exists idx_dynamic_pricing_rules_partner_id on dynamic_pricing_rules(partner_id);
 create index if not exists idx_bookings_user_id on bookings(user_id);
@@ -747,6 +804,12 @@ create index if not exists idx_bookings_booking_date on bookings(booking_date);
 create index if not exists idx_bookings_booking_status on bookings(booking_status);
 create index if not exists idx_bookings_payment_status on bookings(payment_status);
 create index if not exists idx_bookings_schedule_conflict on bookings(court_id, booking_date, start_time, end_time, booking_status);
+create index if not exists idx_booking_slots_schedule on booking_slots(court_id, booking_date, start_time, end_time);
+create index if not exists idx_booking_slots_booking_id on booking_slots(booking_id);
+create index if not exists idx_payments_booking_id on payments(booking_id);
+create index if not exists idx_payments_user_id on payments(user_id);
+create index if not exists idx_payments_status_expires_at on payments(status, expires_at);
+create index if not exists idx_payment_transactions_payment_id on payment_transactions(payment_id);
 create index if not exists idx_reviews_court_id on reviews(court_id);
 create index if not exists idx_reports_status on reports(status);
 create index if not exists idx_notifications_user_read_created on notifications(user_id, is_read, created_at);

@@ -58,6 +58,7 @@ export type Court = {
   directions?: string;
   surfaceInfo?: string;
   minPrice?: number;
+  distanceKm?: number | null;
   averageRating?: number;
   reviewCount?: number;
   category: Category;

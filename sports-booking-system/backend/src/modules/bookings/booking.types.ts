@@ -11,3 +11,20 @@ export type CreateBookingInput = {
   note?: string;
   services: Array<{ serviceId: string; quantity: number }>;
 };
+
+export type BookingSlotInput = {
+  startTime: string;
+  endTime: string;
+};
+
+export type BookingQuoteInput = {
+  courtId: string;
+  bookingDate: string;
+  slots: BookingSlotInput[];
+  voucherCode?: string;
+};
+
+export type BookingCheckoutInput = BookingQuoteInput & {
+  paymentType: "DEPOSIT" | "FULL_PAYMENT";
+  note?: string;
+};

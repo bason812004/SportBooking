@@ -8,24 +8,38 @@
     "startTime": "Giờ bắt đầu",
     "endTime": "Giờ kết thúc",
     "players": "Số người chơi",
-    "searchAgain": "Tìm lại",
+    "searchAgain": "Tìm kiếm",
     "defaultLocation": "TP.HCM, Quận 7",
-    "defaultCourtType": "Cầu lông, bóng đá"
+    "defaultCourtType": "Cầu lông, bóng đá",
+    "keywordPlaceholder": "Tìm kiếm tên sân, địa điểm...",
+    "findNearby": "Tìm sân gần tôi",
+    "locating": "Đang xác định vị trí của bạn...",
+    "locationUnavailable": "Không thể truy cập vị trí của bạn.",
+    "locationDenied": "Bạn đã từ chối quyền truy cập vị trí.",
+    "enableLocation": "Vui lòng bật quyền vị trí để tìm sân gần bạn.",
+    "distance": "Khoảng cách",
+    "distanceFromYou": "Cách bạn {{distance}} km",
+    "chooseSchedule": "Chọn lịch",
+    "realScheduleHint": "Xem chi tiết để chọn lịch sân thật"
   },
   "filters": {
-    "title": "Bộ lọc thông minh",
+    "title": "Bộ lọc",
     "price": "Khoảng giá",
     "rating": "Đánh giá",
     "amenities": "Tiện ích",
     "status": "Trạng thái",
     "distance": "Khoảng cách",
-    "verified": "Đối tác xác thực"
+    "verified": "Đối tác xác thực",
+    "sportType": "Lọc theo môn thể thao",
+    "allSports": "Tất cả môn thể thao",
+    "clear": "Xóa filter",
+    "radius": "Trong bán kính {{radius}} km"
   },
   "detail": {
     "reviews": "Review từ người chơi",
     "reviewAnalytics": "Phân tích review",
     "reviewDescription": "Lọc nhanh theo mới nhất, rating cao nhất hoặc thấp nhất.",
-    "emptyReviews": "Chưa có review thật cho sân này. Hãy chạy seed review để hiển thị đánh giá.",
+    "emptyReviews": "Chưa có review thật cho sân này.",
     "newest": "Mới nhất",
     "highestRating": "Rating cao nhất",
     "lowestRating": "Rating thấp nhất",
@@ -36,7 +50,21 @@
     "serviceValue": "Thuê vợt + nước",
     "subtotal": "Tạm tính",
     "total": "Tổng",
-    "bestTime": "Khung giờ phù hợp cho bạn: 14:00 - 16:00. Dựa trên lịch sử đặt sân, khung này ít đông và đang giảm 20%.",
-    "time": "Giờ"
+    "bestTime": "Chọn khung giờ còn trống để tiếp tục đặt sân.",
+    "time": "Giờ",
+    "availabilityTitle": "Lịch sân",
+    "availabilityDescription": "Chọn một hoặc nhiều khung giờ còn trống. Trạng thái được lấy trực tiếp từ hệ thống đặt sân.",
+    "available": "Sân còn trống",
+    "selected": "Đã chọn",
+    "booked": "Sân đã được đặt",
+    "pendingPayment": "Đang được giữ chỗ",
+    "blocked": "Bị khóa",
+    "maintenance": "Bảo trì",
+    "chooseDate": "Chọn ngày",
+    "chooseSlot": "Chọn khung giờ",
+    "selectedSlotCount": "{{count}} khung giờ",
+    "continueBooking": "Tiếp tục đặt sân",
+    "closedOrNoSchedule": "Sân đóng cửa hoặc chưa mở lịch cho ngày này."
   }
 }
+
