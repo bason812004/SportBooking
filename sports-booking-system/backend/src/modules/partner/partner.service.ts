@@ -243,14 +243,14 @@ export const partnerService = {
     const booking = await partnerRepository.bookingByPartner(bookingId, profile.id);
     if (!booking) throw new NotFoundError("Khong tim thay don cua san ban");
 
-    const transitions: Record<BookingStatus, BookingStatus[]> = {
+    const transitions: Partial<Record<BookingStatus, BookingStatus[]>> = {
       PENDING: [BookingStatus.CONFIRMED, BookingStatus.CANCELLED],
       CONFIRMED: [BookingStatus.COMPLETED, BookingStatus.NO_SHOW, BookingStatus.CANCELLED],
       COMPLETED: [],
       CANCELLED: [],
       NO_SHOW: []
     };
-    if (!transitions[booking.bookingStatus].includes(status)) {
+    if (!(transitions[booking.bookingStatus] ?? []).includes(status)) {
       throw new ValidationError("Khong the chuyen trang thai don theo thao tac nay");
     }
     if (

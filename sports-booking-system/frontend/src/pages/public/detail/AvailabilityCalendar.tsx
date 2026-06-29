@@ -1,22 +1,69 @@
-import { availabilityDays, availabilitySlots } from "./detailData";
+import type { AvailabilitySlot } from "../../../features/courts/api/courtApi";
 import { DetailSection } from "./detailUtils";
 
-export function AvailabilityCalendar({ selectedSlot, onSelectSlot }: { selectedSlot: string; onSelectSlot: (slot: string) => void }) {
+export function AvailabilityCalendar({
+  date,
+  onDateChange,
+  slots,
+  selectedSlots,
+  loading,
+  onToggleSlot
+}: {
+  date: string;
+  onDateChange: (date: string) => void;
+  slots: AvailabilitySlot[];
+  selectedSlots: AvailabilitySlot[];
+  loading: boolean;
+  onToggleSlot: (slot: AvailabilitySlot) => void;
+}) {
   return (
-    <DetailSection title="Lịch trống thông minh" description="Màu xanh còn trống, vàng sắp kín, đỏ đã kín. Chọn trực tiếp để đặt nhanh.">
-      <div className="flex gap-2 overflow-x-auto pb-2">
-        {availabilityDays.map((day, index) => <button key={day} className={`min-w-28 rounded-2xl px-4 py-3 font-black ${index === 0 ? "bg-[#0f766e] text-white" : "bg-slate-50"}`}>{day}</button>)}
+    <DetailSection title="Lịch sân" description="Chọn một hoặc nhiều khung giờ còn trống. Trạng thái được lấy trực tiếp từ hệ thống đặt sân.">
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="text-sm font-black text-slate-600" htmlFor="availability-date">Chọn ngày</label>
+        <input
+          id="availability-date"
+          type="date"
+          value={date}
+          onChange={(event) => onDateChange(event.target.value)}
+          className="rounded-xl border border-slate-200 px-4 py-3 font-bold focus:outline-none focus:ring-2 focus:ring-teal-500"
+        />
       </div>
+
+      <div className="mt-4 flex flex-wrap gap-2 text-xs font-bold">
+        <Legend className="border-emerald-200 bg-emerald-50 text-emerald-800" label="Còn trống" />
+        <Legend className="border-teal-500 bg-teal-600 text-white" label="Đã chọn" />
+        <Legend className="border-amber-200 bg-amber-50 text-amber-800" label="Đang được giữ chỗ" />
+        <Legend className="border-red-200 bg-red-50 text-red-700" label="Đã đặt" />
+        <Legend className="border-slate-200 bg-slate-100 text-slate-500" label="Bị khóa" />
+      </div>
+
+      {loading ? (
+        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+          {Array.from({ length: 12 }).map((_, index) => <div key={index} className="h-20 animate-pulse rounded-2xl bg-slate-100" />)}
+        </div>
+      ) : null}
+
+      {!loading && !slots.length ? (
+        <p className="mt-5 rounded-2xl border border-dashed border-slate-300 p-5 text-center font-semibold text-slate-500">
+          Sân đóng cửa hoặc chưa mở lịch cho ngày này.
+        </p>
+      ) : null}
+
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-        {availabilitySlots.map((slot, index) => {
-          const status = index >= 5 && index <= 8 ? "busy" : index === 4 || index === 9 ? "warning" : "free";
+        {slots.map((slot) => {
+          const selected = selectedSlots.some((item) => item.startTime === slot.startTime && item.endTime === slot.endTime);
+          const disabled = slot.status !== "AVAILABLE";
           return (
             <button
-              key={slot}
-              onClick={() => status !== "busy" && onSelectSlot(slot)}
-              className={`rounded-2xl border px-4 py-4 font-black transition ${selectedSlot === slot ? "ring-4 ring-blue-200" : ""} ${status === "free" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : status === "warning" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-700 opacity-70"}`}
+              key={`${slot.startTime}-${slot.endTime}`}
+              type="button"
+              disabled={disabled}
+              onClick={() => onToggleSlot(slot)}
+              className={`min-h-20 rounded-2xl border px-3 py-3 text-sm font-black transition disabled:cursor-not-allowed ${selected ? "border-teal-500 bg-teal-600 text-white ring-4 ring-teal-100" : statusClass(slot.status)}`}
             >
-              {slot}
+              <span className="block">{slot.startTime} - {slot.endTime}</span>
+              <span className="mt-1 block text-xs">{slot.price.toLocaleString("vi-VN")}đ</span>
+              {slot.status === "PENDING_PAYMENT" ? <span className="mt-1 block text-[11px]">Đang giữ chỗ</span> : null}
             </button>
           );
         })}
@@ -24,3 +71,15 @@ export function AvailabilityCalendar({ selectedSlot, onSelectSlot }: { selectedS
     </DetailSection>
   );
 }
+
+function statusClass(status: AvailabilitySlot["status"]) {
+  if (status === "AVAILABLE") return "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100";
+  if (status === "PENDING_PAYMENT") return "border-amber-200 bg-amber-50 text-amber-800 opacity-80";
+  if (status === "BOOKED") return "border-red-200 bg-red-50 text-red-700 opacity-70";
+  return "border-slate-200 bg-slate-100 text-slate-500 opacity-70";
+}
+
+function Legend({ className, label }: { className: string; label: string }) {
+  return <span className={`rounded-full border px-3 py-1 ${className}`}>{label}</span>;
+}
+

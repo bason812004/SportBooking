@@ -7,6 +7,12 @@ export type CourtListQuery = {
   province?: string;
   city?: string;
   district?: string;
+  latitude?: string;
+  longitude?: string;
+  radiusKm?: string;
+  date?: string;
+  startTime?: string;
+  endTime?: string;
   minPrice?: string;
   maxPrice?: string;
   rating?: string;

@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { LoadingState, ErrorState, EmptyState } from "../../components/common/States";
-import { useCourt } from "../../features/courts/hooks/useCourts";
+import type { AvailabilitySlot } from "../../features/courts/api/courtApi";
+import { useCourt, useCourtAvailability } from "../../features/courts/hooks/useCourts";
 import { HeroGallery } from "./detail/HeroGallery";
 import { StickyBookingBar } from "./detail/StickyBookingBar";
 import { CourtInfo } from "./detail/CourtInfo";
@@ -33,7 +34,23 @@ function timeText(value?: string) {
 export function CourtDetailPage() {
   const { id } = useParams();
   const court = useCourt(id);
-  const [selectedSlot, setSelectedSlot] = useState("18:00");
+  const today = new Date().toISOString().slice(0, 10);
+  const [selectedDate, setSelectedDate] = useState(today);
+  const [selectedSlots, setSelectedSlots] = useState<AvailabilitySlot[]>([]);
+  const availability = useCourtAvailability(id, selectedDate);
+
+  function toggleSlot(slot: AvailabilitySlot) {
+    setSelectedSlots((current) => {
+      const exists = current.some((item) => item.startTime === slot.startTime && item.endTime === slot.endTime);
+      if (exists) return current.filter((item) => item.startTime !== slot.startTime || item.endTime !== slot.endTime);
+      return [...current, slot].sort((left, right) => left.startTime.localeCompare(right.startTime));
+    });
+  }
+
+  function handleDateChange(date: string) {
+    setSelectedDate(date);
+    setSelectedSlots([]);
+  }
 
   const view = useMemo(() => {
     const data = court.data;
@@ -58,7 +75,7 @@ export function CourtDetailPage() {
 
   return (
     <div className="bg-[#f5f7fb] pb-16 text-[#0b1220]">
-      <StickyBookingBar courtId={view.id} price={view.price} rating={view.rating} selectedSlot={selectedSlot} />
+      <StickyBookingBar courtId={view.id} price={view.price} rating={view.rating} selectedDate={selectedDate} selectedSlots={selectedSlots} />
       <div className="mx-auto max-w-7xl space-y-6 px-4 py-6">
         <HeroGallery images={view.images} />
         <CourtInfo
@@ -75,7 +92,14 @@ export function CourtDetailPage() {
           <main className="space-y-6">
             <QuickStats price={`${view.price.toLocaleString("vi-VN")}đ/giờ`} rating={view.rating} />
             <InteractiveMap address={view.address} />
-            <AvailabilityCalendar selectedSlot={selectedSlot} onSelectSlot={setSelectedSlot} />
+            <AvailabilityCalendar
+              date={selectedDate}
+              onDateChange={handleDateChange}
+              slots={availability.data?.slots ?? []}
+              selectedSlots={selectedSlots}
+              loading={availability.isLoading}
+              onToggleSlot={toggleSlot}
+            />
             <PricingSection />
             <HeatmapSection />
             <AmenitiesSection />
@@ -93,7 +117,7 @@ export function CourtDetailPage() {
             <FAQSection />
           </main>
           <div className="hidden lg:block">
-            <StickyBookingPanel courtId={view.id} price={view.price} selectedSlot={selectedSlot} />
+            <StickyBookingPanel courtId={view.id} price={view.price} selectedDate={selectedDate} selectedSlots={selectedSlots} />
           </div>
         </div>
       </div>

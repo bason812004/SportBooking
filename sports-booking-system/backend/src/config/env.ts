@@ -29,7 +29,15 @@ const envSchema = z.object({
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
   CLOUDINARY_FOLDER: z.string().default("sports-booking"),
-  FRONTEND_URL: z.string().default("http://localhost:5173")
+  FRONTEND_URL: z.string().default("http://localhost:5173"),
+  PAYMENT_PROVIDER: z.string().default("LOCAL_QR"),
+  PAYMENT_API_KEY: z.string().optional(),
+  PAYMENT_SECRET_KEY: z.string().optional(),
+  PAYMENT_WEBHOOK_SECRET: z.string().optional(),
+  PAYMENT_RETURN_URL: z.string().optional(),
+  PAYMENT_WEBHOOK_URL: z.string().optional(),
+  PAYMENT_QR_EXPIRES_MINUTES: z.coerce.number().int().positive().default(15),
+  BOOKING_HOLD_EXPIRES_MINUTES: z.coerce.number().int().positive().default(15)
 });
 
 export const env = envSchema.parse(process.env);
