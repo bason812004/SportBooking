@@ -1,6 +1,12 @@
-import type { PaymentMethod, PaymentType, Prisma } from "@prisma/client";
+import type { PaymentMethod, PaymentType, PaymentStatus, Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 import { timeToDate, toDbDate } from "../../shared/utils/time.js";
+
+function generateShortId(prefix: string): string {
+  const rand = Math.random().toString(36).slice(2, 10);
+  const time = Date.now().toString(36).slice(-8);
+  return `${prefix}${rand}${time}`.slice(0, 20);
+}
 
 export const bookingRepository = {
   findById(id: string) {
@@ -41,7 +47,7 @@ export const bookingRepository = {
       cancelReason?: string;
       refundAmount: number;
       platformRetainedAmount: number;
-      paymentStatus: "UNPAID" | "PARTIALLY_REFUNDED" | "REFUNDED";
+      paymentStatus: PaymentStatus;
     }
   ) {
     return prisma.booking.update({
@@ -89,8 +95,10 @@ export const bookingRepository = {
     services: Array<{ serviceId: string; quantity: number; price: number }>;
   }) {
     return prisma.$transaction(async (tx) => {
+      const bookingId = generateShortId("bk");
       const booking = await tx.booking.create({
         data: {
+          id: bookingId,
           bookingCode: input.bookingCode,
           userId: input.userId,
           courtId: input.courtId,
@@ -108,6 +116,7 @@ export const bookingRepository = {
           note: input.note,
           bookingServices: {
             create: input.services.map((service) => ({
+              id: generateShortId("bs"),
               serviceId: service.serviceId,
               quantity: service.quantity,
               price: service.price
@@ -120,6 +129,7 @@ export const bookingRepository = {
       if (input.voucherId && input.voucherDiscountAmount > 0) {
         await tx.bookingVoucher.create({
           data: {
+            id: generateShortId("bv"),
             bookingId: booking.id,
             voucherId: input.voucherId,
             discountAmount: input.voucherDiscountAmount
@@ -153,16 +163,16 @@ export const bookingRepository = {
             courtId,
             bookingDate: toDbDate(date),
             bookingStatus: { in: activeStatuses as any },
-            startTime: { lt: timeToDate(slot.endTime) },
-            endTime: { gt: timeToDate(slot.startTime) }
+            startTime: { lt: timeToDate(slot.endTime.slice(0,5)) },
+            endTime: { gt: timeToDate(slot.startTime.slice(0,5)) }
           }
         });
         const slotBooking = await tx.bookingSlot.findFirst({
           where: {
             courtId,
             bookingDate: toDbDate(date),
-            startTime: { lt: timeToDate(slot.endTime) },
-            endTime: { gt: timeToDate(slot.startTime) },
+            startTime: { lt: timeToDate(slot.endTime.slice(0,5)) },
+            endTime: { gt: timeToDate(slot.startTime.slice(0,5)) },
             booking: { bookingStatus: { in: activeStatuses as any } }
           }
         });
@@ -200,8 +210,10 @@ export const bookingRepository = {
         const sortedSlots = [...input.slots].sort((left, right) => left.startTime.localeCompare(right.startTime));
         const firstSlot = sortedSlots[0];
         const lastSlot = sortedSlots[sortedSlots.length - 1];
+        const bookingId = generateShortId("bk");
         const booking = await tx.booking.create({
           data: {
+            id: bookingId,
             bookingCode: input.bookingCode,
             userId: input.userId,
             courtId: input.courtId,
@@ -215,8 +227,8 @@ export const bookingRepository = {
             totalPrice: input.totalAmount,
             depositAmount: input.depositAmount,
             paymentMethod: "QR_TRANSFER",
-            paymentStatus: "UNPAID",
-            bookingStatus: "PENDING",
+            paymentStatus: "PENDING",
+            bookingStatus: "PENDING_PAYMENT",
             note: input.note,
             bookingSlots: {
               create: sortedSlots.map((slot) => ({
@@ -234,6 +246,7 @@ export const bookingRepository = {
         if (input.voucherId && input.voucherDiscountAmount > 0) {
           await tx.bookingVoucher.create({
             data: {
+              id: generateShortId("bv"),
               bookingId: booking.id,
               voucherId: input.voucherId,
               discountAmount: input.voucherDiscountAmount
@@ -251,7 +264,7 @@ export const bookingRepository = {
             paymentType: input.paymentType,
             amount: input.paymentAmount,
             currency: "VND",
-            status: "UNPAID",
+            status: "PENDING",
             externalOrderId: input.externalOrderId,
             qrCodeUrl: input.qrCodeUrl ?? undefined,
             qrPayload: input.qrPayload ?? undefined,

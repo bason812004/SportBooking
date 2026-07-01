@@ -59,16 +59,18 @@ function slotPrice(
 }
 
 function isExpiredPaymentHold(item: { payments?: Array<{ expiresAt: Date; status: string }> }) {
-  const pendingPayment = item.payments?.find((payment) => payment.status === "UNPAID");
-  return pendingPayment ? pendingPayment.expiresAt.getTime() <= Date.now() : false;
+  if (!item.payments || item.payments.length === 0) return false;
+  const activePayment = item.payments.find((payment) => payment.status === "PENDING" || payment.status === "UNPAID");
+  if (!activePayment) return true;
+  return activePayment.expiresAt.getTime() <= Date.now();
 }
 
 function bookingSlotStatus(item: { bookingStatus: string; payments?: Array<{ expiresAt: Date; status: string }> }) {
-  if (item.bookingStatus === "PENDING") {
+  if (item.bookingStatus === "PENDING" || item.bookingStatus === "PENDING_PAYMENT") {
     return isExpiredPaymentHold(item) ? "AVAILABLE" : "PENDING_PAYMENT";
   }
   if (item.bookingStatus === "CONFIRMED" || item.bookingStatus === "COMPLETED") return "BOOKED";
-  return "BOOKED";
+  return "AVAILABLE";
 }
 
 export const courtService = {
@@ -115,18 +117,31 @@ export const courtService = {
 
     for (let cursor = opening; cursor < closing; cursor += 60) {
       const slot = { startTime: minutesToTime(cursor), endTime: minutesToTime(Math.min(cursor + 60, closing)) };
-      const matchedBookingSlot = bookingSlots.find((bookingSlot) => overlaps(slot, bookingSlot));
-      const matchedBooking = bookings.find((booking) => overlaps(slot, booking));
+      const matchedBookingSlots = bookingSlots.filter((bookingSlot) => overlaps(slot, bookingSlot));
+      const matchedBookings = bookings.filter((booking) => overlaps(slot, booking));
       const isBlocked = blocks.some((block) => overlaps(slot, block));
       const price = slotPrice(slot, date, court.prices);
-      const status = isBlocked
-        ? "BLOCKED"
-        : matchedBookingSlot
-          ? bookingSlotStatus({ bookingStatus: matchedBookingSlot.booking.bookingStatus, payments: matchedBookingSlot.booking.payments })
-          : matchedBooking
-            ? bookingSlotStatus(matchedBooking)
-            : "AVAILABLE";
-      slots.push({ ...slot, status, price, bookingId: matchedBookingSlot?.bookingId ?? matchedBooking?.id ?? null });
+
+      let status = "AVAILABLE";
+      if (isBlocked) {
+        status = "BLOCKED";
+      } else {
+        const statuses = [
+          ...matchedBookingSlots.map(bs => bookingSlotStatus({ bookingStatus: bs.booking.bookingStatus, payments: bs.booking.payments })),
+          ...matchedBookings.map(b => bookingSlotStatus(b))
+        ];
+        if (statuses.includes("BOOKED")) {
+          status = "BOOKED";
+        } else if (statuses.includes("PENDING_PAYMENT")) {
+          status = "PENDING_PAYMENT";
+        }
+      }
+
+      const activeSlot = matchedBookingSlots.find(bs => bookingSlotStatus({ bookingStatus: bs.booking.bookingStatus, payments: bs.booking.payments }) !== "AVAILABLE") || matchedBookingSlots[0];
+      const activeBooking = matchedBookings.find(b => bookingSlotStatus(b) !== "AVAILABLE") || matchedBookings[0];
+      const bookingId = activeSlot?.bookingId ?? activeBooking?.id ?? null;
+
+      slots.push({ ...slot, status, price, bookingId });
     }
 
     return {

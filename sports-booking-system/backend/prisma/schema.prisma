@@ -71,6 +71,7 @@ enum BookingStatus {
 enum PaymentStatus {
   UNPAID
   PENDING
+  PROCESSING
   PAID
   FAILED
   EXPIRED

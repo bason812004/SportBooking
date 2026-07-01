@@ -190,7 +190,8 @@ export const courtRepository = {
         bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] },
         startTime: { lt: timeToDate(endTime) },
         endTime: { gt: timeToDate(startTime) }
-      }
+      },
+      include: { payments: { select: { expiresAt: true, status: true } } }
     });
   }
 };
