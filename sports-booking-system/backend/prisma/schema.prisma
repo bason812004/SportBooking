@@ -452,7 +452,9 @@ model CourtSurface {
   sortOrder Int               @default(0) @map("sort_order")
   createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz
 
-  court Court @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  court        Court         @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  bookings     Booking[]
+  bookingSlots BookingSlot[]
 
   @@index([courtId], map: "idx_court_surfaces_court_id")
   @@map("court_surfaces")
@@ -562,6 +564,7 @@ model Booking {
   bookingCode              String        @unique @map("booking_code") @db.VarChar(30)
   userId                   String        @map("user_id") @db.Uuid
   courtId                  String        @map("court_id") @db.Uuid
+  courtSurfaceId           String?       @map("court_surface_id") @db.Uuid
   bookingDate              DateTime      @map("booking_date") @db.Date
   startTime                DateTime      @map("start_time") @db.Time
   endTime                  DateTime      @map("end_time") @db.Time
@@ -586,6 +589,7 @@ model Booking {
 
   user                   User                    @relation(fields: [userId], references: [id])
   court                  Court                   @relation(fields: [courtId], references: [id])
+  courtSurface           CourtSurface?           @relation(fields: [courtSurfaceId], references: [id])
   bookingServices        BookingService[]
   bookingSlots           BookingSlot[]
   payments               Payment[]
@@ -595,10 +599,12 @@ model Booking {
 
   @@index([userId], map: "idx_bookings_user_id")
   @@index([courtId], map: "idx_bookings_court_id")
+  @@index([courtSurfaceId], map: "idx_bookings_court_surface_id")
   @@index([bookingDate], map: "idx_bookings_booking_date")
   @@index([bookingStatus], map: "idx_bookings_booking_status")
   @@index([paymentStatus], map: "idx_bookings_payment_status")
   @@index([courtId, bookingDate, startTime, endTime, bookingStatus], map: "idx_bookings_schedule_conflict")
+  @@index([courtSurfaceId, bookingDate, startTime, endTime, bookingStatus], map: "idx_bookings_surface_schedule_conflict")
   @@map("bookings")
 }
 
@@ -619,6 +625,7 @@ model BookingSlot {
   id          String   @id @default(uuid()) @db.Uuid
   bookingId   String   @map("booking_id") @db.Uuid
   courtId     String   @map("court_id") @db.Uuid
+  courtSurfaceId String? @map("court_surface_id") @db.Uuid
   bookingDate DateTime @map("booking_date") @db.Date
   startTime   DateTime @map("start_time") @db.Time
   endTime     DateTime @map("end_time") @db.Time
@@ -628,8 +635,10 @@ model BookingSlot {
 
   booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   court   Court   @relation(fields: [courtId], references: [id], onDelete: Cascade)
+  courtSurface CourtSurface? @relation(fields: [courtSurfaceId], references: [id])
 
   @@index([courtId, bookingDate, startTime, endTime], map: "idx_booking_slots_schedule")
+  @@index([courtSurfaceId, bookingDate, startTime, endTime], map: "idx_booking_slots_surface_schedule")
   @@index([bookingId], map: "idx_booking_slots_booking_id")
   @@map("booking_slots")
 }

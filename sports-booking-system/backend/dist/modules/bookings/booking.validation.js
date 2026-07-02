@@ -2,6 +2,7 @@ import { z } from "zod";
 export const createBookingSchema = z.object({
     body: z.object({
         courtId: z.string().min(1),
+        courtSurfaceId: z.string().min(1).optional(),
         bookingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         startTime: z.string().regex(/^\d{2}:\d{2}$/),
         endTime: z.string().regex(/^\d{2}:\d{2}$/),
@@ -19,6 +20,7 @@ const bookingSlotSchema = z.object({
 export const bookingQuoteSchema = z.object({
     body: z.object({
         courtId: z.string().min(1),
+        courtSurfaceId: z.string().min(1).optional(),
         bookingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         slots: z.array(bookingSlotSchema).min(1).max(12),
         voucherCode: z.string().min(2).max(40).optional()
@@ -27,6 +29,7 @@ export const bookingQuoteSchema = z.object({
 export const bookingCheckoutSchema = z.object({
     body: z.object({
         courtId: z.string().min(1),
+        courtSurfaceId: z.string().min(1).optional(),
         bookingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         slots: z.array(bookingSlotSchema).min(1).max(12),
         voucherCode: z.string().min(2).max(40).optional(),

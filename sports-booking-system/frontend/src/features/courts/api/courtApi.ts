@@ -41,9 +41,11 @@ export const courtApi = {
     const { data } = await api.get<ApiResponse<Court>>(`/courts/${id}`);
     return data.data;
   },
-  async availability(id: string, date: string) {
+  async availability(id: string, date: string, courtSurfaceId?: string) {
     const { data } = await api.get<ApiResponse<{
       courtId: string;
+      courtSurfaceId?: string | null;
+      courtSurfaceName?: string | null;
       date: string;
       openingTime: string;
       closingTime: string;
@@ -52,7 +54,7 @@ export const courtApi = {
       bookedSlots: Array<{ id: string; startTime: string; endTime: string }>;
     }>>(
       `/courts/${id}/availability`,
-      { params: { date } }
+      { params: { date, courtSurfaceId } }
     );
     return data.data;
   },

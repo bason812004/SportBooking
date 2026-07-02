@@ -101,12 +101,14 @@ export const courtService = {
     };
   },
 
-  async availability(id: string, date: string) {
+  async availability(id: string, date: string, courtSurfaceId?: string) {
     const court = await courtRepository.findPublicById(id);
     if (!court) throw new NotFoundError("Khong tim thay san");
+    const surface = courtSurfaceId ? court.surfaces.find((item) => item.id === courtSurfaceId) : null;
+    if (courtSurfaceId && !surface) throw new NotFoundError("Khong tim thay san con");
     const [bookings, bookingSlots, blocks] = await Promise.all([
-      courtRepository.availability(id, date),
-      courtRepository.bookingSlots(id, date),
+      courtRepository.availability(id, date, courtSurfaceId),
+      courtRepository.bookingSlots(id, date, courtSurfaceId),
       courtRepository.availabilityBlocks(id, date)
     ]);
     const slots = [];
@@ -131,6 +133,8 @@ export const courtService = {
 
     return {
       courtId: id,
+      courtSurfaceId: courtSurfaceId ?? null,
+      courtSurfaceName: surface?.name ?? null,
       date,
       openingTime: timeText(court.openingTime),
       closingTime: timeText(court.closingTime),

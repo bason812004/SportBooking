@@ -22,10 +22,16 @@ export const partnerController = {
   updateService: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateService(req.user!.id, req.params.serviceId, req.body))),
   deleteService: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deleteService(req.user!.id, req.params.serviceId))),
   bookings: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.bookings(req.user!.id, req.query))),
+  operations: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.operations(req.user!.id, req.query as any))),
+  createWalkInBooking: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.createWalkInBooking(req.user!.id, req.body), 201)),
   confirm: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.CONFIRMED))),
   reject: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.CANCELLED))),
   complete: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.COMPLETED))),
   noShow: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.NO_SHOW))),
+  extendBooking: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.extendBooking(req.user!.id, req.params.id, req.body.minutes))),
+  continueBooking: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.continueBooking(req.user!.id, req.params.id, req.body.targetCourtSurfaceId, req.body.minutes), 201)
+  ),
   revenue: asyncHandler(async (req, res) =>
     sendSuccess(res, await partnerService.revenue(req.user!.id, req.query.month as string | undefined))
   ),

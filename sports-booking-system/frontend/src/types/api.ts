@@ -91,6 +91,7 @@ export type Booking = {
   refundAmount?: string;
   platformRetainedAmount?: string;
   court: Court;
+  courtSurface?: { id: string; code: string; name: string } | null;
   user?: { id?: string; fullName: string; email?: string; phone?: string };
 };
 
@@ -120,6 +121,70 @@ export type PartnerDashboard = {
     bookings: Array<{ bookingStatus: string; startTime: string; endTime: string }>;
   }>;
   recentBookings: Booking[];
+};
+
+export type PartnerOperationBooking = {
+  id: string;
+  bookingCode: string;
+  customerName: string;
+  customerPhone?: string | null;
+  startTime: string;
+  endTime: string;
+  bookingStatus: string;
+  paymentStatus: string;
+  totalPrice: number;
+};
+
+export type PartnerOperationItem = {
+  court: {
+    id: string;
+    name: string;
+    categoryName: string;
+    imageUrl?: string | null;
+    activeStatus: "ACTIVE" | "INACTIVE";
+    approvalStatus: "PENDING" | "APPROVED" | "REJECTED";
+    courtCount?: number | null;
+  };
+  surface: {
+    id: string;
+    code: string;
+    name: string;
+    capacity?: string | null;
+    surface?: string | null;
+    size?: string | null;
+    imageUrl?: string | null;
+  };
+  status: "AVAILABLE" | "OCCUPIED" | "ENDING_SOON" | "OVERDUE" | "RESERVED_SOON" | "INACTIVE";
+  minutesLeft?: number | null;
+  currentBooking?: PartnerOperationBooking | null;
+  latestEndedBooking?: PartnerOperationBooking | null;
+  nextBooking?: PartnerOperationBooking | null;
+  canExtend: boolean;
+  suggestedExtension?: { bookingId: string; startTime: string; endTime: string; minutes: number } | null;
+  alternatives: Array<{
+    id: string;
+    name: string;
+    courtId: string;
+    courtName: string;
+    surfaceId: string;
+    surfaceName: string;
+    categoryName: string;
+    imageUrl?: string | null;
+  }>;
+};
+
+export type PartnerOperations = {
+  date: string;
+  nowTime: string;
+  summary: {
+    total: number;
+    available: number;
+    occupied: number;
+    endingSoon: number;
+    overdue: number;
+    reservedSoon: number;
+  };
+  items: PartnerOperationItem[];
 };
 
 export type PartnerBlog = {

@@ -61,8 +61,12 @@ export const bookingRepository = {
   courtWithPricing(id: string) {
     return prisma.court.findFirst({
       where: { id, approvalStatus: "APPROVED", activeStatus: "ACTIVE" },
-      include: { prices: true, services: true, images: { orderBy: { sortOrder: "asc" } } }
+      include: { prices: true, services: true, images: { orderBy: { sortOrder: "asc" } }, surfaces: { where: { status: "ACTIVE" }, orderBy: { sortOrder: "asc" } } }
     });
+  },
+
+  courtSurface(courtId: string, courtSurfaceId: string) {
+    return prisma.courtSurface.findFirst({ where: { id: courtSurfaceId, courtId, status: "ACTIVE" } });
   },
 
   services(ids: string[]) {
@@ -73,6 +77,7 @@ export const bookingRepository = {
     bookingCode: string;
     userId: string;
     courtId: string;
+    courtSurfaceId?: string | null;
     bookingDate: Date;
     startTime: Date;
     endTime: Date;
@@ -94,6 +99,7 @@ export const bookingRepository = {
           bookingCode: input.bookingCode,
           userId: input.userId,
           courtId: input.courtId,
+          courtSurfaceId: input.courtSurfaceId ?? undefined,
           bookingDate: input.bookingDate,
           startTime: input.startTime,
           endTime: input.endTime,
@@ -142,6 +148,7 @@ export const bookingRepository = {
   findConflictsInTransaction(
     tx: Prisma.TransactionClient,
     courtId: string,
+    courtSurfaceId: string | null | undefined,
     date: string,
     slots: Array<{ startTime: string; endTime: string }>
   ) {
@@ -151,6 +158,7 @@ export const bookingRepository = {
         const legacyBooking = await tx.booking.findFirst({
           where: {
             courtId,
+            OR: courtSurfaceId ? [{ courtSurfaceId }, { courtSurfaceId: null }] : undefined,
             bookingDate: toDbDate(date),
             bookingStatus: { in: activeStatuses as any },
             startTime: { lt: timeToDate(slot.endTime) },
@@ -160,6 +168,7 @@ export const bookingRepository = {
         const slotBooking = await tx.bookingSlot.findFirst({
           where: {
             courtId,
+            OR: courtSurfaceId ? [{ courtSurfaceId }, { courtSurfaceId: null }] : undefined,
             bookingDate: toDbDate(date),
             startTime: { lt: timeToDate(slot.endTime) },
             endTime: { gt: timeToDate(slot.startTime) },
@@ -175,6 +184,7 @@ export const bookingRepository = {
     bookingCode: string;
     userId: string;
     courtId: string;
+    courtSurfaceId?: string | null;
     bookingDate: string;
     slots: Array<{ startTime: string; endTime: string; price: number }>;
     subtotal: number;
@@ -194,7 +204,7 @@ export const bookingRepository = {
   }) {
     return prisma.$transaction(
       async (tx) => {
-        const conflicts = await this.findConflictsInTransaction(tx, input.courtId, input.bookingDate, input.slots);
+        const conflicts = await this.findConflictsInTransaction(tx, input.courtId, input.courtSurfaceId, input.bookingDate, input.slots);
         if (conflicts.some(Boolean)) return { conflict: true as const };
 
         const sortedSlots = [...input.slots].sort((left, right) => left.startTime.localeCompare(right.startTime));
@@ -205,6 +215,7 @@ export const bookingRepository = {
             bookingCode: input.bookingCode,
             userId: input.userId,
             courtId: input.courtId,
+            courtSurfaceId: input.courtSurfaceId ?? undefined,
             bookingDate: toDbDate(input.bookingDate),
             startTime: timeToDate(firstSlot.startTime),
             endTime: timeToDate(lastSlot.endTime),
@@ -221,6 +232,7 @@ export const bookingRepository = {
             bookingSlots: {
               create: sortedSlots.map((slot) => ({
                 courtId: input.courtId,
+                courtSurfaceId: input.courtSurfaceId ?? undefined,
                 bookingDate: toDbDate(input.bookingDate),
                 startTime: timeToDate(slot.startTime),
                 endTime: timeToDate(slot.endTime),

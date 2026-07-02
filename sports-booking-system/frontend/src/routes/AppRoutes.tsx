@@ -33,6 +33,7 @@ import { PartnerPlaceholderPage } from "../pages/partner/PartnerPlaceholderPage"
 import { PartnerCourtResourcesPage } from "../pages/partner/PartnerCourtResourcesPage";
 import { PartnerSettingsPage } from "../pages/partner/PartnerSettingsPage";
 import { PartnerCalendarPage } from "../pages/partner/PartnerCalendarPage";
+import { PartnerOperationsPage } from "../pages/partner/PartnerOperationsPage";
 import { PartnerBlogsPage } from "../pages/partner/PartnerBlogsPage";
 import { PartnerBlogFormPage } from "../pages/partner/PartnerBlogFormPage";
 import { PartnerTournamentsPage } from "../pages/partner/PartnerTournamentsPage";
@@ -94,6 +95,7 @@ export function AppRoutes() {
       <Route element={<ProtectedRoute roles={["PARTNER"]} />}>
         <Route element={<DashboardLayout />}>
           <Route path="partner/dashboard" element={<PartnerDashboardPage />} />
+          <Route path="partner/operations" element={<PartnerOperationsPage />} />
           <Route path="partner/courts" element={<PartnerCourtsPage />} />
           <Route path="partner/courts/create" element={<PartnerCourtFormPage />} />
           <Route path="partner/courts/:id/edit" element={<PartnerCourtFormPage />} />

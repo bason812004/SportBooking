@@ -28,5 +28,8 @@ export const courtListSchema = z.object({
 
 export const availabilitySchema = z.object({
   params: z.object({ id: z.string().min(1) }),
-  query: z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) })
+  query: z.object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    courtSurfaceId: z.string().min(1).optional()
+  })
 });

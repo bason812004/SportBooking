@@ -2,6 +2,7 @@ import type { PaymentMethod } from "@prisma/client";
 
 export type CreateBookingInput = {
   courtId: string;
+  courtSurfaceId?: string;
   bookingDate: string;
   startTime: string;
   endTime: string;
@@ -19,6 +20,7 @@ export type BookingSlotInput = {
 
 export type BookingQuoteInput = {
   courtId: string;
+  courtSurfaceId?: string;
   bookingDate: string;
   slots: BookingSlotInput[];
   voucherCode?: string;

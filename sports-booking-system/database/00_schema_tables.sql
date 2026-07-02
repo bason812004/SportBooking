@@ -534,6 +534,7 @@ create table bookings (
   booking_code varchar(30) not null unique,
   user_id varchar(20) not null references users(id),
   court_id varchar(20) not null references courts(id),
+  court_surface_id varchar(20) references court_surfaces(id),
   booking_date date not null,
   start_time time not null,
   end_time time not null,
@@ -566,6 +567,7 @@ create table booking_slots (
   id uuid primary key default gen_random_uuid(),
   booking_id varchar(20) not null references bookings(id) on delete cascade,
   court_id varchar(20) not null references courts(id) on delete cascade,
+  court_surface_id varchar(20) references court_surfaces(id),
   booking_date date not null,
   start_time time not null,
   end_time time not null,
@@ -992,11 +994,14 @@ create index if not exists idx_dynamic_pricing_rules_lookup on dynamic_pricing_r
 create index if not exists idx_dynamic_pricing_rules_partner_id on dynamic_pricing_rules(partner_id);
 create index if not exists idx_bookings_user_id on bookings(user_id);
 create index if not exists idx_bookings_court_id on bookings(court_id);
+create index if not exists idx_bookings_court_surface_id on bookings(court_surface_id);
 create index if not exists idx_bookings_booking_date on bookings(booking_date);
 create index if not exists idx_bookings_booking_status on bookings(booking_status);
 create index if not exists idx_bookings_payment_status on bookings(payment_status);
 create index if not exists idx_bookings_schedule_conflict on bookings(court_id, booking_date, start_time, end_time, booking_status);
+create index if not exists idx_bookings_surface_schedule_conflict on bookings(court_surface_id, booking_date, start_time, end_time, booking_status);
 create index if not exists idx_booking_slots_schedule on booking_slots(court_id, booking_date, start_time, end_time);
+create index if not exists idx_booking_slots_surface_schedule on booking_slots(court_surface_id, booking_date, start_time, end_time);
 create index if not exists idx_booking_slots_booking_id on booking_slots(booking_id);
 create index if not exists idx_payments_booking_id on payments(booking_id);
 create index if not exists idx_payments_user_id on payments(user_id);

@@ -11,7 +11,11 @@ import {
   calendarQuerySchema,
   imageSchema,
   imageOrderSchema,
+  bookingContinueSchema,
+  bookingExtendSchema,
+  walkInBookingSchema,
   priceWriteSchema,
+  operationsQuerySchema,
   profileUpdateSchema,
   serviceWriteSchema,
   tournamentWriteSchema,
@@ -41,10 +45,14 @@ partnerRoutes.post("/courts/:id/services", validate(serviceWriteSchema), partner
 partnerRoutes.put("/services/:serviceId", validate(serviceWriteSchema.partial()), partnerController.updateService);
 partnerRoutes.delete("/services/:serviceId", partnerController.deleteService);
 partnerRoutes.get("/bookings", validate(bookingQuerySchema), partnerController.bookings);
+partnerRoutes.get("/operations", validate(operationsQuerySchema), partnerController.operations);
+partnerRoutes.post("/operations/walk-in-booking", validate(walkInBookingSchema), partnerController.createWalkInBooking);
 partnerRoutes.put("/bookings/:id/confirm", partnerController.confirm);
 partnerRoutes.put("/bookings/:id/reject", partnerController.reject);
 partnerRoutes.put("/bookings/:id/complete", partnerController.complete);
 partnerRoutes.put("/bookings/:id/no-show", partnerController.noShow);
+partnerRoutes.post("/bookings/:id/extend", validate(bookingExtendSchema), partnerController.extendBooking);
+partnerRoutes.post("/bookings/:id/continue", validate(bookingContinueSchema), partnerController.continueBooking);
 partnerRoutes.get("/statistics/revenue", partnerController.revenue);
 partnerRoutes.get("/calendar", validate(calendarQuerySchema), partnerController.calendar);
 partnerRoutes.get("/vouchers", partnerController.vouchers);

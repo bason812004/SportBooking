@@ -16,6 +16,7 @@ import {
   UserRoundCheck,
   Users,
   WalletCards,
+  TimerReset,
   type LucideIcon
 } from "lucide-react";
 import { useAuth } from "../../features/auth/hooks/useAuth";
@@ -33,6 +34,7 @@ type MenuItem = {
 const menus = {
   PARTNER: [
     { to: "/partner/dashboard", label: "Bảng điều khiển", icon: Grid2X2, group: "Tổng quan" },
+    { to: "/partner/operations", label: "Vận hành sân", icon: TimerReset, group: "Vận hành" },
     { to: "/partner/courts", label: "Quản lý sân", icon: UserRoundCheck, group: "Vận hành" },
     { to: "/partner/bookings", label: "Đơn đặt", icon: CalendarDays, group: "Vận hành" },
     { to: "/partner/calendar", label: "Lịch đặt sân", icon: CalendarDays, group: "Vận hành" },

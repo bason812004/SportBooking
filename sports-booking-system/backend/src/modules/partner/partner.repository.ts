@@ -9,6 +9,32 @@ export const partnerRepository = {
     });
   },
 
+  findWalkInUser(phone: string) {
+    return prisma.user.findFirst({
+      where: {
+        role: "USER",
+        OR: [
+          { phone },
+          { email: `walkin_${phone}@sportsbooking.local` }
+        ]
+      }
+    });
+  },
+
+  createWalkInUser(input: { fullName: string; phone: string }) {
+    return prisma.user.create({
+      data: {
+        fullName: input.fullName,
+        phone: input.phone,
+        email: `walkin_${input.phone}@sportsbooking.local`,
+        role: "USER",
+        provider: "LOCAL",
+        emailVerified: false,
+        status: "ACTIVE"
+      }
+    });
+  },
+
   dashboard(partnerId: string) {
     const now = new Date();
     const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -66,7 +92,7 @@ export const partnerRepository = {
   listCourts(partnerId: string) {
     return prisma.court.findMany({
       where: { partnerId },
-      include: { category: true, images: true, prices: true, services: true },
+      include: { category: true, images: true, prices: true, services: true, surfaces: { where: { status: "ACTIVE" }, orderBy: { sortOrder: "asc" } } },
       orderBy: { createdAt: "desc" }
     });
   },
@@ -74,7 +100,14 @@ export const partnerRepository = {
   courtByPartner(courtId: string, partnerId: string) {
     return prisma.court.findFirst({
       where: { id: courtId, partnerId },
-      include: { category: true, images: true, prices: true, services: true }
+      include: { category: true, images: true, prices: true, services: true, surfaces: { where: { status: "ACTIVE" }, orderBy: { sortOrder: "asc" } } }
+    });
+  },
+
+  courtSurfaceByPartner(courtSurfaceId: string, partnerId: string) {
+    return prisma.courtSurface.findFirst({
+      where: { id: courtSurfaceId, status: "ACTIVE", court: { partnerId } },
+      include: { court: { include: { category: true, images: { orderBy: { sortOrder: "asc" }, take: 1 } } } }
     });
   },
 
@@ -168,7 +201,7 @@ export const partnerRepository = {
   bookingByPartner(bookingId: string, partnerId: string) {
     return prisma.booking.findFirst({
       where: { id: bookingId, court: { partnerId } },
-      include: { court: { include: { partner: true } } }
+      include: { court: { include: { partner: true } }, courtSurface: true }
     });
   },
 
@@ -185,6 +218,93 @@ export const partnerRepository = {
         court: { select: { id: true, name: true } }
       },
       orderBy: [{ bookingDate: "asc" }, { startTime: "asc" }]
+    });
+  },
+
+  operationCourts(partnerId: string, date: Date) {
+    return prisma.court.findMany({
+      where: { partnerId },
+      include: {
+        category: true,
+        images: { orderBy: { sortOrder: "asc" }, take: 1 },
+        surfaces: { where: { status: "ACTIVE" }, orderBy: { sortOrder: "asc" } },
+        bookings: {
+          where: {
+            bookingDate: date,
+            bookingStatus: { in: ["PENDING", "CONFIRMED"] }
+          },
+          include: { user: { select: { id: true, fullName: true, phone: true, email: true } }, courtSurface: true },
+          orderBy: { startTime: "asc" }
+        }
+      },
+      orderBy: { name: "asc" }
+    });
+  },
+
+  findScheduleConflict(courtId: string, courtSurfaceId: string | null | undefined, date: Date, startTime: Date, endTime: Date, excludeBookingId?: string) {
+    return prisma.booking.findFirst({
+      where: {
+        id: excludeBookingId ? { not: excludeBookingId } : undefined,
+        courtId,
+        OR: courtSurfaceId ? [{ courtSurfaceId }, { courtSurfaceId: null }] : undefined,
+        bookingDate: date,
+        bookingStatus: { in: ["PENDING", "CONFIRMED"] },
+        startTime: { lt: endTime },
+        endTime: { gt: startTime }
+      },
+      include: { user: { select: { fullName: true, phone: true } }, court: { select: { id: true, name: true } } }
+    });
+  },
+
+  extendBooking(bookingId: string, endTime: Date, pricing: { basePrice: number; dynamicAdjustmentAmount: number; subtotal: number; totalPrice: number }) {
+    return prisma.booking.update({
+      where: { id: bookingId },
+      data: {
+        endTime,
+        basePrice: { increment: pricing.basePrice },
+        dynamicAdjustmentAmount: { increment: pricing.dynamicAdjustmentAmount },
+        subtotal: { increment: pricing.subtotal },
+        totalPrice: { increment: pricing.totalPrice }
+      },
+      include: { court: true, user: { select: { id: true, fullName: true, phone: true } } }
+    });
+  },
+
+  createContinuationBooking(input: {
+    bookingCode: string;
+    userId: string;
+    courtId: string;
+    courtSurfaceId?: string | null;
+    bookingDate: Date;
+    startTime: Date;
+    endTime: Date;
+    basePrice: number;
+    dynamicAdjustmentAmount: number;
+    subtotal: number;
+    totalPrice: number;
+    note: string;
+    paymentMethod?: "CASH" | "BANK_TRANSFER" | "E_WALLET";
+  }) {
+    return prisma.booking.create({
+      data: {
+        bookingCode: input.bookingCode,
+        userId: input.userId,
+        courtId: input.courtId,
+        courtSurfaceId: input.courtSurfaceId ?? undefined,
+        bookingDate: input.bookingDate,
+        startTime: input.startTime,
+        endTime: input.endTime,
+        basePrice: input.basePrice,
+        dynamicAdjustmentAmount: input.dynamicAdjustmentAmount,
+        subtotal: input.subtotal,
+        totalPrice: input.totalPrice,
+        depositAmount: 0,
+        paymentMethod: input.paymentMethod ?? "CASH",
+        paymentStatus: "UNPAID",
+        bookingStatus: "CONFIRMED",
+        note: input.note
+      },
+      include: { court: true, user: { select: { id: true, fullName: true, phone: true } } }
     });
   },
 

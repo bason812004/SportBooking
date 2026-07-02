@@ -53,11 +53,14 @@ async function buildQuote(userId: string, input: BookingQuoteInput) {
 
   const court = await bookingRepository.courtWithPricing(input.courtId);
   if (!court) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
+  const selectedSurfaceId = input.courtSurfaceId ?? court.surfaces[0]?.id ?? null;
+  const selectedSurface = selectedSurfaceId ? await bookingRepository.courtSurface(input.courtId, selectedSurfaceId) : null;
+  if (selectedSurfaceId && !selectedSurface) throw new NotFoundError("San con khong ton tai hoac dang tam ngung");
 
   const [blocks, legacyBookings, bookingSlots] = await Promise.all([
     courtRepository.availabilityBlocks(input.courtId, input.bookingDate),
-    courtRepository.availability(input.courtId, input.bookingDate),
-    courtRepository.bookingSlots(input.courtId, input.bookingDate)
+    courtRepository.availability(input.courtId, input.bookingDate, selectedSurfaceId),
+    courtRepository.bookingSlots(input.courtId, input.bookingDate, selectedSurfaceId)
   ]);
 
   for (const slot of input.slots) {
@@ -96,6 +99,7 @@ async function buildQuote(userId: string, input: BookingQuoteInput) {
       address: [court.address, court.district, court.city].filter(Boolean).join(", "),
       imageUrl: court.images?.[0]?.imageUrl ?? null
     },
+    courtSurface: selectedSurface ? { id: selectedSurface.id, code: selectedSurface.code, name: selectedSurface.name } : null,
     bookingDate: input.bookingDate,
     slots: pricedSlots,
     voucherId,
@@ -134,6 +138,7 @@ export const bookingService = {
       bookingCode: bookingCode(),
       userId,
       courtId: input.courtId,
+      courtSurfaceId: quote.courtSurface?.id ?? null,
       bookingDate: input.bookingDate,
       slots: quote.slots,
       subtotal: quote.subtotal,
@@ -178,13 +183,16 @@ export const bookingService = {
       throw new ValidationError("Gio bat dau phai nho hon gio ket thuc");
     }
 
-    const conflict = await courtRepository.findConflict(input.courtId, input.bookingDate, input.startTime, input.endTime);
+    const court = await bookingRepository.courtWithPricing(input.courtId);
+    if (!court) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
+    const selectedSurfaceId = input.courtSurfaceId ?? court.surfaces[0]?.id ?? null;
+    const selectedSurface = selectedSurfaceId ? await bookingRepository.courtSurface(input.courtId, selectedSurfaceId) : null;
+    if (selectedSurfaceId && !selectedSurface) throw new NotFoundError("San con khong ton tai hoac dang tam ngung");
+
+    const conflict = await courtRepository.findConflict(input.courtId, input.bookingDate, input.startTime, input.endTime, selectedSurfaceId);
     if (conflict) {
       throw new ConflictError("Khung gio nay da co nguoi dat.", "BOOKING_CONFLICT");
     }
-
-    const court = await bookingRepository.courtWithPricing(input.courtId);
-    if (!court) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
 
     const serviceIds = input.services.map((service) => service.serviceId);
     const services = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
@@ -248,6 +256,7 @@ export const bookingService = {
       bookingCode: bookingCode(),
       userId,
       courtId: input.courtId,
+      courtSurfaceId: selectedSurfaceId,
       bookingDate: toDbDate(input.bookingDate),
       startTime: timeToDate(input.startTime),
       endTime: timeToDate(input.endTime),

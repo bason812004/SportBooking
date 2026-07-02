@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
@@ -8,10 +9,11 @@ import type { Booking } from "../../types/api";
 
 const iso = (date: Date) => date.toISOString().slice(0, 10);
 export function PartnerCalendarPage() {
+  const [searchParams] = useSearchParams();
   const today = new Date();
   const [fromDate, setFromDate] = useState(iso(new Date(today.getFullYear(), today.getMonth(), 1)));
   const [toDate, setToDate] = useState(iso(new Date(today.getFullYear(), today.getMonth() + 1, 0)));
-  const [courtId, setCourtId] = useState("");
+  const [courtId, setCourtId] = useState(searchParams.get("courtId") ?? "");
   const courts = useQuery({ queryKey: ["partner-courts"], queryFn: partnerApi.courts });
   const bookings = useQuery({ queryKey: ["partner-calendar", fromDate, toDate, courtId], queryFn: () => partnerApi.calendar({ fromDate, toDate, courtId: courtId || undefined }) });
   const groups = useMemo(() => {

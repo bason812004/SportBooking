@@ -1,19 +1,53 @@
 import { BookingStatus } from "@prisma/client";
 import { prisma } from "../../config/db.js";
-import { ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { cloudinaryService } from "../../shared/services/cloudinary.service.js";
 import { paginationMeta } from "../../shared/utils/response.js";
-import { bookingStartsAt, parseLimit, parsePage, timeToDate, timeToMinutes, toDbDate } from "../../shared/utils/time.js";
+import { bookingStartsAt, durationHours, parseLimit, parsePage, timeToDate, timeToMinutes, toDbDate } from "../../shared/utils/time.js";
 import { uniqueSlug } from "../../shared/utils/slug.js";
 import { commissionService } from "../commission/commission.service.js";
+import { dynamicPricingService } from "../dynamic-pricing/dynamicPricing.service.js";
 import { voucherService } from "../vouchers/voucher.service.js";
 import { userRepository } from "../users/user.repository.js";
 import { partnerRepository } from "./partner.repository.js";
+
+function bookingCode() {
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  return `BK${stamp}${Math.floor(Math.random() * 900 + 100)}`;
+}
 
 async function getProfile(userId: string) {
   const profile = await partnerRepository.profileByUser(userId);
   if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
   return profile;
+}
+
+function dbTime(value: Date) {
+  return value.toISOString().slice(11, 16);
+}
+
+function normalizePhone(value: string) {
+  return value.trim().replace(/[^\d+]/g, "");
+}
+
+function addMinutes(time: Date, minutes: number) {
+  const next = new Date(time);
+  next.setUTCMinutes(next.getUTCMinutes() + minutes);
+  return next;
+}
+
+const extendableBookingStatuses: BookingStatus[] = [BookingStatus.PENDING, BookingStatus.CONFIRMED];
+
+async function pricingFor(courtId: string, date: string, startTime: string, endTime: string) {
+  const dynamicPrice = await dynamicPricingService.calculate(courtId, { date, startTime, endTime });
+  const hours = durationHours(startTime, endTime);
+  const subtotal = dynamicPrice.finalPrice * hours;
+  return {
+    basePrice: dynamicPrice.basePrice * hours,
+    dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
+    subtotal,
+    totalPrice: subtotal
+  };
 }
 
 export const partnerService = {
@@ -236,6 +270,238 @@ export const partnerService = {
       toDate: query.toDate ? toDbDate(query.toDate) : undefined
     });
     return { items, meta: paginationMeta(page, limit, total) };
+  },
+
+  async operations(userId: string, query: { date?: string; nowTime?: string }) {
+    const profile = await getProfile(userId);
+    const selectedDate = query.date ?? new Date().toISOString().slice(0, 10);
+    const nowTime = query.nowTime ?? new Date().toTimeString().slice(0, 5);
+    const nowMinutes = timeToMinutes(nowTime);
+    const courts = await partnerRepository.operationCourts(profile.id, toDbDate(selectedDate));
+
+    const surfaces = courts.flatMap((court) =>
+      court.surfaces.map((surface) => ({ surface, court }))
+    );
+    const activeSurfaces = surfaces.filter(({ court }) => court.activeStatus === "ACTIVE");
+    const canUseSurface = async (courtId: string, courtSurfaceId: string, startTime: string, endTime: string) => {
+      const conflict = await partnerRepository.findScheduleConflict(courtId, courtSurfaceId, toDbDate(selectedDate), timeToDate(startTime), timeToDate(endTime));
+      return !conflict;
+    };
+
+    const items = await Promise.all(
+      surfaces.map(async ({ court, surface }) => {
+        const bookings = court.bookings.filter((booking) => booking.courtSurfaceId === surface.id || booking.courtSurfaceId == null).map((booking) => ({
+          ...booking,
+          start: dbTime(booking.startTime),
+          end: dbTime(booking.endTime)
+        }));
+        const currentBooking = bookings.find((booking) => timeToMinutes(booking.start) <= nowMinutes && timeToMinutes(booking.end) > nowMinutes);
+        const latestEnded = [...bookings]
+          .filter((booking) => timeToMinutes(booking.end) <= nowMinutes)
+          .sort((left, right) => timeToMinutes(right.end) - timeToMinutes(left.end))[0];
+        const nextBooking = bookings.find((booking) => timeToMinutes(booking.start) >= nowMinutes);
+        const referenceBooking = currentBooking ?? latestEnded;
+        const isOverdue = !currentBooking && latestEnded && nowMinutes - timeToMinutes(latestEnded.end) <= 30 && !nextBooking;
+        const minutesLeft = currentBooking ? timeToMinutes(currentBooking.end) - nowMinutes : null;
+        const suggestedStart = referenceBooking?.end ?? nowTime;
+        const suggestedEnd = addMinutes(timeToDate(suggestedStart), 60).toISOString().slice(11, 16);
+        const sameCourtFree = referenceBooking ? await canUseSurface(court.id, surface.id, suggestedStart, suggestedEnd) : null;
+        const alternatives = referenceBooking
+          ? (
+              await Promise.all(
+                activeSurfaces
+                  .filter((candidate) => candidate.surface.id !== surface.id)
+                  .map(async (candidate) => ({
+                    id: candidate.surface.id,
+                    name: `${candidate.court.name} - ${candidate.surface.name}`,
+                    courtId: candidate.court.id,
+                    courtName: candidate.court.name,
+                    surfaceId: candidate.surface.id,
+                    surfaceName: candidate.surface.name,
+                    categoryName: candidate.court.category.name,
+                    imageUrl: candidate.surface.imageUrl ?? candidate.court.images[0]?.imageUrl ?? null,
+                    available: await canUseSurface(candidate.court.id, candidate.surface.id, suggestedStart, suggestedEnd)
+                  }))
+              )
+            )
+              .filter((candidate) => candidate.available)
+              .slice(0, 4)
+          : [];
+
+        let status: "AVAILABLE" | "OCCUPIED" | "ENDING_SOON" | "OVERDUE" | "RESERVED_SOON" | "INACTIVE" = "AVAILABLE";
+        if (court.activeStatus === "INACTIVE") status = "INACTIVE";
+        else if (isOverdue) status = "OVERDUE";
+        else if (currentBooking && minutesLeft != null && minutesLeft <= 15) status = "ENDING_SOON";
+        else if (currentBooking) status = "OCCUPIED";
+        else if (nextBooking && timeToMinutes(nextBooking.start) - nowMinutes <= 30) status = "RESERVED_SOON";
+
+        const serializeBooking = (booking?: typeof bookings[number]) =>
+          booking
+            ? {
+                id: booking.id,
+                bookingCode: booking.bookingCode,
+                customerName: booking.user.fullName,
+                customerPhone: booking.user.phone,
+                startTime: booking.start,
+                endTime: booking.end,
+                bookingStatus: booking.bookingStatus,
+                paymentStatus: booking.paymentStatus,
+                totalPrice: Number(booking.totalPrice)
+              }
+            : null;
+
+        return {
+          court: {
+            id: court.id,
+            name: court.name,
+            categoryName: court.category.name,
+            imageUrl: surface.imageUrl ?? court.images[0]?.imageUrl ?? null,
+            activeStatus: court.activeStatus,
+            approvalStatus: court.approvalStatus,
+            courtCount: court.courtCount
+          },
+          surface: {
+            id: surface.id,
+            code: surface.code,
+            name: surface.name,
+            capacity: surface.capacity,
+            surface: surface.surface,
+            size: surface.size,
+            imageUrl: surface.imageUrl
+          },
+          status,
+          minutesLeft,
+          currentBooking: serializeBooking(currentBooking),
+          latestEndedBooking: serializeBooking(isOverdue ? latestEnded : undefined),
+          nextBooking: serializeBooking(nextBooking),
+          canExtend: Boolean(referenceBooking && sameCourtFree),
+          suggestedExtension: referenceBooking
+            ? {
+                bookingId: referenceBooking.id,
+                startTime: suggestedStart,
+                endTime: suggestedEnd,
+                minutes: 60
+              }
+            : null,
+          alternatives: alternatives.map(({ available, ...candidate }) => candidate)
+        };
+      })
+    );
+
+    return {
+      date: selectedDate,
+      nowTime,
+      summary: {
+        total: items.length,
+        available: items.filter((item) => item.status === "AVAILABLE").length,
+        occupied: items.filter((item) => item.status === "OCCUPIED").length,
+        endingSoon: items.filter((item) => item.status === "ENDING_SOON").length,
+        overdue: items.filter((item) => item.status === "OVERDUE").length,
+        reservedSoon: items.filter((item) => item.status === "RESERVED_SOON").length
+      },
+      items
+    };
+  },
+
+  async extendBooking(userId: string, bookingId: string, minutes: number) {
+    const profile = await getProfile(userId);
+    const booking = await partnerRepository.bookingByPartner(bookingId, profile.id);
+    if (!booking) throw new NotFoundError("Khong tim thay don cua san ban");
+    if (!extendableBookingStatuses.includes(booking.bookingStatus)) {
+      throw new ValidationError("Chi co the gia han don dang cho xu ly hoac da xac nhan");
+    }
+
+    const date = booking.bookingDate.toISOString().slice(0, 10);
+    const startTime = dbTime(booking.endTime);
+    const newEndTime = addMinutes(booking.endTime, minutes);
+    const endTime = dbTime(newEndTime);
+    const conflict = await partnerRepository.findScheduleConflict(booking.courtId, booking.courtSurfaceId, booking.bookingDate, booking.endTime, newEndTime, booking.id);
+    if (conflict) throw new ConflictError("San nay da co lich sau do. Hay chuyen khach sang san trong.", "BOOKING_EXTENSION_CONFLICT");
+
+    const pricing = await pricingFor(booking.courtId, date, startTime, endTime);
+    return partnerRepository.extendBooking(booking.id, newEndTime, pricing);
+  },
+
+  async continueBooking(userId: string, bookingId: string, targetCourtSurfaceId: string, minutes: number) {
+    const profile = await getProfile(userId);
+    const booking = await partnerRepository.bookingByPartner(bookingId, profile.id);
+    if (!booking) throw new NotFoundError("Khong tim thay don cua san ban");
+    if (!extendableBookingStatuses.includes(booking.bookingStatus)) {
+      throw new ValidationError("Chi co the tao luot choi tiep tu don dang cho xu ly hoac da xac nhan");
+    }
+    const targetSurface = await partnerRepository.courtSurfaceByPartner(targetCourtSurfaceId, profile.id);
+    if (!targetSurface || targetSurface.court.activeStatus !== "ACTIVE") throw new ValidationError("San chuyen den khong hop le");
+
+    const startTimeDate = booking.endTime;
+    const endTimeDate = addMinutes(startTimeDate, minutes);
+    const conflict = await partnerRepository.findScheduleConflict(targetSurface.courtId, targetSurface.id, booking.bookingDate, startTimeDate, endTimeDate);
+    if (conflict) throw new ConflictError("San duoc chon da co lich trong khung gio nay", "BOOKING_CONFLICT");
+
+    const date = booking.bookingDate.toISOString().slice(0, 10);
+    const startTime = dbTime(startTimeDate);
+    const endTime = dbTime(endTimeDate);
+    const pricing = await pricingFor(targetSurface.courtId, date, startTime, endTime);
+    return partnerRepository.createContinuationBooking({
+      bookingCode: bookingCode(),
+      userId: booking.userId,
+      courtId: targetSurface.courtId,
+      courtSurfaceId: targetSurface.id,
+      bookingDate: booking.bookingDate,
+      startTime: startTimeDate,
+      endTime: endTimeDate,
+      ...pricing,
+      note: `Luot choi tiep tu don ${booking.bookingCode}`
+    });
+  },
+
+  async createWalkInBooking(
+    userId: string,
+    input: {
+      courtSurfaceId: string;
+      customerName: string;
+      customerPhone: string;
+      bookingDate: string;
+      startTime: string;
+      minutes: number;
+      paymentMethod: "CASH" | "BANK_TRANSFER" | "E_WALLET";
+      note?: string;
+    }
+  ) {
+    const profile = await getProfile(userId);
+    const targetSurface = await partnerRepository.courtSurfaceByPartner(input.courtSurfaceId, profile.id);
+    if (!targetSurface || targetSurface.court.activeStatus !== "ACTIVE") throw new ValidationError("San con khong hop le");
+
+    const endTimeDate = addMinutes(timeToDate(input.startTime), input.minutes);
+    const endTime = dbTime(endTimeDate);
+    if (timeToMinutes(input.startTime) >= timeToMinutes(endTime)) throw new ValidationError("Khung gio khong hop le");
+
+    const conflict = await partnerRepository.findScheduleConflict(
+      targetSurface.courtId,
+      targetSurface.id,
+      toDbDate(input.bookingDate),
+      timeToDate(input.startTime),
+      endTimeDate
+    );
+    if (conflict) throw new ConflictError("San con nay da co lich trong khung gio da chon", "BOOKING_CONFLICT");
+
+    const phone = normalizePhone(input.customerPhone);
+    const customer =
+      (await partnerRepository.findWalkInUser(phone)) ??
+      (await partnerRepository.createWalkInUser({ fullName: input.customerName.trim(), phone }));
+
+    const pricing = await pricingFor(targetSurface.courtId, input.bookingDate, input.startTime, endTime);
+    return partnerRepository.createContinuationBooking({
+      bookingCode: bookingCode(),
+      userId: customer.id,
+      courtId: targetSurface.courtId,
+      courtSurfaceId: targetSurface.id,
+      bookingDate: toDbDate(input.bookingDate),
+      startTime: timeToDate(input.startTime),
+      endTime: endTimeDate,
+      ...pricing,
+      paymentMethod: input.paymentMethod,
+      note: input.note || `Khach vang lai tai quay: ${input.customerName.trim()} - ${phone}`
+    });
   },
 
   async updateBookingStatus(userId: string, bookingId: string, status: BookingStatus) {

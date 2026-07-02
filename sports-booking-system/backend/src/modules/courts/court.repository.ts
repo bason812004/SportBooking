@@ -141,22 +141,24 @@ export const courtRepository = {
     });
   },
 
-  availability(courtId: string, date: string) {
+  availability(courtId: string, date: string, courtSurfaceId?: string | null) {
     return prisma.booking.findMany({
       where: {
         courtId,
+        OR: courtSurfaceId ? [{ courtSurfaceId }, { courtSurfaceId: null }] : undefined,
         bookingDate: toDbDate(date),
         bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] }
       },
-      select: { id: true, bookingCode: true, startTime: true, endTime: true, bookingStatus: true, payments: { select: { expiresAt: true, status: true } } },
+      select: { id: true, bookingCode: true, courtSurfaceId: true, startTime: true, endTime: true, bookingStatus: true, payments: { select: { expiresAt: true, status: true } } },
       orderBy: { startTime: "asc" }
     });
   },
 
-  bookingSlots(courtId: string, date: string) {
+  bookingSlots(courtId: string, date: string, courtSurfaceId?: string | null) {
     return prisma.bookingSlot.findMany({
       where: {
         courtId,
+        OR: courtSurfaceId ? [{ courtSurfaceId }, { courtSurfaceId: null }] : undefined,
         bookingDate: toDbDate(date),
         booking: {
           bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] }
@@ -182,10 +184,11 @@ export const courtRepository = {
     });
   },
 
-  findConflict(courtId: string, date: string, startTime: string, endTime: string) {
+  findConflict(courtId: string, date: string, startTime: string, endTime: string, courtSurfaceId?: string | null) {
     return prisma.booking.findFirst({
       where: {
         courtId,
+        OR: courtSurfaceId ? [{ courtSurfaceId }, { courtSurfaceId: null }] : undefined,
         bookingDate: toDbDate(date),
         bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] },
         startTime: { lt: timeToDate(endTime) },

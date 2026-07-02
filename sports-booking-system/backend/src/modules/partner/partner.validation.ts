@@ -71,6 +71,39 @@ export const calendarQuerySchema = z.object({
   })
 });
 
+export const operationsQuerySchema = z.object({
+  query: z.object({
+    date: z.string().date().optional(),
+    nowTime: time.optional()
+  })
+});
+
+export const bookingExtendSchema = z.object({
+  body: z.object({
+    minutes: z.number().int().min(15).max(180)
+  })
+});
+
+export const bookingContinueSchema = z.object({
+  body: z.object({
+    targetCourtSurfaceId: z.string().min(1),
+    minutes: z.number().int().min(15).max(180)
+  })
+});
+
+export const walkInBookingSchema = z.object({
+  body: z.object({
+    courtSurfaceId: z.string().min(1),
+    customerName: z.string().trim().min(2).max(120),
+    customerPhone: z.string().trim().min(6).max(30),
+    bookingDate: z.string().date(),
+    startTime: time,
+    minutes: z.number().int().min(15).max(240),
+    paymentMethod: z.enum(["CASH", "BANK_TRANSFER", "E_WALLET"]).default("CASH"),
+    note: z.string().trim().max(500).optional()
+  })
+});
+
 export const profileUpdateSchema = z.object({
   body: z.object({
     fullName: z.string().trim().min(2).max(120),

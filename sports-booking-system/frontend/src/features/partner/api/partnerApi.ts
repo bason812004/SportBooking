@@ -6,6 +6,7 @@ import type {
   Paginated,
   PartnerBlog,
   PartnerDashboard,
+  PartnerOperations,
   PartnerProfile,
   PartnerRevenueReport,
   PartnerTournament,
@@ -24,6 +25,17 @@ export type PartnerVoucherPayload = {
   usageLimit?: number | null;
   startDate: string;
   endDate: string;
+};
+
+export type WalkInBookingPayload = {
+  courtSurfaceId: string;
+  customerName: string;
+  customerPhone: string;
+  bookingDate: string;
+  startTime: string;
+  minutes: number;
+  paymentMethod: "CASH" | "BANK_TRANSFER" | "E_WALLET";
+  note?: string;
 };
 
 export const partnerApi = {
@@ -106,8 +118,27 @@ export const partnerApi = {
     });
     return data.data;
   },
+  async operations(params: { date?: string; nowTime?: string } = {}) {
+    const cleanParams = Object.fromEntries(
+      Object.entries(params).filter(([, value]) => value !== "" && value !== undefined)
+    );
+    const { data } = await api.get<ApiResponse<PartnerOperations>>("/partner/operations", { params: cleanParams });
+    return data.data;
+  },
   async setBookingStatus(id: string, action: "confirm" | "reject" | "complete" | "no-show") {
     const { data } = await api.put<ApiResponse<Booking>>(`/partner/bookings/${id}/${action}`);
+    return data.data;
+  },
+  async extendBooking(id: string, minutes: number) {
+    const { data } = await api.post<ApiResponse<Booking>>(`/partner/bookings/${id}/extend`, { minutes });
+    return data.data;
+  },
+  async continueBooking(id: string, targetCourtSurfaceId: string, minutes: number) {
+    const { data } = await api.post<ApiResponse<Booking>>(`/partner/bookings/${id}/continue`, { targetCourtSurfaceId, minutes });
+    return data.data;
+  },
+  async createWalkInBooking(payload: WalkInBookingPayload) {
+    const { data } = await api.post<ApiResponse<Booking>>("/partner/operations/walk-in-booking", payload);
     return data.data;
   },
   async revenue(month: string) {

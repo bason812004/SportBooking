@@ -5,7 +5,9 @@ import { toast } from "sonner";
 import { ErrorState, LoadingState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
+import { Select } from "../../components/ui/Select";
 import { bookingApi, type BookingSlotPayload } from "../../features/bookings/api/bookingApi";
+import { courtApi } from "../../features/courts/api/courtApi";
 
 function money(value: number) {
   return `${value.toLocaleString("vi-VN")} VND`;
@@ -26,12 +28,19 @@ export function BookingPage() {
   const navigate = useNavigate();
   const bookingDate = searchParams.get("date") ?? "";
   const selectedSlots = useMemo(() => parseSlots(searchParams.getAll("slot")), [searchParams]);
+  const court = useQuery({
+    queryKey: ["court-detail", courtId],
+    queryFn: () => courtApi.detail(courtId!),
+    enabled: Boolean(courtId)
+  });
+  const [courtSurfaceId, setCourtSurfaceId] = useState("");
+  const selectedSurfaceId = courtSurfaceId || court.data?.surfaces?.[0]?.id || undefined;
   const [voucherCode, setVoucherCode] = useState("");
   const [note, setNote] = useState("");
   const [paymentType, setPaymentType] = useState<"DEPOSIT" | "FULL_PAYMENT">("DEPOSIT");
 
   const quotePayload = courtId && bookingDate && selectedSlots.length
-    ? { courtId, bookingDate, slots: selectedSlots, voucherCode: voucherCode || undefined }
+    ? { courtId, courtSurfaceId: selectedSurfaceId, bookingDate, slots: selectedSlots, voucherCode: voucherCode || undefined }
     : null;
 
   const quote = useQuery({
@@ -44,6 +53,7 @@ export function BookingPage() {
     mutationFn: () =>
       bookingApi.checkout({
         courtId: courtId!,
+        courtSurfaceId: selectedSurfaceId,
         bookingDate,
         slots: selectedSlots,
         voucherCode: voucherCode || undefined,
@@ -60,8 +70,9 @@ export function BookingPage() {
   if (!courtId || !bookingDate || !selectedSlots.length) {
     return <ErrorState message="Vui lòng chọn sân, ngày và khung giờ từ trang chi tiết sân." />;
   }
-  if (quote.isLoading) return <LoadingState />;
+  if (quote.isLoading || court.isLoading) return <LoadingState />;
   if (quote.isError) return <ErrorState message={quote.error.message} />;
+  if (court.isError) return <ErrorState message={court.error.message} />;
   if (!quote.data) return <ErrorState message="Không thể tạo báo giá đặt sân." />;
 
   const paymentAmount = paymentType === "DEPOSIT" ? quote.data.minimumDepositAmount : quote.data.totalAmount;
@@ -76,8 +87,23 @@ export function BookingPage() {
             <h2 className="text-xl font-semibold">{quote.data.court.name}</h2>
             <p className="mt-1 text-sm text-slate-600">{quote.data.court.address}</p>
             <p className="mt-2 font-medium">Ngày đặt: {quote.data.bookingDate}</p>
+            {quote.data.courtSurface && <p className="mt-1 text-sm font-bold text-emerald-700">San con: {quote.data.courtSurface.name}</p>}
           </div>
         </div>
+
+        {court.data?.surfaces?.length ? (
+          <div className="mt-6">
+            <Select
+              label="Chon san con"
+              value={selectedSurfaceId ?? ""}
+              onChange={(event) => setCourtSurfaceId(event.target.value)}
+              options={court.data.surfaces.map((surface) => ({
+                value: surface.id,
+                label: `${surface.name}${surface.code ? ` (${surface.code})` : ""}`
+              }))}
+            />
+          </div>
+        ) : null}
 
         <div className="mt-6 space-y-3">
           <h3 className="font-semibold">Khung giờ đã chọn</h3>

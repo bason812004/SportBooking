@@ -3,6 +3,7 @@ import type { ApiResponse, Booking, Paginated } from "../../../types/api";
 
 export type BookingPayload = {
   courtId: string;
+  courtSurfaceId?: string;
   bookingDate: string;
   startTime: string;
   endTime: string;
@@ -20,6 +21,7 @@ export type BookingSlotPayload = {
 
 export type BookingQuotePayload = {
   courtId: string;
+  courtSurfaceId?: string;
   bookingDate: string;
   slots: BookingSlotPayload[];
   voucherCode?: string;
@@ -27,6 +29,7 @@ export type BookingQuotePayload = {
 
 export type BookingQuote = {
   court: { id: string; name: string; address: string; imageUrl?: string | null };
+  courtSurface?: { id: string; code: string; name: string } | null;
   bookingDate: string;
   slots: Array<BookingSlotPayload & { price: number }>;
   subtotal: number;
