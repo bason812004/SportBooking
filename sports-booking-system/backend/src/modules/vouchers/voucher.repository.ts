@@ -12,6 +12,7 @@ export type VoucherRow = {
   minBookingAmount: number;
   usageLimit: number | null;
   usedCount: number;
+  clickCount: number;
   startDate: Date;
   endDate: Date;
   status: string;
@@ -23,6 +24,27 @@ export type PartnerVoucherRow = Omit<VoucherRow, "partner"> & {
   createdAt: Date;
   updatedAt: Date;
 };
+
+const columnExistsCache = new Map<string, boolean>();
+
+async function columnExists(tableName: string, columnName: string) {
+  const cacheKey = `${tableName}.${columnName}`;
+  const cached = columnExistsCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+    select exists(
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = ${tableName}
+        and column_name = ${columnName}
+    ) as "exists"
+  `;
+  const exists = Boolean(row?.exists);
+  if (exists) columnExistsCache.set(cacheKey, true);
+  return exists;
+}
 
 const partnerVoucherSelect = Prisma.sql`
   select
@@ -36,6 +58,7 @@ const partnerVoucherSelect = Prisma.sql`
     v.min_booking_amount::float as "minBookingAmount",
     v.usage_limit as "usageLimit",
     v.used_count as "usedCount",
+    0::int as "clickCount",
     v.start_date as "startDate",
     v.end_date as "endDate",
     case
@@ -66,8 +89,14 @@ const partnerVoucherSelect = Prisma.sql`
 `;
 
 export const voucherRepository = {
-  listActive() {
-    return prisma.$queryRaw<VoucherRow[]>`
+  async listActive() {
+    const hasClickCount = await columnExists("vouchers", "click_count");
+    const clickCountSelect = hasClickCount ? Prisma.sql`coalesce(v.click_count, 0)::int` : Prisma.sql`0::int`;
+    const orderBy = hasClickCount
+      ? Prisma.sql`coalesce(v.click_count, 0) desc, v.used_count desc, v.created_at desc`
+      : Prisma.sql`v.used_count desc, v.created_at desc`;
+
+    return prisma.$queryRaw<VoucherRow[]>(Prisma.sql`
       select
         v.id,
         v.code,
@@ -79,6 +108,7 @@ export const voucherRepository = {
         v.min_booking_amount::float as "minBookingAmount",
         v.usage_limit as "usageLimit",
         v.used_count as "usedCount",
+        ${clickCountSelect} as "clickCount",
         v.start_date as "startDate",
         v.end_date as "endDate",
         v.status::text as "status",
@@ -105,13 +135,16 @@ export const voucherRepository = {
       ) ci on true
       where v.status = 'ACTIVE'::voucher_status
         and now() between v.start_date and v.end_date
-      order by v.created_at desc
+      order by ${orderBy}
       limit 30
-    `;
+    `);
   },
 
-  findActiveById(id: string) {
-    return prisma.$queryRaw<VoucherRow[]>`
+  async findActiveById(id: string) {
+    const hasClickCount = await columnExists("vouchers", "click_count");
+    const clickCountSelect = hasClickCount ? Prisma.sql`coalesce(v.click_count, 0)::int` : Prisma.sql`0::int`;
+
+    return prisma.$queryRaw<VoucherRow[]>(Prisma.sql`
       select
         v.id,
         v.code,
@@ -123,6 +156,7 @@ export const voucherRepository = {
         v.min_booking_amount::float as "minBookingAmount",
         v.usage_limit as "usageLimit",
         v.used_count as "usedCount",
+        ${clickCountSelect} as "clickCount",
         v.start_date as "startDate",
         v.end_date as "endDate",
         v.status::text as "status",
@@ -151,7 +185,25 @@ export const voucherRepository = {
         and v.status = 'ACTIVE'::voucher_status
         and now() between v.start_date and v.end_date
       limit 1
+    `);
+  },
+
+  async incrementClickCount(id: string) {
+    if (!(await columnExists("vouchers", "click_count"))) {
+      const [voucher] = await this.findActiveById(id);
+      return voucher ? { id: voucher.id, clickCount: 0 } : null;
+    }
+
+    const rows = await prisma.$queryRaw<Array<{ id: string; clickCount: number }>>`
+      update vouchers
+      set click_count = coalesce(click_count, 0) + 1,
+          updated_at = now()
+      where id = ${id}::uuid
+        and status = 'ACTIVE'::voucher_status
+        and now() between start_date and end_date
+      returning id, click_count::int as "clickCount"
     `;
+    return rows[0] ?? null;
   },
 
   findUsable(input: { voucherId?: string; code?: string; courtId: string }) {

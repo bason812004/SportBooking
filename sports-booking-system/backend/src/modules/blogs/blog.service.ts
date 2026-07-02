@@ -7,6 +7,7 @@ export const blogService = {
   },
 
   async detail(slug: string) {
+    await blogRepository.incrementViewCount(slug);
     const [post] = await blogRepository.findPublishedBySlug(slug);
     if (!post) throw new NotFoundError("Khong tim thay bai viet");
     return post;

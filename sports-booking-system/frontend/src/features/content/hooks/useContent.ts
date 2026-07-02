@@ -1,20 +1,22 @@
 import { useQuery } from "@tanstack/react-query";
 import { contentApi } from "../api/contentApi";
 
+const realtimeQuery = { refetchInterval: 8000, refetchOnWindowFocus: true };
+
 export function useVouchers() {
-  return useQuery({ queryKey: ["public-vouchers"], queryFn: contentApi.vouchers });
+  return useQuery({ queryKey: ["public-vouchers"], queryFn: contentApi.vouchers, ...realtimeQuery });
 }
 
 export function useBlogs() {
-  return useQuery({ queryKey: ["public-blogs"], queryFn: contentApi.blogs });
+  return useQuery({ queryKey: ["public-blogs"], queryFn: contentApi.blogs, ...realtimeQuery });
 }
 
 export function useBlog(slug?: string) {
-  return useQuery({ queryKey: ["public-blog", slug], queryFn: () => contentApi.blog(slug!), enabled: Boolean(slug) });
+  return useQuery({ queryKey: ["public-blog", slug], queryFn: () => contentApi.blog(slug!), enabled: Boolean(slug), refetchOnWindowFocus: false, staleTime: Infinity });
 }
 
 export function useTournaments() {
-  return useQuery({ queryKey: ["public-tournaments"], queryFn: contentApi.tournaments });
+  return useQuery({ queryKey: ["public-tournaments"], queryFn: contentApi.tournaments, ...realtimeQuery });
 }
 
 export function useTournament(slug?: string) {

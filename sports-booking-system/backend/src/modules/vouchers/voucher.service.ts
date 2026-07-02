@@ -1,6 +1,11 @@
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { calculateVoucherDiscount } from "../../shared/utils/businessRules.js";
+import { durationHours } from "../../shared/utils/time.js";
 import { trackEvent } from "../analytics/analytics.service.js";
+import { courtRepository } from "../courts/court.repository.js";
+import { dynamicPricingService } from "../dynamic-pricing/dynamicPricing.service.js";
+import { realtimeService } from "../realtime/realtime.service.js";
+import { realtimeEvents } from "../realtime/realtime.events.js";
 import { voucherRepository } from "./voucher.repository.js";
 
 export const voucherService = {
@@ -12,6 +17,12 @@ export const voucherService = {
     const [voucher] = await voucherRepository.findActiveById(id);
     if (!voucher) throw new NotFoundError("Khong tim thay voucher");
     return voucher;
+  },
+
+  async trackClick(id: string) {
+    const clicked = await voucherRepository.incrementClickCount(id);
+    if (!clicked) throw new NotFoundError("Khong tim thay voucher");
+    return clicked;
   },
 
   async claim(userId: string, voucherId: string) {
@@ -61,6 +72,122 @@ export const voucherService = {
     return { voucherId: voucher.id, code: voucher.code, ...discount };
   },
 
+  /**
+   * Validate voucher cho booking chua tao.
+   * Body gom voucherCode | voucherId, courtId, bookingDate, startTime, endTime, services.
+   * Backend TU tinh subtotal (court + services), tin nhay vao db thay vi frontend.
+   */
+  async validate(input: {
+    userId?: string;
+    voucherId?: string;
+    code?: string;
+    courtId: string;
+    bookingDate: string;
+    startTime: string;
+    endTime: string;
+    services?: Array<{ serviceId: string; quantity: number }>;
+  }) {
+    if (!input.code && !input.voucherId) {
+      throw new ValidationError("Vui long cung cap ma voucher hoac id voucher");
+    }
+
+    const voucher = await voucherRepository.findUsable({
+      voucherId: input.voucherId,
+      code: input.code,
+      courtId: input.courtId
+    });
+    if (!voucher) throw new NotFoundError("Ma voucher khong hop le hoac da het han");
+
+    const court = await voucherRepository.partnerCourt(input.courtId, voucher.partnerId);
+    if (!court) throw new ValidationError("Voucher khong ap dung cho san nay");
+
+    if (voucher.usageLimit != null && voucher.usedCount >= voucher.usageLimit) {
+      throw new ValidationError("Voucher da het luot su dung");
+    }
+
+    const courtWithPricing = await courtRepository.findPublicById(input.courtId);
+    if (!courtWithPricing) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
+
+    if (input.startTime >= input.endTime) {
+      throw new ValidationError("Khung gio khong hop le");
+    }
+
+    const dynamicPrice = await dynamicPricingService.calculate(input.courtId, {
+      date: input.bookingDate,
+      startTime: input.startTime,
+      endTime: input.endTime
+    });
+    const hours = durationHours(input.startTime, input.endTime);
+    const courtTotal = dynamicPrice.finalPrice * hours;
+
+    let servicesTotal = 0;
+    const serviceIds = (input.services ?? []).map((s) => s.serviceId);
+    if (serviceIds.length) {
+      const services = await courtRepository.servicesByIds(serviceIds);
+      const serviceMap = new Map(services.map((s) => [s.id, s]));
+      for (const line of input.services ?? []) {
+        const service = serviceMap.get(line.serviceId);
+        if (!service) throw new ValidationError(`Dich vu ${line.serviceId} khong ton tai`);
+        if (service.status !== "ACTIVE") throw new ValidationError(`Dich vu ${service.name} khong kha dung`);
+        servicesTotal += Number(service.price) * line.quantity;
+      }
+    }
+
+    const subtotal = Math.round(courtTotal + servicesTotal);
+    const minBookingAmount = Number(voucher.minBookingAmount);
+    if (subtotal < minBookingAmount) {
+      throw new ValidationError(
+        `Don hang phai dat toi thieu ${minBookingAmount.toLocaleString("vi-VN")} VND de ap dung voucher nay`
+      );
+    }
+
+    const discount = calculateVoucherDiscount({
+      subtotal,
+      discountType: voucher.discountType,
+      discountValue: Number(voucher.discountValue),
+      maxDiscountAmount: voucher.maxDiscountAmount == null ? null : Number(voucher.maxDiscountAmount),
+      minBookingAmount
+    });
+
+    const discountAmount = Math.round(discount.discountAmount);
+    const finalTotal = Math.max(0, subtotal - discountAmount);
+    const message =
+      voucher.discountType === "PERCENTAGE"
+        ? `Giam ${voucher.discountValue}% (toi da ${voucher.maxDiscountAmount ? Number(voucher.maxDiscountAmount).toLocaleString("vi-VN") + " VND" : "khong gioi han"})`
+        : `Giam ${Number(voucher.discountValue).toLocaleString("vi-VN")} VND`;
+
+    await trackEvent({
+      userId: input.userId,
+      partnerId: voucher.partnerId,
+      eventType: "VOUCHER_APPLIED",
+      entityType: "VOUCHER",
+      entityId: voucher.id,
+      metadataJson: { courtId: input.courtId, subtotal, discountAmount, validateOnly: true }
+    });
+
+    return {
+      voucher: {
+        id: voucher.id,
+        code: voucher.code,
+        title: voucher.title,
+        description: voucher.description,
+        discountType: voucher.discountType,
+        discountValue: Number(voucher.discountValue),
+        maxDiscountAmount: voucher.maxDiscountAmount == null ? null : Number(voucher.maxDiscountAmount),
+        minBookingAmount,
+        endDate: voucher.endDate,
+        usageLimit: voucher.usageLimit,
+        usedCount: voucher.usedCount
+      },
+      courtSubtotal: Math.round(courtTotal),
+      servicesSubtotal: Math.round(servicesTotal),
+      subtotal,
+      discountAmount,
+      finalTotal,
+      message
+    };
+  },
+
   async listForPartner(partnerId: string) {
     return voucherRepository.listForPartner(partnerId);
   },
@@ -99,7 +226,9 @@ export const voucherService = {
       throw new ValidationError("Voucher da het luot su dung");
     }
     await voucherRepository.setStatus(id, partnerId, ["DRAFT", "DISABLED"], "ACTIVE");
-    return this.detailForPartner(partnerId, id);
+    const activated = await this.detailForPartner(partnerId, id);
+    realtimeService.toPublic(realtimeEvents.voucherNew, activated);
+    return activated;
   },
 
   async disableForPartner(partnerId: string, id: string) {

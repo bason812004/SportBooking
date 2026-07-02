@@ -608,6 +608,7 @@ create table vouchers (
   min_booking_amount numeric(12, 2) not null default 0 check (min_booking_amount >= 0),
   usage_limit integer check (usage_limit is null or usage_limit > 0),
   used_count integer not null default 0 check (used_count >= 0),
+  click_count integer not null default 0 check (click_count >= 0),
   start_date timestamptz not null,
   end_date timestamptz not null,
   status voucher_status not null default 'DRAFT',
@@ -655,6 +656,7 @@ create table blog_posts (
   category_id varchar(20) references blog_categories(id),
   status blog_post_status not null default 'DRAFT',
   visibility blog_visibility not null default 'PUBLIC',
+  view_count integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   published_at timestamptz

@@ -1,9 +1,15 @@
 import { LocateFixed, ShieldAlert } from "lucide-react";
 import { useCourts } from "../../../features/courts/hooks/useCourts";
 import { useUserLocation } from "../../../features/courts/hooks/useUserLocation";
-import { fallbackCourts } from "./homeData";
 import { CourtCard } from "./CourtCard";
 import { Reveal, SectionShell, SkeletonCard } from "./homeUtils";
+
+const FALLBACK_IMAGES = [
+  "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=900&q=80",
+  "https://images.unsplash.com/photo-1622279457486-62dcc4a431d6?auto=format&fit=crop&w=900&q=80",
+  "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?auto=format&fit=crop&w=900&q=80",
+  "https://images.unsplash.com/photo-1526232761682-d26e03ac148e?auto=format&fit=crop&w=900&q=80"
+];
 
 export function NearbyCourtsSection() {
   const userLocation = useUserLocation();
@@ -20,8 +26,17 @@ export function NearbyCourtsSection() {
     ? "Đang ưu tiên sân gần vị trí của bạn."
     : "Bấm cho phép vị trí để website hiển thị sân gần bạn hơn.";
 
-  const items = courts.data?.items?.length
-    ? courts.data.items.slice(0, 4).map((court, index) => ({
+  if (courts.isLoading) {
+    return (
+      <SectionShell eyebrow="Sân gần bạn" title="Gợi ý sân phù hợp theo khu vực" description={description} className="bg-[#f8fafc]">
+        <div className="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 4 }).map((_, index) => <SkeletonCard key={index} />)}</div>
+      </SectionShell>
+    );
+  }
+
+  const items = courts.data?.items ?? [];
+  const displayItems = items.length > 0
+    ? items.slice(0, 4).map((court, index) => ({
         id: court.id,
         name: court.name,
         area: `${court.district}, ${court.city}`,
@@ -29,9 +44,9 @@ export function NearbyCourtsSection() {
         price: `${Number(court.minPrice ?? 120000).toLocaleString("vi-VN")}đ/giờ`,
         rating: court.averageRating ?? 4.8,
         bookings: court.reviewCount ? court.reviewCount * 32 : 700 + index * 120,
-        image: court.images[0]?.imageUrl || fallbackCourts[index % fallbackCourts.length].image
+        image: court.images[0]?.imageUrl || FALLBACK_IMAGES[index % FALLBACK_IMAGES.length]
       }))
-    : fallbackCourts;
+    : null;
 
   return (
     <SectionShell eyebrow="Sân gần bạn" title="Gợi ý sân phù hợp theo khu vực" description={description} className="bg-[#f8fafc]">
@@ -43,11 +58,13 @@ export function NearbyCourtsSection() {
         permissionState={userLocation.permissionState}
         onRequestLocation={userLocation.requestLocation}
       />
-      {courts.isLoading ? (
-        <div className="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 4 }).map((_, index) => <SkeletonCard key={index} />)}</div>
+      {!displayItems ? (
+        <p className="mt-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
+          Chưa có sân nào trong cơ sở dữ liệu.
+        </p>
       ) : (
         <div className="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-          {items.map((court, index) => (
+          {displayItems.map((court, index) => (
             <Reveal key={court.id} delay={index * 0.05}>
               <CourtCard {...court} />
             </Reveal>
@@ -111,4 +128,3 @@ function LocationRequestStrip({
     </div>
   );
 }
-

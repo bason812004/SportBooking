@@ -12,6 +12,12 @@ export const voucherService = {
             throw new NotFoundError("Khong tim thay voucher");
         return voucher;
     },
+    async trackClick(id) {
+        const clicked = await voucherRepository.incrementClickCount(id);
+        if (!clicked)
+            throw new NotFoundError("Khong tim thay voucher");
+        return clicked;
+    },
     async claim(userId, voucherId) {
         const voucher = await voucherRepository.findActiveVoucher(voucherId);
         if (!voucher)

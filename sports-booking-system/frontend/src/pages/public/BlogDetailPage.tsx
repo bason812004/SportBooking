@@ -1,5 +1,5 @@
 import { Link, useParams } from "react-router-dom";
-import { CalendarDays, FileText, UserRound } from "lucide-react";
+import { CalendarDays, Eye, FileText, UserRound } from "lucide-react";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { useBlog, useBlogs } from "../../features/content/hooks/useContent";
 
@@ -15,11 +15,19 @@ export function BlogDetailPage() {
   if (!post.data) return <div className="px-4 py-16"><EmptyState title="Không tìm thấy bài viết." /></div>;
 
   const item = post.data;
-  const relatedPosts = (related.data ?? []).filter((candidate) => candidate.slug !== item.slug).slice(0, 3);
+  const relatedPosts = (related.data ?? [])
+    .filter((candidate) => candidate.slug !== item.slug)
+    .sort((left, right) => {
+      const sameCategoryLeft = left.category?.id && left.category.id === item.category?.id ? 1 : 0;
+      const sameCategoryRight = right.category?.id && right.category.id === item.category?.id ? 1 : 0;
+      if (sameCategoryLeft !== sameCategoryRight) return sameCategoryRight - sameCategoryLeft;
+      return (right.viewCount ?? 0) - (left.viewCount ?? 0);
+    })
+    .slice(0, 6);
 
   return (
     <article className="bg-[#f6f3ed] px-4 py-10 text-slate-950">
-      <div className="mx-auto max-w-4xl">
+      <div className="mx-auto max-w-5xl">
         <Link to="/blogs" className="text-sm font-black text-emerald-700 hover:text-emerald-900">Quay lại danh sách blog</Link>
         <div className="mt-5 rounded-3xl bg-white p-6 shadow-xl shadow-stone-200/70 md:p-9">
           <div className="flex flex-wrap gap-2">
@@ -30,6 +38,7 @@ export function BlogDetailPage() {
           <div className="mt-5 flex flex-wrap gap-4 text-sm font-semibold text-slate-500">
             <span className="flex items-center gap-2"><UserRound className="h-4 w-4" />{item.author.fullName}</span>
             <span className="flex items-center gap-2"><CalendarDays className="h-4 w-4" />{dateFormat.format(new Date(item.publishedAt ?? item.createdAt))}</span>
+            <span className="flex items-center gap-2"><Eye className="h-4 w-4" />{(item.viewCount ?? 0).toLocaleString("vi-VN")} lượt xem</span>
           </div>
           {item.coverImageUrl && <img src={item.coverImageUrl} alt={item.title} className="mt-7 aspect-[16/8] w-full rounded-2xl object-cover" />}
           <div className="mt-8 space-y-5 text-base leading-8 text-slate-700">
@@ -39,13 +48,17 @@ export function BlogDetailPage() {
 
         {!!relatedPosts.length && (
           <div className="mt-8">
-            <h2 className="text-2xl font-black">Bài viết liên quan</h2>
-            <div className="mt-4 grid gap-4 md:grid-cols-3">
+            <h2 className="text-2xl font-black">Bài viết khác được quan tâm</h2>
+            <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {relatedPosts.map((candidate) => (
                 <Link key={candidate.id} to={`/blogs/${candidate.slug}`} className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-stone-200 transition hover:-translate-y-1 hover:shadow-lg">
                   <FileText className="h-5 w-5 text-emerald-700" />
                   <h3 className="mt-3 line-clamp-2 font-black">{candidate.title}</h3>
-                  <p className="mt-2 line-clamp-2 text-sm text-slate-500">{candidate.excerpt}</p>
+                  <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-500">{candidate.excerpt}</p>
+                  <span className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-slate-500">
+                    <Eye className="h-4 w-4" />
+                    {(candidate.viewCount ?? 0).toLocaleString("vi-VN")} lượt xem
+                  </span>
                 </Link>
               ))}
             </div>

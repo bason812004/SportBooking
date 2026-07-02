@@ -13,8 +13,9 @@ export const bookingRepository = {
     return prisma.booking.findUnique({
       where: { id },
       include: {
-        court: { include: { images: true, category: true, partner: true } },
+        court: { include: { images: { orderBy: { sortOrder: "asc" } }, category: true, partner: true } },
         bookingServices: { include: { service: true } },
+        bookingVoucher: { include: { voucher: { include: { partner: true, court: true } } } },
         review: true
       }
     });
@@ -25,7 +26,11 @@ export const bookingRepository = {
     return prisma.$transaction([
       prisma.booking.findMany({
         where,
-        include: { court: { include: { images: true, category: true } }, bookingServices: { include: { service: true } } },
+        include: {
+          court: { include: { images: { orderBy: { sortOrder: "asc" } }, category: true, partner: true } },
+          bookingServices: { include: { service: true } },
+          bookingVoucher: { include: { voucher: true } }
+        },
         orderBy: { createdAt: "desc" },
         skip: (page - 1) * limit,
         take: limit

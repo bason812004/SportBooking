@@ -42,8 +42,8 @@ export function PaymentPage() {
     queryKey: ["payment-status", paymentId],
     queryFn: () => paymentApi.status(paymentId!),
     enabled: Boolean(paymentId),
-    refetchInterval: (data) => {
-      const current = data?.status;
+    refetchInterval: (query) => {
+      const current = query.state.data?.status;
       return current && ["PAID", "FAILED", "EXPIRED", "CANCELLED"].includes(current) ? false : 1000;
     }
   });
@@ -96,7 +96,7 @@ export function PaymentPage() {
     if (payment.data.qrCodeUrl.includes("vietqr.io")) {
       qrUrl = payment.data.qrCodeUrl;
     } else {
-      qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(payment.data.qrPayload)}`;
+      qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(payment.data.qrPayload ?? "")}`;
     }
   }
 
@@ -243,5 +243,4 @@ function Row({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-
 

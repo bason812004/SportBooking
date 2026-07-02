@@ -42,10 +42,36 @@ async function buildQuote(userId, input) {
         courtRepository.availability(input.courtId, input.bookingDate),
         courtRepository.bookingSlots(input.courtId, input.bookingDate)
     ]);
+    const activeBookings = legacyBookings.filter(b => {
+        const isPending = b.bookingStatus === "PENDING" || b.bookingStatus === "PENDING_PAYMENT";
+        if (isPending) {
+            if (!b.payments || b.payments.length === 0)
+                return true;
+            const activePayment = b.payments.find((p) => p.status === "PENDING" || p.status === "UNPAID");
+            if (!activePayment)
+                return false;
+            const isExpired = activePayment.expiresAt.getTime() <= Date.now();
+            return !isExpired;
+        }
+        return true;
+    });
+    const activeBookingSlots = bookingSlots.filter(bs => {
+        const isPending = bs.booking.bookingStatus === "PENDING" || bs.booking.bookingStatus === "PENDING_PAYMENT";
+        if (isPending) {
+            if (!bs.booking.payments || bs.booking.payments.length === 0)
+                return true;
+            const activePayment = bs.booking.payments.find((p) => p.status === "PENDING" || p.status === "UNPAID");
+            if (!activePayment)
+                return false;
+            const isExpired = activePayment.expiresAt.getTime() <= Date.now();
+            return !isExpired;
+        }
+        return true;
+    });
     for (const slot of input.slots) {
         const blocked = blocks.some((block) => checkBookingOverlap(slot, { startTime: block.startTime.toISOString().slice(11, 16), endTime: block.endTime.toISOString().slice(11, 16) }));
-        const booked = legacyBookings.some((booking) => checkBookingOverlap(slot, { startTime: booking.startTime.toISOString().slice(11, 16), endTime: booking.endTime.toISOString().slice(11, 16) }));
-        const bookedSlot = bookingSlots.some((bookingSlot) => checkBookingOverlap(slot, { startTime: bookingSlot.startTime.toISOString().slice(11, 16), endTime: bookingSlot.endTime.toISOString().slice(11, 16) }));
+        const booked = activeBookings.some((booking) => checkBookingOverlap(slot, { startTime: booking.startTime.toISOString().slice(11, 16), endTime: booking.endTime.toISOString().slice(11, 16) }));
+        const bookedSlot = activeBookingSlots.some((bookingSlot) => checkBookingOverlap(slot, { startTime: bookingSlot.startTime.toISOString().slice(11, 16), endTime: bookingSlot.endTime.toISOString().slice(11, 16) }));
         if (blocked || booked || bookedSlot)
             throw new ConflictError("Mot hoac nhieu khung gio da duoc dat hoac bi khoa", "BOOKING_CONFLICT");
     }
@@ -95,7 +121,9 @@ export const bookingService = {
         const remainingAmount = quote.totalAmount - paymentAmount;
         const expiresAt = new Date(Date.now() + env.BOOKING_HOLD_EXPIRES_MINUTES * 60 * 1000);
         const reference = paymentReference();
-        const orderId = `${reference}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+        const orderId = env.PAYMENT_PROVIDER === "PAYOS"
+            ? String(Number(String(Date.now()).slice(-9) + String(Math.floor(Math.random() * 1000)).padStart(3, "0")))
+            : `${reference}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
         const providerResult = await paymentProvider.createQrPayment({
             amount: paymentAmount,
             currency: "VND",
@@ -151,7 +179,20 @@ export const bookingService = {
         }
         const conflict = await courtRepository.findConflict(input.courtId, input.bookingDate, input.startTime, input.endTime);
         if (conflict) {
-            throw new ConflictError("Khung gio nay da co nguoi dat.", "BOOKING_CONFLICT");
+            const isPending = conflict.bookingStatus === "PENDING" || conflict.bookingStatus === "PENDING_PAYMENT";
+            let isExpired = false;
+            if (isPending) {
+                if (!conflict.payments || conflict.payments.length === 0) {
+                    isExpired = false;
+                }
+                else {
+                    const activePayment = conflict.payments.find((p) => p.status === "PENDING" || p.status === "UNPAID");
+                    isExpired = !activePayment ? true : activePayment.expiresAt.getTime() <= Date.now();
+                }
+            }
+            if (!isExpired) {
+                throw new ConflictError("Khung gio nay da co nguoi dat.", "BOOKING_CONFLICT");
+            }
         }
         const court = await bookingRepository.courtWithPricing(input.courtId);
         if (!court)

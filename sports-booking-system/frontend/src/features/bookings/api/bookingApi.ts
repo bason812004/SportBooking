@@ -1,5 +1,5 @@
 import { api } from "../../../lib/axios";
-import type { ApiResponse, Booking, Paginated } from "../../../types/api";
+import type { ApiResponse, Booking, MyVoucher, Paginated, Voucher, VoucherValidatePayload, VoucherValidateResult } from "../../../types/api";
 
 export type BookingPayload = {
   courtId: string;
@@ -36,11 +36,13 @@ export type BookingQuote = {
   remainingAmount: number;
   currency: "VND";
   quoteExpiresAt: string;
+  voucherId?: string;
 };
 
 export type BookingCheckoutPayload = BookingQuotePayload & {
   paymentType: "DEPOSIT" | "FULL_PAYMENT";
   note?: string;
+  voucherId?: string;
 };
 
 export type BookingCheckoutResult = {
@@ -82,6 +84,25 @@ export const bookingApi = {
   },
   async cancel(id: string, cancelReason?: string) {
     const { data } = await api.put<ApiResponse<Booking>>(`/users/me/bookings/${id}/cancel`, { cancelReason });
+    return data.data;
+  }
+};
+
+export const voucherApi = {
+  async list() {
+    const { data } = await api.get<ApiResponse<Voucher[]>>("/vouchers");
+    return data.data;
+  },
+  async myVouchers() {
+    const { data } = await api.get<ApiResponse<MyVoucher[]>>("/vouchers/me");
+    return data.data;
+  },
+  async claim(voucherId: string) {
+    const { data } = await api.post<ApiResponse<{ id: string }>>(`/vouchers/${voucherId}/claim`);
+    return data.data;
+  },
+  async validate(payload: VoucherValidatePayload) {
+    const { data } = await api.post<ApiResponse<VoucherValidateResult>>("/vouchers/validate", payload);
     return data.data;
   }
 };

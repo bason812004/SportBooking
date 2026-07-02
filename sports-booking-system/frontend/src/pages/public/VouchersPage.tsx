@@ -1,7 +1,11 @@
 import { motion } from "framer-motion";
-import { CalendarDays, Copy, Gift, MapPin, TicketPercent } from "lucide-react";
+import { CalendarDays, Check, Copy, Gift, MapPin, TicketPercent } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import { EmptyState, ErrorState } from "../../components/common/States";
+import { contentApi } from "../../features/content/api/contentApi";
+import { voucherApi } from "../../features/bookings/api/bookingApi";
 import { useVouchers } from "../../features/content/hooks/useContent";
 
 const currency = new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 });
@@ -11,8 +15,32 @@ function formatDiscount(type: string, value: number) {
   return type === "PERCENTAGE" ? `Giảm ${value}%` : `Giảm ${currency.format(value)}`;
 }
 
+function trackVoucherClick(id: string) {
+  void contentApi.trackVoucherClick(id).catch(() => undefined);
+}
+
 export function VouchersPage() {
   const vouchers = useVouchers();
+  const [claimingId, setClaimingId] = useState<string | null>(null);
+  const [claimedIds, setClaimedIds] = useState<Set<string>>(new Set());
+
+  async function copyCode(id: string, code: string) {
+    trackVoucherClick(id);
+    await navigator.clipboard?.writeText(code);
+  }
+
+  async function handleClaim(voucherId: string) {
+    setClaimingId(voucherId);
+    try {
+      await voucherApi.claim(voucherId);
+      setClaimedIds((prev) => new Set([...prev, voucherId]));
+      toast.success("Nhận voucher thành công! Voucher đã được lưu vào kho của bạn.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Không thể nhận voucher.");
+    } finally {
+      setClaimingId(null);
+    }
+  }
 
   if (vouchers.isLoading) {
     return (
@@ -92,12 +120,19 @@ export function VouchersPage() {
                   <div className="space-y-4 p-5">
                     <div>
                       <h2 className="line-clamp-2 text-xl font-black text-slate-950">{voucher.title}</h2>
-                      <p className="mt-2 line-clamp-2 text-sm text-slate-500">{voucher.description}</p>
+                      <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-500">{voucher.description}</p>
                     </div>
                     <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4">
                       <div className="flex items-center justify-between gap-3">
                         <span className="font-mono text-lg font-black tracking-widest text-teal-700">{voucher.code}</span>
-                        <Copy className="h-4 w-4 text-slate-400" />
+                        <button
+                          type="button"
+                          aria-label={`Copy mã ${voucher.code}`}
+                          onClick={() => void copyCode(voucher.id, voucher.code)}
+                          className="rounded-lg p-2 text-slate-400 transition hover:bg-white hover:text-teal-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+                        >
+                          <Copy className="h-4 w-4" />
+                        </button>
                       </div>
                       <p className="mt-2 text-xs text-slate-500">Đơn tối thiểu {currency.format(voucher.minBookingAmount)}</p>
                     </div>
@@ -111,15 +146,41 @@ export function VouchersPage() {
                         {voucher.court ? `${voucher.court.name}, ${voucher.court.district}` : voucher.partner.businessName}
                       </p>
                     </div>
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-semibold text-slate-500">
-                        {remaining === null ? "Không giới hạn lượt dùng" : `Còn ${remaining} lượt`}
+                        {remaining === null ? "Không giới hạn lượt" : `Còn ${remaining} lượt`}
                       </span>
-                      {voucher.court?.id && (
-                        <Link to={`/courts/${voucher.court.id}`} className="rounded-full bg-slate-950 px-4 py-2 text-sm font-bold text-white">
-                          Đặt sân
-                        </Link>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {claimedIds.has(voucher.id) ? (
+                          <span className="flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-bold text-emerald-700">
+                            <Check className="h-3 w-3" />
+                            Đã nhận
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => void handleClaim(voucher.id)}
+                            disabled={claimingId === voucher.id}
+                            className="flex items-center gap-1 rounded-full bg-teal-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-teal-700 disabled:opacity-60"
+                          >
+                            {claimingId === voucher.id ? (
+                              <span className="h-3 w-3 animate-spin rounded-full border border-white border-t-transparent" />
+                            ) : (
+                              <Gift className="h-3 w-3" />
+                            )}
+                            Nhận voucher
+                          </button>
+                        )}
+                        {voucher.court?.id && (
+                          <Link
+                            to={`/courts/${voucher.court.id}`}
+                            onClick={() => trackVoucherClick(voucher.id)}
+                            className="rounded-full bg-slate-950 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-slate-800"
+                          >
+                            Đặt sân
+                          </Link>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </motion.article>

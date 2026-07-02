@@ -9,7 +9,6 @@ import {
   Flame,
   Gift,
   Goal,
-  Handshake,
   Headphones,
   HeartHandshake,
   MapPin,
@@ -42,12 +41,7 @@ export const sportTypes: Array<{ name: string; count: string; image: string; ico
   { name: "Sân pickleball", count: "37 sân", image: "https://images.unsplash.com/photo-1554068865-24cecd4e34b8?auto=format&fit=crop&w=900&q=80", icon: Sparkles, query: "pickleball" }
 ];
 
-export const fallbackCourts = [
-  { id: "panda", name: "Panda Badminton", area: "Bình Tân", distance: "2.4 km", price: "120.000đ/giờ", rating: 4.9, bookings: 1280, image: heroSlides[0] },
-  { id: "ami", name: "Ami Social Pickleball", area: "Quận 7", distance: "4.8 km", price: "180.000đ/giờ", rating: 4.8, bookings: 940, image: heroSlides[1] },
-  { id: "arena", name: "2P Pickleball Arena", area: "Thủ Đức", distance: "6.1 km", price: "160.000đ/giờ", rating: 4.7, bookings: 860, image: heroSlides[2] },
-  { id: "victory", name: "Victory Football Hub", area: "Tân Bình", distance: "7.2 km", price: "350.000đ/giờ", rating: 4.9, bookings: 1510, image: "https://images.unsplash.com/photo-1526232761682-d26e03ac148e?auto=format&fit=crop&w=900&q=80" }
-];
+export const courtImageFallbacks = heroSlides;
 
 export const promotions = [
   { code: "GIAM50", title: "Giảm 50.000đ", description: "Áp dụng cho đơn từ 250.000đ", tone: "from-[#111827] to-[#2563eb]" },
@@ -56,29 +50,23 @@ export const promotions = [
 ];
 
 export const liveFeeds = [
-  "Nguyễn Văn A vừa đặt sân bóng đá tại Quận 7",
-  "Một người dùng vừa đặt sân tennis cách đây 2 phút",
-  "Minh Anh vừa dùng mã NEWUSER cho sân cầu lông",
-  "Đội Thunder vừa giữ chỗ sân 7 người lúc 20:00",
-  "CLB PicklePro vừa mở thêm 3 khung giờ trống"
+  "Có lượt đặt sân mới vừa được ghi nhận",
+  "Một người dùng vừa xem lịch trống",
+  "Có người vừa sao chép mã voucher",
+  "Một đội chơi vừa tìm sân theo khu vực",
+  "Có chủ sân vừa cập nhật khung giờ trống"
 ];
 
 export const tournaments = [
-  { title: "Giải bóng đá sân 7 cuối tuần", slug: "sala-football-cup-thang-7", sport: "Bóng đá", time: "15/06", location: "Quận 7", image: fallbackCourts[3].image },
-  { title: "Badminton Open Night", slug: "phu-nhuan-badminton-open", sport: "Cầu lông", time: "18/06", location: "Bình Tân", image: fallbackCourts[0].image },
-  { title: "Pickleball Rookie Cup", slug: "pickleball-tan-binh-challenge", sport: "Pickleball", time: "22/06", location: "Thủ Đức", image: fallbackCourts[2].image }
+  { title: "Giải bóng đá sân 7 cuối tuần", slug: "sala-football-cup-thang-7", sport: "Bóng đá", time: "15/06", location: "Quận 7", image: courtImageFallbacks[1] },
+  { title: "Badminton Open Night", slug: "phu-nhuan-badminton-open", sport: "Cầu lông", time: "18/06", location: "Bình Tân", image: courtImageFallbacks[0] },
+  { title: "Pickleball Rookie Cup", slug: "pickleball-tan-binh-challenge", sport: "Pickleball", time: "22/06", location: "Thủ Đức", image: courtImageFallbacks[2] }
 ];
 
 export const teammatePosts = [
   { sport: "Cầu lông", title: "Cần 2 người chơi cầu lông tối nay", location: "Bình Thạnh", time: "19:30" },
   { sport: "Bóng đá", title: "Cần thủ môn đá sân 7", location: "Quận 7", time: "20:00" },
   { sport: "Pickleball", title: "Tìm cặp đôi giao lưu pickleball", location: "Thủ Đức", time: "18:00" }
-];
-
-export const partners = [
-  { name: "Panda Sports Group", courts: 28, revenue: "1.8 tỷ", badge: "Verified Partner" },
-  { name: "Ami Social Club", courts: 16, revenue: "920 triệu", badge: "Verified Partner" },
-  { name: "2P Arena Network", courts: 22, revenue: "1.2 tỷ", badge: "Verified Partner" }
 ];
 
 export const whyChooseUs: Array<{ title: string; description: string; icon: LucideIcon }> = [
@@ -90,9 +78,9 @@ export const whyChooseUs: Array<{ title: string; description: string; icon: Luci
 ];
 
 export const blogs = [
-  { title: "5 mẹo chơi tennis bền sức hơn", slug: "3-bai-tap-khoi-dong-truoc-khi-choi-tennis", category: "Tennis", image: fallbackCourts[1].image },
-  { title: "Kinh nghiệm đá bóng sân 7 cho đội mới", slug: "5-buoc-chon-san-bong-phu-hop", category: "Bóng đá", image: fallbackCourts[3].image },
-  { title: "Kỹ thuật pickleball cơ bản cho người mới", slug: "pickleball-vi-sao-dang-bung-no", category: "Pickleball", image: fallbackCourts[2].image },
+  { title: "5 mẹo chơi tennis bền sức hơn", slug: "3-bai-tap-khoi-dong-truoc-khi-choi-tennis", category: "Tennis", image: courtImageFallbacks[2] },
+  { title: "Kinh nghiệm đá bóng sân 7 cho đội mới", slug: "5-buoc-chon-san-bong-phu-hop", category: "Bóng đá", image: courtImageFallbacks[1] },
+  { title: "Kỹ thuật pickleball cơ bản cho người mới", slug: "pickleball-vi-sao-dang-bung-no", category: "Pickleball", image: courtImageFallbacks[0] },
   { title: "Dinh dưỡng thể thao trước giờ thi đấu", slug: "an-gi-truoc-khi-da-bong-buoi-toi", category: "Sức khỏe", image: "https://images.unsplash.com/photo-1490645935967-10de6ba17061?auto=format&fit=crop&w=900&q=80" }
 ];
 

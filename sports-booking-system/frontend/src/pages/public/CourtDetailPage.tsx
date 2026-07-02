@@ -9,21 +9,14 @@ import { CourtInfo } from "./detail/CourtInfo";
 import { QuickStats } from "./detail/QuickStats";
 import { AvailabilityCalendar } from "./detail/AvailabilityCalendar";
 import { PricingSection } from "./detail/PricingSection";
-import { HeatmapSection } from "./detail/HeatmapSection";
 import { AmenitiesSection } from "./detail/AmenitiesSection";
 import { PartnerSection } from "./detail/PartnerSection";
 import { PolicySection } from "./detail/PolicySection";
 import { ReviewSection } from "./detail/ReviewSection";
 import { ReviewAnalytics } from "./detail/ReviewAnalytics";
-import { NearbyCourts, SimilarCourts } from "./detail/SimilarCourts";
-import { TournamentSection } from "./detail/TournamentSection";
-import { CommunitySection } from "./detail/CommunitySection";
-import { LiveActivity } from "./detail/LiveActivity";
-import { FAQSection } from "./detail/FAQSection";
+import { NearbyCourts } from "./detail/SimilarCourts";
 import { StickyBookingPanel } from "./detail/StickyBookingPanel";
 import { InteractiveMap } from "./detail/InteractiveMap";
-import { AIRecommendation } from "./detail/AIRecommendation";
-import { GamificationSection } from "./detail/GamificationSection";
 import { detailImages } from "./detail/detailData";
 
 function timeText(value?: string) {
@@ -57,14 +50,16 @@ export function CourtDetailPage() {
     const images = data?.images?.length ? data.images.map((item) => item.imageUrl) : detailImages;
     return {
       id: data?.id ?? id ?? "fallback",
-      name: data?.name ?? "Panda Badminton Premium",
-      category: data?.category?.name ?? "Cầu lông",
-      address: [data?.address, data?.ward, data?.district, data?.city].filter(Boolean).join(", ") || "65A D. Lò Tư, Bình Tân, TP.HCM",
+      name: data?.name ?? "Sân thể thao",
+      category: data?.category?.name ?? "Sân thể thao",
+      address: [data?.address, data?.ward, data?.district, data?.city].filter(Boolean).join(", ") || "Chưa cập nhật địa chỉ",
+      latitude: data?.latitude,
+      longitude: data?.longitude,
       openingHours: `${timeText(data?.openingTime) || "05:00"} - ${timeText(data?.closingTime) || "23:00"}`,
-      price: data?.minPrice ?? 120000,
-      rating: data?.averageRating ?? 4.9,
+      price: data?.minPrice ?? 0,
+      rating: data?.averageRating ?? 0,
       reviewCount: data?.reviewCount ?? data?.reviews?.length ?? 0,
-      bookingCount: 21840,
+      bookingCount: data?.reviewCount ?? data?.reviews?.length ?? 0,
       images
     };
   }, [court.data, id]);
@@ -90,8 +85,8 @@ export function CourtDetailPage() {
 
         <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
           <main className="space-y-6">
-            <QuickStats price={`${view.price.toLocaleString("vi-VN")}đ/giờ`} rating={view.rating} />
-            <InteractiveMap address={view.address} />
+            <QuickStats price={view.price ? `${view.price.toLocaleString("vi-VN")}đ/giờ` : "Chưa cập nhật"} rating={view.rating} />
+            <InteractiveMap address={view.address} latitude={view.latitude} longitude={view.longitude} />
             <AvailabilityCalendar
               date={selectedDate}
               onDateChange={handleDateChange}
@@ -100,21 +95,16 @@ export function CourtDetailPage() {
               loading={availability.isLoading}
               onToggleSlot={toggleSlot}
             />
-            <PricingSection />
-            <HeatmapSection />
-            <AmenitiesSection />
-            <PartnerSection />
+            <PricingSection prices={court.data?.prices ?? []} />
+            <AmenitiesSection amenities={court.data?.amenities ?? []} />
+            <PartnerSection partner={court.data?.partner} />
             <PolicySection />
             <ReviewAnalytics breakdown={court.data?.ratingBreakdown ?? []} />
             <ReviewSection reviews={court.data?.reviews ?? []} />
-            <AIRecommendation />
-            <SimilarCourts />
-            <NearbyCourts />
-            <TournamentSection />
-            <CommunitySection />
-            <LiveActivity />
-            <GamificationSection />
-            <FAQSection />
+            <NearbyCourts
+              courts={court.data?.nearbyCourts ?? []}
+              description="Danh sách này được lấy từ API chi tiết sân, dựa trên các sân công khai cùng khu vực trong cơ sở dữ liệu."
+            />
           </main>
           <div className="hidden lg:block">
             <StickyBookingPanel courtId={view.id} price={view.price} selectedDate={selectedDate} selectedSlots={selectedSlots} />

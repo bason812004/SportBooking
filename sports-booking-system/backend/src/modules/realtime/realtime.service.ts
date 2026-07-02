@@ -25,5 +25,8 @@ export const realtimeService = {
   },
   toBooking(bookingId: string, event: string, payload: unknown) {
     emit(`booking:${bookingId}`, event, payload);
+  },
+  toPublic(event: string, payload: unknown) {
+    io?.emit(event, payload);
   }
 };
