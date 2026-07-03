@@ -11,11 +11,45 @@ export type BlogPostRow = {
   status: string;
   visibility: string;
   createdAt: Date;
+  updatedAt: Date;
   publishedAt: Date | null;
   viewCount: number;
   category: { id: string; name: string; slug: string } | null;
   author: { id: string; fullName: string; avatarUrl: string | null };
 };
+
+export type BlogWriteInput = {
+  title: string;
+  slug: string;
+  excerpt?: string | null;
+  content: string;
+  coverImageUrl?: string | null;
+  visibility: "PUBLIC" | "PRIVATE";
+};
+
+const blogRowSelect = (viewCountSelect: Prisma.Sql = Prisma.sql`0::int`) => Prisma.sql`
+  select
+    b.id,
+    b.title,
+    b.slug,
+    b.excerpt,
+    b.content,
+    b.cover_image_url as "coverImageUrl",
+    b.status::text as "status",
+    b.visibility::text as "visibility",
+    b.created_at as "createdAt",
+    b.updated_at as "updatedAt",
+    b.published_at as "publishedAt",
+    ${viewCountSelect} as "viewCount",
+    case
+      when bc.id is null then null
+      else json_build_object('id', bc.id, 'name', bc.name, 'slug', bc.slug)
+    end as "category",
+    json_build_object('id', u.id, 'fullName', u.full_name, 'avatarUrl', u.avatar_url) as "author"
+  from blog_posts b
+  join users u on u.id = b.author_id
+  left join blog_categories bc on bc.id = b.category_id
+`;
 
 const columnExistsCache = new Map<string, boolean>();
 
@@ -47,26 +81,7 @@ export const blogRepository = {
       : Prisma.sql`coalesce(b.published_at, b.created_at) desc`;
 
     return prisma.$queryRaw<BlogPostRow[]>(Prisma.sql`
-      select
-        b.id,
-        b.title,
-        b.slug,
-        b.excerpt,
-        b.content,
-        b.cover_image_url as "coverImageUrl",
-        b.status::text as "status",
-        b.visibility::text as "visibility",
-        b.created_at as "createdAt",
-        b.published_at as "publishedAt",
-        ${viewCountSelect} as "viewCount",
-        case
-          when bc.id is null then null
-          else json_build_object('id', bc.id, 'name', bc.name, 'slug', bc.slug)
-        end as "category",
-        json_build_object('id', u.id, 'fullName', u.full_name, 'avatarUrl', u.avatar_url) as "author"
-      from blog_posts b
-      join users u on u.id = b.author_id
-      left join blog_categories bc on bc.id = b.category_id
+      ${blogRowSelect(viewCountSelect)}
       where b.status = 'PUBLISHED'::blog_post_status
         and b.visibility = 'PUBLIC'::blog_visibility
       order by ${orderBy}
@@ -79,26 +94,7 @@ export const blogRepository = {
     const viewCountSelect = hasViewCount ? Prisma.sql`coalesce(b.view_count, 0)::int` : Prisma.sql`0::int`;
 
     return prisma.$queryRaw<BlogPostRow[]>(Prisma.sql`
-      select
-        b.id,
-        b.title,
-        b.slug,
-        b.excerpt,
-        b.content,
-        b.cover_image_url as "coverImageUrl",
-        b.status::text as "status",
-        b.visibility::text as "visibility",
-        b.created_at as "createdAt",
-        b.published_at as "publishedAt",
-        ${viewCountSelect} as "viewCount",
-        case
-          when bc.id is null then null
-          else json_build_object('id', bc.id, 'name', bc.name, 'slug', bc.slug)
-        end as "category",
-        json_build_object('id', u.id, 'fullName', u.full_name, 'avatarUrl', u.avatar_url) as "author"
-      from blog_posts b
-      join users u on u.id = b.author_id
-      left join blog_categories bc on bc.id = b.category_id
+      ${blogRowSelect(viewCountSelect)}
       where b.slug = ${slug}
         and b.status = 'PUBLISHED'::blog_post_status
         and b.visibility = 'PUBLIC'::blog_visibility
@@ -116,6 +112,76 @@ export const blogRepository = {
       where slug = ${slug}
         and status = 'PUBLISHED'::blog_post_status
         and visibility = 'PUBLIC'::blog_visibility
+    `;
+  },
+
+  async listMine(userId: string) {
+    const hasViewCount = await columnExists("blog_posts", "view_count");
+    const viewCountSelect = hasViewCount ? Prisma.sql`coalesce(b.view_count, 0)::int` : Prisma.sql`0::int`;
+
+    return prisma.$queryRaw<BlogPostRow[]>(Prisma.sql`
+      ${blogRowSelect(viewCountSelect)}
+      where b.author_id = ${userId}
+      order by b.updated_at desc, b.created_at desc
+      limit 100
+    `);
+  },
+
+  async findMineById(id: string, userId: string) {
+    const hasViewCount = await columnExists("blog_posts", "view_count");
+    const viewCountSelect = hasViewCount ? Prisma.sql`coalesce(b.view_count, 0)::int` : Prisma.sql`0::int`;
+
+    return prisma.$queryRaw<BlogPostRow[]>(Prisma.sql`
+      ${blogRowSelect(viewCountSelect)}
+      where b.id = ${id}
+        and b.author_id = ${userId}
+      limit 1
+    `);
+  },
+
+  async createMine(userId: string, input: BlogWriteInput) {
+    const [inserted] = await prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      insert into blog_posts (author_id, title, slug, excerpt, content, cover_image_url, visibility, status, published_at)
+      values (
+        ${userId},
+        ${input.title},
+        ${input.slug},
+        ${input.excerpt ?? null},
+        ${input.content},
+        ${input.coverImageUrl || null},
+        ${input.visibility}::blog_visibility,
+        'PUBLISHED'::blog_post_status,
+        now()
+      )
+      returning id
+    `);
+    return inserted?.id ? this.findMineById(inserted.id, userId) : [];
+  },
+
+  async updateMine(id: string, userId: string, input: BlogWriteInput) {
+    const [updated] = await prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      update blog_posts
+      set title = ${input.title},
+          slug = ${input.slug},
+          excerpt = ${input.excerpt ?? null},
+          content = ${input.content},
+          cover_image_url = ${input.coverImageUrl || null},
+          visibility = ${input.visibility}::blog_visibility,
+          status = 'PUBLISHED'::blog_post_status,
+          published_at = coalesce(published_at, now()),
+          updated_at = now()
+      where id = ${id}
+        and author_id = ${userId}
+      returning id
+    `);
+    return updated?.id ? this.findMineById(updated.id, userId) : [];
+  },
+
+  deleteMine(id: string, userId: string) {
+    return prisma.$executeRaw`
+      delete from blog_posts
+      where id = ${id}
+        and author_id = ${userId}
     `;
   }
 };

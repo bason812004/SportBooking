@@ -5,6 +5,8 @@ import { teamPostService } from "./teamPost.service.js";
 export const teamPostController = {
   list: asyncHandler(async (_req, res) => sendSuccess(res, await teamPostService.list())),
 
+  listMine: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.listMine(req.user!.id))),
+
   detail: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.detail(req.params.id))),
 
   create: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.create(req.user!.id, req.body), 201)),

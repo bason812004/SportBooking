@@ -1,6 +1,6 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { CalendarDays, Check, Gift, MapPin, TicketPercent } from "lucide-react";
-import { useState } from "react";
+import { CalendarDays, Check, Gift, MapPin, TicketPercent, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Button } from "../ui/Button";
 
 type Props = {
@@ -22,7 +22,7 @@ type VoucherData = {
   endDate: string;
   usageLimit?: number | null;
   usedCount: number;
-  partner: { id: string; businessName: string };
+  partner?: { id: string; businessName: string };
   court?: { id: string; name: string; city: string; district: string; imageUrl?: string | null } | null;
 };
 
@@ -31,7 +31,7 @@ const dateFormat = new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-
 
 function formatDiscount(type: string, value: number, max?: number | null) {
   if (type === "PERCENTAGE") {
-    return max != null ? `Giảm ${value}% (tối đa ${currency.format(max)})` : `Giảm ${value}%`;
+    return max != null ? `Giảm ${value}% tối đa ${currency.format(max)}` : `Giảm ${value}%`;
   }
   return `Giảm ${currency.format(value)}`;
 }
@@ -40,6 +40,12 @@ export function ClaimVoucherModal({ voucher, open, onClaim, onClose }: Props) {
   const [claiming, setClaiming] = useState(false);
   const [claimed, setClaimed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setClaimed(false);
+    setError(null);
+    setClaiming(false);
+  }, [voucher?.id, open]);
 
   async function handleClaim() {
     if (!voucher) return;
@@ -55,15 +61,11 @@ export function ClaimVoucherModal({ voucher, open, onClaim, onClose }: Props) {
     }
   }
 
-  function handleClose() {
-    setClaimed(false);
-    setError(null);
-    onClose();
-  }
-
   if (!voucher) return null;
 
   const remaining = voucher.usageLimit != null ? Math.max(voucher.usageLimit - voucher.usedCount, 0) : null;
+  const outOfStock = remaining === 0;
+  const ownerName = voucher.partner?.businessName ?? "SportBooking";
 
   return (
     <AnimatePresence>
@@ -72,52 +74,48 @@ export function ClaimVoucherModal({ voucher, open, onClaim, onClose }: Props) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[100] grid place-items-center bg-black/50 p-4"
-          onClick={(e) => e.target === e.currentTarget && handleClose()}
+          className="fixed inset-0 z-[100] grid place-items-center bg-slate-950/60 p-4"
+          onClick={(event) => event.target === event.currentTarget && onClose()}
         >
           <motion.div
-            initial={{ scale: 0.85, opacity: 0, y: 20 }}
+            initial={{ scale: 0.92, opacity: 0, y: 18 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.85, opacity: 0, y: 20 }}
-            transition={{ type: "spring", damping: 25, stiffness: 300 }}
+            exit={{ scale: 0.92, opacity: 0, y: 18 }}
+            transition={{ type: "spring", damping: 24, stiffness: 280 }}
             className="relative w-full max-w-sm overflow-hidden rounded-3xl bg-white shadow-2xl"
           >
-            {/* Banner */}
             <div className="relative h-44 bg-slate-900">
               {voucher.court?.imageUrl ? (
-                <img src={voucher.court.imageUrl} alt={voucher.court.name} className="h-full w-full object-cover opacity-60" />
+                <img src={voucher.court.imageUrl} alt={voucher.court.name} className="h-full w-full object-cover opacity-65" />
               ) : (
                 <div className="grid h-full place-items-center bg-gradient-to-br from-teal-600 to-emerald-600">
                   <Gift className="h-16 w-16 text-white/80" />
                 </div>
               )}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/75 to-transparent" />
 
-              {/* Badge */}
               <div className="absolute left-4 top-4 rounded-full bg-amber-300 px-3 py-1 text-xs font-black text-slate-950">
                 <span className="flex items-center gap-1">
                   <TicketPercent className="h-3 w-3" />
-                  Voucher mới!
+                  Voucher mới
                 </span>
               </div>
 
-              {/* Close button */}
               <button
                 type="button"
-                onClick={handleClose}
-                className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-black/30 text-white hover:bg-black/50"
+                onClick={onClose}
+                className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-full bg-black/30 text-white transition hover:bg-black/50"
+                aria-label="Đóng popup voucher"
               >
-                ✕
+                <X className="h-4 w-4" />
               </button>
 
-              {/* Partner name */}
               <div className="absolute bottom-4 left-4 right-4">
-                <p className="text-sm font-semibold text-white/80">{voucher.partner.businessName}</p>
+                <p className="text-sm font-semibold text-white/80">{ownerName}</p>
                 <h2 className="mt-1 text-xl font-black text-white">{voucher.title}</h2>
               </div>
             </div>
 
-            {/* Body */}
             <div className="space-y-4 p-5">
               {claimed ? (
                 <div className="flex flex-col items-center gap-3 py-4 text-center">
@@ -125,27 +123,22 @@ export function ClaimVoucherModal({ voucher, open, onClaim, onClose }: Props) {
                     <Check className="h-8 w-8 text-emerald-600" />
                   </div>
                   <div>
-                    <p className="text-lg font-black text-emerald-700">Nhận voucher thành công!</p>
-                    <p className="mt-1 text-sm text-slate-500">Mã: <span className="font-mono font-black text-teal-700">{voucher.code}</span></p>
+                    <p className="text-lg font-black text-emerald-700">Đã lưu voucher</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Mã <span className="font-mono font-black text-teal-700">{voucher.code}</span> đã nằm trong kho của bạn.
+                    </p>
                   </div>
-                  <p className="text-xs text-slate-500">
-                    Voucher đã được lưu vào kho của bạn. Áp dụng khi đặt sân.
-                  </p>
-                  <Button onClick={handleClose} className="w-full">Đóng</Button>
+                  <Button onClick={onClose} className="w-full">Đóng</Button>
                 </div>
               ) : (
                 <>
-                  {/* Discount info */}
                   <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-center">
                     <p className="text-2xl font-black text-teal-700">
-                      {voucher.discountType === "PERCENTAGE"
-                        ? `${voucher.discountValue}%`
-                        : currency.format(voucher.discountValue)}
+                      {formatDiscount(voucher.discountType, voucher.discountValue, voucher.maxDiscountAmount)}
                     </p>
-                    <p className="mt-1 text-xs text-slate-500">Giảm {voucher.discountType === "PERCENTAGE" ? "theo phần trăm" : "cố định"}</p>
+                    <p className="mt-1 font-mono text-sm font-black tracking-widest text-slate-700">{voucher.code}</p>
                   </div>
 
-                  {/* Meta info */}
                   <div className="space-y-2 text-sm text-slate-600">
                     <p className="flex items-center gap-2">
                       <CalendarDays className="h-4 w-4 shrink-0 text-teal-600" />
@@ -153,13 +146,13 @@ export function ClaimVoucherModal({ voucher, open, onClaim, onClose }: Props) {
                     </p>
                     <p className="flex items-center gap-2">
                       <MapPin className="h-4 w-4 shrink-0 text-teal-600" />
-                      {voucher.court ? `${voucher.court.name}, ${voucher.court.district}` : voucher.partner.businessName}
+                      {voucher.court ? `${voucher.court.name}, ${voucher.court.district}` : ownerName}
                     </p>
-                    <p className="text-xs text-slate-500">
-                      Đơn tối thiểu {currency.format(voucher.minBookingAmount)}
-                    </p>
+                    <p className="text-xs text-slate-500">Đơn tối thiểu {currency.format(voucher.minBookingAmount)}</p>
                     {remaining != null && (
-                      <p className="text-xs font-semibold text-rose-600">Chỉ còn {remaining} lượt</p>
+                      <p className="text-xs font-semibold text-rose-600">
+                        {outOfStock ? "Voucher đã hết lượt nhận" : `Chỉ còn ${remaining} lượt`}
+                      </p>
                     )}
                   </div>
 
@@ -169,16 +162,15 @@ export function ClaimVoucherModal({ voucher, open, onClaim, onClose }: Props) {
                     </p>
                   )}
 
-                  {/* Actions */}
                   <div className="flex gap-2">
-                    <Button variant="secondary" onClick={handleClose} className="flex-1">
+                    <Button variant="secondary" onClick={onClose} className="flex-1">
                       Bỏ qua
                     </Button>
-                    <Button onClick={handleClaim} disabled={claiming} className="flex-1">
+                    <Button onClick={handleClaim} disabled={claiming || outOfStock} className="flex-1">
                       {claiming ? (
                         <span className="flex items-center gap-2">
                           <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                          Đang nhận...
+                          Đang nhận
                         </span>
                       ) : (
                         <span className="flex items-center gap-2">

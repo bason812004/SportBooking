@@ -1,12 +1,14 @@
 import { z } from "zod";
 
+const fullHourTime = z.string().regex(/^(?:[01]\d|2[0-3]):00$/, "Gio dat san phai la gio chan, vi du 06:00");
+
 export const voucherIdParamsSchema = z.object({
-  params: z.object({ id: z.string().uuid() })
+  params: z.object({ id: z.string().min(1) })
 });
 
 export const applyVoucherSchema = z.object({
   body: z.object({
-    voucherId: z.string().uuid().optional(),
+    voucherId: z.string().optional(),
     code: z.string().min(2).max(40).optional(),
     courtId: z.string().uuid(),
     subtotal: z.number().nonnegative()
@@ -15,12 +17,12 @@ export const applyVoucherSchema = z.object({
 
 export const validateVoucherSchema = z.object({
   body: z.object({
-    voucherId: z.string().uuid().optional(),
+    voucherId: z.string().optional(),
     code: z.string().min(2).max(40).optional(),
     courtId: z.string().min(1),
     bookingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    startTime: z.string().regex(/^\d{2}:\d{2}$/),
-    endTime: z.string().regex(/^\d{2}:\d{2}$/),
+    startTime: fullHourTime,
+    endTime: fullHourTime,
     services: z
       .array(z.object({ serviceId: z.string().min(1), quantity: z.number().int().positive().max(99) }))
       .optional()

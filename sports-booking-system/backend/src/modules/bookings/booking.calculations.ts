@@ -1,4 +1,4 @@
-import { timeToMinutes } from "../../shared/utils/time.js";
+import { isFullHour, timeToMinutes } from "../../shared/utils/time.js";
 
 export type SlotInput = {
   startTime: string;
@@ -32,11 +32,15 @@ export function checkBookingOverlap(left: SlotInput, right: SlotInput) {
 
 export function validateSelectedSlots(slots: SlotInput[]) {
   if (!slots.length) return false;
-  return slots.every((slot) => timeToMinutes(slot.startTime) < timeToMinutes(slot.endTime));
+  return slots.every((slot) => {
+    const start = timeToMinutes(slot.startTime);
+    const end = timeToMinutes(slot.endTime);
+    return isFullHour(slot.startTime) && isFullHour(slot.endTime) && start < end && (end - start) % 60 === 0;
+  });
 }
 
-export function calculateBookingQuote(slots: PricedSlot[], voucherDiscountAmount = 0) {
-  const subtotal = slots.reduce((sum, slot) => sum + slot.price, 0);
+export function calculateBookingQuote(slots: PricedSlot[], voucherDiscountAmount = 0, extraSubtotal = 0) {
+  const subtotal = slots.reduce((sum, slot) => sum + slot.price, 0) + extraSubtotal;
   const discount = Math.min(Math.max(voucherDiscountAmount, 0), subtotal);
   const totalAmount = subtotal - discount;
   return {

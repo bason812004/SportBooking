@@ -21,6 +21,10 @@ export const teamPostService = {
     return teamPostRepository.list();
   },
 
+  listMine(userId: string) {
+    return teamPostRepository.listMine(userId);
+  },
+
   async detail(id: string) {
     const [post] = await teamPostRepository.findById(id);
     if (!post) throw new NotFoundError("Khong tim thay bai dang tim dong doi");

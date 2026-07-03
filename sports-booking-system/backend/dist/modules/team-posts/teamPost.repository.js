@@ -33,6 +33,14 @@ export const teamPostRepository = {
       limit 60
     `);
     },
+    listMine(userId) {
+        return prisma.$queryRawUnsafe(`
+        ${selectPost}
+        where p.user_id = $1
+        order by p.updated_at desc, p.created_at desc
+        limit 100
+      `, userId);
+    },
     findById(id) {
         return prisma.$queryRawUnsafe(`
         ${selectPost}
@@ -40,9 +48,8 @@ export const teamPostRepository = {
         limit 1
       `, id);
     },
-    create(input) {
-        return prisma.$queryRawUnsafe(`
-      with inserted as (
+    async create(input) {
+        const [inserted] = await prisma.$queryRawUnsafe(`
         insert into team_recruitment_posts (
           user_id, court_id, title, sport_type, court_name, address,
           current_players, max_players, playing_date, start_time, end_time,
@@ -52,15 +59,11 @@ export const teamPostRepository = {
           $12, $13, $14, $15, $16
         )
         returning id
-      )
-      ${selectPost}
-      join inserted i on i.id = p.id
-      limit 1
-    `, input.userId, input.courtId ?? null, input.title, input.sportType, input.courtName, input.address, input.currentPlayers, input.maxPlayers, input.playingDate ?? null, input.startTime, input.endTime, input.pricePerPerson, input.extraServices ?? null, input.note ?? null, input.zaloGroupLink ?? null, input.zaloQrImage ?? null);
+      `, input.userId, input.courtId ?? null, input.title, input.sportType, input.courtName, input.address, input.currentPlayers, input.maxPlayers, input.playingDate ?? null, input.startTime, input.endTime, input.pricePerPerson, input.extraServices ?? null, input.note ?? null, input.zaloGroupLink ?? null, input.zaloQrImage ?? null);
+        return inserted?.id ? this.findById(inserted.id) : [];
     },
-    update(id, input) {
-        return prisma.$queryRawUnsafe(`
-      with updated as (
+    async update(id, input) {
+        const [updated] = await prisma.$queryRawUnsafe(`
         update team_recruitment_posts
         set
           court_id = $3,
@@ -77,15 +80,13 @@ export const teamPostRepository = {
           extra_services = $14,
           note = $15,
           zalo_group_link = $16,
-          zalo_qr_image = $17
+          zalo_qr_image = $17,
+          updated_at = now()
         where id = $1
           and user_id = $2
         returning id
-      )
-      ${selectPost}
-      join updated u2 on u2.id = p.id
-      limit 1
-    `, id, input.userId, input.courtId ?? null, input.title, input.sportType, input.courtName, input.address, input.currentPlayers, input.maxPlayers, input.playingDate ?? null, input.startTime, input.endTime, input.pricePerPerson, input.extraServices ?? null, input.note ?? null, input.zaloGroupLink ?? null, input.zaloQrImage ?? null);
+      `, id, input.userId, input.courtId ?? null, input.title, input.sportType, input.courtName, input.address, input.currentPlayers, input.maxPlayers, input.playingDate ?? null, input.startTime, input.endTime, input.pricePerPerson, input.extraServices ?? null, input.note ?? null, input.zaloGroupLink ?? null, input.zaloQrImage ?? null);
+        return updated?.id ? this.findById(updated.id) : [];
     },
     delete(id, userId) {
         return prisma.$executeRaw `

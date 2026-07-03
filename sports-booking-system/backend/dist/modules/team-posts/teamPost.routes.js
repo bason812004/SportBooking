@@ -5,6 +5,7 @@ import { teamPostController } from "./teamPost.controller.js";
 import { teamPostIdSchema, teamPostSchema } from "./teamPost.validation.js";
 export const teamPostRoutes = Router();
 teamPostRoutes.get("/", teamPostController.list);
+teamPostRoutes.get("/me", authMiddleware, teamPostController.listMine);
 teamPostRoutes.get("/:id", validate(teamPostIdSchema), teamPostController.detail);
 teamPostRoutes.post("/", authMiddleware, validate(teamPostSchema), teamPostController.create);
 teamPostRoutes.put("/:id", authMiddleware, validate(teamPostIdSchema.merge(teamPostSchema)), teamPostController.update);

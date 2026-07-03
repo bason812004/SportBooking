@@ -1,38 +1,48 @@
-const currencyFormatter = new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 });
+const currencyFormatter = new Intl.NumberFormat("vi-VN", {
+  style: "currency",
+  currency: "VND",
+  maximumFractionDigits: 0
+});
 const numberFormatter = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 });
 const dateFormatter = new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
-const dateTimeFormatter = new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+const dateTimeFormatter = new Intl.DateTimeFormat("vi-VN", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit"
+});
 
 export function formatCurrency(value: number | string | null | undefined) {
-  if (value == null) return "—";
+  if (value == null) return "-";
   const n = typeof value === "string" ? Number(value) : value;
-  if (!Number.isFinite(n)) return "—";
+  if (!Number.isFinite(n)) return "-";
   return currencyFormatter.format(n);
 }
 
 export function formatNumber(value: number | string | null | undefined) {
-  if (value == null) return "—";
+  if (value == null) return "-";
   const n = typeof value === "string" ? Number(value) : value;
-  if (!Number.isFinite(n)) return "—";
+  if (!Number.isFinite(n)) return "-";
   return numberFormatter.format(n);
 }
 
 export function formatDate(value: string | Date | null | undefined) {
-  if (!value) return "—";
+  if (!value) return "-";
   const d = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "-";
   return dateFormatter.format(d);
 }
 
 export function formatDateTime(value: string | Date | null | undefined) {
-  if (!value) return "—";
+  if (!value) return "-";
   const d = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "-";
   return dateTimeFormatter.format(d);
 }
 
 export function timeText(value: string | Date | null | undefined) {
-  if (!value) return "—";
+  if (!value) return "-";
   const s = value instanceof Date ? value.toISOString() : String(value);
   if (s.includes("T")) return s.slice(11, 16);
   return s.slice(0, 5);
@@ -57,7 +67,9 @@ function timeToMinutes(value: string) {
 export const BOOKING_STATUS_LABELS: Record<string, { label: string; tone: string }> = {
   PENDING: { label: "Chờ xác nhận", tone: "bg-amber-100 text-amber-800" },
   PENDING_PAYMENT: { label: "Chờ thanh toán", tone: "bg-amber-100 text-amber-800" },
-  CONFIRMED: { label: "Đã xác nhận", tone: "bg-blue-100 text-blue-800" },
+  AWAITING_PAYMENT: { label: "Chờ thanh toán", tone: "bg-amber-100 text-amber-800" },
+  CONFIRMED: { label: "Đã xác nhận", tone: "bg-sky-100 text-sky-800" },
+  DEPOSITED: { label: "Đã đặt cọc", tone: "bg-blue-100 text-blue-800" },
   COMPLETED: { label: "Hoàn tất", tone: "bg-emerald-100 text-emerald-800" },
   CANCELLED: { label: "Đã hủy", tone: "bg-slate-200 text-slate-700" },
   NO_SHOW: { label: "Không đến", tone: "bg-rose-100 text-rose-700" },

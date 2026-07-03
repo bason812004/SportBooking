@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { CalendarDays, Eye, FileText, UserRound } from "lucide-react";
+import { CalendarDays, Edit3, Eye, FileText, UserRound } from "lucide-react";
 import { Link } from "react-router-dom";
 import { EmptyState, ErrorState } from "../../components/common/States";
 import { useBlogs } from "../../features/content/hooks/useContent";
@@ -60,41 +60,53 @@ export function BlogPage() {
     <section className="bg-[#f6f3ed] px-4 py-12">
       <div className="mx-auto max-w-6xl">
         <div className="rounded-[2rem] bg-white p-8 shadow-xl shadow-stone-200/70 md:p-10">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700">
-              <FileText className="h-4 w-4" />
-              Blog thể thao
+          <div className="flex flex-wrap items-end justify-between gap-5">
+            <div className="max-w-3xl">
+              <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700">
+                <FileText className="h-4 w-4" />
+                Blog thể thao
+              </div>
+              <h1 className="mt-5 text-4xl font-black tracking-tight text-slate-950 md:text-5xl">
+                Kiến thức giúp bạn chơi tốt hơn và đặt sân thông minh hơn
+              </h1>
+              <p className="mt-4 text-slate-600">
+                Mỗi lượt người dùng mở bài viết sẽ được tính là một lượt xem. Bạn có thể sắp xếp bài viết theo ngày đăng hoặc theo mức độ được quan tâm.
+              </p>
             </div>
-            <h1 className="mt-5 text-4xl font-black tracking-tight text-slate-950 md:text-5xl">
-              Kiến thức giúp bạn chơi tốt hơn và đặt sân thông minh hơn
-            </h1>
-            <p className="mt-4 text-slate-600">
-              Mỗi lượt người dùng mở bài viết sẽ được tính là một lượt xem. Bạn có thể sắp xếp bài viết theo ngày đăng hoặc theo mức độ được quan tâm.
-            </p>
+            <Link to="/user/blogs/create" className="inline-flex min-h-12 items-center gap-2 rounded-2xl bg-emerald-700 px-5 text-sm font-black text-white shadow-lg shadow-emerald-900/15 transition hover:-translate-y-0.5 hover:bg-emerald-800">
+              <Edit3 className="h-4 w-4" />
+              Đăng bài
+            </Link>
           </div>
         </div>
 
         {!blogs.data?.length ? (
           <div className="mt-8">
-            <EmptyState title="Chưa có bài viết đã xuất bản. Hãy kiểm tra trạng thái PUBLISHED và visibility PUBLIC trong DB." />
+            <EmptyState title="Chưa có bài viết đã xuất bản." description="Bạn có thể đăng bài mới và quản lý bài viết trong tài khoản của mình." />
           </div>
         ) : (
           <>
             <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm font-bold text-slate-600">{sortedBlogs.length} bài viết đang hiển thị</p>
-              <div className="inline-flex rounded-2xl border border-stone-200 bg-white p-1 shadow-sm">
-                {sortOptions.map((item) => (
-                  <button
-                    key={item.value}
-                    type="button"
-                    onClick={() => setSortBy(item.value)}
-                    className={`min-h-10 rounded-xl px-4 text-sm font-black transition ${
-                      sortBy === item.value ? "bg-emerald-700 text-white shadow-sm" : "text-slate-600 hover:bg-emerald-50 hover:text-emerald-800"
-                    }`}
-                  >
-                    {item.label}
-                  </button>
-                ))}
+              <div className="flex flex-wrap items-center gap-3">
+                <Link to="/user/blogs/create" className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-slate-950 px-4 text-sm font-black text-white hover:bg-slate-800">
+                  <Edit3 className="h-4 w-4" />
+                  Đăng bài
+                </Link>
+                <div className="inline-flex rounded-2xl border border-stone-200 bg-white p-1 shadow-sm">
+                  {sortOptions.map((item) => (
+                    <button
+                      key={item.value}
+                      type="button"
+                      onClick={() => setSortBy(item.value)}
+                      className={`min-h-10 rounded-xl px-4 text-sm font-black transition ${
+                        sortBy === item.value ? "bg-emerald-700 text-white shadow-sm" : "text-slate-600 hover:bg-emerald-50 hover:text-emerald-800"
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 

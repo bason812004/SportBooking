@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { CalendarDays, MapPin, QrCode, UserRound, UsersRound, WalletCards, X } from "lucide-react";
+import { CalendarDays, Edit3, MapPin, QrCode, UserRound, UsersRound, WalletCards, X } from "lucide-react";
 import { toast } from "sonner";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { contentApi } from "../../features/content/api/contentApi";
@@ -10,10 +10,14 @@ import { useAuth } from "../../features/auth/hooks/useAuth";
 const currency = new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 });
 const dateFormat = new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
 
+function wasUpdated(createdAt: string, updatedAt: string) {
+  return new Date(updatedAt).getTime() - new Date(createdAt).getTime() > 1000;
+}
+
 export function TeammateDetailPage() {
   const { id } = useParams();
   const post = useTeamPost(id);
-  const { isAuthenticated } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const [qrOpen, setQrOpen] = useState(false);
   const [joining, setJoining] = useState(false);
@@ -30,6 +34,7 @@ export function TeammateDetailPage() {
 
   const item = post.data;
   const playingDate = item.playingDate ? dateFormat.format(new Date(item.playingDate)) : "Linh hoạt";
+  const isOwner = user?.id === item.createdBy.id;
 
   async function handleJoin() {
     if (!isAuthenticated) {
@@ -67,6 +72,7 @@ export function TeammateDetailPage() {
               <div className="flex flex-wrap gap-2">
                 <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-800">{item.sportType}</span>
                 <span className="rounded-full bg-lime-100 px-3 py-1 text-xs font-black text-emerald-900">{item.status}</span>
+                {wasUpdated(item.createdAt, item.updatedAt) && <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">Đã cập nhật</span>}
               </div>
               <h1 className="mt-5 text-4xl font-black leading-tight md:text-5xl">{item.title}</h1>
               <p className="mt-4 flex items-center gap-2 text-slate-600">
@@ -102,8 +108,14 @@ export function TeammateDetailPage() {
                   <p className="font-black">{item.createdBy.fullName}</p>
                 </div>
               </div>
+              {isOwner && (
+                <Link to={`/user/teammates/${item.id}/edit`} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-black text-slate-800 hover:bg-slate-50">
+                  <Edit3 className="h-4 w-4" />
+                  Chỉnh sửa bài đăng
+                </Link>
+              )}
               {item.zaloQrImage && (
-                <button onClick={() => setQrOpen(true)} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-black hover:bg-slate-50">
+                <button onClick={() => setQrOpen(true)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-black hover:bg-slate-50">
                   <QrCode className="h-4 w-4" />
                   Xem mã QR Zalo
                 </button>

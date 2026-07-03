@@ -8,6 +8,7 @@ export const voucherController = {
     claim: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.claim(req.user.id, req.params.id), 201)),
     myVouchers: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.listForUser(req.user.id))),
     apply: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.apply({ ...req.body, userId: req.user?.id }))),
+    validate: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.validate({ ...req.body, userId: req.user?.id }))),
     partnerList: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.listPartner(req.user.id))),
     partnerCreate: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.createPartner(req.user.id, req.body), 201)),
     partnerUpdate: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.updatePartner(req.user.id, req.params.id, req.body))),

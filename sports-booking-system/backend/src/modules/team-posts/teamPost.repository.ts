@@ -78,6 +78,18 @@ export const teamPostRepository = {
     `);
   },
 
+  listMine(userId: string) {
+    return prisma.$queryRawUnsafe<TeamPostRow[]>(
+      `
+        ${selectPost}
+        where p.user_id = $1
+        order by p.updated_at desc, p.created_at desc
+        limit 100
+      `,
+      userId
+    );
+  },
+
   findById(id: string) {
     return prisma.$queryRawUnsafe<TeamPostRow[]>(
       `
@@ -89,10 +101,9 @@ export const teamPostRepository = {
     );
   },
 
-  create(input: TeamPostInput) {
-    return prisma.$queryRawUnsafe<TeamPostRow[]>(
+  async create(input: TeamPostInput) {
+    const [inserted] = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
       `
-      with inserted as (
         insert into team_recruitment_posts (
           user_id, court_id, title, sport_type, court_name, address,
           current_players, max_players, playing_date, start_time, end_time,
@@ -102,11 +113,7 @@ export const teamPostRepository = {
           $12, $13, $14, $15, $16
         )
         returning id
-      )
-      ${selectPost}
-      join inserted i on i.id = p.id
-      limit 1
-    `,
+      `,
       input.userId,
       input.courtId ?? null,
       input.title,
@@ -124,12 +131,12 @@ export const teamPostRepository = {
       input.zaloGroupLink ?? null,
       input.zaloQrImage ?? null
     );
+    return inserted?.id ? this.findById(inserted.id) : [];
   },
 
-  update(id: string, input: TeamPostInput) {
-    return prisma.$queryRawUnsafe<TeamPostRow[]>(
+  async update(id: string, input: TeamPostInput) {
+    const [updated] = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
       `
-      with updated as (
         update team_recruitment_posts
         set
           court_id = $3,
@@ -146,15 +153,12 @@ export const teamPostRepository = {
           extra_services = $14,
           note = $15,
           zalo_group_link = $16,
-          zalo_qr_image = $17
+          zalo_qr_image = $17,
+          updated_at = now()
         where id = $1
           and user_id = $2
         returning id
-      )
-      ${selectPost}
-      join updated u2 on u2.id = p.id
-      limit 1
-    `,
+      `,
       id,
       input.userId,
       input.courtId ?? null,
@@ -173,6 +177,7 @@ export const teamPostRepository = {
       input.zaloGroupLink ?? null,
       input.zaloQrImage ?? null
     );
+    return updated?.id ? this.findById(updated.id) : [];
   },
 
   delete(id: string, userId: string) {

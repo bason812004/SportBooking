@@ -227,7 +227,8 @@ export const voucherService = {
     }
     await voucherRepository.setStatus(id, partnerId, ["DRAFT", "DISABLED"], "ACTIVE");
     const activated = await this.detailForPartner(partnerId, id);
-    realtimeService.toPublic(realtimeEvents.voucherNew, activated);
+    const [publicVoucher] = await voucherRepository.findActiveById(id);
+    realtimeService.toPublic(realtimeEvents.voucherNew, publicVoucher ?? activated);
     return activated;
   },
 

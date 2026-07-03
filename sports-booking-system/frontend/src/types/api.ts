@@ -74,7 +74,7 @@ export type Court = {
   amenities: Array<{ id: string; name: string }>;
   prices: Array<{ id: string; dayType: string; startTime: string; endTime: string; price: string; note?: string }>;
   services: Array<{ id: string; name: string; description?: string; price: string; status: string }>;
-  reviews?: Array<{ id: string; rating: number; comment?: string; createdAt: string; user: { id: string; fullName: string; avatarUrl?: string } }>;
+  reviews?: Array<{ id: string; rating: number; comment?: string | null; createdAt: string; updatedAt?: string; user: { id: string; fullName: string; avatarUrl?: string | null } }>;
   ratingBreakdown?: Array<{ rating: number; count: number; percent: number }>;
   nearbyCourts?: Court[];
 };
@@ -135,6 +135,21 @@ export type Booking = {
   user?: { id?: string; fullName: string; email?: string; phone?: string };
   bookingServices?: BookingService[];
   bookingVoucher?: BookingVoucherInfo | null;
+  payments?: Array<{
+    id: string;
+    status: string;
+    amount: string;
+    paymentMethod: string;
+    paymentType: string;
+    expiresAt?: string;
+    createdAt: string;
+  }>;
+  review?: {
+    id: string;
+    rating: number;
+    comment?: string | null;
+    createdAt: string;
+  } | null;
 };
 
 export type PartnerProfile = {
@@ -312,6 +327,7 @@ export type PartnerVoucher = Omit<Voucher, "partner"> & {
 export type MyVoucher = Voucher & {
   userVoucherId: string;
   status: UserVoucherStatus;
+  voucherStatus?: string;
   claimedAt: string;
   usedAt?: string | null;
 };
@@ -379,10 +395,20 @@ export type BlogPost = {
   status: string;
   visibility: string;
   createdAt: string;
+  updatedAt?: string;
   publishedAt?: string | null;
   category?: { id: string; name: string; slug: string } | null;
   author: { id: string; fullName: string; avatarUrl?: string | null };
   viewCount?: number;
+};
+
+export type BlogComment = {
+  id: string;
+  postId: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  user: { id: string; fullName: string; avatarUrl?: string | null };
 };
 
 export type Tournament = {
@@ -428,6 +454,7 @@ export type TeamRecruitmentPost = {
 };
 
 export type TeamRecruitmentInput = {
+  courtId?: string | null;
   title: string;
   sportType: string;
   courtName: string;

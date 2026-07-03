@@ -79,7 +79,59 @@ insert into court_categories (id, name, slug, description) values
 ('cc0004', 'Cau long', 'cau-long', 'San cau long co tham va den'),
 ('cc0005', 'Bong ro', 'bong-ro', 'San bong ro 3x3 va 5x5'),
 ('cc0006', 'Pickleball', 'pickleball', 'San pickleball moi');
+BEGIN;
 
+SET client_encoding = 'UTF8';
+
+INSERT INTO court_categories (
+  id,
+  name,
+  slug,
+  description
+)
+VALUES
+(
+  'cc0001',
+  'Bóng đá mini',
+  'bong-da-mini',
+  'Sân bóng đá 5-7 người'
+),
+(
+  'cc0002',
+  'Tennis',
+  'tennis',
+  'Sân tennis tiêu chuẩn'
+),
+(
+  'cc0003',
+  'Bóng chuyền',
+  'bong-chuyen',
+  'Sân bóng chuyền trong nhà và ngoài trời'
+),
+(
+  'cc0004',
+  'Cầu lông',
+  'cau-long',
+  'Sân cầu lông có thảm và đèn'
+),
+(
+  'cc0005',
+  'Bóng rổ',
+  'bong-ro',
+  'Sân bóng rổ 3x3 và 5x5'
+),
+(
+  'cc0006',
+  'Pickleball',
+  'pickleball',
+  'Sân pickleball mới'
+)
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  slug = EXCLUDED.slug,
+  description = EXCLUDED.description;
+
+COMMIT;
 -- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 -- 4. COURTS
 -- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const time = z.string().regex(/^\d{2}:\d{2}$/);
+const time = z.string().regex(/^(?:[01]\d|2[0-3]):00$/, "Gio phai la gio chan, vi du 06:00");
 const optionalQuery = <T extends z.ZodTypeAny>(schema: T) =>
   z.preprocess((value) => value === "" ? undefined : value, schema.optional());
 

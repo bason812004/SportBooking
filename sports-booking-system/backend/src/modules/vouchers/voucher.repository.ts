@@ -25,6 +25,14 @@ export type PartnerVoucherRow = Omit<VoucherRow, "partner"> & {
   updatedAt: Date;
 };
 
+export type UserVoucherRow = VoucherRow & {
+  userVoucherId: string;
+  status: "CLAIMED" | "USED" | "EXPIRED";
+  claimedAt: Date;
+  usedAt: Date | null;
+  voucherStatus: string;
+};
+
 const columnExistsCache = new Map<string, boolean>();
 
 async function columnExists(tableName: string, columnName: string) {
@@ -181,7 +189,7 @@ export const voucherRepository = {
         order by sort_order asc
         limit 1
       ) ci on true
-      where v.id = ${id}::uuid
+      where v.id = ${id}
         and v.status = 'ACTIVE'::voucher_status
         and now() between v.start_date and v.end_date
       limit 1
@@ -198,7 +206,7 @@ export const voucherRepository = {
       update vouchers
       set click_count = coalesce(click_count, 0) + 1,
           updated_at = now()
-      where id = ${id}::uuid
+      where id = ${id}
         and status = 'ACTIVE'::voucher_status
         and now() between start_date and end_date
       returning id, click_count::int as "clickCount"
@@ -230,20 +238,83 @@ export const voucherRepository = {
     });
   },
 
-  userVoucher(userId: string, voucherId: string) {
-    return prisma.userVoucher.findUnique({ where: { userId_voucherId: { userId, voucherId } } });
+  async userVoucher(userId: string, voucherId: string) {
+    const rows = await prisma.$queryRaw<Array<{ id: string; userId: string; voucherId: string; status: string }>>`
+      select id, user_id as "userId", voucher_id as "voucherId", status::text
+      from user_vouchers
+      where user_id = ${userId}
+        and voucher_id = ${voucherId}
+      limit 1
+    `;
+    return rows[0] ?? null;
   },
 
-  claim(userId: string, voucherId: string) {
-    return prisma.userVoucher.create({ data: { userId, voucherId } });
+  async claim(userId: string, voucherId: string) {
+    const rows = await prisma.$queryRaw<Array<{ id: string; user_id: string; voucher_id: string; status: string; claimed_at: Date }>>`
+      INSERT INTO user_vouchers (user_id, voucher_id, status, claimed_at)
+      VALUES (${userId}, ${voucherId}, 'CLAIMED'::user_voucher_status, NOW())
+      RETURNING id, user_id, voucher_id, status, claimed_at
+    `;
+    const row = rows[0];
+    if (!row) throw new Error("Claim voucher that bai");
+    return {
+      id: row.id,
+      userId: row.user_id,
+      voucherId: row.voucher_id,
+      status: row.status,
+      claimedAt: row.claimed_at,
+    };
   },
 
-  listForUser(userId: string) {
-    return prisma.userVoucher.findMany({
-      where: { userId },
-      include: { voucher: { include: { court: true, partner: true } } },
-      orderBy: { claimedAt: "desc" }
-    });
+  async listForUser(userId: string) {
+    const hasClickCount = await columnExists("vouchers", "click_count");
+    const clickCountSelect = hasClickCount ? Prisma.sql`coalesce(v.click_count, 0)::int` : Prisma.sql`0::int`;
+
+    return prisma.$queryRaw<UserVoucherRow[]>(Prisma.sql`
+      select
+        v.id,
+        v.code,
+        v.title,
+        v.description,
+        v.discount_type as "discountType",
+        v.discount_value::float as "discountValue",
+        v.max_discount_amount::float as "maxDiscountAmount",
+        v.min_booking_amount::float as "minBookingAmount",
+        v.usage_limit as "usageLimit",
+        v.used_count as "usedCount",
+        ${clickCountSelect} as "clickCount",
+        v.start_date as "startDate",
+        v.end_date as "endDate",
+        uv.id as "userVoucherId",
+        uv.status::text as "status",
+        uv.claimed_at as "claimedAt",
+        uv.used_at as "usedAt",
+        v.status::text as "voucherStatus",
+        json_build_object('id', p.id, 'businessName', p.business_name) as "partner",
+        case
+          when c.id is null then null
+          else json_build_object(
+            'id', c.id,
+            'name', c.name,
+            'city', c.city,
+            'district', c.district,
+            'imageUrl', ci.image_url
+          )
+        end as "court"
+      from user_vouchers uv
+      join vouchers v on v.id = uv.voucher_id
+      join partner_profiles p on p.id = v.partner_id
+      left join courts c on c.id = v.court_id
+      left join lateral (
+        select image_url
+        from court_images
+        where court_id = c.id
+        order by sort_order asc
+        limit 1
+      ) ci on true
+      where uv.user_id = ${userId}
+      order by uv.claimed_at desc
+    `);
   },
 
   partnerProfile(userId: string) {
@@ -257,7 +328,7 @@ export const voucherRepository = {
   listForPartner(partnerId: string) {
     return prisma.$queryRaw<PartnerVoucherRow[]>`
       ${partnerVoucherSelect}
-      where v.partner_id = ${partnerId}::uuid
+      where v.partner_id = ${partnerId}
       order by v.created_at desc
     `;
   },
@@ -265,8 +336,8 @@ export const voucherRepository = {
   findForPartner(id: string, partnerId: string) {
     return prisma.$queryRaw<PartnerVoucherRow[]>`
       ${partnerVoucherSelect}
-      where v.id = ${id}::uuid
-        and v.partner_id = ${partnerId}::uuid
+      where v.id = ${id}
+        and v.partner_id = ${partnerId}
       limit 1
     `;
   },
@@ -277,7 +348,7 @@ export const voucherRepository = {
         select 1
         from vouchers
         where upper(code) = upper(${code})
-          and (${excludeId ?? null}::uuid is null or id <> ${excludeId ?? null}::uuid)
+          and (${excludeId ?? null} is null or id <> ${excludeId ?? null})
       ) as "exists"
     `;
   },
@@ -311,8 +382,8 @@ export const voucherRepository = {
         discount_value, max_discount_amount, min_booking_amount,
         usage_limit, start_date, end_date, status
       ) values (
-        ${partnerId}::uuid,
-        ${input.courtId ?? null}::uuid,
+        ${partnerId},
+        ${input.courtId ?? null},
         ${input.code},
         ${input.title},
         ${input.description ?? null},
@@ -349,7 +420,7 @@ export const voucherRepository = {
   ) {
     return prisma.$executeRaw`
       update vouchers
-      set court_id = ${input.courtId ?? null}::uuid,
+      set court_id = ${input.courtId ?? null},
           code = ${input.code},
           title = ${input.title},
           description = ${input.description ?? null},
@@ -361,8 +432,8 @@ export const voucherRepository = {
           start_date = ${input.startDate},
           end_date = ${input.endDate},
           updated_at = now()
-      where id = ${id}::uuid
-        and partner_id = ${partnerId}::uuid
+      where id = ${id}
+        and partner_id = ${partnerId}
         and status = 'DRAFT'::voucher_status
     `;
   },
@@ -372,8 +443,8 @@ export const voucherRepository = {
       update vouchers
       set status = ${status}::voucher_status,
           updated_at = now()
-      where id = ${id}::uuid
-        and partner_id = ${partnerId}::uuid
+      where id = ${id}
+        and partner_id = ${partnerId}
         and status::text in (${Prisma.join(from)})
     `;
   },
@@ -381,8 +452,8 @@ export const voucherRepository = {
   deleteDraft(id: string, partnerId: string) {
     return prisma.$executeRaw`
       delete from vouchers
-      where id = ${id}::uuid
-        and partner_id = ${partnerId}::uuid
+      where id = ${id}
+        and partner_id = ${partnerId}
         and status = 'DRAFT'::voucher_status
         and used_count = 0
     `;

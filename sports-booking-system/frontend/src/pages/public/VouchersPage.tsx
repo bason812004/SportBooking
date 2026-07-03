@@ -1,12 +1,15 @@
 import { motion } from "framer-motion";
-import { CalendarDays, Check, Copy, Gift, MapPin, TicketPercent } from "lucide-react";
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { CalendarDays, Check, Copy, Gift, Loader2, LockKeyhole, MapPin, TicketPercent } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { EmptyState, ErrorState } from "../../components/common/States";
 import { contentApi } from "../../features/content/api/contentApi";
 import { voucherApi } from "../../features/bookings/api/bookingApi";
 import { useVouchers } from "../../features/content/hooks/useContent";
+import { useAuth } from "../../features/auth/hooks/useAuth";
+import type { UserVoucherStatus, Voucher } from "../../types/api";
 
 const currency = new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 });
 const dateFormat = new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -15,27 +18,60 @@ function formatDiscount(type: string, value: number) {
   return type === "PERCENTAGE" ? `Giảm ${value}%` : `Giảm ${currency.format(value)}`;
 }
 
+function claimLabel(status?: UserVoucherStatus) {
+  if (status === "CLAIMED") return "Đã nhận";
+  if (status === "USED") return "Đã dùng";
+  if (status === "EXPIRED") return "Hết hạn";
+  return null;
+}
+
 function trackVoucherClick(id: string) {
   void contentApi.trackVoucherClick(id).catch(() => undefined);
 }
 
 export function VouchersPage() {
   const vouchers = useVouchers();
+  const { isAuthenticated, user } = useAuth();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [claimingId, setClaimingId] = useState<string | null>(null);
-  const [claimedIds, setClaimedIds] = useState<Set<string>>(new Set());
+  const [localClaimedIds, setLocalClaimedIds] = useState<Set<string>>(new Set());
 
-  async function copyCode(id: string, code: string) {
-    trackVoucherClick(id);
-    await navigator.clipboard?.writeText(code);
+  const myVouchers = useQuery({
+    queryKey: ["my-vouchers"],
+    queryFn: voucherApi.myVouchers,
+    enabled: isAuthenticated && user?.role === "USER",
+    staleTime: 30_000
+  });
+
+  const claimedStatus = useMemo(() => {
+    const map = new Map<string, UserVoucherStatus>();
+    for (const item of myVouchers.data ?? []) map.set(item.id, item.status);
+    for (const id of localClaimedIds) map.set(id, "CLAIMED");
+    return map;
+  }, [localClaimedIds, myVouchers.data]);
+
+  async function copyCode(voucher: Voucher) {
+    trackVoucherClick(voucher.id);
+    await navigator.clipboard?.writeText(voucher.code);
+    toast.success(`Đã sao chép mã ${voucher.code}.`);
   }
 
   async function handleClaim(voucherId: string) {
+    if (!isAuthenticated || user?.role !== "USER") {
+      toast.error("Vui lòng đăng nhập tài khoản người dùng để nhận voucher.");
+      navigate("/login");
+      return;
+    }
+
     setClaimingId(voucherId);
     try {
       await voucherApi.claim(voucherId);
-      setClaimedIds((prev) => new Set([...prev, voucherId]));
-      toast.success("Nhận voucher thành công! Voucher đã được lưu vào kho của bạn.");
+      setLocalClaimedIds((prev) => new Set([...prev, voucherId]));
+      await queryClient.invalidateQueries({ queryKey: ["my-vouchers"] });
+      toast.success("Nhận voucher thành công. Voucher đã được lưu vào kho của bạn.");
     } catch (e) {
+      await queryClient.invalidateQueries({ queryKey: ["my-vouchers"] });
       toast.error(e instanceof Error ? e.message : "Không thể nhận voucher.");
     } finally {
       setClaimingId(null);
@@ -79,7 +115,7 @@ export function VouchersPage() {
               </div>
               <h1 className="mt-5 max-w-2xl text-4xl font-black tracking-tight md:text-5xl">Voucher đặt sân hôm nay</h1>
               <p className="mt-3 max-w-2xl text-slate-300">
-                Lấy mã giảm giá từ các đối tác đã xác thực và áp dụng khi đặt sân trong thời gian khuyến mãi.
+                Nhận voucher vào kho cá nhân, sau đó áp dụng khi đặt sân. Voucher đã nhận sẽ được khóa nút để tránh nhận trùng.
               </p>
             </div>
             <div className="rounded-3xl bg-white/10 px-6 py-4 text-center">
@@ -91,12 +127,15 @@ export function VouchersPage() {
 
         {!vouchers.data?.length ? (
           <div className="mt-8">
-            <EmptyState title="Chưa có voucher đang hoạt động. Hãy kiểm tra lại dữ liệu seed hoặc thời hạn voucher." />
+            <EmptyState title="Chưa có voucher đang hoạt động" description="Hãy kiểm tra lại dữ liệu seed hoặc thời hạn voucher." />
           </div>
         ) : (
           <div className="mt-8 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
             {vouchers.data.map((voucher, index) => {
               const remaining = voucher.usageLimit ? Math.max(voucher.usageLimit - voucher.usedCount, 0) : null;
+              const status = claimedStatus.get(voucher.id);
+              const claimedText = claimLabel(status);
+              const isClaimed = Boolean(claimedText);
               return (
                 <motion.article
                   key={voucher.id}
@@ -128,7 +167,7 @@ export function VouchersPage() {
                         <button
                           type="button"
                           aria-label={`Copy mã ${voucher.code}`}
-                          onClick={() => void copyCode(voucher.id, voucher.code)}
+                          onClick={() => void copyCode(voucher)}
                           className="rounded-lg p-2 text-slate-400 transition hover:bg-white hover:text-teal-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
                         >
                           <Copy className="h-4 w-4" />
@@ -151,24 +190,20 @@ export function VouchersPage() {
                         {remaining === null ? "Không giới hạn lượt" : `Còn ${remaining} lượt`}
                       </span>
                       <div className="flex items-center gap-2">
-                        {claimedIds.has(voucher.id) ? (
+                        {isClaimed ? (
                           <span className="flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-bold text-emerald-700">
                             <Check className="h-3 w-3" />
-                            Đã nhận
+                            {claimedText}
                           </span>
                         ) : (
                           <button
                             type="button"
                             onClick={() => void handleClaim(voucher.id)}
-                            disabled={claimingId === voucher.id}
+                            disabled={claimingId === voucher.id || remaining === 0}
                             className="flex items-center gap-1 rounded-full bg-teal-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-teal-700 disabled:opacity-60"
                           >
-                            {claimingId === voucher.id ? (
-                              <span className="h-3 w-3 animate-spin rounded-full border border-white border-t-transparent" />
-                            ) : (
-                              <Gift className="h-3 w-3" />
-                            )}
-                            Nhận voucher
+                            {claimingId === voucher.id ? <Loader2 className="h-3 w-3 animate-spin" /> : isAuthenticated ? <Gift className="h-3 w-3" /> : <LockKeyhole className="h-3 w-3" />}
+                            {remaining === 0 ? "Hết lượt" : "Nhận voucher"}
                           </button>
                         )}
                         {voucher.court?.id && (

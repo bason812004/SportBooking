@@ -7,6 +7,8 @@ import { voucherController } from "./voucher.controller.js";
 import { voucherIdParamsSchema } from "./voucher.validation.js";
 export const voucherRoutes = Router();
 voucherRoutes.get("/", voucherController.list);
+voucherRoutes.get("/me", authMiddleware, requireRole(UserRole.USER), voucherController.myVouchers);
+voucherRoutes.post("/validate", authMiddleware, requireRole(UserRole.USER), voucherController.validate);
 voucherRoutes.post("/:id/click", validate(voucherIdParamsSchema), voucherController.click);
 voucherRoutes.get("/:id", voucherController.detail);
 voucherRoutes.post("/:id/claim", authMiddleware, requireRole(UserRole.USER), validate(voucherIdParamsSchema), voucherController.claim);

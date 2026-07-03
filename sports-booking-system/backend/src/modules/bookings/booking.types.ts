@@ -21,6 +21,8 @@ export type BookingQuoteInput = {
   courtId: string;
   bookingDate: string;
   slots: BookingSlotInput[];
+  services?: Array<{ serviceId: string; quantity: number }>;
+  voucherId?: string;
   voucherCode?: string;
 };
 

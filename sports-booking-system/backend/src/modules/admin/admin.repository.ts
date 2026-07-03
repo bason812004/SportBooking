@@ -194,7 +194,7 @@ export const adminRepository = {
   },
 
   setVoucherStatus(id: string, status: "ACTIVE" | "DISABLED") {
-    return prisma.$executeRaw`update vouchers set status = ${status}::voucher_status, updated_at = now() where id = ${id}::uuid`;
+    return prisma.$executeRaw`update vouchers set status = ${status}::voucher_status, updated_at = now() where id = ${id}`;
   },
 
   pendingBlogs(page: number, limit: number, search?: string) {

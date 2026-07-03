@@ -3,6 +3,9 @@ import { paginationMeta } from "../../shared/utils/response.js";
 import { parseLimit, parsePage } from "../../shared/utils/time.js";
 import { slugify } from "../../shared/utils/slug.js";
 import { commissionService } from "../commission/commission.service.js";
+import { realtimeEvents } from "../realtime/realtime.events.js";
+import { realtimeService } from "../realtime/realtime.service.js";
+import { voucherRepository } from "../vouchers/voucher.repository.js";
 import { recordAdminAction, verifyAuditChain } from "./admin.audit.js";
 import { adminRepository } from "./admin.repository.js";
 
@@ -169,6 +172,10 @@ export const adminService = {
     if (!(await adminRepository.setVoucherStatus(id, status))) throw new NotFoundError("Khong tim thay voucher");
     await adminRepository.addModerationHistory({ entityType: "VOUCHER", entityId: id, action: status, reason, actorId });
     await recordAdminAction(actorId, `VOUCHER_${status}`, "VOUCHER", id, { reason });
+    if (status === "ACTIVE") {
+      const [publicVoucher] = await voucherRepository.findActiveById(id);
+      if (publicVoucher) realtimeService.toPublic(realtimeEvents.voucherNew, publicVoucher);
+    }
     return { id, status };
   },
 

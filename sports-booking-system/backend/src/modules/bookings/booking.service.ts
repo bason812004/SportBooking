@@ -104,15 +104,34 @@ async function buildQuote(userId: string, input: BookingQuoteInput) {
       return { ...slot, price: dynamicPrice.finalPrice * hours };
     })
   );
-  const subtotal = pricedSlots.reduce((sum, slot) => sum + slot.price, 0);
+  const courtSubtotal = pricedSlots.reduce((sum, slot) => sum + slot.price, 0);
+  const serviceIds = (input.services ?? []).map((service) => service.serviceId);
+  const services = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
+  if (services.length !== serviceIds.length) throw new ValidationError("Dich vu khong hop le");
+  const serviceLines = (input.services ?? []).map((line) => {
+    const service = services.find((item) => item.id === line.serviceId)!;
+    return {
+      serviceId: line.serviceId,
+      name: service.name,
+      quantity: line.quantity,
+      price: Number(service.price),
+      total: Number(service.price) * line.quantity
+    };
+  });
+  const servicesSubtotal = serviceLines.reduce((sum, line) => sum + line.total, 0);
+  const subtotal = courtSubtotal + servicesSubtotal;
   let voucherDiscountAmount = 0;
   let voucherId: string | undefined;
-  if (input.voucherCode) {
+  if (input.voucherId) {
+    const voucherResult = await voucherService.apply({ userId, voucherId: input.voucherId, courtId: input.courtId, subtotal });
+    voucherDiscountAmount = voucherResult.discountAmount;
+    voucherId = voucherResult.voucherId;
+  } else if (input.voucherCode) {
     const voucherResult = await voucherService.apply({ userId, code: input.voucherCode, courtId: input.courtId, subtotal });
     voucherDiscountAmount = voucherResult.discountAmount;
     voucherId = voucherResult.voucherId;
   }
-  const quote = calculateBookingQuote(pricedSlots, voucherDiscountAmount);
+  const quote = calculateBookingQuote(pricedSlots, voucherDiscountAmount, servicesSubtotal);
   return {
     court: {
       id: court.id,
@@ -122,6 +141,9 @@ async function buildQuote(userId: string, input: BookingQuoteInput) {
     },
     bookingDate: input.bookingDate,
     slots: pricedSlots,
+    services: serviceLines,
+    courtSubtotal,
+    servicesSubtotal,
     voucherId,
     currency: "VND" as const,
     quoteExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
@@ -162,6 +184,8 @@ export const bookingService = {
       courtId: input.courtId,
       bookingDate: input.bookingDate,
       slots: quote.slots,
+      services: quote.services,
+      courtSubtotal: quote.courtSubtotal,
       subtotal: quote.subtotal,
       voucherDiscountAmount: quote.voucherDiscountAmount,
       totalAmount: quote.totalAmount,

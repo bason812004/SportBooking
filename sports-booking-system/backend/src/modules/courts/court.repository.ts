@@ -10,28 +10,11 @@ const courtInclude = {
   amenities: true,
   prices: true,
   services: { where: { status: "ACTIVE" as const } },
-  reviews: {
-    where: { displayStatus: "VISIBLE" as const },
-    select: {
-      id: true,
-      rating: true,
-      comment: true,
-      createdAt: true,
-      user: { select: { id: true, fullName: true, avatarUrl: true } }
-    },
-    orderBy: { createdAt: "desc" as const },
-    take: 3
-  },
   partner: { include: { user: { select: { fullName: true, email: true, phone: true } } } }
 };
 
 const courtDetailInclude = {
-  ...courtInclude,
-  reviews: {
-    where: { displayStatus: "VISIBLE" as const },
-    include: { user: { select: { id: true, fullName: true, avatarUrl: true } } },
-    orderBy: { createdAt: "desc" as const }
-  }
+  ...courtInclude
 };
 
 const accentMap: Record<string, string> = {

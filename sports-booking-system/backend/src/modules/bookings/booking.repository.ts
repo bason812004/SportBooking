@@ -1,5 +1,6 @@
 import type { PaymentMethod, PaymentType, PaymentStatus, Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+import { ValidationError } from "../../shared/errors/AppError.js";
 import { timeToDate, toDbDate } from "../../shared/utils/time.js";
 
 function generateShortId(prefix: string): string {
@@ -16,6 +17,7 @@ export const bookingRepository = {
         court: { include: { images: { orderBy: { sortOrder: "asc" } }, category: true, partner: true } },
         bookingServices: { include: { service: true } },
         bookingVoucher: { include: { voucher: { include: { partner: true, court: true } } } },
+        payments: { orderBy: { createdAt: "desc" } },
         review: true
       }
     });
@@ -29,7 +31,8 @@ export const bookingRepository = {
         include: {
           court: { include: { images: { orderBy: { sortOrder: "asc" } }, category: true, partner: true } },
           bookingServices: { include: { service: true } },
-          bookingVoucher: { include: { voucher: true } }
+          bookingVoucher: { include: { voucher: true } },
+          payments: { orderBy: { createdAt: "desc" }, take: 1 }
         },
         orderBy: { createdAt: "desc" },
         skip: (page - 1) * limit,
@@ -132,6 +135,17 @@ export const bookingRepository = {
       });
 
       if (input.voucherId && input.voucherDiscountAmount > 0) {
+        const voucherUpdate = await tx.voucher.updateMany({
+          where: {
+            id: input.voucherId,
+            status: "ACTIVE",
+            OR: [{ usageLimit: null }, { usedCount: { lt: tx.voucher.fields.usageLimit } }]
+          },
+          data: { usedCount: { increment: 1 } }
+        });
+        if (voucherUpdate.count !== 1) {
+          throw new ValidationError("Voucher da het luot su dung");
+        }
         await tx.bookingVoucher.create({
           data: {
             id: generateShortId("bv"),
@@ -139,10 +153,6 @@ export const bookingRepository = {
             voucherId: input.voucherId,
             discountAmount: input.voucherDiscountAmount
           }
-        });
-        await tx.voucher.update({
-          where: { id: input.voucherId },
-          data: { usedCount: { increment: 1 } }
         });
         await tx.userVoucher.updateMany({
           where: { userId: input.userId, voucherId: input.voucherId, status: "CLAIMED" },
@@ -192,6 +202,8 @@ export const bookingRepository = {
     courtId: string;
     bookingDate: string;
     slots: Array<{ startTime: string; endTime: string; price: number }>;
+    services: Array<{ serviceId: string; quantity: number; price: number }>;
+    courtSubtotal: number;
     subtotal: number;
     voucherDiscountAmount: number;
     totalAmount: number;
@@ -225,7 +237,7 @@ export const bookingRepository = {
             bookingDate: toDbDate(input.bookingDate),
             startTime: timeToDate(firstSlot.startTime),
             endTime: timeToDate(lastSlot.endTime),
-            basePrice: input.subtotal,
+            basePrice: input.courtSubtotal,
             dynamicAdjustmentAmount: 0,
             subtotal: input.subtotal,
             voucherDiscountAmount: input.voucherDiscountAmount,
@@ -243,12 +255,31 @@ export const bookingRepository = {
                 endTime: timeToDate(slot.endTime),
                 slotPrice: slot.price
               }))
+            },
+            bookingServices: {
+              create: input.services.map((service) => ({
+                id: generateShortId("bs"),
+                serviceId: service.serviceId,
+                quantity: service.quantity,
+                price: service.price
+              }))
             }
           },
-          include: { court: true, bookingSlots: true }
+          include: { court: true, bookingSlots: true, bookingServices: { include: { service: true } } }
         });
 
         if (input.voucherId && input.voucherDiscountAmount > 0) {
+          const voucherUpdate = await tx.voucher.updateMany({
+            where: {
+              id: input.voucherId,
+              status: "ACTIVE",
+              OR: [{ usageLimit: null }, { usedCount: { lt: tx.voucher.fields.usageLimit } }]
+            },
+            data: { usedCount: { increment: 1 } }
+          });
+          if (voucherUpdate.count !== 1) {
+            throw new ValidationError("Voucher da het luot su dung");
+          }
           await tx.bookingVoucher.create({
             data: {
               id: generateShortId("bv"),
@@ -257,7 +288,6 @@ export const bookingRepository = {
               discountAmount: input.voucherDiscountAmount
             }
           });
-          await tx.voucher.update({ where: { id: input.voucherId }, data: { usedCount: { increment: 1 } } });
         }
 
         const payment = await tx.payment.create({

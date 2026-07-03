@@ -113,7 +113,17 @@ export function PaymentPage() {
           <div className="flex flex-col items-center">
             <XCircle className="h-16 w-16 text-red-600" />
             <h1 className="mt-4 text-2xl font-bold text-slate-800">Thanh toán thất bại hoặc hết hạn</h1>
-            <p className="mt-1 text-slate-500">Vui lòng thử lại hoặc liên hệ hỗ trợ.</p>
+            <p className="mt-1 text-slate-500 text-sm text-center">
+              Vui lòng thử lại hoặc liên hệ hỗ trợ trực tiếp qua{" "}
+              <a
+                href="https://zalo.me/0986966745"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-bold text-emerald-700 hover:underline"
+              >
+                Zalo: 0986966745
+              </a>
+            </p>
           </div>
         ) : (
           <div className="w-full flex flex-col items-center">
@@ -197,6 +207,17 @@ export function PaymentPage() {
               <p className="text-[11px] text-slate-500 italic mt-3 border-t border-slate-200 pt-2 text-center">
                 * Lưu ý: Hãy nhập đúng nội dung chuyển khoản để hệ thống tự động ghi nhận tức thì.
               </p>
+              <div className="mt-2.5 text-center text-xs text-slate-500">
+                <span>Gặp khó khăn khi thanh toán? </span>
+                <a
+                  href="https://zalo.me/0986966745"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-bold text-emerald-700 hover:underline inline-flex items-center gap-1"
+                >
+                  Nhắn tin Zalo hỗ trợ ngay
+                </a>
+              </div>
             </div>
           </div>
         )}

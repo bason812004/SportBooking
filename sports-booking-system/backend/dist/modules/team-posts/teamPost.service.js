@@ -16,6 +16,9 @@ export const teamPostService = {
     list() {
         return teamPostRepository.list();
     },
+    listMine(userId) {
+        return teamPostRepository.listMine(userId);
+    },
     async detail(id) {
         const [post] = await teamPostRepository.findById(id);
         if (!post)

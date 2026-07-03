@@ -22,6 +22,8 @@ export type BookingQuotePayload = {
   courtId: string;
   bookingDate: string;
   slots: BookingSlotPayload[];
+  services?: Array<{ serviceId: string; quantity: number }>;
+  voucherId?: string;
   voucherCode?: string;
 };
 
@@ -29,6 +31,9 @@ export type BookingQuote = {
   court: { id: string; name: string; address: string; imageUrl?: string | null };
   bookingDate: string;
   slots: Array<BookingSlotPayload & { price: number }>;
+  services: Array<{ serviceId: string; name: string; quantity: number; price: number; total: number }>;
+  courtSubtotal: number;
+  servicesSubtotal: number;
   subtotal: number;
   voucherDiscountAmount: number;
   totalAmount: number;
@@ -42,7 +47,6 @@ export type BookingQuote = {
 export type BookingCheckoutPayload = BookingQuotePayload & {
   paymentType: "DEPOSIT" | "FULL_PAYMENT";
   note?: string;
-  voucherId?: string;
 };
 
 export type BookingCheckoutResult = {

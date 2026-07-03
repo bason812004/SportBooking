@@ -5,7 +5,7 @@ import { useVoucherPopup } from "../hooks/useVoucherPopup";
 
 export function App() {
   useRealtime();
-  const { pendingVoucher, modalOpen, setModalOpen, onClaim } = useVoucherPopup();
+  const { pendingVoucher, modalOpen, onClose, onClaim } = useVoucherPopup();
   return (
     <>
       <AppRoutes />
@@ -13,7 +13,7 @@ export function App() {
         voucher={pendingVoucher}
         open={modalOpen}
         onClaim={onClaim}
-        onClose={() => setModalOpen(false)}
+        onClose={onClose}
       />
     </>
   );
