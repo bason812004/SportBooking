@@ -422,6 +422,89 @@ export const partnerService = {
     return partnerRepository.extendBooking(booking.id, newEndTime, pricing);
   },
 
+  async earlyCheckInBooking(userId: string, bookingId: string) {
+    const profile = await getProfile(userId);
+    const booking = await partnerRepository.bookingByPartner(bookingId, profile.id);
+    if (!booking) throw new NotFoundError("Khong tim thay don cua san ban");
+    if (!extendableBookingStatuses.includes(booking.bookingStatus)) {
+      throw new ValidationError("Chi co the check-in som don dang cho xu ly hoac da xac nhan");
+    }
+
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    const date = booking.bookingDate.toISOString().slice(0, 10);
+    if (date !== today) throw new ValidationError("Chi co the check-in som cho booking hom nay");
+
+    const currentTime = now.toTimeString().slice(0, 5);
+    const originalStartTime = dbTime(booking.startTime);
+    const originalEndTime = dbTime(booking.endTime);
+    if (timeToMinutes(currentTime) >= timeToMinutes(originalStartTime)) {
+      throw new ValidationError("Booking da den gio bat dau hoac dang dien ra");
+    }
+    if (timeToMinutes(currentTime) >= timeToMinutes(originalEndTime)) {
+      throw new ValidationError("Khung gio booking khong hop le de check-in som");
+    }
+    if (timeToMinutes(originalStartTime) - timeToMinutes(currentTime) > 30) {
+      throw new ValidationError("Chi co the check-in som khi booking sap den gio");
+    }
+
+    const conflict = await partnerRepository.findScheduleConflict(
+      booking.courtId,
+      booking.courtSurfaceId,
+      booking.bookingDate,
+      timeToDate(currentTime),
+      booking.startTime,
+      booking.id
+    );
+    if (conflict) throw new ConflictError("San hien khong trong de check-in som", "EARLY_CHECK_IN_CONFLICT");
+
+    const pricing = await pricingFor(booking.courtId, date, currentTime, originalStartTime);
+    return partnerRepository.earlyCheckInBooking(booking.id, booking.startTime, timeToDate(currentTime), pricing);
+  },
+
+  async earlyCheckOutBooking(userId: string, bookingId: string) {
+    const profile = await getProfile(userId);
+    const booking = await partnerRepository.bookingByPartner(bookingId, profile.id);
+    if (!booking) throw new NotFoundError("Khong tim thay don cua san ban");
+    if (!extendableBookingStatuses.includes(booking.bookingStatus)) {
+      throw new ValidationError("Chi co the check-out som don dang cho xu ly hoac da xac nhan");
+    }
+
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    const date = booking.bookingDate.toISOString().slice(0, 10);
+    if (date !== today) throw new ValidationError("Chi co the check-out som cho booking hom nay");
+
+    const currentTime = now.toTimeString().slice(0, 5);
+    const originalStartTime = dbTime(booking.startTime);
+    const originalEndTime = dbTime(booking.endTime);
+    if (timeToMinutes(currentTime) <= timeToMinutes(originalStartTime) || timeToMinutes(currentTime) >= timeToMinutes(originalEndTime)) {
+      throw new ValidationError("Chi co the check-out som khi booking dang dien ra");
+    }
+
+    const newEndTime = timeToDate(currentTime);
+    const checkoutNote = `Khach check-out som luc ${currentTime}`;
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.booking.update({
+        where: { id: booking.id },
+        data: {
+          endTime: newEndTime,
+          bookingStatus: BookingStatus.COMPLETED,
+          note: booking.note ? `${booking.note}\n${checkoutNote}` : checkoutNote
+        },
+        include: { court: { include: { partner: true } } }
+      });
+
+      await tx.bookingSlot.updateMany({
+        where: { bookingId: booking.id, endTime: booking.endTime },
+        data: { endTime: newEndTime }
+      });
+
+      await commissionService.createEarning(updated, BookingStatus.COMPLETED, tx);
+      return updated;
+    });
+  },
+
   async continueBooking(userId: string, bookingId: string, targetCourtSurfaceId: string, minutes: number) {
     const profile = await getProfile(userId);
     const booking = await partnerRepository.bookingByPartner(bookingId, profile.id);

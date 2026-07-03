@@ -25,6 +25,10 @@ export const adminApi = {
     const { data } = await api.get<ApiResponse<AdminDashboard>>("/admin/dashboard");
     return data.data;
   },
+  async courtLocations() {
+    const { data } = await api.get<ApiResponse<{ cities: string[]; districts: Record<string, string[]> }>>("/admin/courts/locations");
+    return data.data;
+  },
   async users(params: Record<string, string | number | undefined> = {}) {
     const { data } = await api.get<ApiResponse<Paginated<User>>>("/admin/users", { params: clean(params) });
     return data.data;

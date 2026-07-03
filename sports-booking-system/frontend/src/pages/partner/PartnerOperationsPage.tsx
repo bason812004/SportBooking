@@ -8,6 +8,8 @@ import {
   Clock3,
   DoorOpen,
   Hourglass,
+  LogIn,
+  LogOut,
   MapPin,
   PlayCircle,
   RefreshCcw,
@@ -69,9 +71,8 @@ function CourtTile({ item, selected, onSelect }: { item: PartnerOperationItem; s
     <button
       type="button"
       onClick={onSelect}
-      className={`overflow-hidden rounded-lg border bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg ${
-        selected ? "border-blue-500 ring-2 ring-blue-200" : "border-line"
-      }`}
+      className={`overflow-hidden rounded-lg border bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg ${selected ? "border-blue-500 ring-2 ring-blue-200" : "border-line"
+        }`}
     >
       <div className="relative aspect-[4/3] bg-slate-100">
         {(item.surface.imageUrl || item.court.imageUrl) ? (
@@ -147,6 +148,7 @@ export function PartnerOperationsPage() {
     [filteredItems, items, selectedId]
   );
   const selectedBooking = selected ? activeBooking(selected) : null;
+  const earlyCheckInTarget = selected?.status === "RESERVED_SOON" && !selected.currentBooking ? selected.nextBooking : null;
 
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ["partner-operations"] });
@@ -158,6 +160,26 @@ export function PartnerOperationsPage() {
     mutationFn: ({ bookingId, minutes }: { bookingId: string; minutes: number }) => partnerApi.extendBooking(bookingId, minutes),
     onSuccess: async () => {
       toast.success("Đã gia hạn lượt chơi");
+      await invalidate();
+    },
+    onError: (error) => toast.error(error.message)
+  });
+
+  const earlyCheckIn = useMutation({
+    mutationFn: (bookingId: string) => partnerApi.earlyCheckInBooking(bookingId),
+    onSuccess: async () => {
+      toast.success("Đã check-in sớm cho booking");
+      setNowTime(nowValue());
+      await invalidate();
+    },
+    onError: (error) => toast.error(error.message)
+  });
+
+  const earlyCheckOut = useMutation({
+    mutationFn: (bookingId: string) => partnerApi.earlyCheckOutBooking(bookingId),
+    onSuccess: async () => {
+      toast.success("Đã check-out sớm cho booking");
+      setNowTime(nowValue());
       await invalidate();
     },
     onError: (error) => toast.error(error.message)
@@ -302,6 +324,18 @@ export function PartnerOperationsPage() {
                     <p className="text-sm font-semibold text-amber-700">Sân này không trống sau giờ hiện tại. Chọn sân thay thế bên dưới.</p>
                   )}
 
+                  {selected.currentBooking ? (
+                    <Button
+                      className="w-full"
+                      variant="secondary"
+                      disabled={earlyCheckOut.isPending}
+                      onClick={() => earlyCheckOut.mutate(selected.currentBooking!.id)}
+                    >
+                      <LogOut className="h-4 w-4" />
+                      {earlyCheckOut.isPending ? "Đang check-out..." : "Check-out sớm"}
+                    </Button>
+                  ) : null}
+
                   <div className="space-y-2">
                     <p className="text-sm font-black text-slate-500">Sân trống có thể chuyển</p>
                     {selected.alternatives.length ? (
@@ -332,6 +366,23 @@ export function PartnerOperationsPage() {
                     onClick={() => complete.mutate(selectedBooking.id)}
                   >
                     Kết thúc lượt chơi
+                  </Button>
+                </div>
+              ) : earlyCheckInTarget ? (
+                <div className="space-y-4 rounded-lg bg-violet-50 p-4">
+                  <div>
+                    <p className="text-sm font-black text-violet-800">Check-in sớm</p>
+                    <p className="mt-1 text-xs font-semibold text-violet-700">
+                      Cập nhật giờ bắt đầu của booking về thời điểm hiện tại và giữ nguyên giờ kết thúc.
+                    </p>
+                  </div>
+                  <Button
+                    className="w-full"
+                    disabled={earlyCheckIn.isPending}
+                    onClick={() => earlyCheckIn.mutate(earlyCheckInTarget.id)}
+                  >
+                    <LogIn className="h-4 w-4" />
+                    {earlyCheckIn.isPending ? "Đang check-in..." : "Check-in sớm"}
                   </Button>
                 </div>
               ) : (

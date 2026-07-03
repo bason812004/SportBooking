@@ -1,4 +1,4 @@
-import { useEffect, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BadgeCheck, Eye, Lock, Megaphone, Star, Unlock } from "lucide-react";
 import { toast } from "sonner";
@@ -7,6 +7,7 @@ import type { AdminCourt } from "../../types/api";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
+import { SearchableSelect } from "../../components/ui/SearchableSelect";
 import { ErrorState, LoadingState } from "../../components/common/States";
 
 const approvalLabels: Record<string, string> = {
@@ -38,6 +39,34 @@ export function AdminCourtsPage() {
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [selected, setSelected] = useState<string | null>(null);
+
+  const locations = useQuery({
+    queryKey: ["admin-court-locations"],
+    queryFn: adminApi.courtLocations,
+    staleTime: 5 * 60 * 1000
+  });
+
+  const cityOptions = useMemo(() => [
+    { value: "", label: "Tất cả" },
+    ...(locations.data?.cities ?? []).map((c) => ({ value: c, label: c }))
+  ], [locations.data]);
+
+  const districtOptions = useMemo(() => {
+    const districts = filters.city && locations.data?.districts[filters.city]
+      ? locations.data.districts[filters.city]
+      : [];
+    return [{ value: "", label: "Tất cả" }, ...districts.map((d) => ({ value: d, label: d }))];
+  }, [filters.city, locations.data]);
+
+  const handleCityChange = useCallback((value: string) => {
+    setPage(1);
+    setFilters((prev) => ({ ...prev, city: value, district: "" }));
+  }, []);
+
+  const handleDistrictChange = useCallback((value: string) => {
+    setPage(1);
+    setFilters((prev) => ({ ...prev, district: value }));
+  }, []);
 
   const courts = useQuery({
     queryKey: ["admin-courts", page, filters],
@@ -71,8 +100,8 @@ export function AdminCourtsPage() {
 
       <div className="grid gap-3 rounded-lg border bg-white p-4 md:grid-cols-2 xl:grid-cols-4">
         <Input label="Tìm kiếm" value={filters.search} onChange={(event) => updateFilter(setPage, setFilters, "search", event.target.value)} placeholder="Tên sân, địa chỉ, đối tác" />
-        <Input label="Thành phố" value={filters.city} onChange={(event) => updateFilter(setPage, setFilters, "city", event.target.value)} />
-        <Input label="Quận/Huyện" value={filters.district} onChange={(event) => updateFilter(setPage, setFilters, "district", event.target.value)} />
+        <SearchableSelect label="Thành phố" options={cityOptions} value={filters.city} onChange={handleCityChange} placeholder="Chọn thành phố" />
+        <SearchableSelect label="Quận/Huyện" options={districtOptions} value={filters.district} onChange={handleDistrictChange} placeholder="Chọn quận/huyện" disabled={!filters.city} />
         <Input label="ID đối tác" value={filters.partnerId} onChange={(event) => updateFilter(setPage, setFilters, "partnerId", event.target.value)} placeholder="pp0001" />
         <Select label="Duyệt sân" value={filters.approvalStatus} onChange={(event) => updateFilter(setPage, setFilters, "approvalStatus", event.target.value)} options={withAll(["PENDING", "APPROVED", "REJECTED"], approvalLabels)} />
         <Select label="Hoạt động" value={filters.activeStatus} onChange={(event) => updateFilter(setPage, setFilters, "activeStatus", event.target.value)} options={withAll(["ACTIVE", "INACTIVE"], activeLabels)} />

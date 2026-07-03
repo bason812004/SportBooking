@@ -52,6 +52,8 @@ partnerRoutes.put("/bookings/:id/reject", partnerController.reject);
 partnerRoutes.put("/bookings/:id/complete", partnerController.complete);
 partnerRoutes.put("/bookings/:id/no-show", partnerController.noShow);
 partnerRoutes.post("/bookings/:id/extend", validate(bookingExtendSchema), partnerController.extendBooking);
+partnerRoutes.post("/bookings/:id/early-check-in", partnerController.earlyCheckInBooking);
+partnerRoutes.post("/bookings/:id/early-check-out", partnerController.earlyCheckOutBooking);
 partnerRoutes.post("/bookings/:id/continue", validate(bookingContinueSchema), partnerController.continueBooking);
 partnerRoutes.get("/statistics/revenue", partnerController.revenue);
 partnerRoutes.get("/calendar", validate(calendarQuerySchema), partnerController.calendar);

@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
@@ -48,10 +49,12 @@ type BookingAdminForm = {
   actionNote: string;
 };
 
+const currentYear = new Date().getFullYear();
+
 const emptyFilters: Filters = {
   search: "",
-  fromDate: "",
-  toDate: "",
+  fromDate: `${currentYear}-01-01`,
+  toDate: `${currentYear}-12-31`,
   courtId: "",
   partnerId: "",
   userId: "",
@@ -59,15 +62,69 @@ const emptyFilters: Filters = {
   bookingStatus: ""
 };
 
+type SortField = "bookingCode" | "customerName" | "bookingDate" | "totalPrice" | "bookingStatus" | "paymentStatus";
+
+function SortableHeader({ label, field, active, order, onToggle }: {
+  label: string;
+  field: SortField;
+  active: boolean;
+  order: "asc" | "desc";
+  onToggle: (field: SortField) => void;
+}) {
+  const icon = !active ? "⇅" : order === "asc" ? "▲" : "▼";
+  return (
+    <th
+      className="cursor-pointer select-none p-3 transition-colors hover:bg-slate-100"
+      onClick={() => onToggle(field)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        <span className={`text-xs ${active ? "text-blue-600" : "text-slate-400"}`}>{icon}</span>
+      </span>
+    </th>
+  );
+}
+
 export function AdminBookingsPage() {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string | null>(null);
   const [filters, setFilters] = useState<Filters>(emptyFilters);
+  const [sortBy, setSortBy] = useState<SortField | "">(((searchParams.get("sortBy") ?? "") as SortField | ""));
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">(searchParams.get("sortOrder") === "asc" ? "asc" : "desc");
+
+  const toggleSort = useCallback((field: SortField) => {
+    setPage(1);
+    setSortBy((prevField) => {
+      if (prevField !== field) {
+        setSortOrder("asc");
+        return field;
+      }
+      if (sortOrder === "asc") {
+        setSortOrder("desc");
+        return field;
+      }
+      setSortOrder("desc");
+      return "";
+    });
+  }, [sortOrder]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams);
+    if (sortBy) {
+      params.set("sortBy", sortBy);
+      params.set("sortOrder", sortOrder);
+    } else {
+      params.delete("sortBy");
+      params.delete("sortOrder");
+    }
+    setSearchParams(params, { replace: true });
+  }, [sortBy, sortOrder, setSearchParams, searchParams]);
 
   const list = useQuery({
-    queryKey: ["admin-bookings", page, filters],
-    queryFn: () => adminApi.bookings({ page, limit: 10, ...filters })
+    queryKey: ["admin-bookings", page, filters, sortBy, sortOrder],
+    queryFn: () => adminApi.bookings({ page, limit: 10, ...filters, sortBy: sortBy || undefined, sortOrder: sortBy ? sortOrder : undefined })
   });
   const detail = useQuery({
     queryKey: ["admin-booking", selected],
@@ -85,7 +142,7 @@ export function AdminBookingsPage() {
           <h1 className="text-3xl font-bold">Quản lý đơn đặt sân</h1>
           <p className="text-sm text-slate-600">Theo dõi, lọc và xử lý booking toàn hệ thống.</p>
         </div>
-        <Button variant="secondary" onClick={() => { setPage(1); setFilters(emptyFilters); }}>
+        <Button variant="secondary" onClick={() => { setPage(1); setFilters(emptyFilters); setSortBy(""); setSortOrder("desc"); }}>
           Xóa lọc
         </Button>
       </div>
@@ -105,13 +162,13 @@ export function AdminBookingsPage() {
         <table className="w-full min-w-[980px] text-sm">
           <thead>
             <tr className="bg-slate-50 text-left">
-              <th className="p-3">Mã đơn</th>
-              <th>Khách hàng</th>
-              <th>Sân / đối tác</th>
-              <th>Lịch đặt</th>
-              <th>Tổng tiền</th>
-              <th>Đơn</th>
-              <th>Thanh toán</th>
+              <SortableHeader label="Mã đơn" field="bookingCode" active={sortBy === "bookingCode"} order={sortOrder} onToggle={toggleSort} />
+              <SortableHeader label="Khách hàng" field="customerName" active={sortBy === "customerName"} order={sortOrder} onToggle={toggleSort} />
+              <th className="p-3">Sân / đối tác</th>
+              <SortableHeader label="Lịch đặt" field="bookingDate" active={sortBy === "bookingDate"} order={sortOrder} onToggle={toggleSort} />
+              <SortableHeader label="Tổng tiền" field="totalPrice" active={sortBy === "totalPrice"} order={sortOrder} onToggle={toggleSort} />
+              <SortableHeader label="Đơn" field="bookingStatus" active={sortBy === "bookingStatus"} order={sortOrder} onToggle={toggleSort} />
+              <SortableHeader label="Thanh toán" field="paymentStatus" active={sortBy === "paymentStatus"} order={sortOrder} onToggle={toggleSort} />
               <th></th>
             </tr>
           </thead>

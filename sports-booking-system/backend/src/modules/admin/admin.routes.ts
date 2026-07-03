@@ -56,6 +56,7 @@ adminRoutes.get("/notifications/campaigns", validate(notificationCampaignQuerySc
 adminRoutes.post("/notifications/campaigns", validate(notificationCampaignCreateSchema), adminController.createNotificationCampaign);
 adminRoutes.get("/notifications/campaigns/:id", adminController.notificationCampaignDetail);
 adminRoutes.get("/courts/pending", adminController.pendingCourts);
+adminRoutes.get("/courts/locations", adminController.courtLocations);
 adminRoutes.get("/courts", validate(adminCourtQuerySchema), adminController.courts);
 adminRoutes.get("/courts/:id", adminController.courtDetail);
 adminRoutes.patch("/courts/:id/admin", validate(adminCourtUpdateSchema), adminController.updateCourtAdmin);

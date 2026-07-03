@@ -270,6 +270,32 @@ export const partnerRepository = {
     });
   },
 
+  earlyCheckInBooking(bookingId: string, oldStartTime: Date, startTime: Date, pricing: { basePrice: number; dynamicAdjustmentAmount: number; subtotal: number; totalPrice: number }) {
+    return prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          startTime,
+          basePrice: { increment: pricing.basePrice },
+          dynamicAdjustmentAmount: { increment: pricing.dynamicAdjustmentAmount },
+          subtotal: { increment: pricing.subtotal },
+          totalPrice: { increment: pricing.totalPrice }
+        },
+        include: { court: true, user: { select: { id: true, fullName: true, phone: true } } }
+      });
+
+      await tx.bookingSlot.updateMany({
+        where: { bookingId, startTime: oldStartTime },
+        data: {
+          startTime,
+          slotPrice: { increment: pricing.totalPrice }
+        }
+      });
+
+      return booking;
+    });
+  },
+
   createContinuationBooking(input: {
     bookingCode: string;
     userId: string;

@@ -133,6 +133,14 @@ export const partnerApi = {
     const { data } = await api.post<ApiResponse<Booking>>(`/partner/bookings/${id}/extend`, { minutes });
     return data.data;
   },
+  async earlyCheckInBooking(id: string) {
+    const { data } = await api.post<ApiResponse<Booking>>(`/partner/bookings/${id}/early-check-in`);
+    return data.data;
+  },
+  async earlyCheckOutBooking(id: string) {
+    const { data } = await api.post<ApiResponse<Booking>>(`/partner/bookings/${id}/early-check-out`);
+    return data.data;
+  },
   async continueBooking(id: string, targetCourtSurfaceId: string, minutes: number) {
     const { data } = await api.post<ApiResponse<Booking>>(`/partner/bookings/${id}/continue`, { targetCourtSurfaceId, minutes });
     return data.data;

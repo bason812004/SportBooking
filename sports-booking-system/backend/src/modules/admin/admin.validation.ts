@@ -47,7 +47,9 @@ export const bookingQuerySchema = z.object({
     partnerId: optionalQuery(z.string().trim().max(40)),
     userId: optionalQuery(z.string().trim().max(40)),
     bookingStatus: optionalQuery(z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"])),
-    paymentStatus: optionalQuery(z.enum(["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"]))
+    paymentStatus: optionalQuery(z.enum(["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"])),
+    sortBy: optionalQuery(z.enum(["bookingCode", "customerName", "bookingDate", "totalPrice", "bookingStatus", "paymentStatus"])),
+    sortOrder: optionalQuery(z.enum(["asc", "desc"]))
   })
 });
 

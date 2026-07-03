@@ -39,6 +39,10 @@ const csvCell = (value: unknown) => {
 };
 
 export const adminService = {
+  async courtLocations() {
+    return adminRepository.courtLocations();
+  },
+
   async dashboard() {
     const [users, partners, courts, bookings, money, commission, pendingCourts, pendingPartners, trend, pendingItems] =
       await adminRepository.dashboard();
@@ -88,7 +92,9 @@ export const adminService = {
       partnerId: query.partnerId || undefined,
       userId: query.userId || undefined,
       bookingStatus: query.bookingStatus || undefined,
-      paymentStatus: query.paymentStatus || undefined
+      paymentStatus: query.paymentStatus || undefined,
+      sortBy: query.sortBy || undefined,
+      sortOrder: query.sortOrder || undefined
     });
     return { items, meta: paginationMeta(page, limit, total) };
   },

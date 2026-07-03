@@ -77,6 +77,24 @@ function adminCourtWhere(filters: {
 }
 
 export const adminRepository = {
+  async courtLocations() {
+    const rows = await prisma.$queryRaw<Array<{ city: string; district: string }>>`
+      select distinct city, district from courts
+      where city is not null and district is not null
+      order by city, district
+    `;
+    const cities: string[] = [];
+    const districts: Record<string, string[]> = {};
+    for (const row of rows) {
+      if (!districts[row.city]) {
+        cities.push(row.city);
+        districts[row.city] = [];
+      }
+      districts[row.city].push(row.district);
+    }
+    return { cities, districts };
+  },
+
   dashboard() {
     const now = new Date();
     const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
@@ -138,8 +156,25 @@ export const adminRepository = {
     userId?: string;
     bookingStatus?: string;
     paymentStatus?: string;
+    sortBy?: string;
+    sortOrder?: string;
   }) {
     const { where, values } = bookingWhere(filters);
+
+    const sortColumnMap: Record<string, string> = {
+      bookingCode: "b.booking_code",
+      customerName: "u.full_name",
+      bookingDate: "b.booking_date",
+      totalPrice: "b.total_price",
+      bookingStatus: "b.booking_status",
+      paymentStatus: "b.payment_status"
+    };
+    const sortCol = filters.sortBy && sortColumnMap[filters.sortBy];
+    const sortDir = filters.sortOrder === "asc" ? "asc" : "desc";
+    const orderBy = sortCol
+      ? `${sortCol} ${sortDir} nulls last${sortCol === "b.booking_date" ? `, b.start_time ${sortDir}` : ""}`
+      : "b.booking_date desc, b.start_time desc";
+
     const listValues = [...values, limit, (page - 1) * limit];
     const limitIndex = values.length + 1;
     const offsetIndex = values.length + 2;
@@ -174,7 +209,7 @@ export const adminRepository = {
       join courts c on c.id = b.court_id
       join partner_profiles p on p.id = c.partner_id
       ${where}
-      order by b.created_at desc
+      order by ${orderBy}
       limit $${limitIndex} offset $${offsetIndex}
     `, ...listValues);
     const countRows = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`

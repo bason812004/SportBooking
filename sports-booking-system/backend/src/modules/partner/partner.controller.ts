@@ -29,6 +29,8 @@ export const partnerController = {
   complete: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.COMPLETED))),
   noShow: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.NO_SHOW))),
   extendBooking: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.extendBooking(req.user!.id, req.params.id, req.body.minutes))),
+  earlyCheckInBooking: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.earlyCheckInBooking(req.user!.id, req.params.id))),
+  earlyCheckOutBooking: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.earlyCheckOutBooking(req.user!.id, req.params.id))),
   continueBooking: asyncHandler(async (req, res) =>
     sendSuccess(res, await partnerService.continueBooking(req.user!.id, req.params.id, req.body.targetCourtSurfaceId, req.body.minutes), 201)
   ),

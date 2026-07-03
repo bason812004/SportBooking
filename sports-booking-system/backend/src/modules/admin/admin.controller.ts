@@ -4,6 +4,7 @@ import { adminService } from "./admin.service.js";
 
 export const adminController = {
   dashboard: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.dashboard())),
+  courtLocations: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.courtLocations())),
   users: asyncHandler(async (req, res) => sendSuccess(res, await adminService.users(req.query))),
   bookings: asyncHandler(async (req, res) => sendSuccess(res, await adminService.bookings(req.query))),
   bookingDetail: asyncHandler(async (req, res) => sendSuccess(res, await adminService.bookingDetail(req.params.id))),
