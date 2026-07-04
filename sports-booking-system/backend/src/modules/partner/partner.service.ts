@@ -357,6 +357,13 @@ export const partnerService = {
     return blog;
   },
 
+  async updateBlogComments(userId: string, id: string, allowComments: boolean) {
+    await this.blogDetail(userId, id);
+    const [blog] = await partnerRepository.updateBlogComments(id, userId, allowComments);
+    if (!blog) throw new ValidationError("Khong the cap nhat trang thai binh luan");
+    return blog;
+  },
+
   async submitBlog(userId: string, id: string) {
     await this.blogDetail(userId, id);
     if (!(await partnerRepository.submitBlog(id, userId))) throw new ValidationError("Chi co the gui duyet bai viet nhap");

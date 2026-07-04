@@ -21,11 +21,36 @@ const selectComment = `
   join users u on u.id = c.user_id
 `;
 
+const columnExistsCache = new Map<string, boolean>();
+
+async function columnExists(tableName: string, columnName: string) {
+  const cacheKey = `${tableName}.${columnName}`;
+  const cached = columnExistsCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+    select exists(
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = ${tableName}
+        and column_name = ${columnName}
+    ) as "exists"
+  `;
+  const exists = Boolean(row?.exists);
+  columnExistsCache.set(cacheKey, exists);
+  return exists;
+}
+
 export const blogCommentRepository = {
-  publishedPostBySlug(slug: string) {
-    return prisma.$queryRawUnsafe<Array<{ id: string }>>(
+  async publishedPostBySlug(slug: string) {
+    const allowCommentsSelect = await columnExists("blog_posts", "allow_comments")
+      ? "coalesce(allow_comments, true)"
+      : "true";
+
+    return prisma.$queryRawUnsafe<Array<{ id: string; allowComments: boolean }>>(
       `
-        select id
+        select id, ${allowCommentsSelect} as "allowComments"
         from blog_posts
         where slug = $1
           and status = 'PUBLISHED'::blog_post_status

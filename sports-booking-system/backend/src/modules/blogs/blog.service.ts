@@ -7,6 +7,7 @@ type BlogBody = {
   content: string;
   coverImageUrl?: string | null;
   visibility: "PUBLIC" | "PRIVATE";
+  allowComments?: boolean;
 };
 
 function slugify(value: string) {
@@ -26,8 +27,9 @@ function slugFor(title: string, suffix?: string) {
 }
 
 export const blogService = {
-  list() {
-    return blogRepository.listPublished();
+  list(query?: { search?: unknown }) {
+    const search = typeof query?.search === "string" ? query.search.trim().slice(0, 160) : undefined;
+    return blogRepository.listPublished(search || undefined);
   },
 
   async detail(slug: string) {
@@ -52,7 +54,8 @@ export const blogService = {
       ...body,
       slug: slugFor(body.title),
       excerpt: body.excerpt || null,
-      coverImageUrl: body.coverImageUrl || null
+      coverImageUrl: body.coverImageUrl || null,
+      allowComments: body.allowComments ?? true
     });
     if (!post) throw new NotFoundError("Khong the tao bai viet");
     return post;
@@ -64,9 +67,17 @@ export const blogService = {
       ...body,
       slug: slugFor(body.title, id),
       excerpt: body.excerpt || null,
-      coverImageUrl: body.coverImageUrl || null
+      coverImageUrl: body.coverImageUrl || null,
+      allowComments: body.allowComments ?? true
     });
     if (!post) throw new NotFoundError("Khong the cap nhat bai viet");
+    return post;
+  },
+
+  async updateMineComments(id: string, userId: string, allowComments: boolean) {
+    await this.detailMine(id, userId);
+    const [post] = await blogRepository.updateMineComments(id, userId, allowComments);
+    if (!post) throw new NotFoundError("Khong the cap nhat binh luan");
     return post;
   },
 

@@ -6,7 +6,15 @@ export const blogWriteSchema = z.object({
     excerpt: z.string().trim().max(1000).nullable().optional(),
     content: z.string().trim().min(20),
     coverImageUrl: z.union([z.string().url(), z.literal(""), z.null()]).optional(),
-    visibility: z.enum(["PUBLIC", "PRIVATE"]).default("PUBLIC")
+    visibility: z.enum(["PUBLIC", "PRIVATE"]).default("PUBLIC"),
+    allowComments: z.boolean().default(true)
+  })
+});
+
+export const blogCommentsToggleSchema = z.object({
+  params: z.object({ id: z.string().min(1) }),
+  body: z.object({
+    allowComments: z.boolean()
   })
 });
 

@@ -7,12 +7,12 @@ export function useVouchers() {
   return useQuery({ queryKey: ["public-vouchers"], queryFn: contentApi.vouchers, ...realtimeQuery });
 }
 
-export function useBlogs() {
-  return useQuery({ queryKey: ["public-blogs"], queryFn: contentApi.blogs, ...realtimeQuery });
+export function useBlogs(search = "") {
+  return useQuery({ queryKey: ["public-blogs", search], queryFn: () => contentApi.blogs({ search }), ...realtimeQuery });
 }
 
 export function useBlog(slug?: string) {
-  return useQuery({ queryKey: ["public-blog", slug], queryFn: () => contentApi.blog(slug!), enabled: Boolean(slug), refetchOnWindowFocus: false, staleTime: Infinity });
+  return useQuery({ queryKey: ["public-blog", slug], queryFn: () => contentApi.blog(slug!), enabled: Boolean(slug), refetchOnMount: "always", refetchOnWindowFocus: true });
 }
 
 export function useBlogComments(slug?: string) {
@@ -43,6 +43,18 @@ export function useMyTeamPosts() {
   return useQuery({ queryKey: ["my-team-posts"], queryFn: contentApi.myTeamPosts });
 }
 
+export function useJoinedTeamPosts() {
+  return useQuery({ queryKey: ["joined-team-posts"], queryFn: contentApi.joinedTeamPosts });
+}
+
 export function useTeamPost(id?: string) {
   return useQuery({ queryKey: ["team-post", id], queryFn: () => contentApi.teamPost(id!), enabled: Boolean(id) });
+}
+
+export function useTeamPostMessages(id?: string, enabled = true) {
+  return useQuery({
+    queryKey: ["team-post-messages", id],
+    queryFn: () => contentApi.teamPostMessages(id!),
+    enabled: Boolean(id) && enabled
+  });
 }

@@ -164,6 +164,10 @@ export const partnerApi = {
     const { data } = await api.put<ApiResponse<PartnerBlog>>(`/partner/blogs/${id}`, payload);
     return data.data;
   },
+  async updateBlogComments(id: string, allowComments: boolean) {
+    const { data } = await api.patch<ApiResponse<PartnerBlog>>(`/partner/blogs/${id}/comments`, { allowComments });
+    return data.data;
+  },
   async submitBlog(id: string) {
     const { data } = await api.put<ApiResponse<PartnerBlog>>(`/partner/blogs/${id}/submit`);
     return data.data;

@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
-import { CalendarDays, Eye, FileText, MessageCircle, Send, UserRound } from "lucide-react";
+import { CalendarDays, Eye, FileText, MessageCircle, MessageCircleOff, Send, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { contentApi } from "../../features/content/api/contentApi";
@@ -30,6 +30,7 @@ export function BlogDetailPage() {
   if (!post.data) return <div className="px-4 py-16"><EmptyState title="Không tìm thấy bài viết." /></div>;
 
   const item = post.data;
+  const allowComments = item.allowComments !== false;
   const relatedPosts = (related.data ?? [])
     .filter((candidate) => candidate.slug !== item.slug)
     .sort((left, right) => {
@@ -42,7 +43,7 @@ export function BlogDetailPage() {
 
   async function handleComment(event: FormEvent) {
     event.preventDefault();
-    if (!slug || !isAuthenticated || submitting) return;
+    if (!slug || !isAuthenticated || submitting || !allowComments) return;
     if (!comment.trim()) {
       toast.error("Vui lòng nhập nội dung bình luận.");
       return;
@@ -55,6 +56,7 @@ export function BlogDetailPage() {
       await queryClient.invalidateQueries({ queryKey: ["blog-comments", slug] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không thể gửi bình luận.");
+      await queryClient.invalidateQueries({ queryKey: ["public-blog", slug] });
     } finally {
       setSubmitting(false);
     }
@@ -69,6 +71,12 @@ export function BlogDetailPage() {
             {item.category && <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">{item.category.name}</span>}
             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-600">Blog</span>
             {wasUpdated(item.createdAt, item.updatedAt) && <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">Đã cập nhật</span>}
+            {!allowComments && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">
+                <MessageCircleOff className="h-3.5 w-3.5" />
+                Tắt bình luận
+              </span>
+            )}
           </div>
           <h1 className="mt-5 text-4xl font-black leading-tight md:text-5xl">{item.title}</h1>
           <div className="mt-5 flex flex-wrap gap-4 text-sm font-semibold text-slate-500">
@@ -86,36 +94,44 @@ export function BlogDetailPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="flex items-center gap-2 text-2xl font-black">
-                <MessageCircle className="h-6 w-6 text-emerald-700" />
+                {allowComments ? <MessageCircle className="h-6 w-6 text-emerald-700" /> : <MessageCircleOff className="h-6 w-6 text-amber-700" />}
                 Bình luận
               </h2>
-              <p className="mt-1 text-sm font-semibold text-slate-500">Chỉ cần đăng nhập là có thể bình luận về bài blog.</p>
+              <p className="mt-1 text-sm font-semibold text-slate-500">
+                {allowComments ? "Đăng nhập để bình luận về bài blog." : "Tác giả đã tắt bình luận mới cho bài viết này."}
+              </p>
             </div>
             <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-black text-emerald-800">{comments.data?.length ?? 0} bình luận</span>
           </div>
 
-          {isAuthenticated ? (
-            <form onSubmit={handleComment} className="mt-5">
-              <textarea
-                value={comment}
-                onChange={(event) => setComment(event.target.value)}
-                className="min-h-28 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
-                placeholder="Viết bình luận của bạn..."
-                maxLength={1000}
-              />
-              <div className="mt-3 flex justify-end">
-                <button disabled={submitting} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-black text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60">
-                  <Send className="h-4 w-4" />
-                  {submitting ? "Đang gửi..." : "Gửi bình luận"}
-                </button>
+          {allowComments ? (
+            isAuthenticated ? (
+              <form onSubmit={handleComment} className="mt-5">
+                <textarea
+                  value={comment}
+                  onChange={(event) => setComment(event.target.value)}
+                  className="min-h-28 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                  placeholder="Viết bình luận của bạn..."
+                  maxLength={1000}
+                />
+                <div className="mt-3 flex justify-end">
+                  <button disabled={submitting} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-black text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60">
+                    <Send className="h-4 w-4" />
+                    {submitting ? "Đang gửi..." : "Gửi bình luận"}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-slate-50 p-4">
+                <p className="font-semibold text-slate-600">Đăng nhập để tham gia bình luận.</p>
+                <Link to="/login" className="rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-black text-white hover:bg-emerald-800">
+                  Đăng nhập
+                </Link>
               </div>
-            </form>
+            )
           ) : (
-            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-slate-50 p-4">
-              <p className="font-semibold text-slate-600">Đăng nhập để tham gia bình luận.</p>
-              <Link to="/login" className="rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-black text-white hover:bg-emerald-800">
-                Đăng nhập
-              </Link>
+            <div className="mt-5 rounded-2xl bg-amber-50 p-4 text-sm font-bold text-amber-900">
+              Bình luận mới đang bị tắt. Các bình luận cũ vẫn được hiển thị bên dưới.
             </div>
           )}
 

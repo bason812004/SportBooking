@@ -189,6 +189,7 @@ export type PartnerBlog = {
   coverImageUrl?: string | null;
   status: string;
   visibility: "PUBLIC" | "PRIVATE";
+  allowComments?: boolean;
   createdAt: string;
   updatedAt: string;
   publishedAt?: string | null;
@@ -394,6 +395,7 @@ export type BlogPost = {
   coverImageUrl?: string | null;
   status: string;
   visibility: string;
+  allowComments?: boolean;
   createdAt: string;
   updatedAt?: string;
   publishedAt?: string | null;
@@ -451,6 +453,15 @@ export type TeamRecruitmentPost = {
   createdAt: string;
   updatedAt: string;
   createdBy: { id: string; fullName: string; avatarUrl?: string | null };
+};
+
+export type TeamPostMessage = {
+  id: string;
+  postId: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  sender: { id: string; fullName: string; avatarUrl?: string | null };
 };
 
 export type TeamRecruitmentInput = {

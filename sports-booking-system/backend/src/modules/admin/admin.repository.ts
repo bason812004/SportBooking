@@ -1,5 +1,26 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+
+const columnExistsCache = new Map<string, boolean>();
+
+async function columnExists(tableName: string, columnName: string) {
+  const cacheKey = `${tableName}.${columnName}`;
+  const cached = columnExistsCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+    select exists(
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = ${tableName}
+        and column_name = ${columnName}
+    ) as "exists"
+  `;
+  const exists = Boolean(row?.exists);
+  columnExistsCache.set(cacheKey, exists);
+  return exists;
+}
 
 export const adminRepository = {
   dashboard() {
@@ -197,17 +218,22 @@ export const adminRepository = {
     return prisma.$executeRaw`update vouchers set status = ${status}::voucher_status, updated_at = now() where id = ${id}`;
   },
 
-  pendingBlogs(page: number, limit: number, search?: string) {
+  async pendingBlogs(page: number, limit: number, search?: string) {
     const pattern = search ? `%${search}%` : null;
+    const allowCommentsSelect = await columnExists("blog_posts", "allow_comments")
+      ? Prisma.sql`coalesce(b.allow_comments, true)`
+      : Prisma.sql`true`;
+
     return prisma.$transaction([
-      prisma.$queryRaw<any[]>`
+      prisma.$queryRaw<any[]>(Prisma.sql`
         select b.id, b.title, b.excerpt, b.content, b.cover_image_url as "coverImageUrl",
-          b.status::text, b.created_at as "createdAt", u.full_name as "authorName", u.email as "authorEmail"
+          b.status::text, b.visibility::text, ${allowCommentsSelect} as "allowComments",
+          b.created_at as "createdAt", u.full_name as "authorName", u.email as "authorEmail"
         from blog_posts b join users u on u.id = b.author_id
         where b.status = 'PENDING'::blog_post_status
           and (${pattern}::text is null or b.title ilike ${pattern} or u.full_name ilike ${pattern})
         order by b.created_at desc offset ${(page - 1) * limit} limit ${limit}
-      `,
+      `),
       prisma.$queryRaw<Array<{ count: bigint }>>`
         select count(*)::bigint as count from blog_posts b join users u on u.id = b.author_id
         where b.status = 'PENDING'::blog_post_status
@@ -220,7 +246,7 @@ export const adminRepository = {
     return prisma.$executeRaw`
       update blog_posts set status = ${status}::blog_post_status,
         published_at = case when ${status} = 'PUBLISHED' then now() else published_at end, updated_at = now()
-      where id = ${id}::uuid and status = 'PENDING'::blog_post_status
+      where id = ${id} and status = 'PENDING'::blog_post_status
     `;
   },
 

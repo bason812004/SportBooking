@@ -53,6 +53,7 @@ export const partnerController = {
   blogDetail: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.blogDetail(req.user!.id, req.params.id))),
   createBlog: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.createBlog(req.user!.id, req.body), 201)),
   updateBlog: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBlog(req.user!.id, req.params.id, req.body))),
+  updateBlogComments: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBlogComments(req.user!.id, req.params.id, req.body.allowComments))),
   submitBlog: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.submitBlog(req.user!.id, req.params.id))),
   deleteBlog: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deleteBlog(req.user!.id, req.params.id))),
   tournaments: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.tournaments(req.user!.id))),

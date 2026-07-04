@@ -1,4 +1,4 @@
-import { NotFoundError } from "../../shared/errors/AppError.js";
+import { NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { blogCommentRepository } from "./blogComment.repository.js";
 
 async function requirePublishedPost(slug: string) {
@@ -15,6 +15,7 @@ export const blogCommentService = {
 
   async create(slug: string, userId: string, content: string) {
     const post = await requirePublishedPost(slug);
+    if (!post.allowComments) throw new ValidationError("Bai viet da tat binh luan");
     const [comment] = await blogCommentRepository.create(post.id, userId, content);
     if (!comment) throw new NotFoundError("Khong the tao binh luan");
     return comment;

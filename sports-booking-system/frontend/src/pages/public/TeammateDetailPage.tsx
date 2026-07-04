@@ -1,6 +1,7 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { CalendarDays, Edit3, MapPin, QrCode, UserRound, UsersRound, WalletCards, X } from "lucide-react";
+import { CalendarDays, Edit3, MapPin, MessageCircle, QrCode, UserRound, UsersRound, WalletCards, X } from "lucide-react";
 import { toast } from "sonner";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { contentApi } from "../../features/content/api/contentApi";
@@ -18,6 +19,7 @@ export function TeammateDetailPage() {
   const { id } = useParams();
   const post = useTeamPost(id);
   const { user, isAuthenticated } = useAuth();
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [qrOpen, setQrOpen] = useState(false);
   const [joining, setJoining] = useState(false);
@@ -45,13 +47,11 @@ export function TeammateDetailPage() {
     setJoining(true);
     try {
       if (id) await contentApi.joinTeamPost(id);
-      if (item.zaloGroupLink) {
-        window.open(item.zaloGroupLink, "_blank", "noopener,noreferrer");
-      } else if (item.zaloQrImage) {
-        setQrOpen(true);
-      } else {
-        toast.info("Chưa có thông tin nhóm.");
-      }
+      await queryClient.invalidateQueries({ queryKey: ["team-post", id] });
+      await queryClient.invalidateQueries({ queryKey: ["team-posts"] });
+      await queryClient.invalidateQueries({ queryKey: ["joined-team-posts"] });
+      toast.success("Đã tham gia nhóm. Đang mở phòng chat.");
+      if (id) navigate(`/user/team-groups/${id}/chat`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không thể tham gia nhóm.");
     } finally {
@@ -117,12 +117,20 @@ export function TeammateDetailPage() {
               {item.zaloQrImage && (
                 <button onClick={() => setQrOpen(true)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-black hover:bg-slate-50">
                   <QrCode className="h-4 w-4" />
-                  Xem mã QR Zalo
+                  Xem QR cũ
                 </button>
               )}
-              <button onClick={handleJoin} disabled={joining} className="mt-3 w-full rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black text-white transition hover:bg-emerald-800 disabled:opacity-60">
-                {joining ? "Đang xử lý..." : "Tham gia nhóm"}
-              </button>
+              {isOwner ? (
+                <Link to={`/user/team-groups/${item.id}/chat`} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black text-white transition hover:bg-emerald-800">
+                  <MessageCircle className="h-4 w-4" />
+                  Mở chat nhóm
+                </Link>
+              ) : (
+                <button onClick={handleJoin} disabled={joining} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black text-white transition hover:bg-emerald-800 disabled:opacity-60">
+                  <MessageCircle className="h-4 w-4" />
+                  {joining ? "Đang xử lý..." : "Tham gia và mở chat"}
+                </button>
+              )}
             </div>
           </aside>
         </div>
@@ -134,7 +142,7 @@ export function TeammateDetailPage() {
             <button onClick={() => setQrOpen(false)} className="absolute right-3 top-3 rounded-full bg-slate-100 p-2 hover:bg-slate-200" aria-label="Đóng">
               <X className="h-4 w-4" />
             </button>
-            <img src={item.zaloQrImage} alt="Mã QR nhóm Zalo" className="mt-8 h-72 w-72 rounded-2xl object-cover" />
+            <img src={item.zaloQrImage} alt="QR nhóm cũ" className="mt-8 h-72 w-72 rounded-2xl object-cover" />
           </div>
         </div>
       )}

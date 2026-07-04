@@ -1,6 +1,6 @@
 import { api } from "../../../lib/axios";
 import { repairObject } from "../../../lib/text";
-import type { ApiResponse, BlogComment, BlogPost, TeamRecruitmentInput, TeamRecruitmentPost, Tournament, Voucher } from "../../../types/api";
+import type { ApiResponse, BlogComment, BlogPost, TeamPostMessage, TeamRecruitmentInput, TeamRecruitmentPost, Tournament, Voucher } from "../../../types/api";
 
 export type BlogWriteInput = {
   title: string;
@@ -8,6 +8,7 @@ export type BlogWriteInput = {
   content: string;
   coverImageUrl?: string | null;
   visibility: "PUBLIC" | "PRIVATE";
+  allowComments: boolean;
 };
 
 export const contentApi = {
@@ -16,8 +17,8 @@ export const contentApi = {
     return repairObject(data.data);
   },
 
-  async blogs() {
-    const { data } = await api.get<ApiResponse<BlogPost[]>>("/blogs");
+  async blogs(params: { search?: string } = {}) {
+    const { data } = await api.get<ApiResponse<BlogPost[]>>("/blogs", { params: clean(params) });
     return repairObject(data.data);
   },
 
@@ -56,6 +57,11 @@ export const contentApi = {
     return repairObject(data.data);
   },
 
+  async updateBlogComments(id: string, allowComments: boolean) {
+    const { data } = await api.patch<ApiResponse<BlogPost>>(`/blogs/me/${id}/comments`, { allowComments });
+    return repairObject(data.data);
+  },
+
   async deleteBlog(id: string) {
     const { data } = await api.delete<ApiResponse<{ deleted: boolean }>>(`/blogs/me/${id}`);
     return data.data;
@@ -91,6 +97,11 @@ export const contentApi = {
     return repairObject(data.data);
   },
 
+  async joinedTeamPosts() {
+    const { data } = await api.get<ApiResponse<TeamRecruitmentPost[]>>("/team-posts/joined");
+    return repairObject(data.data);
+  },
+
   async createTeamPost(input: TeamRecruitmentInput) {
     const { data } = await api.post<ApiResponse<TeamRecruitmentPost>>("/team-posts", input);
     return repairObject(data.data);
@@ -109,5 +120,19 @@ export const contentApi = {
   async joinTeamPost(id: string) {
     const { data } = await api.post<ApiResponse<TeamRecruitmentPost>>(`/team-posts/${id}/join`);
     return data.data;
+  },
+
+  async teamPostMessages(id: string) {
+    const { data } = await api.get<ApiResponse<TeamPostMessage[]>>(`/team-posts/${id}/messages`);
+    return repairObject(data.data);
+  },
+
+  async createTeamPostMessage(id: string, content: string) {
+    const { data } = await api.post<ApiResponse<TeamPostMessage>>(`/team-posts/${id}/messages`, { content });
+    return repairObject(data.data);
   }
 };
+
+function clean(params: Record<string, string | undefined>) {
+  return Object.fromEntries(Object.entries(params).filter(([, value]) => value !== "" && value !== undefined));
+}

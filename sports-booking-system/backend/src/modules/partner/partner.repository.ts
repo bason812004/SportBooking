@@ -1,5 +1,36 @@
-import type { ApprovalStatus, BookingStatus, Prisma } from "@prisma/client";
+import { Prisma, type ApprovalStatus, type BookingStatus } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+
+const columnExistsCache = new Map<string, boolean>();
+
+async function columnExists(tableName: string, columnName: string) {
+  const cacheKey = `${tableName}.${columnName}`;
+  const cached = columnExistsCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+    select exists(
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = ${tableName}
+        and column_name = ${columnName}
+    ) as "exists"
+  `;
+  const exists = Boolean(row?.exists);
+  columnExistsCache.set(cacheKey, exists);
+  return exists;
+}
+
+async function ensureAllowCommentsColumn() {
+  if (await columnExists("blog_posts", "allow_comments")) return;
+
+  await prisma.$executeRaw`
+    alter table blog_posts
+    add column if not exists allow_comments boolean not null default true
+  `;
+  columnExistsCache.set("blog_posts.allow_comments", true);
+}
 
 export const partnerRepository = {
   profileByUser(userId: string) {
@@ -205,55 +236,82 @@ export const partnerRepository = {
     return prisma.court.update({ where: { id }, data: { approvalStatus } });
   },
 
-  listBlogs(userId: string) {
-    return prisma.$queryRaw<any[]>`
+  async listBlogs(userId: string) {
+    const allowCommentsSelect = await columnExists("blog_posts", "allow_comments")
+      ? Prisma.sql`coalesce(allow_comments, true)`
+      : Prisma.sql`true`;
+
+    return prisma.$queryRaw<any[]>(Prisma.sql`
       select id, title, slug, excerpt, content, cover_image_url as "coverImageUrl",
         status::text, visibility::text, created_at as "createdAt", updated_at as "updatedAt",
-        published_at as "publishedAt"
-      from blog_posts where author_id = ${userId}::uuid order by created_at desc
-    `;
+        published_at as "publishedAt", ${allowCommentsSelect} as "allowComments"
+      from blog_posts where author_id = ${userId} order by created_at desc
+    `);
   },
 
-  findBlog(id: string, userId: string) {
-    return prisma.$queryRaw<any[]>`
+  async findBlog(id: string, userId: string) {
+    const allowCommentsSelect = await columnExists("blog_posts", "allow_comments")
+      ? Prisma.sql`coalesce(allow_comments, true)`
+      : Prisma.sql`true`;
+
+    return prisma.$queryRaw<any[]>(Prisma.sql`
       select id, title, slug, excerpt, content, cover_image_url as "coverImageUrl",
         status::text, visibility::text, created_at as "createdAt", updated_at as "updatedAt",
-        published_at as "publishedAt"
-      from blog_posts where id = ${id}::uuid and author_id = ${userId}::uuid limit 1
-    `;
+        published_at as "publishedAt", ${allowCommentsSelect} as "allowComments"
+      from blog_posts where id = ${id} and author_id = ${userId} limit 1
+    `);
   },
 
-  createBlog(userId: string, input: any) {
+  async createBlog(userId: string, input: any) {
+    await ensureAllowCommentsColumn();
+
     return prisma.$queryRaw<any[]>`
-      insert into blog_posts (author_id, title, slug, excerpt, content, cover_image_url, visibility, status)
-      values (${userId}::uuid, ${input.title}, ${input.slug}, ${input.excerpt ?? null},
-        ${input.content}, ${input.coverImageUrl || null}, ${input.visibility}::blog_visibility, 'DRAFT'::blog_post_status)
+      insert into blog_posts (author_id, title, slug, excerpt, content, cover_image_url, visibility, status, allow_comments)
+      values (${userId}, ${input.title}, ${input.slug}, ${input.excerpt ?? null},
+        ${input.content}, ${input.coverImageUrl || null}, ${input.visibility}::blog_visibility, 'DRAFT'::blog_post_status,
+        ${input.allowComments ?? true})
       returning id, title, slug, excerpt, content, cover_image_url as "coverImageUrl",
-        status::text, visibility::text, created_at as "createdAt", updated_at as "updatedAt"
+        status::text, visibility::text, coalesce(allow_comments, true) as "allowComments",
+        created_at as "createdAt", updated_at as "updatedAt"
     `;
   },
 
-  updateBlog(id: string, userId: string, input: any) {
+  async updateBlog(id: string, userId: string, input: any) {
+    await ensureAllowCommentsColumn();
+
     return prisma.$queryRaw<any[]>`
       update blog_posts set title = ${input.title}, slug = ${input.slug}, excerpt = ${input.excerpt ?? null},
         content = ${input.content}, cover_image_url = ${input.coverImageUrl || null},
-        visibility = ${input.visibility}::blog_visibility, updated_at = now()
-      where id = ${id}::uuid and author_id = ${userId}::uuid and status = 'DRAFT'::blog_post_status
+        visibility = ${input.visibility}::blog_visibility, allow_comments = ${input.allowComments ?? true}, updated_at = now()
+      where id = ${id} and author_id = ${userId} and status = 'DRAFT'::blog_post_status
       returning id, title, slug, excerpt, content, cover_image_url as "coverImageUrl",
-        status::text, visibility::text, created_at as "createdAt", updated_at as "updatedAt"
+        status::text, visibility::text, coalesce(allow_comments, true) as "allowComments",
+        created_at as "createdAt", updated_at as "updatedAt"
+    `;
+  },
+
+  async updateBlogComments(id: string, userId: string, allowComments: boolean) {
+    await ensureAllowCommentsColumn();
+
+    return prisma.$queryRaw<any[]>`
+      update blog_posts set allow_comments = ${allowComments}, updated_at = now()
+      where id = ${id} and author_id = ${userId}
+      returning id, title, slug, excerpt, content, cover_image_url as "coverImageUrl",
+        status::text, visibility::text, coalesce(allow_comments, true) as "allowComments",
+        created_at as "createdAt", updated_at as "updatedAt", published_at as "publishedAt"
     `;
   },
 
   submitBlog(id: string, userId: string) {
     return prisma.$executeRaw`
       update blog_posts set status = 'PENDING'::blog_post_status, updated_at = now()
-      where id = ${id}::uuid and author_id = ${userId}::uuid and status = 'DRAFT'::blog_post_status
+      where id = ${id} and author_id = ${userId} and status = 'DRAFT'::blog_post_status
     `;
   },
 
   deleteBlog(id: string, userId: string) {
     return prisma.$executeRaw`
-      delete from blog_posts where id = ${id}::uuid and author_id = ${userId}::uuid
+      delete from blog_posts where id = ${id} and author_id = ${userId}
         and status = 'DRAFT'::blog_post_status
     `;
   },

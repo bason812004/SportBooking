@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { MessageCircle, MessageCircleOff } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ErrorState, LoadingState } from "../../components/common/States";
@@ -11,7 +12,8 @@ const initialForm: BlogWriteInput = {
   excerpt: "",
   content: "",
   coverImageUrl: "",
-  visibility: "PUBLIC"
+  visibility: "PUBLIC",
+  allowComments: true
 };
 
 export function UserBlogFormPage() {
@@ -30,7 +32,8 @@ export function UserBlogFormPage() {
       excerpt: detail.data.excerpt ?? "",
       content: detail.data.content,
       coverImageUrl: detail.data.coverImageUrl ?? "",
-      visibility: detail.data.visibility === "PRIVATE" ? "PRIVATE" : "PUBLIC"
+      visibility: detail.data.visibility === "PRIVATE" ? "PRIVATE" : "PUBLIC",
+      allowComments: detail.data.allowComments !== false
     });
   }, [detail.data]);
 
@@ -52,14 +55,15 @@ export function UserBlogFormPage() {
         title: form.title.trim(),
         excerpt: form.excerpt?.trim() || null,
         coverImageUrl: form.coverImageUrl?.trim() || null,
-        content: form.content.trim()
+        content: form.content.trim(),
+        allowComments: form.allowComments
       };
       if (editing && id) {
         await contentApi.updateBlog(id, payload);
-        toast.success("Đã cập nhật bài blog.");
+        toast.success("Đã gửi bài cập nhật để admin duyệt.");
       } else {
         await contentApi.createBlog(payload);
-        toast.success("Đã đăng bài blog.");
+        toast.success("Đã gửi bài blog để admin duyệt.");
       }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["my-blogs"] }),
@@ -82,6 +86,10 @@ export function UserBlogFormPage() {
         <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200 md:p-8">
           <p className="text-sm font-black uppercase tracking-[0.16em] text-emerald-700">Blog</p>
           <h1 className="mt-2 text-4xl font-black">{editing ? "Chỉnh sửa bài blog" : "Viết bài blog"}</h1>
+          <p className="mt-3 max-w-2xl text-sm font-semibold text-slate-600">
+            Bài viết công khai chỉ xuất hiện sau khi admin duyệt. Nếu chỉnh sửa nội dung bài đã đăng, bài sẽ quay lại trạng thái chờ duyệt.
+          </p>
+
           <form onSubmit={handleSubmit} className="mt-8 grid gap-5">
             <label className={labelClass}>
               <span>Tiêu đề</span>
@@ -96,11 +104,27 @@ export function UserBlogFormPage() {
               <label className={labelClass}>
                 <span>Hiển thị</span>
                 <select value={form.visibility} onChange={(event) => update("visibility", event.target.value as BlogWriteInput["visibility"])} className={inputClass}>
-                  <option value="PUBLIC">Công khai</option>
+                  <option value="PUBLIC">Công khai sau khi duyệt</option>
                   <option value="PRIVATE">Riêng tư</option>
                 </select>
               </label>
             </div>
+
+            <label className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-700">
+              <span className="flex min-w-0 items-center gap-3">
+                {form.allowComments ? <MessageCircle className="h-5 w-5 shrink-0 text-emerald-700" /> : <MessageCircleOff className="h-5 w-5 shrink-0 text-amber-700" />}
+                <span>
+                  <span className="block">Cho phép bình luận</span>
+                  <span className="block text-xs font-semibold text-slate-500">Có thể tắt khi đăng bài hoặc đổi lại trong trang Blog của tôi.</span>
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={form.allowComments}
+                onChange={(event) => update("allowComments", event.target.checked)}
+                className="h-5 w-5 rounded border-slate-300 text-emerald-700 focus:ring-emerald-500"
+              />
+            </label>
 
             <label className={labelClass}>
               <span>Tóm tắt</span>
@@ -114,7 +138,7 @@ export function UserBlogFormPage() {
 
             <div>
               <button disabled={saving} className="rounded-xl bg-emerald-700 px-6 py-3 text-sm font-black text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60">
-                {saving ? "Đang lưu..." : editing ? "Cập nhật bài blog" : "Đăng bài blog"}
+                {saving ? "Đang lưu..." : editing ? "Gửi duyệt bản cập nhật" : "Gửi duyệt bài blog"}
               </button>
             </div>
           </form>

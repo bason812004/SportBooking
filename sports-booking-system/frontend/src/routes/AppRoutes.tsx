@@ -26,6 +26,8 @@ import { UserBookingsPage } from "../pages/user/UserBookingsPage";
 import { UserBookingDetailPage } from "../pages/user/UserBookingDetailPage";
 import { UserVouchersPage } from "../pages/user/UserVouchersPage";
 import { UserTeammatesPage } from "../pages/user/UserTeammatesPage";
+import { UserJoinedGroupsPage } from "../pages/user/UserJoinedGroupsPage";
+import { TeamGroupChatPage } from "../pages/user/TeamGroupChatPage";
 import { UserBlogsPage } from "../pages/user/UserBlogsPage";
 import { UserBlogFormPage } from "../pages/user/UserBlogFormPage";
 import { PartnerDashboardPage } from "../pages/partner/PartnerDashboardPage";
@@ -86,10 +88,13 @@ export function AppRoutes() {
           <Route path="user/teammates/:id/edit" element={<TeammateCreatePage />} />
           <Route path="booking/:courtId" element={<BookingPage />} />
           <Route path="payment/:paymentId" element={<PaymentPage />} />
+          <Route path="user/profile" element={<UserProfilePage />} />
           <Route path="user/bookings" element={<UserBookingsPage />} />
           <Route path="user/bookings/:id" element={<UserBookingDetailPage />} />
           <Route path="user/vouchers" element={<UserVouchersPage />} />
           <Route path="user/teammates" element={<UserTeammatesPage />} />
+          <Route path="user/team-groups" element={<UserJoinedGroupsPage />} />
+          <Route path="user/team-groups/:id/chat" element={<TeamGroupChatPage />} />
           <Route path="user/blogs" element={<UserBlogsPage />} />
           <Route path="user/blogs/create" element={<UserBlogFormPage />} />
           <Route path="user/blogs/:id/edit" element={<UserBlogFormPage />} />

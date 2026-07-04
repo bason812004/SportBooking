@@ -7,6 +7,7 @@ import { validate } from "../../middlewares/validate.middleware.js";
 import {
   courtWriteSchema,
   bookingQuerySchema,
+  blogCommentsToggleSchema,
   blogWriteSchema,
   calendarQuerySchema,
   imageSchema,
@@ -58,6 +59,7 @@ partnerRoutes.get("/blogs", partnerController.blogs);
 partnerRoutes.post("/blogs", validate(blogWriteSchema), partnerController.createBlog);
 partnerRoutes.get("/blogs/:id", partnerController.blogDetail);
 partnerRoutes.put("/blogs/:id", validate(blogWriteSchema), partnerController.updateBlog);
+partnerRoutes.patch("/blogs/:id/comments", validate(blogCommentsToggleSchema), partnerController.updateBlogComments);
 partnerRoutes.put("/blogs/:id/submit", partnerController.submitBlog);
 partnerRoutes.delete("/blogs/:id", partnerController.deleteBlog);
 partnerRoutes.get("/tournaments", partnerController.tournaments);

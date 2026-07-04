@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Edit3, Plus, UsersRound } from "lucide-react";
+import { Edit3, MessageCircle, Plus, UsersRound } from "lucide-react";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { useMyTeamPosts } from "../../features/content/hooks/useContent";
 
@@ -21,10 +21,16 @@ export function UserTeammatesPage() {
             <p className="text-sm font-black uppercase tracking-[0.16em] text-emerald-700">Tài khoản</p>
             <h1 className="mt-2 text-4xl font-black">Bài tìm đồng đội của tôi</h1>
           </div>
-          <Link to="/teammates/create" className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black text-white hover:bg-emerald-800">
-            <Plus className="h-4 w-4" />
-            Đăng bài mới
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link to="/user/team-groups" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-black text-slate-800 hover:bg-slate-50">
+              <MessageCircle className="h-4 w-4" />
+              Nhóm đã tham gia
+            </Link>
+            <Link to="/teammates/create" className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-sm font-black text-white hover:bg-emerald-800">
+              <Plus className="h-4 w-4" />
+              Đăng bài mới
+            </Link>
+          </div>
         </div>
 
         {!posts.data?.length ? (
