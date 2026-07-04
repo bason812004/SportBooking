@@ -37,6 +37,16 @@ export const contentApi = {
     return repairObject(data.data);
   },
 
+  async updateBlogComment(slug: string, commentId: string, content: string) {
+    const { data } = await api.put<ApiResponse<BlogComment>>(`/blogs/${slug}/comments/${commentId}`, { content });
+    return repairObject(data.data);
+  },
+
+  async deleteBlogComment(slug: string, commentId: string) {
+    const { data } = await api.delete<ApiResponse<any>>(`/blogs/${slug}/comments/${commentId}`);
+    return repairObject(data.data);
+  },
+
   async myBlogs() {
     const { data } = await api.get<ApiResponse<BlogPost[]>>("/blogs/me");
     return repairObject(data.data);

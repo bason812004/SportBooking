@@ -12,6 +12,7 @@ enum UserRole {
   USER
   PARTNER
   ADMIN
+  RECIPIENT
 
   @@map("user_role")
 }
@@ -251,7 +252,11 @@ model User {
   status        AccountStatus @default(ACTIVE)
   createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz
   updatedAt     DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  partnerId       String?       @map("partner_id") @db.Uuid
+  managedCourtId  String?       @map("managed_court_id") @db.Uuid
 
+  partner                 PartnerProfile? @relation("PartnerRecipients", fields: [partnerId], references: [id], onDelete: Cascade)
+  managedCourt            Court?          @relation("CourtRecipient", fields: [managedCourtId], references: [id], onDelete: SetNull)
   partnerProfile          PartnerProfile?
   bookings                Booking[]
   payments                Payment[]
@@ -335,6 +340,7 @@ model PartnerProfile {
   vouchers               Voucher[]
   tournaments            Tournament[]
   analyticsEvents        AnalyticsEvent[]
+  recipients             User[]                  @relation("PartnerRecipients")
 
   @@index([userId], map: "idx_partner_profiles_user_id")
   @@index([approvalStatus], map: "idx_partner_profiles_approval_status")
@@ -407,6 +413,7 @@ model Court {
   demandFeatures      DemandFeature[]
   vouchers            Voucher[]
   tournaments         Tournament[]
+  recipients          User[]            @relation("CourtRecipient")
 
   @@index([partnerId], map: "idx_courts_partner_id")
   @@index([categoryId], map: "idx_courts_category_id")

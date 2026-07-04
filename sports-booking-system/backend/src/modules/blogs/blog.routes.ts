@@ -3,7 +3,7 @@ import { authMiddleware } from "../../middlewares/auth.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
 import { blogCommentController } from "./blogComment.controller.js";
 import { blogController } from "./blog.controller.js";
-import { blogCommentSchema, blogCommentsToggleSchema, blogSlugParamsSchema, blogWriteSchema, myBlogParamsSchema } from "./blog.validation.js";
+import { blogCommentParamsSchema, blogCommentSchema, blogCommentsToggleSchema, blogSlugParamsSchema, blogWriteSchema, myBlogParamsSchema } from "./blog.validation.js";
 
 export const blogRoutes = Router();
 
@@ -16,4 +16,6 @@ blogRoutes.patch("/me/:id/comments", authMiddleware, validate(blogCommentsToggle
 blogRoutes.delete("/me/:id", authMiddleware, validate(myBlogParamsSchema), blogController.deleteMine);
 blogRoutes.get("/:slug/comments", validate(blogSlugParamsSchema), blogCommentController.list);
 blogRoutes.post("/:slug/comments", authMiddleware, validate(blogCommentSchema), blogCommentController.create);
+blogRoutes.put("/:slug/comments/:commentId", authMiddleware, validate(blogCommentParamsSchema.merge(blogCommentSchema.pick({ body: true }))), blogCommentController.update);
+blogRoutes.delete("/:slug/comments/:commentId", authMiddleware, validate(blogCommentParamsSchema), blogCommentController.delete);
 blogRoutes.get("/:slug", blogController.detail);

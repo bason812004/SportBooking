@@ -290,3 +290,14 @@ create trigger trg_team_post_messages_updated_at
 create index if not exists idx_team_post_members_post_id on team_post_members(post_id);
 create index if not exists idx_team_post_members_user_id on team_post_members(user_id);
 create index if not exists idx_team_post_messages_post_created on team_post_messages(post_id, created_at desc);
+
+-- Source: database\09_court_deposit_percent.sql
+alter table courts
+  add column if not exists deposit_percent numeric(5, 2) null;
+
+alter table courts
+  drop constraint if exists courts_deposit_percent_check;
+
+alter table courts
+  add constraint courts_deposit_percent_check
+  check (deposit_percent is null or (deposit_percent >= 0 and deposit_percent < 50));

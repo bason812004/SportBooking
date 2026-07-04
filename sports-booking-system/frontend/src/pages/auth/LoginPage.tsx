@@ -16,7 +16,10 @@ import { useLanguage } from "../../lib/i18n";
 type FormValues = z.infer<typeof loginSchema>;
 
 function redirectPath(role: AuthSession["user"]["role"]) {
-  return role === "ADMIN" ? "/admin/dashboard" : role === "PARTNER" ? "/partner/dashboard" : "/courts";
+  if (role === "ADMIN") return "/admin/dashboard";
+  if (role === "PARTNER") return "/partner/dashboard";
+  if (role === "RECIPIENT") return "/recipient/dashboard";
+  return "/courts";
 }
 
 export function LoginPage({ mode = "user" }: { mode?: "user" | "partner" }) {
@@ -31,11 +34,11 @@ export function LoginPage({ mode = "user" }: { mode?: "user" | "partner" }) {
   });
 
   function applySession(session: AuthSession) {
-    if (isPartner && session.user.role !== "PARTNER") {
-      toast.error("Tài khoản này không phải tài khoản đối tác.");
+    if (isPartner && session.user.role !== "PARTNER" && session.user.role !== "RECIPIENT") {
+      toast.error("Tài khoản này không phải tài khoản đối tác hoặc nhân viên.");
       return;
     }
-    if (!isPartner && session.user.role === "PARTNER") {
+    if (!isPartner && (session.user.role === "PARTNER" || session.user.role === "RECIPIENT")) {
       toast.error("Vui lòng đăng nhập tại cổng dành cho đối tác.");
       navigate(`/partner/login?email=${encodeURIComponent(session.user.email)}`);
       return;

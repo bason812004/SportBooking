@@ -19,6 +19,7 @@ type FormValues = {
   ward?: string;
   openingTime: string;
   closingTime: string;
+  depositPercent?: number | null;
   images?: FileList;
 };
 
@@ -48,7 +49,8 @@ export function PartnerCourtFormPage() {
       district: court.data.district,
       ward: court.data.ward ?? "",
       openingTime: timeValue(court.data.openingTime),
-      closingTime: timeValue(court.data.closingTime)
+      closingTime: timeValue(court.data.closingTime),
+      depositPercent: court.data.depositPercent ?? null
     });
   }, [court.data, form]);
 
@@ -87,6 +89,23 @@ export function PartnerCourtFormPage() {
         <Input label="Phường/Xã" {...form.register("ward")} />
         <Input label="Giờ mở cửa" type="time" {...form.register("openingTime", { required: true })} />
         <Input label="Giờ đóng cửa" type="time" {...form.register("closingTime", { required: true })} />
+        <Input
+          label="% cọc giữ sân"
+          type="number"
+          min={0}
+          max={49.99}
+          step={0.01}
+          placeholder="Bỏ trống nếu không cần cọc"
+          {...form.register("depositPercent", {
+            setValueAs: (value) => value === "" || value == null ? null : Number(value),
+            min: { value: 0, message: "Cọc không được âm" },
+            max: { value: 49.99, message: "Cọc phải dưới 50%" }
+          })}
+          error={form.formState.errors.depositPercent?.message}
+        />
+        <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-sm text-emerald-800">
+          Nhập từ 1 đến dưới 50% nếu sân cần cọc. Bỏ trống hoặc nhập 0 thì khách có thể chọn thanh toán tại sân.
+        </div>
         <label className="grid gap-1 text-sm font-medium md:col-span-2">
           Mô tả
           <textarea className="min-h-28 rounded-md border border-line p-3" {...form.register("description")} />

@@ -27,6 +27,6 @@ export type BookingQuoteInput = {
 };
 
 export type BookingCheckoutInput = BookingQuoteInput & {
-  paymentType: "DEPOSIT" | "FULL_PAYMENT";
+  paymentType: "DEPOSIT" | "FULL_PAYMENT" | "PAY_AT_COURT";
   note?: string;
 };

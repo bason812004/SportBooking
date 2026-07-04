@@ -1,4 +1,4 @@
-import { NotFoundError } from "../../shared/errors/AppError.js";
+import { NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { courtRepository } from "../courts/court.repository.js";
 import { reviewRepository } from "./review.repository.js";
 
@@ -27,5 +27,30 @@ export const reviewService = {
     });
     if (!created) throw new NotFoundError("Khong the tao danh gia");
     return created;
+  },
+
+  async update(id: string, userId: string, role: string, input: { rating: number; comment?: string | null }) {
+    const [review] = await reviewRepository.findById(id);
+    if (!review) throw new NotFoundError("Khong tim thay danh gia");
+
+    if (review.user.id !== userId && role !== "ADMIN") {
+      throw new ValidationError("Ban khong co quyen chinh sua danh gia nay");
+    }
+
+    const [updated] = await reviewRepository.update(id, input);
+    if (!updated) throw new NotFoundError("Khong the cap nhat danh gia");
+    return updated;
+  },
+
+  async delete(id: string, userId: string, role: string) {
+    const [review] = await reviewRepository.findById(id);
+    if (!review) throw new NotFoundError("Khong tim thay danh gia");
+
+    if (review.user.id !== userId && role !== "ADMIN") {
+      throw new ValidationError("Ban khong co quyen xoa danh gia nay");
+    }
+
+    await reviewRepository.delete(id);
+    return { deleted: true };
   }
 };

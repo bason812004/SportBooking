@@ -1,4 +1,4 @@
-export type Role = "USER" | "PARTNER" | "ADMIN";
+export type Role = "USER" | "PARTNER" | "ADMIN" | "RECIPIENT";
 
 export type ApiResponse<T> = {
   success: boolean;
@@ -54,6 +54,7 @@ export type Court = {
   courtCount?: number;
   priceNote?: string;
   goldenPriceNote?: string;
+  depositPercent?: number | null;
   articleContent?: string;
   directions?: string;
   surfaceInfo?: string;

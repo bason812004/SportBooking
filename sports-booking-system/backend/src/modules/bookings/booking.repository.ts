@@ -9,6 +9,17 @@ function generateShortId(prefix: string): string {
   return `${prefix}${rand}${time}`.slice(0, 20);
 }
 
+let depositColumnReady = false;
+
+async function ensureCourtDepositColumn() {
+  if (depositColumnReady) return;
+  await prisma.$executeRaw`
+    alter table courts
+    add column if not exists deposit_percent numeric(5, 2) null
+  `;
+  depositColumnReady = true;
+}
+
 export const bookingRepository = {
   findById(id: string) {
     return prisma.booking.findUnique({
@@ -77,6 +88,17 @@ export const bookingRepository = {
       where: { id, approvalStatus: "APPROVED", activeStatus: "ACTIVE" },
       include: { prices: true, services: true, images: { orderBy: { sortOrder: "asc" } } }
     });
+  },
+
+  async courtDepositPercent(id: string) {
+    await ensureCourtDepositColumn();
+    const [row] = await prisma.$queryRaw<Array<{ depositPercent: number | null }>>`
+      select deposit_percent::float as "depositPercent"
+      from courts
+      where id = ${id}
+      limit 1
+    `;
+    return Number(row?.depositPercent ?? 0);
   },
 
   services(ids: string[]) {
@@ -309,6 +331,97 @@ export const bookingRepository = {
         });
 
         return { conflict: false as const, booking, payment };
+      },
+      { isolationLevel: "Serializable" }
+    );
+  },
+
+  createPayAtCourtCheckout(input: {
+    bookingCode: string;
+    userId: string;
+    courtId: string;
+    bookingDate: string;
+    slots: Array<{ startTime: string; endTime: string; price: number }>;
+    services: Array<{ serviceId: string; quantity: number; price: number }>;
+    courtSubtotal: number;
+    subtotal: number;
+    voucherDiscountAmount: number;
+    totalAmount: number;
+    voucherId?: string;
+    note?: string;
+  }) {
+    return prisma.$transaction(
+      async (tx) => {
+        const conflicts = await this.findConflictsInTransaction(tx, input.courtId, input.bookingDate, input.slots);
+        if (conflicts.some(Boolean)) return { conflict: true as const };
+
+        const sortedSlots = [...input.slots].sort((left, right) => left.startTime.localeCompare(right.startTime));
+        const firstSlot = sortedSlots[0];
+        const lastSlot = sortedSlots[sortedSlots.length - 1];
+        const bookingId = generateShortId("bk");
+        const booking = await tx.booking.create({
+          data: {
+            id: bookingId,
+            bookingCode: input.bookingCode,
+            userId: input.userId,
+            courtId: input.courtId,
+            bookingDate: toDbDate(input.bookingDate),
+            startTime: timeToDate(firstSlot.startTime),
+            endTime: timeToDate(lastSlot.endTime),
+            basePrice: input.courtSubtotal,
+            dynamicAdjustmentAmount: 0,
+            subtotal: input.subtotal,
+            voucherDiscountAmount: input.voucherDiscountAmount,
+            totalPrice: input.totalAmount,
+            depositAmount: 0,
+            paymentMethod: "CASH",
+            paymentStatus: "UNPAID",
+            bookingStatus: "CONFIRMED",
+            note: input.note,
+            bookingSlots: {
+              create: sortedSlots.map((slot) => ({
+                courtId: input.courtId,
+                bookingDate: toDbDate(input.bookingDate),
+                startTime: timeToDate(slot.startTime),
+                endTime: timeToDate(slot.endTime),
+                slotPrice: slot.price
+              }))
+            },
+            bookingServices: {
+              create: input.services.map((service) => ({
+                id: generateShortId("bs"),
+                serviceId: service.serviceId,
+                quantity: service.quantity,
+                price: service.price
+              }))
+            }
+          },
+          include: { court: true, bookingSlots: true, bookingServices: { include: { service: true } } }
+        });
+
+        if (input.voucherId && input.voucherDiscountAmount > 0) {
+          const voucherUpdate = await tx.voucher.updateMany({
+            where: {
+              id: input.voucherId,
+              status: "ACTIVE",
+              OR: [{ usageLimit: null }, { usedCount: { lt: tx.voucher.fields.usageLimit } }]
+            },
+            data: { usedCount: { increment: 1 } }
+          });
+          if (voucherUpdate.count !== 1) {
+            throw new ValidationError("Voucher da het luot su dung");
+          }
+          await tx.bookingVoucher.create({
+            data: {
+              id: generateShortId("bv"),
+              bookingId: booking.id,
+              voucherId: input.voucherId,
+              discountAmount: input.voucherDiscountAmount
+            }
+          });
+        }
+
+        return { conflict: false as const, booking };
       },
       { isolationLevel: "Serializable" }
     );

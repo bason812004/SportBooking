@@ -4,7 +4,6 @@ import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from ".
 import { paginationMeta } from "../../shared/utils/response.js";
 import { bookingStartsAt, durationHours, parseLimit, parsePage, timeToDate, timeToMinutes, toDbDate } from "../../shared/utils/time.js";
 import { courtRepository } from "../courts/court.repository.js";
-import { commissionService } from "../commission/commission.service.js";
 import { trackEvent } from "../analytics/analytics.service.js";
 import { demandPredictionService } from "../demand-prediction/demandPrediction.service.js";
 import { dynamicPricingService } from "../dynamic-pricing/dynamicPricing.service.js";
@@ -113,7 +112,8 @@ async function buildQuote(userId, input) {
         voucherDiscountAmount = voucherResult.discountAmount;
         voucherId = voucherResult.voucherId;
     }
-    const quote = calculateBookingQuote(pricedSlots, voucherDiscountAmount, servicesSubtotal);
+    const depositPercent = await bookingRepository.courtDepositPercent(input.courtId);
+    const quote = calculateBookingQuote(pricedSlots, voucherDiscountAmount, servicesSubtotal, depositPercent);
     return {
         court: {
             id: court.id,
@@ -127,6 +127,8 @@ async function buildQuote(userId, input) {
         courtSubtotal,
         servicesSubtotal,
         voucherId,
+        depositPercent,
+        requiresDeposit: depositPercent > 0,
         currency: "VND",
         quoteExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
         ...quote
@@ -138,8 +140,43 @@ export const bookingService = {
     },
     async checkout(userId, input) {
         const quote = await buildQuote(userId, input);
-        if (!canCreateBookingCheckout({ totalAmount: quote.totalAmount, paymentType: input.paymentType })) {
+        if (!canCreateBookingCheckout({ totalAmount: quote.totalAmount, paymentType: input.paymentType, depositPercent: quote.depositPercent })) {
             throw new ValidationError("Lua chon thanh toan khong hop le");
+        }
+        if (input.paymentType === "PAY_AT_COURT") {
+            const result = await bookingRepository.createPayAtCourtCheckout({
+                bookingCode: bookingCode(),
+                userId,
+                courtId: input.courtId,
+                bookingDate: input.bookingDate,
+                slots: quote.slots,
+                services: quote.services,
+                courtSubtotal: quote.courtSubtotal,
+                subtotal: quote.subtotal,
+                voucherDiscountAmount: quote.voucherDiscountAmount,
+                totalAmount: quote.totalAmount,
+                voucherId: quote.voucherId,
+                note: input.note
+            });
+            if (result.conflict)
+                throw new ConflictError("Mot hoac nhieu khung gio vua duoc dat boi nguoi khac", "BOOKING_CONFLICT");
+            realtimeService.toUser(userId, realtimeEvents.bookingCreated, result.booking);
+            realtimeService.toCourt(input.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: input.courtId, bookingDate: input.bookingDate });
+            return {
+                bookingId: result.booking.id,
+                paymentId: null,
+                bookingStatus: result.booking.bookingStatus,
+                paymentStatus: result.booking.paymentStatus,
+                paymentType: input.paymentType,
+                totalAmount: quote.totalAmount,
+                paymentAmount: 0,
+                remainingAmount: quote.totalAmount,
+                qrCodeUrl: null,
+                qrPayload: null,
+                paymentReference: "",
+                expiresAt: null,
+                providerConfigured: true
+            };
         }
         const paymentAmount = input.paymentType === "DEPOSIT" ? quote.minimumDepositAmount : quote.totalAmount;
         const remainingAmount = quote.totalAmount - paymentAmount;
@@ -277,7 +314,7 @@ export const bookingService = {
             };
         }
         const totalPrice = subtotal - voucherDiscountAmount;
-        const depositRate = await commissionService.depositRate();
+        const depositPercent = await bookingRepository.courtDepositPercent(input.courtId);
         const booking = await bookingRepository.createWithServices({
             bookingCode: bookingCode(),
             userId,
@@ -290,7 +327,7 @@ export const bookingService = {
             subtotal,
             voucherDiscountAmount,
             totalPrice,
-            depositAmount: Math.round(totalPrice * (depositRate / 100) * 100) / 100,
+            depositAmount: Math.round(totalPrice * (depositPercent / 100) * 100) / 100,
             paymentMethod: input.paymentMethod,
             voucherId,
             note: input.note,

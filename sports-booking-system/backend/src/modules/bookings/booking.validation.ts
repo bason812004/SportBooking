@@ -45,7 +45,7 @@ export const bookingCheckoutSchema = z.object({
     services: z.array(bookingServiceSchema).default([]),
     voucherId: z.string().min(1).optional(),
     voucherCode: z.string().min(2).max(40).optional(),
-    paymentType: z.enum(["DEPOSIT", "FULL_PAYMENT"]),
+    paymentType: z.enum(["DEPOSIT", "FULL_PAYMENT", "PAY_AT_COURT"]),
     note: z.string().max(500).optional()
   })
 });

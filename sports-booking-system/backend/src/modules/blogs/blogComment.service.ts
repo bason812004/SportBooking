@@ -19,5 +19,32 @@ export const blogCommentService = {
     const [comment] = await blogCommentRepository.create(post.id, userId, content);
     if (!comment) throw new NotFoundError("Khong the tao binh luan");
     return comment;
+  },
+
+  async update(slug: string, commentId: string, userId: string, role: string, content: string) {
+    await requirePublishedPost(slug);
+    const [comment] = await blogCommentRepository.findById(commentId);
+    if (!comment) throw new NotFoundError("Khong tim thay binh luan");
+
+    if (comment.user.id !== userId && role !== "ADMIN") {
+      throw new ValidationError("Ban khong co quyen chinh sua binh luan nay");
+    }
+
+    const [updated] = await blogCommentRepository.update(commentId, content);
+    if (!updated) throw new NotFoundError("Khong the cap nhat binh luan");
+    return updated;
+  },
+
+  async delete(slug: string, commentId: string, userId: string, role: string) {
+    await requirePublishedPost(slug);
+    const [comment] = await blogCommentRepository.findById(commentId);
+    if (!comment) throw new NotFoundError("Khong tim thay binh luan");
+
+    if (comment.user.id !== userId && role !== "ADMIN") {
+      throw new ValidationError("Ban khong co quyen xoa binh luan nay");
+    }
+
+    await blogCommentRepository.delete(commentId);
+    return { deleted: true };
   }
 };

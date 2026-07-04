@@ -49,7 +49,7 @@ export function BookingPage() {
   const [selectedSlots, setSelectedSlots] = useState<BookingSlotPayload[]>(initialSlots);
   const [voucherInput, setVoucherInput] = useState("");
   const [appliedVoucher, setAppliedVoucher] = useState<VoucherValidateResult | null>(null);
-  const [paymentType, setPaymentType] = useState<"DEPOSIT" | "FULL_PAYMENT">("DEPOSIT");
+  const [paymentType, setPaymentType] = useState<"DEPOSIT" | "FULL_PAYMENT" | "PAY_AT_COURT">("PAY_AT_COURT");
   const [note, setNote] = useState("");
   const [agreedToPolicies, setAgreedToPolicies] = useState(false);
 
@@ -88,8 +88,15 @@ export function BookingPage() {
   const subtotal = appliedVoucher?.subtotal ?? quote.data?.subtotal ?? courtSubtotal;
   const discount = appliedVoucher?.discountAmount ?? quote.data?.voucherDiscountAmount ?? 0;
   const finalTotal = appliedVoucher?.finalTotal ?? quote.data?.totalAmount ?? subtotal;
-  const minimumDeposit = quote.data?.minimumDepositAmount ?? Math.ceil(finalTotal * 0.5);
-  const paymentAmount = paymentType === "DEPOSIT" ? minimumDeposit : finalTotal;
+  const minimumDeposit = quote.data?.minimumDepositAmount ?? 0;
+  const requiresDeposit = Boolean(quote.data?.requiresDeposit);
+  const depositPercent = quote.data?.depositPercent ?? 0;
+  const paymentAmount = paymentType === "DEPOSIT" ? minimumDeposit : paymentType === "PAY_AT_COURT" ? 0 : finalTotal;
+
+  useEffect(() => {
+    if (!quote.data) return;
+    setPaymentType(quote.data.requiresDeposit ? "DEPOSIT" : "PAY_AT_COURT");
+  }, [quote.data]);
 
   function toggleSlot(slot: BookingSlotPayload) {
     setSelectedSlots((current) => {
@@ -141,7 +148,8 @@ export function BookingPage() {
     },
     onSuccess: (result) => {
       toast.success(`Đặt sân thành công. Tổng thanh toán: ${formatCurrency(result.totalAmount)}.`);
-      navigate(`/payment/${result.paymentId}`);
+      if (result.paymentId) navigate(`/payment/${result.paymentId}`);
+      else navigate(`/user/bookings/${result.bookingId}`);
     },
     onError: (error) => toast.error(error.message || "Không thể tạo đơn đặt sân.")
   });
@@ -231,7 +239,11 @@ export function BookingPage() {
 
             <SectionCard icon={CreditCard} title="Thanh toán và ghi chú" subtitle="Chọn cách thanh toán qua QR và để lại ghi chú ngắn cho chủ sân nếu cần.">
               <div className="grid gap-3 sm:grid-cols-2">
-                <PaymentChoice active={paymentType === "DEPOSIT"} title="Đặt cọc 50%" description="Giữ sân trước, thanh toán phần còn lại tại sân." onClick={() => setPaymentType("DEPOSIT")} />
+                {requiresDeposit ? (
+                  <PaymentChoice active={paymentType === "DEPOSIT"} title={`Đặt cọc ${depositPercent}%`} description="Giữ sân trước, thanh toán phần còn lại tại sân." onClick={() => setPaymentType("DEPOSIT")} />
+                ) : (
+                  <PaymentChoice active={paymentType === "PAY_AT_COURT"} title="Thanh toán tại sân" description="Không cần qua trang thanh toán, trả tiền trực tiếp tại sân." onClick={() => setPaymentType("PAY_AT_COURT")} />
+                )}
                 <PaymentChoice active={paymentType === "FULL_PAYMENT"} title="Thanh toán toàn bộ" description="Hoàn tất toàn bộ chi phí ngay bằng QR." onClick={() => setPaymentType("FULL_PAYMENT")} />
               </div>
               <textarea
@@ -282,7 +294,11 @@ export function BookingPage() {
                 <p className="text-xs font-bold uppercase tracking-wide text-emerald-200">Tổng thanh toán</p>
                 <p className="mt-1 text-3xl font-black">{formatCurrency(finalTotal)}</p>
                 <p className="mt-1 text-xs text-slate-300">
-                  {paymentType === "DEPOSIT" ? `Thanh toán trước ${formatCurrency(paymentAmount)}, còn ${formatCurrency(Math.max(0, finalTotal - paymentAmount))} tại sân.` : "Thanh toán toàn bộ bằng QR."}
+                  {paymentType === "DEPOSIT"
+                    ? `Thanh toán trước ${formatCurrency(paymentAmount)}, còn ${formatCurrency(Math.max(0, finalTotal - paymentAmount))} tại sân.`
+                    : paymentType === "PAY_AT_COURT"
+                      ? "Thanh toán trực tiếp tại sân, không cần quét QR."
+                      : "Thanh toán toàn bộ bằng QR."}
                 </p>
               </div>
 

@@ -39,26 +39,32 @@ export function validateSelectedSlots(slots: SlotInput[]) {
   });
 }
 
-export function calculateBookingQuote(slots: PricedSlot[], voucherDiscountAmount = 0, extraSubtotal = 0) {
+export function calculateBookingQuote(slots: PricedSlot[], voucherDiscountAmount = 0, extraSubtotal = 0, depositPercent = 50) {
   const subtotal = slots.reduce((sum, slot) => sum + slot.price, 0) + extraSubtotal;
   const discount = Math.min(Math.max(voucherDiscountAmount, 0), subtotal);
   const totalAmount = subtotal - discount;
+  const minimumDepositAmount = calculateMinimumDeposit(totalAmount, depositPercent);
   return {
     subtotal,
     voucherDiscountAmount: discount,
     totalAmount,
-    minimumDepositAmount: calculateMinimumDeposit(totalAmount),
-    remainingAmount: totalAmount - calculateMinimumDeposit(totalAmount)
+    minimumDepositAmount,
+    remainingAmount: totalAmount - minimumDepositAmount
   };
 }
 
-export function calculateMinimumDeposit(totalAmount: number) {
-  return Math.ceil(totalAmount * 0.5);
+export function calculateMinimumDeposit(totalAmount: number, depositPercent = 50) {
+  if (depositPercent <= 0) return 0;
+  return Math.ceil(totalAmount * (depositPercent / 100));
 }
 
-export function canCreateBookingCheckout(input: { totalAmount: number; paymentType: "DEPOSIT" | "FULL_PAYMENT" }) {
+export function canCreateBookingCheckout(input: { totalAmount: number; paymentType: "DEPOSIT" | "FULL_PAYMENT" | "PAY_AT_COURT"; depositPercent?: number }) {
   if (input.totalAmount <= 0) return false;
-  return input.paymentType === "DEPOSIT" || input.paymentType === "FULL_PAYMENT";
+  const requiresDeposit = Number(input.depositPercent ?? 0) > 0;
+  if (input.paymentType === "FULL_PAYMENT") return true;
+  if (input.paymentType === "DEPOSIT") return requiresDeposit;
+  if (input.paymentType === "PAY_AT_COURT") return !requiresDeposit;
+  return false;
 }
 
 export function expirePendingPaymentAndReleaseSlots(expiresAt: Date, now = new Date()) {

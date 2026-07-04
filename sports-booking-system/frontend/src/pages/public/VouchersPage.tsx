@@ -115,7 +115,7 @@ export function VouchersPage() {
               </div>
               <h1 className="mt-5 max-w-2xl text-4xl font-black tracking-tight md:text-5xl">Voucher đặt sân hôm nay</h1>
               <p className="mt-3 max-w-2xl text-slate-300">
-                Nhận voucher vào kho cá nhân, sau đó áp dụng khi đặt sân. Voucher đã nhận sẽ được khóa nút để tránh nhận trùng.
+                Nhận voucher vào kho cá nhân, sau đó áp dụng khi đặt sân. 
               </p>
             </div>
             <div className="rounded-3xl bg-white/10 px-6 py-4 text-center">

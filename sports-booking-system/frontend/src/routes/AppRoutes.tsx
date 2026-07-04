@@ -30,6 +30,10 @@ import { UserJoinedGroupsPage } from "../pages/user/UserJoinedGroupsPage";
 import { TeamGroupChatPage } from "../pages/user/TeamGroupChatPage";
 import { UserBlogsPage } from "../pages/user/UserBlogsPage";
 import { UserBlogFormPage } from "../pages/user/UserBlogFormPage";
+import { RecipientDashboardPage } from "../pages/recipient/RecipientDashboardPage";
+import { RecipientBookingsPage } from "../pages/recipient/RecipientBookingsPage";
+import { RecipientCalendarPage } from "../pages/recipient/RecipientCalendarPage";
+import { PartnerStaffPage } from "../pages/partner/PartnerStaffPage";
 import { PartnerDashboardPage } from "../pages/partner/PartnerDashboardPage";
 import { PartnerCourtsPage } from "../pages/partner/PartnerCourtsPage";
 import { PartnerCourtFormPage } from "../pages/partner/PartnerCourtFormPage";
@@ -123,6 +127,15 @@ export function AppRoutes() {
           <Route path="partner/calendar" element={<PartnerCalendarPage />} />
           <Route path="partner/statistics" element={<PartnerStatisticsPage />} />
           <Route path="partner/settings" element={<PartnerSettingsPage />} />
+          <Route path="partner/staff" element={<PartnerStaffPage />} />
+        </Route>
+      </Route>
+
+      <Route element={<ProtectedRoute roles={["RECIPIENT"]} />}>
+        <Route element={<DashboardLayout />}>
+          <Route path="recipient/dashboard" element={<RecipientDashboardPage />} />
+          <Route path="recipient/bookings" element={<RecipientBookingsPage />} />
+          <Route path="recipient/calendar" element={<RecipientCalendarPage />} />
         </Route>
       </Route>
 

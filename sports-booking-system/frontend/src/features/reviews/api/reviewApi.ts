@@ -11,5 +11,13 @@ export const reviewApi = {
   async report(payload: { courtId: string; reason: string; description?: string }) {
     const { data } = await api.post<ApiResponse<unknown>>("/reports", payload);
     return data.data;
+  },
+  async update(id: string, payload: { rating: number; comment?: string | null }) {
+    const { data } = await api.put<ApiResponse<CourtReview>>(`/reviews/${id}`, payload);
+    return data.data;
+  },
+  async delete(id: string) {
+    const { data } = await api.delete<ApiResponse<{ deleted: boolean }>>(`/reviews/${id}`);
+    return data.data;
   }
 };

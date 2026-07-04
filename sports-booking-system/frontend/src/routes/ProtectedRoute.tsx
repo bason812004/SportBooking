@@ -7,8 +7,8 @@ export function ProtectedRoute({ roles }: { roles?: Role[] }) {
   const location = useLocation();
 
   if (!isAuthenticated) {
-    const isPartnerRoute = location.pathname.startsWith("/partner");
-    return <Navigate to={isPartnerRoute ? "/partner/login" : "/login"} replace />;
+    const isPartnerOrRecipientRoute = location.pathname.startsWith("/partner") || location.pathname.startsWith("/recipient");
+    return <Navigate to={isPartnerOrRecipientRoute ? "/partner/login" : "/login"} replace />;
   }
   if (roles && !hasRole(roles)) return <Navigate to="/" replace />;
   return <Outlet />;

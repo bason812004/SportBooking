@@ -20,10 +20,12 @@ export function BlogDetailPage() {
   const post = useBlog(slug);
   const related = useBlogs();
   const comments = useBlogComments(slug);
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const queryClient = useQueryClient();
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
 
   if (post.isLoading) return <div className="px-4 py-16"><LoadingState /></div>;
   if (post.isError) return <div className="px-4 py-16"><ErrorState message={post.error.message} /></div>;
@@ -59,6 +61,30 @@ export function BlogDetailPage() {
       await queryClient.invalidateQueries({ queryKey: ["public-blog", slug] });
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleEditComment(commentId: string) {
+    if (!slug || !editText.trim()) return;
+    try {
+      await contentApi.updateBlogComment(slug, commentId, editText.trim());
+      setEditingId(null);
+      toast.success("Đã chỉnh sửa bình luận.");
+      await queryClient.invalidateQueries({ queryKey: ["blog-comments", slug] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không thể chỉnh sửa bình luận.");
+    }
+  }
+
+  async function handleDeleteComment(commentId: string) {
+    if (!slug) return;
+    if (!window.confirm("Bạn có chắc chắn muốn xóa bình luận này?")) return;
+    try {
+      await contentApi.deleteBlogComment(slug, commentId);
+      toast.success("Đã xóa bình luận.");
+      await queryClient.invalidateQueries({ queryKey: ["blog-comments", slug] });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không thể xóa bình luận.");
     }
   }
 
@@ -150,11 +176,50 @@ export function BlogDetailPage() {
                       <span className="grid h-11 w-11 place-items-center rounded-full bg-emerald-50 font-black text-emerald-800">{entry.user.fullName.slice(0, 1)}</span>
                     )}
                     <div>
-                      <p className="font-black">{entry.user.fullName}</p>
-                      <p className="text-sm text-slate-500">{new Date(entry.createdAt).toLocaleString("vi-VN")}</p>
+                      <p className="font-black text-slate-800">{entry.user.fullName}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {new Date(entry.createdAt).toLocaleString("vi-VN")}
+                        {entry.isEdited && <span className="ml-2 text-slate-400 font-normal italic">(đã chỉnh sửa)</span>}
+                      </p>
                     </div>
                   </div>
-                  <p className="mt-3 leading-7 text-slate-700">{entry.content}</p>
+                  {editingId === entry.id ? (
+                    <div className="mt-3 space-y-2">
+                      <textarea
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 p-3 text-sm focus:border-emerald-600 focus:ring-1 focus:ring-emerald-100 outline-none"
+                        maxLength={1000}
+                        rows={3}
+                      />
+                      <div className="flex gap-2 justify-end">
+                        <button
+                          type="button"
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
+                          onClick={() => setEditingId(null)}
+                        >
+                          Hủy
+                        </button>
+                        <button
+                          type="button"
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white"
+                          onClick={() => handleEditComment(entry.id)}
+                        >
+                          Lưu
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-3 leading-7 text-slate-700 whitespace-pre-wrap">{entry.content}</p>
+                  )}
+                  {isAuthenticated && (user?.id === entry.user.id || user?.role === "ADMIN" || item.author.id === user?.id) && editingId !== entry.id && (
+                    <div className="mt-2 flex gap-3 text-xs font-bold text-slate-500 justify-end">
+                      {user?.id === entry.user.id && (
+                        <button className="hover:text-emerald-700 transition" onClick={() => { setEditingId(entry.id); setEditText(entry.content); }}>Sửa</button>
+                      )}
+                      <button className="hover:text-red-700 transition" onClick={() => handleDeleteComment(entry.id)}>Xóa</button>
+                    </div>
+                  )}
                 </article>
               ))
             ) : (

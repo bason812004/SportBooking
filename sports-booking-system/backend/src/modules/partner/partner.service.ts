@@ -1,6 +1,6 @@
 import { BookingStatus } from "@prisma/client";
 import { prisma } from "../../config/db.js";
-import { ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
+import { ForbiddenError, NotFoundError, ValidationError, ConflictError } from "../../shared/errors/AppError.js";
 import { cloudinaryService } from "../../shared/services/cloudinary.service.js";
 import { paginationMeta } from "../../shared/utils/response.js";
 import { bookingStartsAt, parseLimit, parsePage, timeToDate, timeToMinutes, toDbDate } from "../../shared/utils/time.js";
@@ -9,6 +9,7 @@ import { commissionService } from "../commission/commission.service.js";
 import { voucherService } from "../vouchers/voucher.service.js";
 import { userRepository } from "../users/user.repository.js";
 import { partnerRepository } from "./partner.repository.js";
+import { hashPassword } from "../auth/auth.security.js";
 
 async function getProfile(userId: string) {
   const profile = await partnerRepository.profileByUser(userId);
@@ -99,20 +100,21 @@ export const partnerService = {
       closingTime: timeToDate(input.closingTime),
       approvalStatus: "PENDING",
       activeStatus: "ACTIVE"
-    });
+    }, input.depositPercent ?? null);
   },
 
   async updateCourt(userId: string, courtId: string, input: any) {
     const profile = await getProfile(userId);
     const existing = await partnerRepository.courtByPartner(courtId, profile.id);
     if (!existing) throw new NotFoundError("Khong tim thay san cua ban");
+    const { depositPercent, ...courtInput } = input;
     return partnerRepository.updateCourt(courtId, {
-      ...input,
-      slug: input.name ? uniqueSlug(input.name) : undefined,
-      openingTime: input.openingTime ? timeToDate(input.openingTime) : undefined,
-      closingTime: input.closingTime ? timeToDate(input.closingTime) : undefined,
+      ...courtInput,
+      slug: courtInput.name ? uniqueSlug(courtInput.name) : undefined,
+      openingTime: courtInput.openingTime ? timeToDate(courtInput.openingTime) : undefined,
+      closingTime: courtInput.closingTime ? timeToDate(courtInput.closingTime) : undefined,
       approvalStatus: "PENDING"
-    });
+    }, depositPercent ?? null);
   },
 
   async deactivateCourt(userId: string, courtId: string) {
@@ -419,6 +421,63 @@ export const partnerService = {
     if (!(await partnerRepository.deleteTournament(id, profile.id))) {
       throw new ValidationError("Chi co the xoa giai dau nhap");
     }
+    return { id };
+  },
+
+  async listRecipients(userId: string) {
+    const profile = await getProfile(userId);
+    return partnerRepository.listRecipients(profile.id);
+  },
+
+  async createRecipient(userId: string, input: any) {
+    const profile = await getProfile(userId);
+    const [localPart, domain] = profile.user.email.split("@");
+    const recipientEmail = `${localPart}+${input.emailSuffix.trim().toLowerCase()}@${domain}`;
+
+    const existing = await prisma.user.findUnique({ where: { email: recipientEmail } });
+    if (existing) throw new ConflictError("Email nhân viên đã tồn tại", "EMAIL_EXISTS");
+
+    const court = await partnerRepository.courtByPartner(input.managedCourtId, profile.id);
+    if (!court) throw new ValidationError("Sân được phân công không hợp lệ hoặc không thuộc về bạn");
+
+    const passwordHash = await hashPassword(input.password);
+    const created = await partnerRepository.createRecipient(profile.id, {
+      fullName: input.fullName.trim(),
+      email: recipientEmail,
+      passwordHash,
+      phone: input.phone,
+      managedCourtId: input.managedCourtId
+    });
+
+    return created;
+  },
+
+  async updateRecipient(userId: string, id: string, input: any) {
+    const profile = await getProfile(userId);
+    const recipient = await partnerRepository.findRecipient(id, profile.id);
+    if (!recipient) throw new NotFoundError("Không tìm thấy nhân viên");
+
+    const updateData: any = {};
+    if (input.fullName) updateData.fullName = input.fullName.trim();
+    if (input.phone) updateData.phone = input.phone.trim();
+    if (input.password) {
+      updateData.passwordHash = await hashPassword(input.password);
+    }
+    if (input.managedCourtId) {
+      const court = await partnerRepository.courtByPartner(input.managedCourtId, profile.id);
+      if (!court) throw new ValidationError("Sân được phân công không hợp lệ");
+      updateData.managedCourtId = input.managedCourtId;
+    }
+
+    return partnerRepository.updateRecipient(id, profile.id, updateData);
+  },
+
+  async deleteRecipient(userId: string, id: string) {
+    const profile = await getProfile(userId);
+    const recipient = await partnerRepository.findRecipient(id, profile.id);
+    if (!recipient) throw new NotFoundError("Không tìm thấy nhân viên");
+
+    await partnerRepository.deleteRecipient(id, profile.id);
     return { id };
   }
 };

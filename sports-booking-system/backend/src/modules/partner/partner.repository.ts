@@ -32,6 +32,40 @@ async function ensureAllowCommentsColumn() {
   columnExistsCache.set("blog_posts.allow_comments", true);
 }
 
+async function ensureCourtDepositColumn() {
+  if (await columnExists("courts", "deposit_percent")) return;
+
+  await prisma.$executeRaw`
+    alter table courts
+    add column if not exists deposit_percent numeric(5, 2) null
+  `;
+  columnExistsCache.set("courts.deposit_percent", true);
+}
+
+async function attachCourtDeposit<T extends { id: string }>(court: T | null) {
+  if (!court) return court;
+  await ensureCourtDepositColumn();
+  const [row] = await prisma.$queryRaw<Array<{ depositPercent: number | null }>>`
+    select deposit_percent::float as "depositPercent"
+    from courts
+    where id = ${court.id}
+    limit 1
+  `;
+  return { ...court, depositPercent: row?.depositPercent ?? null };
+}
+
+async function attachCourtDeposits<T extends { id: string }>(courts: T[]) {
+  await ensureCourtDepositColumn();
+  if (!courts.length) return courts;
+  const rows = await prisma.$queryRaw<Array<{ id: string; depositPercent: number | null }>>`
+    select id, deposit_percent::float as "depositPercent"
+    from courts
+    where id in (${Prisma.join(courts.map((court) => court.id))})
+  `;
+  const deposits = new Map(rows.map((row) => [row.id, row.depositPercent ?? null]));
+  return courts.map((court) => ({ ...court, depositPercent: deposits.get(court.id) ?? null }));
+}
+
 export const partnerRepository = {
   profileByUser(userId: string) {
     return prisma.partnerProfile.findUnique({
@@ -94,27 +128,43 @@ export const partnerRepository = {
     });
   },
 
-  listCourts(partnerId: string) {
-    return prisma.court.findMany({
+  async listCourts(partnerId: string) {
+    const courts = await prisma.court.findMany({
       where: { partnerId },
       include: { category: true, images: true, prices: true, services: true },
       orderBy: { createdAt: "desc" }
     });
+    return attachCourtDeposits(courts);
   },
 
-  courtByPartner(courtId: string, partnerId: string) {
-    return prisma.court.findFirst({
+  async courtByPartner(courtId: string, partnerId: string) {
+    const court = await prisma.court.findFirst({
       where: { id: courtId, partnerId },
       include: { category: true, images: true, prices: true, services: true }
     });
+    return attachCourtDeposit(court);
   },
 
-  createCourt(data: Prisma.CourtUncheckedCreateInput) {
-    return prisma.court.create({ data, include: { category: true } });
+  async createCourt(data: Prisma.CourtUncheckedCreateInput, depositPercent?: number | null) {
+    const court = await prisma.court.create({ data, include: { category: true } });
+    await this.updateCourtDeposit(court.id, depositPercent);
+    return attachCourtDeposit(court);
   },
 
-  updateCourt(id: string, data: Prisma.CourtUpdateInput) {
-    return prisma.court.update({ where: { id }, data, include: { category: true, images: true, prices: true, services: true } });
+  async updateCourt(id: string, data: Prisma.CourtUpdateInput, depositPercent?: number | null) {
+    const court = await prisma.court.update({ where: { id }, data, include: { category: true, images: true, prices: true, services: true } });
+    if (depositPercent !== undefined) await this.updateCourtDeposit(id, depositPercent);
+    return attachCourtDeposit(court);
+  },
+
+  async updateCourtDeposit(id: string, depositPercent?: number | null) {
+    await ensureCourtDepositColumn();
+    const normalized = depositPercent && depositPercent > 0 ? depositPercent : null;
+    await prisma.$executeRaw`
+      update courts
+      set deposit_percent = ${normalized}
+      where id = ${id}
+    `;
   },
 
   addImage(data: Prisma.CourtImageUncheckedCreateInput) {
@@ -322,6 +372,8 @@ export const partnerRepository = {
         t.sport_type as "sportType", t.cover_image_url as "coverImageUrl",
         t.start_date as "startDate", t.end_date as "endDate",
         t.registration_deadline as "registrationDeadline", t.max_participants as "maxParticipants",
+
+
         t.current_participants as "currentParticipants", t.entry_fee::float as "entryFee",
         t.prize_description as "prizeDescription", t.status::text,
         t.created_at as "createdAt", c.name as "courtName"
@@ -385,5 +437,69 @@ export const partnerRepository = {
       delete from tournaments where id = ${id}::uuid and partner_id = ${partnerId}::uuid
         and status = 'DRAFT'::tournament_status
     `;
+  },
+
+  listRecipients(partnerId: string) {
+    return prisma.user.findMany({
+      where: { partnerId, role: "RECIPIENT" as any },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        phone: true,
+        status: true,
+        managedCourtId: true,
+        managedCourt: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      },
+      orderBy: { fullName: "asc" }
+    });
+  },
+
+  findRecipient(id: string, partnerId: string) {
+    return prisma.user.findFirst({
+      where: { id, partnerId, role: "RECIPIENT" as any },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        phone: true,
+        status: true,
+        managedCourtId: true
+      }
+    });
+  },
+
+  createRecipient(partnerId: string, data: { fullName: string; email: string; passwordHash: string; phone?: string; managedCourtId: string }) {
+    return prisma.user.create({
+      data: {
+        fullName: data.fullName,
+        email: data.email,
+        passwordHash: data.passwordHash,
+        phone: data.phone ?? null,
+        role: "RECIPIENT" as any,
+        status: "ACTIVE",
+        emailVerified: true,
+        partnerId,
+        managedCourtId: data.managedCourtId
+      }
+    });
+  },
+
+  updateRecipient(id: string, partnerId: string, data: { fullName?: string; passwordHash?: string; phone?: string; managedCourtId?: string }) {
+    return prisma.user.update({
+      where: { id, partnerId },
+      data: data as any
+    });
+  },
+
+  deleteRecipient(id: string, partnerId: string) {
+    return prisma.user.delete({
+      where: { id, partnerId }
+    });
   }
 };

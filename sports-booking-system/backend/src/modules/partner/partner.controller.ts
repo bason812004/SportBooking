@@ -61,5 +61,9 @@ export const partnerController = {
   createTournament: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.createTournament(req.user!.id, req.body), 201)),
   updateTournament: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateTournament(req.user!.id, req.params.id, req.body))),
   submitTournament: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.submitTournament(req.user!.id, req.params.id))),
-  deleteTournament: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deleteTournament(req.user!.id, req.params.id)))
+  deleteTournament: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deleteTournament(req.user!.id, req.params.id))),
+  listRecipients: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.listRecipients(req.user!.id))),
+  createRecipient: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.createRecipient(req.user!.id, req.body), 201)),
+  updateRecipient: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateRecipient(req.user!.id, req.params.id, req.body))),
+  deleteRecipient: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deleteRecipient(req.user!.id, req.params.id)))
 };

@@ -16,7 +16,9 @@ import {
   profileUpdateSchema,
   serviceWriteSchema,
   tournamentWriteSchema,
-  voucherWriteSchema
+  voucherWriteSchema,
+  recipientWriteSchema,
+  recipientUpdateSchema
 } from "./partner.validation.js";
 import { partnerController } from "./partner.controller.js";
 
@@ -68,3 +70,8 @@ partnerRoutes.get("/tournaments/:id", partnerController.tournamentDetail);
 partnerRoutes.put("/tournaments/:id", validate(tournamentWriteSchema), partnerController.updateTournament);
 partnerRoutes.put("/tournaments/:id/submit", partnerController.submitTournament);
 partnerRoutes.delete("/tournaments/:id", partnerController.deleteTournament);
+
+partnerRoutes.get("/recipients", partnerController.listRecipients);
+partnerRoutes.post("/recipients", validate(recipientWriteSchema), partnerController.createRecipient);
+partnerRoutes.put("/recipients/:id", validate(recipientUpdateSchema), partnerController.updateRecipient);
+partnerRoutes.delete("/recipients/:id", partnerController.deleteRecipient);

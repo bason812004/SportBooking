@@ -16,7 +16,8 @@ export const courtWriteSchema = z.object({
     latitude: z.number().optional(),
     longitude: z.number().optional(),
     openingTime: time,
-    closingTime: time
+    closingTime: time,
+    depositPercent: z.coerce.number().min(0).max(49.99).optional().nullable()
   })
 });
 
@@ -113,6 +114,8 @@ export const tournamentWriteSchema = z.object({
     startDate: z.string().datetime(),
     endDate: z.string().datetime(),
     registrationDeadline: z.string().datetime(),
+
+
     maxParticipants: z.number().int().positive(),
     entryFee: z.number().nonnegative(),
     prizeDescription: z.string().trim().max(2000).optional()
@@ -137,5 +140,24 @@ export const voucherWriteSchema = z.object({
     ),
     startDate: z.string().datetime(),
     endDate: z.string().datetime()
+  })
+});
+
+export const recipientWriteSchema = z.object({
+  body: z.object({
+    fullName: z.string().trim().min(2).max(120),
+    emailSuffix: z.string().trim().min(1).regex(/^[A-Za-z0-9_-]+$/, "Phần đuôi email chỉ được chứa chữ cái, số và dấu gạch dưới/gạch ngang"),
+    password: z.string().trim().min(6),
+    phone: z.string().trim().max(30).optional(),
+    managedCourtId: z.string().uuid()
+  })
+});
+
+export const recipientUpdateSchema = z.object({
+  body: z.object({
+    fullName: z.string().trim().min(2).max(120).optional(),
+    password: z.string().trim().min(6).optional(),
+    phone: z.string().trim().max(30).optional(),
+    managedCourtId: z.string().uuid().optional()
   })
 });

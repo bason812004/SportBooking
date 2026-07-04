@@ -32,3 +32,10 @@ export const blogCommentSchema = z.object({
     content: z.string().trim().min(1).max(1000)
   })
 });
+
+export const blogCommentParamsSchema = z.object({
+  params: z.object({
+    slug: z.string().trim().min(1),
+    commentId: z.string().uuid()
+  })
+});

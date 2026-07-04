@@ -14,6 +14,7 @@ const selectComment = `
     c.id,
     c.post_id as "postId",
     c.content,
+    c.is_edited as "isEdited",
     c.created_at as "createdAt",
     c.updated_at as "updatedAt",
     json_build_object('id', u.id, 'fullName', u.full_name, 'avatarUrl', u.avatar_url) as "user"
@@ -42,6 +43,16 @@ async function columnExists(tableName: string, columnName: string) {
   return exists;
 }
 
+async function ensureIsEditedColumn() {
+  if (await columnExists("blog_comments", "is_edited")) return;
+
+  await prisma.$executeRaw`
+    alter table blog_comments
+    add column if not exists is_edited boolean not null default false
+  `;
+  columnExistsCache.set("blog_comments.is_edited", true);
+}
+
 export const blogCommentRepository = {
   async publishedPostBySlug(slug: string) {
     const allowCommentsSelect = await columnExists("blog_posts", "allow_comments")
@@ -61,7 +72,8 @@ export const blogCommentRepository = {
     );
   },
 
-  listByPost(postId: string) {
+  async listByPost(postId: string) {
+    await ensureIsEditedColumn();
     return prisma.$queryRawUnsafe<BlogCommentRow[]>(
       `
         ${selectComment}
@@ -72,7 +84,8 @@ export const blogCommentRepository = {
     );
   },
 
-  findById(id: string) {
+  async findById(id: string) {
+    await ensureIsEditedColumn();
     return prisma.$queryRawUnsafe<BlogCommentRow[]>(
       `
         ${selectComment}
@@ -84,6 +97,7 @@ export const blogCommentRepository = {
   },
 
   async create(postId: string, userId: string, content: string) {
+    await ensureIsEditedColumn();
     const [inserted] = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
       `
         insert into blog_comments (post_id, user_id, content)
@@ -95,5 +109,33 @@ export const blogCommentRepository = {
       content
     );
     return inserted?.id ? this.findById(inserted.id) : [];
+  },
+
+  async update(id: string, content: string) {
+    await ensureIsEditedColumn();
+    const [updated] = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+      `
+        update blog_comments
+        set content = $2,
+            is_edited = true,
+            updated_at = now()
+        where id = $1
+        returning id
+      `,
+      id,
+      content
+    );
+    return updated?.id ? this.findById(updated.id) : [];
+  },
+
+  async delete(id: string) {
+    await prisma.$executeRawUnsafe(
+      `
+        delete from blog_comments
+        where id = $1
+      `,
+      id
+    );
+    return true;
   }
 };

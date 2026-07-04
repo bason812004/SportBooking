@@ -15,6 +15,7 @@ const selectReview = `
     r.id,
     r.rating,
     r.comment,
+    r.is_edited as "isEdited",
     r.display_status::text as "displayStatus",
     r.created_at as "createdAt",
     r.updated_at as "updatedAt",
@@ -23,8 +24,40 @@ const selectReview = `
   join users u on u.id = r.user_id
 `;
 
+const columnExistsCache = new Map<string, boolean>();
+
+async function columnExists(tableName: string, columnName: string) {
+  const cacheKey = `${tableName}.${columnName}`;
+  const cached = columnExistsCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+    select exists(
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = ${tableName}
+        and column_name = ${columnName}
+    ) as "exists"
+  `;
+  const exists = Boolean(row?.exists);
+  columnExistsCache.set(cacheKey, exists);
+  return exists;
+}
+
+async function ensureIsEditedColumn() {
+  if (await columnExists("reviews", "is_edited")) return;
+
+  await prisma.$executeRaw`
+    alter table reviews
+    add column if not exists is_edited boolean not null default false
+  `;
+  columnExistsCache.set("reviews.is_edited", true);
+}
+
 export const reviewRepository = {
-  byCourt(courtId: string) {
+  async byCourt(courtId: string) {
+    await ensureIsEditedColumn();
     return prisma.$queryRawUnsafe<ReviewRow[]>(
       `
         ${selectReview}
@@ -36,7 +69,7 @@ export const reviewRepository = {
     );
   },
 
-  latestByUserCourt(userId: string, courtId: string) {
+  async latestByUserCourt(userId: string, courtId: string) {
     return prisma.$queryRawUnsafe<Array<{ id: string }>>(
       `
         select id
@@ -51,7 +84,8 @@ export const reviewRepository = {
     );
   },
 
-  findById(id: string) {
+  async findById(id: string) {
+    await ensureIsEditedColumn();
     return prisma.$queryRawUnsafe<ReviewRow[]>(
       `
         ${selectReview}
@@ -63,6 +97,7 @@ export const reviewRepository = {
   },
 
   async create(data: { userId: string; courtId: string; bookingId?: string | null; rating: number; comment?: string | null }) {
+    await ensureIsEditedColumn();
     const [inserted] = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
       `
         insert into reviews (user_id, court_id, booking_id, rating, comment, display_status)
@@ -79,11 +114,13 @@ export const reviewRepository = {
   },
 
   async update(id: string, data: { rating: number; comment?: string | null }) {
+    await ensureIsEditedColumn();
     const [updated] = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
       `
         update reviews
         set rating = $2,
             comment = $3,
+            is_edited = true,
             display_status = 'VISIBLE'::review_display_status,
             updated_at = now()
         where id = $1
@@ -94,5 +131,16 @@ export const reviewRepository = {
       data.comment ?? null
     );
     return updated?.id ? this.findById(updated.id) : [];
+  },
+
+  async delete(id: string) {
+    await prisma.$executeRawUnsafe(
+      `
+        delete from reviews
+        where id = $1
+      `,
+      id
+    );
+    return true;
   }
 };

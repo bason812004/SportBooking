@@ -320,6 +320,7 @@ create table courts (
   court_count integer not null default 1 check (court_count > 0),
   price_note varchar(120),
   golden_price_note varchar(120),
+  deposit_percent numeric(5, 2) check (deposit_percent is null or (deposit_percent >= 0 and deposit_percent < 50)),
   article_content text,
   directions text,
   surface_info text,

@@ -39,29 +39,31 @@ export type BookingQuote = {
   totalAmount: number;
   minimumDepositAmount: number;
   remainingAmount: number;
+  depositPercent: number;
+  requiresDeposit: boolean;
   currency: "VND";
   quoteExpiresAt: string;
   voucherId?: string;
 };
 
 export type BookingCheckoutPayload = BookingQuotePayload & {
-  paymentType: "DEPOSIT" | "FULL_PAYMENT";
+  paymentType: "DEPOSIT" | "FULL_PAYMENT" | "PAY_AT_COURT";
   note?: string;
 };
 
 export type BookingCheckoutResult = {
   bookingId: string;
-  paymentId: string;
+  paymentId?: string | null;
   bookingStatus: string;
   paymentStatus: string;
-  paymentType: "DEPOSIT" | "FULL_PAYMENT";
+  paymentType: "DEPOSIT" | "FULL_PAYMENT" | "PAY_AT_COURT";
   totalAmount: number;
   paymentAmount: number;
   remainingAmount: number;
   qrCodeUrl?: string | null;
   qrPayload?: string | null;
-  paymentReference: string;
-  expiresAt: string;
+  paymentReference?: string;
+  expiresAt?: string | null;
   providerConfigured: boolean;
 };
 
