@@ -22,6 +22,7 @@ export type VerifiedPaymentWebhook = {
   status: "PAID" | "FAILED" | "EXPIRED";
   amount: number;
   rawPayload: unknown;
+  paymentReference?: string;
 };
 
 export type PaymentStatusResult = {

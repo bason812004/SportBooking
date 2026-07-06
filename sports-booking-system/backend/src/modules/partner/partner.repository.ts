@@ -1,5 +1,70 @@
-import type { ApprovalStatus, BookingStatus, Prisma } from "@prisma/client";
+import { Prisma, type ApprovalStatus, type BookingStatus } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+
+const columnExistsCache = new Map<string, boolean>();
+
+async function columnExists(tableName: string, columnName: string) {
+  const cacheKey = `${tableName}.${columnName}`;
+  const cached = columnExistsCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+    select exists(
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = ${tableName}
+        and column_name = ${columnName}
+    ) as "exists"
+  `;
+  const exists = Boolean(row?.exists);
+  columnExistsCache.set(cacheKey, exists);
+  return exists;
+}
+
+async function ensureAllowCommentsColumn() {
+  if (await columnExists("blog_posts", "allow_comments")) return;
+
+  await prisma.$executeRaw`
+    alter table blog_posts
+    add column if not exists allow_comments boolean not null default true
+  `;
+  columnExistsCache.set("blog_posts.allow_comments", true);
+}
+
+async function ensureCourtDepositColumn() {
+  if (await columnExists("courts", "deposit_percent")) return;
+
+  await prisma.$executeRaw`
+    alter table courts
+    add column if not exists deposit_percent numeric(5, 2) null
+  `;
+  columnExistsCache.set("courts.deposit_percent", true);
+}
+
+async function attachCourtDeposit<T extends { id: string }>(court: T | null) {
+  if (!court) return court;
+  await ensureCourtDepositColumn();
+  const [row] = await prisma.$queryRaw<Array<{ depositPercent: number | null }>>`
+    select deposit_percent::float as "depositPercent"
+    from courts
+    where id = ${court.id}
+    limit 1
+  `;
+  return { ...court, depositPercent: row?.depositPercent ?? null };
+}
+
+async function attachCourtDeposits<T extends { id: string }>(courts: T[]) {
+  await ensureCourtDepositColumn();
+  if (!courts.length) return courts;
+  const rows = await prisma.$queryRaw<Array<{ id: string; depositPercent: number | null }>>`
+    select id, deposit_percent::float as "depositPercent"
+    from courts
+    where id in (${Prisma.join(courts.map((court) => court.id))})
+  `;
+  const deposits = new Map(rows.map((row) => [row.id, row.depositPercent ?? null]));
+  return courts.map((court) => ({ ...court, depositPercent: deposits.get(court.id) ?? null }));
+}
 
 export const partnerRepository = {
   profileByUser(userId: string) {
@@ -89,16 +154,17 @@ export const partnerRepository = {
     });
   },
 
-  listCourts(partnerId: string) {
-    return prisma.court.findMany({
+  async listCourts(partnerId: string) {
+    const courts = await prisma.court.findMany({
       where: { partnerId },
       include: { category: true, images: true, prices: true, services: true, surfaces: { where: { status: "ACTIVE" }, orderBy: { sortOrder: "asc" } } },
       orderBy: { createdAt: "desc" }
     });
+    return attachCourtDeposits(courts);
   },
 
-  courtByPartner(courtId: string, partnerId: string) {
-    return prisma.court.findFirst({
+  async courtByPartner(courtId: string, partnerId: string) {
+    const court = await prisma.court.findFirst({
       where: { id: courtId, partnerId },
       include: { category: true, images: true, prices: true, services: true, surfaces: { where: { status: "ACTIVE" }, orderBy: { sortOrder: "asc" } } }
     });
@@ -109,14 +175,29 @@ export const partnerRepository = {
       where: { id: courtSurfaceId, status: "ACTIVE", court: { partnerId } },
       include: { court: { include: { category: true, images: { orderBy: { sortOrder: "asc" }, take: 1 } } } }
     });
+    return attachCourtDeposit(court);
   },
 
-  createCourt(data: Prisma.CourtUncheckedCreateInput) {
-    return prisma.court.create({ data, include: { category: true } });
+  async createCourt(data: Prisma.CourtUncheckedCreateInput, depositPercent?: number | null) {
+    const court = await prisma.court.create({ data, include: { category: true } });
+    await this.updateCourtDeposit(court.id, depositPercent);
+    return attachCourtDeposit(court);
   },
 
-  updateCourt(id: string, data: Prisma.CourtUpdateInput) {
-    return prisma.court.update({ where: { id }, data, include: { category: true, images: true, prices: true, services: true } });
+  async updateCourt(id: string, data: Prisma.CourtUpdateInput, depositPercent?: number | null) {
+    const court = await prisma.court.update({ where: { id }, data, include: { category: true, images: true, prices: true, services: true } });
+    if (depositPercent !== undefined) await this.updateCourtDeposit(id, depositPercent);
+    return attachCourtDeposit(court);
+  },
+
+  async updateCourtDeposit(id: string, depositPercent?: number | null) {
+    await ensureCourtDepositColumn();
+    const normalized = depositPercent && depositPercent > 0 ? depositPercent : null;
+    await prisma.$executeRaw`
+      update courts
+      set deposit_percent = ${normalized}
+      where id = ${id}
+    `;
   },
 
   addImage(data: Prisma.CourtImageUncheckedCreateInput) {
@@ -351,55 +432,82 @@ export const partnerRepository = {
     return prisma.court.update({ where: { id }, data: { approvalStatus } });
   },
 
-  listBlogs(userId: string) {
-    return prisma.$queryRaw<any[]>`
+  async listBlogs(userId: string) {
+    const allowCommentsSelect = await columnExists("blog_posts", "allow_comments")
+      ? Prisma.sql`coalesce(allow_comments, true)`
+      : Prisma.sql`true`;
+
+    return prisma.$queryRaw<any[]>(Prisma.sql`
       select id, title, slug, excerpt, content, cover_image_url as "coverImageUrl",
         status::text, visibility::text, created_at as "createdAt", updated_at as "updatedAt",
-        published_at as "publishedAt"
-      from blog_posts where author_id = ${userId}::uuid order by created_at desc
-    `;
+        published_at as "publishedAt", ${allowCommentsSelect} as "allowComments"
+      from blog_posts where author_id = ${userId} order by created_at desc
+    `);
   },
 
-  findBlog(id: string, userId: string) {
-    return prisma.$queryRaw<any[]>`
+  async findBlog(id: string, userId: string) {
+    const allowCommentsSelect = await columnExists("blog_posts", "allow_comments")
+      ? Prisma.sql`coalesce(allow_comments, true)`
+      : Prisma.sql`true`;
+
+    return prisma.$queryRaw<any[]>(Prisma.sql`
       select id, title, slug, excerpt, content, cover_image_url as "coverImageUrl",
         status::text, visibility::text, created_at as "createdAt", updated_at as "updatedAt",
-        published_at as "publishedAt"
-      from blog_posts where id = ${id}::uuid and author_id = ${userId}::uuid limit 1
-    `;
+        published_at as "publishedAt", ${allowCommentsSelect} as "allowComments"
+      from blog_posts where id = ${id} and author_id = ${userId} limit 1
+    `);
   },
 
-  createBlog(userId: string, input: any) {
+  async createBlog(userId: string, input: any) {
+    await ensureAllowCommentsColumn();
+
     return prisma.$queryRaw<any[]>`
-      insert into blog_posts (author_id, title, slug, excerpt, content, cover_image_url, visibility, status)
-      values (${userId}::uuid, ${input.title}, ${input.slug}, ${input.excerpt ?? null},
-        ${input.content}, ${input.coverImageUrl || null}, ${input.visibility}::blog_visibility, 'DRAFT'::blog_post_status)
+      insert into blog_posts (author_id, title, slug, excerpt, content, cover_image_url, visibility, status, allow_comments)
+      values (${userId}, ${input.title}, ${input.slug}, ${input.excerpt ?? null},
+        ${input.content}, ${input.coverImageUrl || null}, ${input.visibility}::blog_visibility, 'DRAFT'::blog_post_status,
+        ${input.allowComments ?? true})
       returning id, title, slug, excerpt, content, cover_image_url as "coverImageUrl",
-        status::text, visibility::text, created_at as "createdAt", updated_at as "updatedAt"
+        status::text, visibility::text, coalesce(allow_comments, true) as "allowComments",
+        created_at as "createdAt", updated_at as "updatedAt"
     `;
   },
 
-  updateBlog(id: string, userId: string, input: any) {
+  async updateBlog(id: string, userId: string, input: any) {
+    await ensureAllowCommentsColumn();
+
     return prisma.$queryRaw<any[]>`
       update blog_posts set title = ${input.title}, slug = ${input.slug}, excerpt = ${input.excerpt ?? null},
         content = ${input.content}, cover_image_url = ${input.coverImageUrl || null},
-        visibility = ${input.visibility}::blog_visibility, updated_at = now()
-      where id = ${id}::uuid and author_id = ${userId}::uuid and status = 'DRAFT'::blog_post_status
+        visibility = ${input.visibility}::blog_visibility, allow_comments = ${input.allowComments ?? true}, updated_at = now()
+      where id = ${id} and author_id = ${userId} and status = 'DRAFT'::blog_post_status
       returning id, title, slug, excerpt, content, cover_image_url as "coverImageUrl",
-        status::text, visibility::text, created_at as "createdAt", updated_at as "updatedAt"
+        status::text, visibility::text, coalesce(allow_comments, true) as "allowComments",
+        created_at as "createdAt", updated_at as "updatedAt"
+    `;
+  },
+
+  async updateBlogComments(id: string, userId: string, allowComments: boolean) {
+    await ensureAllowCommentsColumn();
+
+    return prisma.$queryRaw<any[]>`
+      update blog_posts set allow_comments = ${allowComments}, updated_at = now()
+      where id = ${id} and author_id = ${userId}
+      returning id, title, slug, excerpt, content, cover_image_url as "coverImageUrl",
+        status::text, visibility::text, coalesce(allow_comments, true) as "allowComments",
+        created_at as "createdAt", updated_at as "updatedAt", published_at as "publishedAt"
     `;
   },
 
   submitBlog(id: string, userId: string) {
     return prisma.$executeRaw`
       update blog_posts set status = 'PENDING'::blog_post_status, updated_at = now()
-      where id = ${id}::uuid and author_id = ${userId}::uuid and status = 'DRAFT'::blog_post_status
+      where id = ${id} and author_id = ${userId} and status = 'DRAFT'::blog_post_status
     `;
   },
 
   deleteBlog(id: string, userId: string) {
     return prisma.$executeRaw`
-      delete from blog_posts where id = ${id}::uuid and author_id = ${userId}::uuid
+      delete from blog_posts where id = ${id} and author_id = ${userId}
         and status = 'DRAFT'::blog_post_status
     `;
   },
@@ -410,6 +518,8 @@ export const partnerRepository = {
         t.sport_type as "sportType", t.cover_image_url as "coverImageUrl",
         t.start_date as "startDate", t.end_date as "endDate",
         t.registration_deadline as "registrationDeadline", t.max_participants as "maxParticipants",
+
+
         t.current_participants as "currentParticipants", t.entry_fee::float as "entryFee",
         t.prize_description as "prizeDescription", t.status::text,
         t.created_at as "createdAt", c.name as "courtName"
@@ -473,5 +583,69 @@ export const partnerRepository = {
       delete from tournaments where id = ${id}::uuid and partner_id = ${partnerId}::uuid
         and status = 'DRAFT'::tournament_status
     `;
+  },
+
+  listRecipients(partnerId: string) {
+    return prisma.user.findMany({
+      where: { partnerId, role: "RECIPIENT" as any },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        phone: true,
+        status: true,
+        managedCourtId: true,
+        managedCourt: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      },
+      orderBy: { fullName: "asc" }
+    });
+  },
+
+  findRecipient(id: string, partnerId: string) {
+    return prisma.user.findFirst({
+      where: { id, partnerId, role: "RECIPIENT" as any },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        phone: true,
+        status: true,
+        managedCourtId: true
+      }
+    });
+  },
+
+  createRecipient(partnerId: string, data: { fullName: string; email: string; passwordHash: string; phone?: string; managedCourtId: string }) {
+    return prisma.user.create({
+      data: {
+        fullName: data.fullName,
+        email: data.email,
+        passwordHash: data.passwordHash,
+        phone: data.phone ?? null,
+        role: "RECIPIENT" as any,
+        status: "ACTIVE",
+        emailVerified: true,
+        partnerId,
+        managedCourtId: data.managedCourtId
+      }
+    });
+  },
+
+  updateRecipient(id: string, partnerId: string, data: { fullName?: string; passwordHash?: string; phone?: string; managedCourtId?: string }) {
+    return prisma.user.update({
+      where: { id, partnerId },
+      data: data as any
+    });
+  },
+
+  deleteRecipient(id: string, partnerId: string) {
+    return prisma.user.delete({
+      where: { id, partnerId }
+    });
   }
 };

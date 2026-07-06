@@ -10,33 +10,54 @@ const courtInclude = {
   amenities: true,
   prices: true,
   services: { where: { status: "ACTIVE" as const } },
-  reviews: {
-    where: { displayStatus: "VISIBLE" as const },
-    select: {
-      id: true,
-      rating: true,
-      comment: true,
-      createdAt: true,
-      user: { select: { id: true, fullName: true, avatarUrl: true } }
-    },
-    orderBy: { createdAt: "desc" as const },
-    take: 3
-  },
   partner: { include: { user: { select: { fullName: true, email: true, phone: true } } } }
 };
 
 const courtDetailInclude = {
-  ...courtInclude,
-  reviews: {
-    where: { displayStatus: "VISIBLE" as const },
-    include: { user: { select: { id: true, fullName: true, avatarUrl: true } } },
-    orderBy: { createdAt: "desc" as const }
-  }
+  ...courtInclude
 };
+
+const accentMap: Record<string, string> = {
+  à: "a", á: "a", ạ: "a", ả: "a", ã: "a", â: "a",ầ: "a",ấ: "a",ậ: "a",ẩ: "a",ẫ: "a",ă: "a",ằ: "a",ắ: "a",ặ: "a",ẳ: "a",ẵ: "a",
+  è: "e", é: "e", ẹ: "e", ẻ: "e", ẽ: "e", ê: "e",ề: "e",ế: "e",ệ: "e",ể: "e",ễ: "e",
+  ì: "i", í: "i", ị: "i", ỉ: "i", ĩ: "i",
+  ò: "o", ó: "o", ọ: "o", ỏ: "o", õ: "o", ô: "o",ồ: "o",ố: "o",ộ: "o",ổ: "o",ỗ: "o",ơ: "o",ờ: "o",ớ: "o",ợ: "o",ở: "o",ỡ: "o",
+  ù: "u", ú: "u", ụ: "u", ủ: "u", ũ: "u", ư: "u",ừ: "u",ứ: "u",ự: "u",ử: "u",ữ: "u",
+  ỳ: "y", ý: "y",ỵ: "y",ỷ: "y",ỹ: "y",
+  đ: "d"
+};
+
+function removeVietnameseAccents(value: string) {
+  return value
+    .toLowerCase()
+    .split("")
+    .map((char) => accentMap[char] ?? char)
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function searchVariants(value: string) {
+  const trimmed = value.trim();
+  const ascii = removeVietnameseAccents(trimmed);
+  const withoutAdministrativePrefix = ascii
+    .replace(/^(quan|q|huyen|h|thi xa|tx|thanh pho|tp|tp\.|tinh)\s+/i, "")
+    .trim();
+
+  return Array.from(new Set([trimmed, ascii, withoutAdministrativePrefix].filter(Boolean)));
+}
+
+function textSearchCondition(fields: Array<"name" | "description" | "address" | "city" | "district" | "ward">, value: string) {
+  const variants = searchVariants(value);
+  return {
+    OR: variants.flatMap((variant) => fields.map((field) => ({ [field]: { contains: variant, mode: "insensitive" as const } })))
+  };
+}
 
 export const courtRepository = {
   async list(query: CourtListQuery, page: number, limit: number) {
     const categoryFilter: Prisma.CourtCategoryWhereInput = { status: "ACTIVE" };
+    const andConditions: Prisma.CourtWhereInput[] = [];
     const where: Prisma.CourtWhereInput = {
       approvalStatus: "APPROVED",
       activeStatus: "ACTIVE",
@@ -45,15 +66,12 @@ export const courtRepository = {
 
     const keyword = query.keyword ?? query.q;
     if (keyword) {
-      where.OR = [
-        { name: { contains: keyword, mode: "insensitive" } },
-        { description: { contains: keyword, mode: "insensitive" } },
-        { address: { contains: keyword, mode: "insensitive" } }
-      ];
+      andConditions.push(textSearchCondition(["name", "description", "address", "city", "district"], keyword));
     }
     const city = query.province ?? query.city;
-    if (city) where.city = { contains: city, mode: "insensitive" };
-    if (query.district) where.district = { contains: query.district, mode: "insensitive" };
+    if (city) andConditions.push(textSearchCondition(["city"], city));
+    if (query.district) andConditions.push(textSearchCondition(["district", "city", "ward", "address"], query.district));
+    if (andConditions.length) where.AND = andConditions;
     if (query.categoryId) where.categoryId = query.categoryId;
     if (query.sportType) {
       const sportType = query.sportType.trim();
@@ -119,6 +137,10 @@ export const courtRepository = {
       where: { id, approvalStatus: "APPROVED", activeStatus: "ACTIVE" },
       include: courtDetailInclude
     });
+  },
+
+  servicesByIds(ids: string[]) {
+    return prisma.courtService.findMany({ where: { id: { in: ids } } });
   },
 
   findById(id: string) {
@@ -193,7 +215,8 @@ export const courtRepository = {
         bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] },
         startTime: { lt: timeToDate(endTime) },
         endTime: { gt: timeToDate(startTime) }
-      }
+      },
+      include: { payments: { select: { expiresAt: true, status: true } } }
     });
   }
 };

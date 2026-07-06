@@ -7,6 +7,7 @@ import { validate } from "../../middlewares/validate.middleware.js";
 import {
   courtWriteSchema,
   bookingQuerySchema,
+  blogCommentsToggleSchema,
   blogWriteSchema,
   calendarQuerySchema,
   imageSchema,
@@ -19,7 +20,9 @@ import {
   profileUpdateSchema,
   serviceWriteSchema,
   tournamentWriteSchema,
-  voucherWriteSchema
+  voucherWriteSchema,
+  recipientWriteSchema,
+  recipientUpdateSchema
 } from "./partner.validation.js";
 import { partnerController } from "./partner.controller.js";
 
@@ -68,6 +71,7 @@ partnerRoutes.get("/blogs", partnerController.blogs);
 partnerRoutes.post("/blogs", validate(blogWriteSchema), partnerController.createBlog);
 partnerRoutes.get("/blogs/:id", partnerController.blogDetail);
 partnerRoutes.put("/blogs/:id", validate(blogWriteSchema), partnerController.updateBlog);
+partnerRoutes.patch("/blogs/:id/comments", validate(blogCommentsToggleSchema), partnerController.updateBlogComments);
 partnerRoutes.put("/blogs/:id/submit", partnerController.submitBlog);
 partnerRoutes.delete("/blogs/:id", partnerController.deleteBlog);
 partnerRoutes.get("/tournaments", partnerController.tournaments);
@@ -76,3 +80,8 @@ partnerRoutes.get("/tournaments/:id", partnerController.tournamentDetail);
 partnerRoutes.put("/tournaments/:id", validate(tournamentWriteSchema), partnerController.updateTournament);
 partnerRoutes.put("/tournaments/:id/submit", partnerController.submitTournament);
 partnerRoutes.delete("/tournaments/:id", partnerController.deleteTournament);
+
+partnerRoutes.get("/recipients", partnerController.listRecipients);
+partnerRoutes.post("/recipients", validate(recipientWriteSchema), partnerController.createRecipient);
+partnerRoutes.put("/recipients/:id", validate(recipientUpdateSchema), partnerController.updateRecipient);
+partnerRoutes.delete("/recipients/:id", partnerController.deleteRecipient);

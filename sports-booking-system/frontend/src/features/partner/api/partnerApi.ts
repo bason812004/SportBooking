@@ -203,6 +203,10 @@ export const partnerApi = {
     const { data } = await api.put<ApiResponse<PartnerBlog>>(`/partner/blogs/${id}`, payload);
     return data.data;
   },
+  async updateBlogComments(id: string, allowComments: boolean) {
+    const { data } = await api.patch<ApiResponse<PartnerBlog>>(`/partner/blogs/${id}/comments`, { allowComments });
+    return data.data;
+  },
   async submitBlog(id: string) {
     const { data } = await api.put<ApiResponse<PartnerBlog>>(`/partner/blogs/${id}/submit`);
     return data.data;
@@ -233,6 +237,22 @@ export const partnerApi = {
   },
   async deleteTournament(id: string) {
     const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/tournaments/${id}`);
+    return data.data;
+  },
+  async listRecipients() {
+    const { data } = await api.get<ApiResponse<any[]>>("/partner/recipients");
+    return data.data;
+  },
+  async createRecipient(payload: Record<string, unknown>) {
+    const { data } = await api.post<ApiResponse<any>>("/partner/recipients", payload);
+    return data.data;
+  },
+  async updateRecipient(id: string, payload: Record<string, unknown>) {
+    const { data } = await api.put<ApiResponse<any>>(`/partner/recipients/${id}`, payload);
+    return data.data;
+  },
+  async deleteRecipient(id: string) {
+    const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/recipients/${id}`);
     return data.data;
   }
 };

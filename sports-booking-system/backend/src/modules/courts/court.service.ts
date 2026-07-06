@@ -1,16 +1,28 @@
 import { NotFoundError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
-import { dayTypeFor, parseLimit, parsePage, timeToMinutes } from "../../shared/utils/time.js";
+import { ceilToFullHour, dayTypeFor, floorToFullHour, parseLimit, parsePage, timeToMinutes } from "../../shared/utils/time.js";
 import { calculateDistanceKm } from "../bookings/booking.calculations.js";
+import { reviewRepository } from "../reviews/review.repository.js";
 import { courtRepository } from "./court.repository.js";
 import type { CourtListQuery } from "./court.types.js";
 
-function summarizeCourt<T extends { latitude?: unknown; longitude?: unknown; reviews: { rating: number }[]; prices: { price: unknown }[] }>(
+type CourtWithReviews<T> = T & { reviews: { rating: number }[] };
+
+async function attachReviews<T extends { id: string }>(court: T): Promise<CourtWithReviews<T>> {
+  return { ...court, reviews: await reviewRepository.byCourt(court.id) };
+}
+
+async function attachReviewsList<T extends { id: string }>(courts: T[]): Promise<Array<CourtWithReviews<T>>> {
+  return Promise.all(courts.map((court) => attachReviews(court)));
+}
+
+function summarizeCourt<T extends { latitude?: unknown; longitude?: unknown; reviews?: { rating: number }[]; prices: { price: unknown }[] }>(
   court: T,
   userLocation?: { latitude: number; longitude: number }
 ) {
-  const reviewCount = court.reviews.length;
-  const averageRating = reviewCount ? court.reviews.reduce((sum, review) => sum + review.rating, 0) / reviewCount : 0;
+  const reviews = court.reviews ?? [];
+  const reviewCount = reviews.length;
+  const averageRating = reviewCount ? reviews.reduce((sum, review) => sum + review.rating, 0) / reviewCount : 0;
   const minPrice = court.prices.length ? Math.min(...court.prices.map((price) => Number(price.price))) : 0;
   const hasCourtLocation = court.latitude !== null && court.latitude !== undefined && court.longitude !== null && court.longitude !== undefined;
   const distanceKm =
@@ -59,16 +71,18 @@ function slotPrice(
 }
 
 function isExpiredPaymentHold(item: { payments?: Array<{ expiresAt: Date; status: string }> }) {
-  const pendingPayment = item.payments?.find((payment) => payment.status === "UNPAID");
-  return pendingPayment ? pendingPayment.expiresAt.getTime() <= Date.now() : false;
+  if (!item.payments || item.payments.length === 0) return false;
+  const activePayment = item.payments.find((payment) => payment.status === "PENDING" || payment.status === "UNPAID");
+  if (!activePayment) return true;
+  return activePayment.expiresAt.getTime() <= Date.now();
 }
 
 function bookingSlotStatus(item: { bookingStatus: string; payments?: Array<{ expiresAt: Date; status: string }> }) {
-  if (item.bookingStatus === "PENDING") {
+  if (item.bookingStatus === "PENDING" || item.bookingStatus === "PENDING_PAYMENT") {
     return isExpiredPaymentHold(item) ? "AVAILABLE" : "PENDING_PAYMENT";
   }
   if (item.bookingStatus === "CONFIRMED" || item.bookingStatus === "COMPLETED") return "BOOKED";
-  return "BOOKED";
+  return "AVAILABLE";
 }
 
 export const courtService = {
@@ -80,7 +94,8 @@ export const courtService = {
     const radiusKm = Number(query.radiusKm || 25);
     const userLocation = Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude, longitude } : undefined;
     const { items, total } = await courtRepository.list(query, page, limit);
-    let summarized = items.map((item) => summarizeCourt(item, userLocation));
+    const itemsWithReviews = await attachReviewsList(items);
+    let summarized = itemsWithReviews.map((item) => summarizeCourt(item, userLocation));
     if (userLocation) summarized = summarized.filter((item) => item.distanceKm === null || item.distanceKm <= radiusKm);
     if (query.sortBy === "distance" && userLocation) {
       summarized.sort((left, right) => (left.distanceKm ?? Number.MAX_SAFE_INTEGER) - (right.distanceKm ?? Number.MAX_SAFE_INTEGER));
@@ -93,10 +108,13 @@ export const courtService = {
   async detail(id: string) {
     const court = await courtRepository.findPublicById(id);
     if (!court) throw new NotFoundError("Khong tim thay san hoac san chua duoc duyet");
-    const nearby = await courtRepository.nearby(court.id, court.city, court.district);
+    const [courtWithReviews, nearby] = await Promise.all([
+      attachReviews(court),
+      courtRepository.nearby(court.id, court.city, court.district).then(attachReviewsList)
+    ]);
     return {
-      ...summarizeCourt(court),
-      ratingBreakdown: ratingBreakdown(court.reviews),
+      ...summarizeCourt(courtWithReviews),
+      ratingBreakdown: ratingBreakdown(courtWithReviews.reviews),
       nearbyCourts: nearby.map((item) => summarizeCourt(item))
     };
   },
@@ -112,23 +130,36 @@ export const courtService = {
       courtRepository.availabilityBlocks(id, date)
     ]);
     const slots = [];
-    const opening = timeToMinutes(timeText(court.openingTime));
-    const closing = timeToMinutes(timeText(court.closingTime));
+    const opening = ceilToFullHour(timeToMinutes(timeText(court.openingTime)));
+    const closing = floorToFullHour(timeToMinutes(timeText(court.closingTime)));
 
     for (let cursor = opening; cursor < closing; cursor += 60) {
-      const slot = { startTime: minutesToTime(cursor), endTime: minutesToTime(Math.min(cursor + 60, closing)) };
-      const matchedBookingSlot = bookingSlots.find((bookingSlot) => overlaps(slot, bookingSlot));
-      const matchedBooking = bookings.find((booking) => overlaps(slot, booking));
+      const slot = { startTime: minutesToTime(cursor), endTime: minutesToTime(cursor + 60) };
+      const matchedBookingSlots = bookingSlots.filter((bookingSlot) => overlaps(slot, bookingSlot));
+      const matchedBookings = bookings.filter((booking) => overlaps(slot, booking));
       const isBlocked = blocks.some((block) => overlaps(slot, block));
       const price = slotPrice(slot, date, court.prices);
-      const status = isBlocked
-        ? "BLOCKED"
-        : matchedBookingSlot
-          ? bookingSlotStatus({ bookingStatus: matchedBookingSlot.booking.bookingStatus, payments: matchedBookingSlot.booking.payments })
-          : matchedBooking
-            ? bookingSlotStatus(matchedBooking)
-            : "AVAILABLE";
-      slots.push({ ...slot, status, price, bookingId: matchedBookingSlot?.bookingId ?? matchedBooking?.id ?? null });
+
+      let status = "AVAILABLE";
+      if (isBlocked) {
+        status = "BLOCKED";
+      } else {
+        const statuses = [
+          ...matchedBookingSlots.map(bs => bookingSlotStatus({ bookingStatus: bs.booking.bookingStatus, payments: bs.booking.payments })),
+          ...matchedBookings.map(b => bookingSlotStatus(b))
+        ];
+        if (statuses.includes("BOOKED")) {
+          status = "BOOKED";
+        } else if (statuses.includes("PENDING_PAYMENT")) {
+          status = "PENDING_PAYMENT";
+        }
+      }
+
+      const activeSlot = matchedBookingSlots.find(bs => bookingSlotStatus({ bookingStatus: bs.booking.bookingStatus, payments: bs.booking.payments }) !== "AVAILABLE") || matchedBookingSlots[0];
+      const activeBooking = matchedBookings.find(b => bookingSlotStatus(b) !== "AVAILABLE") || matchedBookings[0];
+      const bookingId = activeSlot?.bookingId ?? activeBooking?.id ?? null;
+
+      slots.push({ ...slot, status, price, bookingId });
     }
 
     return {

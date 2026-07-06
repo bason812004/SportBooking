@@ -36,6 +36,9 @@ const envSchema = z.object({
   PAYMENT_WEBHOOK_SECRET: z.string().optional(),
   PAYMENT_RETURN_URL: z.string().optional(),
   PAYMENT_WEBHOOK_URL: z.string().optional(),
+  PAYMENT_BANK_ID: z.string().default("mbbank"),
+  PAYMENT_BANK_ACCOUNT: z.string().default("0986966745"),
+  PAYMENT_BANK_OWNER: z.string().default("NGUYEN BA SON"),
   PAYMENT_QR_EXPIRES_MINUTES: z.coerce.number().int().positive().default(15),
   BOOKING_HOLD_EXPIRES_MINUTES: z.coerce.number().int().positive().default(15)
 });

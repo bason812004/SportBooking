@@ -1,4 +1,6 @@
 import { ForbiddenError, NotFoundError } from "../../shared/errors/AppError.js";
+import { realtimeEvents } from "../realtime/realtime.events.js";
+import { realtimeService } from "../realtime/realtime.service.js";
 import { teamPostRepository, type TeamPostInput } from "./teamPost.repository.js";
 
 type BodyInput = Omit<TeamPostInput, "userId">;
@@ -19,6 +21,14 @@ function normalizeInput(userId: string, body: BodyInput): TeamPostInput {
 export const teamPostService = {
   list() {
     return teamPostRepository.list();
+  },
+
+  listMine(userId: string) {
+    return teamPostRepository.listMine(userId);
+  },
+
+  listJoined(userId: string) {
+    return teamPostRepository.listJoined(userId);
   },
 
   async detail(id: string) {
@@ -45,9 +55,26 @@ export const teamPostService = {
     return { deleted: true };
   },
 
-  async join(id: string) {
-    const [post] = await teamPostRepository.join(id);
+  async join(id: string, userId: string) {
+    const [post] = await teamPostRepository.join(id, userId);
     if (!post) throw new NotFoundError("Bai dang da day hoac khong con mo");
+    realtimeService.toTeamPost(id, realtimeEvents.teamPostMemberJoined, post);
     return post;
+  },
+
+  async messages(id: string, userId: string) {
+    const isMember = await teamPostRepository.isMember(id, userId);
+    if (!isMember) throw new ForbiddenError("Ban can tham gia nhom de xem tin nhan");
+    return teamPostRepository.listMessages(id);
+  },
+
+  async createMessage(id: string, userId: string, content: string) {
+    const isMember = await teamPostRepository.isMember(id, userId);
+    if (!isMember) throw new ForbiddenError("Ban can tham gia nhom de nhan tin");
+
+    const [message] = await teamPostRepository.createMessage(id, userId, content.trim());
+    if (!message) throw new NotFoundError("Khong the gui tin nhan");
+    realtimeService.toTeamPost(id, realtimeEvents.teamPostMessageNew, message);
+    return message;
   }
 };

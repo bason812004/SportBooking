@@ -35,3 +35,9 @@ export const teamPostSchema = z
 export const teamPostIdSchema = z.object({
   params: z.object({ id: z.string().min(1) })
 });
+
+export const teamPostMessageSchema = teamPostIdSchema.extend({
+  body: z.object({
+    content: z.string().trim().min(1, "Noi dung tin nhan khong duoc rong").max(1000)
+  })
+});

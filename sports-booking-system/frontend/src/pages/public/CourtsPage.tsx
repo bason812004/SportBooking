@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { LocateFixed, ShieldAlert, X } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { X } from "lucide-react";
 import { useCourts, useSportTypes } from "../../features/courts/hooks/useCourts";
 import { useUserLocation } from "../../features/courts/hooks/useUserLocation";
 import { SearchHeader } from "./search/SearchHeader";
@@ -11,28 +12,57 @@ import { MapPanel } from "./search/MapPanel";
 import { PaginationSection } from "./search/PaginationSection";
 import type { SearchCourtItem } from "./search/CourtCard";
 
+const PAGE_SIZE = 8;
+
 export function CourtsPage() {
+  const [searchParams] = useSearchParams();
+  const queryString = searchParams.toString();
   const [filterOpen, setFilterOpen] = useState(false);
   const [activeCourtId, setActiveCourtId] = useState<string | undefined>();
-  const [keyword, setKeyword] = useState("");
-  const [debouncedKeyword, setDebouncedKeyword] = useState("");
-  const [district, setDistrict] = useState("");
-  const [sportType, setSportType] = useState("");
-  const [minPrice, setMinPrice] = useState("");
-  const [maxPrice, setMaxPrice] = useState("");
+  const [page, setPage] = useState(Number(searchParams.get("page") ?? 1));
+  const [keyword, setKeyword] = useState(searchParams.get("keyword") ?? "");
+  const [debouncedKeyword, setDebouncedKeyword] = useState(searchParams.get("keyword") ?? "");
+  const [district, setDistrict] = useState(searchParams.get("district") ?? "");
+  const [sportType, setSportType] = useState(searchParams.get("sportType") ?? "");
+  const [minPrice, setMinPrice] = useState(searchParams.get("minPrice") ?? "");
+  const [maxPrice, setMaxPrice] = useState(searchParams.get("maxPrice") ?? "");
   const [radiusKm, setRadiusKm] = useState(10);
   const [sortBy, setSortBy] = useState("newest");
   const sportTypes = useSportTypes();
-  const userLocation = useUserLocation();
+  const userLocation = useUserLocation({ autoRequest: true });
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedKeyword(keyword), 350);
     return () => window.clearTimeout(timer);
   }, [keyword]);
 
+  useEffect(() => {
+    const nextParams = new URLSearchParams(queryString);
+    setPage(Number(nextParams.get("page") ?? 1));
+    setKeyword(nextParams.get("keyword") ?? "");
+    setDebouncedKeyword(nextParams.get("keyword") ?? "");
+    setDistrict(nextParams.get("district") ?? "");
+    setSportType(nextParams.get("sportType") ?? "");
+    setMinPrice(nextParams.get("minPrice") ?? "");
+    setMaxPrice(nextParams.get("maxPrice") ?? "");
+  }, [queryString]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedKeyword, district, sportType, minPrice, maxPrice, radiusKm, sortBy, userLocation.location?.latitude, userLocation.location?.longitude]);
+
+  const sortOrder: "asc" | "desc" | undefined =
+    sortBy === "rating" ? "desc" :
+    sortBy === "distance" ? "asc" :
+    sortBy === "name" ? "asc" :
+    undefined;
+  const sortField =
+    sortBy === "newest" ? undefined :
+    sortBy;
+
   const filters = {
-    page: 1,
-    limit: 12,
+    page,
+    limit: PAGE_SIZE,
     keyword: debouncedKeyword || undefined,
     district: district || undefined,
     sportType: sportType || undefined,
@@ -41,8 +71,8 @@ export function CourtsPage() {
     radiusKm,
     latitude: userLocation.location?.latitude,
     longitude: userLocation.location?.longitude,
-    sortBy: sortBy === "newest" ? undefined : sortBy,
-    sortOrder: "asc" as const
+    sortBy: sortField,
+    sortOrder
   };
   const courtsQuery = useCourts(filters);
 
@@ -69,7 +99,9 @@ export function CourtsPage() {
     }));
   }, [courtsQuery.data?.items]);
 
-  const total = courtsQuery.data?.meta.total ?? 0;
+  const meta = courtsQuery.data?.meta;
+  const total = meta?.total ?? 0;
+  const totalPages = meta?.totalPages ?? 1;
   const averagePrice = courts.length ? `${Math.round(courts.reduce((sum, item) => sum + item.price, 0) / courts.length).toLocaleString("vi-VN")}đ` : "0đ";
   const averageRating = courts.length ? (courts.reduce((sum, item) => sum + Number(item.rating), 0) / courts.length).toFixed(1) : "0";
 
@@ -81,6 +113,7 @@ export function CourtsPage() {
     setMinPrice("");
     setMaxPrice("");
     setSortBy("newest");
+    setPage(1);
     userLocation.clearLocation();
   }
 
@@ -97,18 +130,6 @@ export function CourtsPage() {
         onKeywordChange={setKeyword}
         onDistrictChange={setDistrict}
         onSearch={() => courtsQuery.refetch()}
-        onFindNearby={userLocation.requestLocation}
-        locationLoading={userLocation.loading}
-      />
-
-      <LocationPermissionPanel
-        loading={userLocation.loading}
-        error={userLocation.error}
-        hasLocation={Boolean(userLocation.location)}
-        secureContext={userLocation.secureContext}
-        permissionState={userLocation.permissionState}
-        onRequestLocation={userLocation.requestLocation}
-        onClearLocation={userLocation.clearLocation}
       />
 
       <div className="mx-auto grid max-w-[1600px] gap-5 px-4 py-6 lg:grid-cols-[290px_1fr] xl:grid-cols-[290px_1fr_360px]">
@@ -129,13 +150,13 @@ export function CourtsPage() {
           <ResultStats
             total={total}
             averagePrice={averagePrice}
-            averageDistance={userLocation.location ? `Trong ${radiusKm} km` : "Chưa cấp vị trí"}
+            averageDistance={userLocation.location ? `Trong ${radiusKm} km` : "Đang tự xin vị trí"}
             averageRating={averageRating}
           />
           <CourtList courts={courts} loading={courtsQuery.isLoading} onHover={setActiveCourtId} />
-          <PaginationSection />
+          <PaginationSection page={page} totalPages={totalPages} onPageChange={setPage} />
         </main>
-        <MapPanel courts={courts} activeId={activeCourtId} onMarkerClick={scrollToCourt} />
+        <MapPanel courts={courts} activeId={activeCourtId} userLocation={userLocation.location} onMarkerClick={scrollToCourt} />
       </div>
 
       {filterOpen && (
@@ -164,70 +185,3 @@ export function CourtsPage() {
     </div>
   );
 }
-
-function LocationPermissionPanel({
-  loading,
-  error,
-  hasLocation,
-  secureContext,
-  permissionState,
-  onRequestLocation,
-  onClearLocation
-}: {
-  loading: boolean;
-  error: string | null;
-  hasLocation: boolean;
-  secureContext: boolean;
-  permissionState: PermissionState | "unsupported";
-  onRequestLocation: () => void;
-  onClearLocation: () => void;
-}) {
-  const denied = permissionState === "denied" || error === "location.denied";
-  const insecure = !secureContext || error === "location.insecure";
-
-  if (hasLocation) {
-    return (
-      <div className="mx-auto max-w-[1600px] px-4 pt-4">
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
-          <span className="inline-flex items-center gap-2">
-            <LocateFixed className="h-4 w-4" />
-            Đã bật vị trí. Danh sách sân đang được sắp xếp theo khoảng cách gần bạn.
-          </span>
-          <button type="button" onClick={onClearLocation} className="rounded-md border border-emerald-300 px-3 py-2 font-bold hover:bg-emerald-100">
-            Tắt lọc vị trí
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mx-auto max-w-[1600px] px-4 pt-4">
-      <div className={`flex flex-wrap items-center justify-between gap-3 rounded-md border px-4 py-3 ${denied || insecure ? "border-amber-200 bg-amber-50 text-amber-900" : "border-teal-200 bg-teal-50 text-teal-900"}`}>
-        <div className="flex min-w-0 items-start gap-3">
-          {denied || insecure ? <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" /> : <LocateFixed className="mt-0.5 h-5 w-5 shrink-0" />}
-          <div>
-            <p className="font-black">Cho phép sử dụng vị trí để tìm sân gần bạn</p>
-            <p className="mt-1 text-sm font-semibold">
-              {insecure
-                ? "Trình duyệt chỉ hiện yêu cầu vị trí trên HTTPS hoặc localhost. Hãy mở bằng http://localhost:5173 hoặc cấu hình HTTPS."
-                : denied
-                  ? "Bạn đã từ chối quyền vị trí. Hãy bật lại quyền vị trí trong cài đặt trình duyệt rồi bấm thử lại."
-                  : "Website sẽ chỉ lấy tọa độ sau khi bạn bấm nút bên dưới và đồng ý với popup của trình duyệt."}
-            </p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={onRequestLocation}
-          disabled={loading || insecure}
-          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-[#0f766e] px-4 font-black text-white disabled:cursor-not-allowed disabled:bg-slate-300"
-        >
-          <LocateFixed className="h-4 w-4" />
-          {loading ? "Đang xin quyền vị trí..." : denied ? "Thử lại quyền vị trí" : "Cho phép vị trí"}
-        </button>
-      </div>
-    </div>
-  );
-}
-

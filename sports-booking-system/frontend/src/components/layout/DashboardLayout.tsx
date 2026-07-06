@@ -33,42 +33,48 @@ type MenuItem = {
 
 const menus = {
   PARTNER: [
-    { to: "/partner/dashboard", label: "Bảng điều khiển", icon: Grid2X2, group: "Tổng quan" },
-    { to: "/partner/operations", label: "Vận hành sân", icon: TimerReset, group: "Vận hành" },
-    { to: "/partner/courts", label: "Quản lý sân", icon: UserRoundCheck, group: "Vận hành" },
-    { to: "/partner/bookings", label: "Đơn đặt", icon: CalendarDays, group: "Vận hành" },
-    { to: "/partner/calendar", label: "Lịch đặt sân", icon: CalendarDays, group: "Vận hành" },
-    { to: "/partner/vouchers", label: "Voucher", icon: Gift, group: "Nội dung" },
-    { to: "/partner/blogs", label: "Bài viết", icon: FileText, group: "Nội dung" },
-    { to: "/partner/tournaments", label: "Giải đấu", icon: Trophy, group: "Nội dung" },
-    { to: "/partner/statistics", label: "Doanh thu", icon: WalletCards, group: "Tài chính" },
-    { to: "/partner/settings", label: "Cài đặt", icon: Settings, group: "Bảo mật" }
+    { to: "/partner/dashboard", label: "Bảng điều khiển", icon: Grid2X2 },
+    { to: "/partner/courts", label: "Quản lý sân", icon: UserRoundCheck },
+    { to: "/partner/bookings", label: "Đơn đặt", icon: CalendarDays },
+    { to: "/partner/calendar", label: "Lịch đặt sân", icon: CalendarDays },
+    { to: "/partner/vouchers", label: "Voucher", icon: Gift },
+    { to: "/partner/blogs", label: "Bài viết", icon: FileText },
+    { to: "/partner/tournaments", label: "Giải đấu", icon: Trophy },
+    { to: "/partner/staff", label: "Nhân viên", icon: Users },
+    { to: "/partner/statistics", label: "Doanh thu", icon: WalletCards },
+    { to: "/partner/settings", label: "Cài đặt", icon: Settings }
   ],
   ADMIN: [
-    { to: "/admin/dashboard", label: "Bảng điều khiển", icon: Grid2X2, group: "Tổng quan" },
-    { to: "/admin/bookings", label: "Đơn đặt sân", icon: CalendarCheck, group: "Vận hành" },
-    { to: "/admin/courts", label: "Tất cả sân", icon: Grid2X2, group: "Vận hành" },
-    { to: "/admin/courts/pending", label: "Duyệt sân", icon: FolderCheck, group: "Vận hành" },
-    { to: "/admin/users", label: "Người dùng", icon: Users, group: "Người dùng" },
-    { to: "/admin/partners", label: "Đối tác", icon: UserRoundCheck, group: "Người dùng" },
-    { to: "/admin/categories", label: "Danh mục", icon: Grid2X2, group: "Nội dung" },
-    { to: "/admin/vouchers", label: "Quản lý voucher", icon: Gift, group: "Nội dung" },
-    { to: "/admin/notifications", label: "Thông báo", icon: Bell, group: "Nội dung" },
-    { to: "/admin/blogs/pending", label: "Duyệt bài viết", icon: FileText, group: "Nội dung" },
-    { to: "/admin/tournaments/pending", label: "Duyệt giải đấu", icon: Trophy, group: "Nội dung" },
-    { to: "/admin/finance", label: "Tài chính", icon: WalletCards, group: "Tài chính" },
-    { to: "/admin/commission", label: "Hoa hồng", icon: WalletCards, group: "Tài chính" },
-    { to: "/admin/reports", label: "Báo cáo", icon: BarChart3, group: "Bảo mật" },
-    { to: "/admin/audit-logs", label: "Nhật ký kiểm toán", icon: CalendarDays, group: "Bảo mật" },
-    { to: "/admin/blockchain-logs", label: "Nhật ký blockchain", icon: Link2, group: "Bảo mật" }
+    { to: "/admin/dashboard", label: "Bảng điều khiển", icon: Grid2X2 },
+    { to: "/admin/users", label: "Người dùng", icon: Users },
+    { to: "/admin/partners", label: "Đối tác", icon: UserRoundCheck },
+    { to: "/admin/courts/pending", label: "Duyệt sân", icon: FolderCheck },
+    { to: "/admin/categories", label: "Danh mục", icon: Grid2X2 },
+    { to: "/admin/vouchers", label: "Quản lý voucher", icon: Gift },
+    { to: "/admin/blogs/pending", label: "Duyệt bài viết", icon: FileText },
+    { to: "/admin/tournaments/pending", label: "Duyệt giải đấu", icon: Trophy },
+    { to: "/admin/reports", label: "Báo cáo", icon: BarChart3 },
+    { to: "/admin/commission", label: "Hoa hồng", icon: WalletCards },
+    { to: "/admin/audit-logs", label: "Nhật ký kiểm toán", icon: CalendarDays, group: "LOGS & SECURITY" },
+    { to: "/admin/blockchain-logs", label: "Nhật ký blockchain", icon: Link2, group: "LOGS & SECURITY" }
+  ],
+  RECIPIENT: [
+    { to: "/recipient/dashboard", label: "Bảng điều khiển", icon: Grid2X2 },
+    { to: "/recipient/bookings", label: "Đơn đặt", icon: CalendarDays },
+    { to: "/recipient/calendar", label: "Lịch đặt sân", icon: CalendarDays }
   ]
-} satisfies Record<"PARTNER" | "ADMIN", MenuItem[]>;
+} satisfies Record<"PARTNER" | "ADMIN" | "RECIPIENT", MenuItem[]>;
 
 export function DashboardLayout() {
   const { user, logout } = useAuth();
   const { t } = useLanguage();
   const isAdmin = user?.role === "ADMIN";
-  const items: MenuItem[] = isAdmin ? menus.ADMIN : menus.PARTNER.filter((item) => item.to !== "/partner/dashboard");
+  const isRecipient = user?.role === "RECIPIENT";
+  const items: MenuItem[] = isAdmin
+    ? menus.ADMIN
+    : isRecipient
+    ? menus.RECIPIENT
+    : menus.PARTNER;
 
   return (
     <div className="min-h-screen bg-[#f7f8f8] text-[#111811]">
@@ -105,19 +111,16 @@ export function DashboardLayout() {
             </div>
           ))}
         </nav>
-
-        <div className="shrink-0 border-t border-[#c8d8c3] bg-[#eaf3e7] p-4">
-          {!isAdmin && (
-            <Button className="mb-3 h-12 w-full rounded-lg bg-[#24c866] text-base text-[#05270e] hover:bg-[#16a34a]" onClick={() => window.location.assign("/partner/courts/create")}>
-              <Plus className="h-5 w-5" />
-              {t("Thêm sân mới")}
-            </Button>
-          )}
-          <Button className="h-11 w-full rounded-lg" variant="secondary" onClick={logout}>
-            <LogOut className="h-4 w-4" />
-            {t("Đăng xuất")}
+        {(user?.role === "PARTNER") && (
+          <Button className="mt-auto h-14 rounded-lg bg-[#24c866] text-lg text-[#05270e] hover:bg-[#16a34a]" onClick={() => window.location.assign("/partner/courts/create")}>
+            <Plus className="h-5 w-5" />
+            {t("Thêm sân mới")}
           </Button>
-        </div>
+        )}
+        <Button className="mt-4 h-12 rounded-lg" variant="secondary" onClick={logout}>
+          <LogOut className="h-4 w-4" />
+          {t("Đăng xuất")}
+        </Button>
       </aside>
       <main className="md:pl-80">
         <div className="flex items-center justify-end gap-3 px-5 py-8 md:px-16">

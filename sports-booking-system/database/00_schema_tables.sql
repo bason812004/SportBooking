@@ -35,6 +35,8 @@
 -- tournaments            → tn0001
 -- tournament_registrations → tr0001
 -- team_recruitment_posts → tp0001
+-- team_post_members      → tpm0001
+-- team_post_messages     → tmsg0001
 -- ================================================
 
 create extension if not exists "pgcrypto";
@@ -55,6 +57,8 @@ drop table if exists demand_features cascade;
 drop table if exists demand_predictions cascade;
 drop table if exists dynamic_pricing_rules cascade;
 drop table if exists court_base_prices cascade;
+drop table if exists team_post_messages cascade;
+drop table if exists team_post_members cascade;
 drop table if exists team_recruitment_posts cascade;
 drop table if exists tournament_registrations cascade;
 drop table if exists tournaments cascade;
@@ -147,6 +151,8 @@ drop sequence if exists seq_blog_likes cascade;
 drop sequence if exists seq_tournaments cascade;
 drop sequence if exists seq_tournament_registrations cascade;
 drop sequence if exists seq_team_recruitment_posts cascade;
+drop sequence if exists seq_team_post_members cascade;
+drop sequence if exists seq_team_post_messages cascade;
 
 -- ── ENUM types ────────────────────────────────────────────────────────
 create type user_role as enum ('USER', 'PARTNER', 'ADMIN');
@@ -234,6 +240,8 @@ create sequence seq_blog_likes;
 create sequence seq_tournaments;
 create sequence seq_tournament_registrations;
 create sequence seq_team_recruitment_posts;
+create sequence seq_team_post_members;
+create sequence seq_team_post_messages;
 
 -- ══════════════════════════════════════════════════════════════════════
 -- TABLES
@@ -417,6 +425,7 @@ create table courts (
   court_count integer not null default 1 check (court_count > 0),
   price_note varchar(120),
   golden_price_note varchar(120),
+  deposit_percent numeric(5, 2) check (deposit_percent is null or (deposit_percent >= 0 and deposit_percent < 50)),
   article_content text,
   directions text,
   surface_info text,
@@ -778,6 +787,7 @@ create table vouchers (
   min_booking_amount numeric(12, 2) not null default 0 check (min_booking_amount >= 0),
   usage_limit integer check (usage_limit is null or usage_limit > 0),
   used_count integer not null default 0 check (used_count >= 0),
+  click_count integer not null default 0 check (click_count >= 0),
   start_date timestamptz not null,
   end_date timestamptz not null,
   status voucher_status not null default 'DRAFT',
@@ -825,6 +835,8 @@ create table blog_posts (
   category_id varchar(20) references blog_categories(id),
   status blog_post_status not null default 'DRAFT',
   visibility blog_visibility not null default 'PUBLIC',
+  allow_comments boolean not null default true,
+  view_count integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   published_at timestamptz
@@ -907,6 +919,24 @@ create table team_recruitment_posts (
   updated_at timestamptz not null default now(),
   constraint team_posts_time_check check (start_time < end_time),
   constraint team_posts_capacity_check check (current_players <= max_players)
+);
+
+create table team_post_members (
+  id varchar(20) primary key default ('tpm' || lpad(nextval('seq_team_post_members')::text, 4, '0')),
+  post_id varchar(20) not null references team_recruitment_posts(id) on delete cascade,
+  user_id varchar(20) not null references users(id) on delete cascade,
+  role varchar(20) not null default 'MEMBER',
+  joined_at timestamptz not null default now(),
+  unique(post_id, user_id)
+);
+
+create table team_post_messages (
+  id varchar(20) primary key default ('tmsg' || lpad(nextval('seq_team_post_messages')::text, 4, '0')),
+  post_id varchar(20) not null references team_recruitment_posts(id) on delete cascade,
+  user_id varchar(20) not null references users(id) on delete cascade,
+  content text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 -- ══════════════════════════════════════════════════════════════════════
@@ -1055,3 +1085,7 @@ create index if not exists idx_team_posts_status on team_recruitment_posts(statu
 create index if not exists idx_team_posts_sport_type on team_recruitment_posts(sport_type);
 create index if not exists idx_team_posts_playing_date on team_recruitment_posts(playing_date);
 create index if not exists idx_team_posts_user_id on team_recruitment_posts(user_id);
+create index if not exists idx_team_post_members_post_id on team_post_members(post_id);
+create index if not exists idx_team_post_members_user_id on team_post_members(user_id);
+create unique index if not exists ux_team_post_members_post_user on team_post_members(post_id, user_id);
+create index if not exists idx_team_post_messages_post_created on team_post_messages(post_id, created_at desc);

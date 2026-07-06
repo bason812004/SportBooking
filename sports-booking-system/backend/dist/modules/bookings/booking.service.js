@@ -4,7 +4,6 @@ import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from ".
 import { paginationMeta } from "../../shared/utils/response.js";
 import { bookingStartsAt, durationHours, parseLimit, parsePage, timeToDate, timeToMinutes, toDbDate } from "../../shared/utils/time.js";
 import { courtRepository } from "../courts/court.repository.js";
-import { commissionService } from "../commission/commission.service.js";
 import { trackEvent } from "../analytics/analytics.service.js";
 import { demandPredictionService } from "../demand-prediction/demandPrediction.service.js";
 import { dynamicPricingService } from "../dynamic-pricing/dynamicPricing.service.js";
@@ -46,10 +45,36 @@ async function buildQuote(userId, input) {
         courtRepository.availability(input.courtId, input.bookingDate, selectedSurfaceId),
         courtRepository.bookingSlots(input.courtId, input.bookingDate, selectedSurfaceId)
     ]);
+    const activeBookings = legacyBookings.filter(b => {
+        const isPending = b.bookingStatus === "PENDING" || b.bookingStatus === "PENDING_PAYMENT";
+        if (isPending) {
+            if (!b.payments || b.payments.length === 0)
+                return true;
+            const activePayment = b.payments.find((p) => p.status === "PENDING" || p.status === "UNPAID");
+            if (!activePayment)
+                return false;
+            const isExpired = activePayment.expiresAt.getTime() <= Date.now();
+            return !isExpired;
+        }
+        return true;
+    });
+    const activeBookingSlots = bookingSlots.filter(bs => {
+        const isPending = bs.booking.bookingStatus === "PENDING" || bs.booking.bookingStatus === "PENDING_PAYMENT";
+        if (isPending) {
+            if (!bs.booking.payments || bs.booking.payments.length === 0)
+                return true;
+            const activePayment = bs.booking.payments.find((p) => p.status === "PENDING" || p.status === "UNPAID");
+            if (!activePayment)
+                return false;
+            const isExpired = activePayment.expiresAt.getTime() <= Date.now();
+            return !isExpired;
+        }
+        return true;
+    });
     for (const slot of input.slots) {
         const blocked = blocks.some((block) => checkBookingOverlap(slot, { startTime: block.startTime.toISOString().slice(11, 16), endTime: block.endTime.toISOString().slice(11, 16) }));
-        const booked = legacyBookings.some((booking) => checkBookingOverlap(slot, { startTime: booking.startTime.toISOString().slice(11, 16), endTime: booking.endTime.toISOString().slice(11, 16) }));
-        const bookedSlot = bookingSlots.some((bookingSlot) => checkBookingOverlap(slot, { startTime: bookingSlot.startTime.toISOString().slice(11, 16), endTime: bookingSlot.endTime.toISOString().slice(11, 16) }));
+        const booked = activeBookings.some((booking) => checkBookingOverlap(slot, { startTime: booking.startTime.toISOString().slice(11, 16), endTime: booking.endTime.toISOString().slice(11, 16) }));
+        const bookedSlot = activeBookingSlots.some((bookingSlot) => checkBookingOverlap(slot, { startTime: bookingSlot.startTime.toISOString().slice(11, 16), endTime: bookingSlot.endTime.toISOString().slice(11, 16) }));
         if (blocked || booked || bookedSlot)
             throw new ConflictError("Mot hoac nhieu khung gio da duoc dat hoac bi khoa", "BOOKING_CONFLICT");
     }
@@ -62,15 +87,37 @@ async function buildQuote(userId, input) {
         const hours = durationHours(slot.startTime, slot.endTime);
         return { ...slot, price: dynamicPrice.finalPrice * hours };
     }));
-    const subtotal = pricedSlots.reduce((sum, slot) => sum + slot.price, 0);
+    const courtSubtotal = pricedSlots.reduce((sum, slot) => sum + slot.price, 0);
+    const serviceIds = (input.services ?? []).map((service) => service.serviceId);
+    const services = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
+    if (services.length !== serviceIds.length)
+        throw new ValidationError("Dich vu khong hop le");
+    const serviceLines = (input.services ?? []).map((line) => {
+        const service = services.find((item) => item.id === line.serviceId);
+        return {
+            serviceId: line.serviceId,
+            name: service.name,
+            quantity: line.quantity,
+            price: Number(service.price),
+            total: Number(service.price) * line.quantity
+        };
+    });
+    const servicesSubtotal = serviceLines.reduce((sum, line) => sum + line.total, 0);
+    const subtotal = courtSubtotal + servicesSubtotal;
     let voucherDiscountAmount = 0;
     let voucherId;
-    if (input.voucherCode) {
+    if (input.voucherId) {
+        const voucherResult = await voucherService.apply({ userId, voucherId: input.voucherId, courtId: input.courtId, subtotal });
+        voucherDiscountAmount = voucherResult.discountAmount;
+        voucherId = voucherResult.voucherId;
+    }
+    else if (input.voucherCode) {
         const voucherResult = await voucherService.apply({ userId, code: input.voucherCode, courtId: input.courtId, subtotal });
         voucherDiscountAmount = voucherResult.discountAmount;
         voucherId = voucherResult.voucherId;
     }
-    const quote = calculateBookingQuote(pricedSlots, voucherDiscountAmount);
+    const depositPercent = await bookingRepository.courtDepositPercent(input.courtId);
+    const quote = calculateBookingQuote(pricedSlots, voucherDiscountAmount, servicesSubtotal, depositPercent);
     return {
         court: {
             id: court.id,
@@ -81,7 +128,12 @@ async function buildQuote(userId, input) {
         courtSurface: selectedSurface ? { id: selectedSurface.id, code: selectedSurface.code, name: selectedSurface.name } : null,
         bookingDate: input.bookingDate,
         slots: pricedSlots,
+        services: serviceLines,
+        courtSubtotal,
+        servicesSubtotal,
         voucherId,
+        depositPercent,
+        requiresDeposit: depositPercent > 0,
         currency: "VND",
         quoteExpiresAt: new Date(Date.now() + 5 * 60 * 1000),
         ...quote
@@ -93,14 +145,51 @@ export const bookingService = {
     },
     async checkout(userId, input) {
         const quote = await buildQuote(userId, input);
-        if (!canCreateBookingCheckout({ totalAmount: quote.totalAmount, paymentType: input.paymentType })) {
+        if (!canCreateBookingCheckout({ totalAmount: quote.totalAmount, paymentType: input.paymentType, depositPercent: quote.depositPercent })) {
             throw new ValidationError("Lua chon thanh toan khong hop le");
+        }
+        if (input.paymentType === "PAY_AT_COURT") {
+            const result = await bookingRepository.createPayAtCourtCheckout({
+                bookingCode: bookingCode(),
+                userId,
+                courtId: input.courtId,
+                bookingDate: input.bookingDate,
+                slots: quote.slots,
+                services: quote.services,
+                courtSubtotal: quote.courtSubtotal,
+                subtotal: quote.subtotal,
+                voucherDiscountAmount: quote.voucherDiscountAmount,
+                totalAmount: quote.totalAmount,
+                voucherId: quote.voucherId,
+                note: input.note
+            });
+            if (result.conflict)
+                throw new ConflictError("Mot hoac nhieu khung gio vua duoc dat boi nguoi khac", "BOOKING_CONFLICT");
+            realtimeService.toUser(userId, realtimeEvents.bookingCreated, result.booking);
+            realtimeService.toCourt(input.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: input.courtId, bookingDate: input.bookingDate });
+            return {
+                bookingId: result.booking.id,
+                paymentId: null,
+                bookingStatus: result.booking.bookingStatus,
+                paymentStatus: result.booking.paymentStatus,
+                paymentType: input.paymentType,
+                totalAmount: quote.totalAmount,
+                paymentAmount: 0,
+                remainingAmount: quote.totalAmount,
+                qrCodeUrl: null,
+                qrPayload: null,
+                paymentReference: "",
+                expiresAt: null,
+                providerConfigured: true
+            };
         }
         const paymentAmount = input.paymentType === "DEPOSIT" ? quote.minimumDepositAmount : quote.totalAmount;
         const remainingAmount = quote.totalAmount - paymentAmount;
         const expiresAt = new Date(Date.now() + env.BOOKING_HOLD_EXPIRES_MINUTES * 60 * 1000);
         const reference = paymentReference();
-        const orderId = `${reference}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+        const orderId = env.PAYMENT_PROVIDER === "PAYOS"
+            ? String(Number(String(Date.now()).slice(-9) + String(Math.floor(Math.random() * 1000)).padStart(3, "0")))
+            : `${reference}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
         const providerResult = await paymentProvider.createQrPayment({
             amount: paymentAmount,
             currency: "VND",
@@ -116,6 +205,8 @@ export const bookingService = {
             courtSurfaceId: quote.courtSurface?.id ?? null,
             bookingDate: input.bookingDate,
             slots: quote.slots,
+            services: quote.services,
+            courtSubtotal: quote.courtSubtotal,
             subtotal: quote.subtotal,
             voucherDiscountAmount: quote.voucherDiscountAmount,
             totalAmount: quote.totalAmount,
@@ -154,6 +245,23 @@ export const bookingService = {
     async create(userId, input) {
         if (timeToMinutes(input.startTime) >= timeToMinutes(input.endTime)) {
             throw new ValidationError("Gio bat dau phai nho hon gio ket thuc");
+        }
+        const conflict = await courtRepository.findConflict(input.courtId, input.bookingDate, input.startTime, input.endTime);
+        if (conflict) {
+            const isPending = conflict.bookingStatus === "PENDING" || conflict.bookingStatus === "PENDING_PAYMENT";
+            let isExpired = false;
+            if (isPending) {
+                if (!conflict.payments || conflict.payments.length === 0) {
+                    isExpired = false;
+                }
+                else {
+                    const activePayment = conflict.payments.find((p) => p.status === "PENDING" || p.status === "UNPAID");
+                    isExpired = !activePayment ? true : activePayment.expiresAt.getTime() <= Date.now();
+                }
+            }
+            if (!isExpired) {
+                throw new ConflictError("Khung gio nay da co nguoi dat.", "BOOKING_CONFLICT");
+            }
         }
         const court = await bookingRepository.courtWithPricing(input.courtId);
         if (!court)
@@ -220,7 +328,7 @@ export const bookingService = {
             };
         }
         const totalPrice = subtotal - voucherDiscountAmount;
-        const depositRate = await commissionService.depositRate();
+        const depositPercent = await bookingRepository.courtDepositPercent(input.courtId);
         const booking = await bookingRepository.createWithServices({
             bookingCode: bookingCode(),
             userId,
@@ -234,7 +342,7 @@ export const bookingService = {
             subtotal,
             voucherDiscountAmount,
             totalPrice,
-            depositAmount: Math.round(totalPrice * (depositRate / 100) * 100) / 100,
+            depositAmount: Math.round(totalPrice * (depositPercent / 100) * 100) / 100,
             paymentMethod: input.paymentMethod,
             voucherId,
             note: input.note,

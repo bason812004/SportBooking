@@ -13,5 +13,8 @@ export const realtimeEvents = {
   notificationNew: "notification:new",
   voucherClaimed: "voucher:claimed",
   voucherUsed: "voucher:used",
-  reviewCreated: "review:created"
+  voucherNew: "voucher:new",
+  reviewCreated: "review:created",
+  teamPostMemberJoined: "team-post:member-joined",
+  teamPostMessageNew: "team-post:message:new"
 } as const;

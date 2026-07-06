@@ -1,79 +1,25 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 
-function bookingWhere(filters: {
-  search?: string;
-  fromDate?: string;
-  toDate?: string;
-  courtId?: string;
-  partnerId?: string;
-  userId?: string;
-  bookingStatus?: string;
-  paymentStatus?: string;
-}) {
-  const clauses: string[] = [];
-  const values: unknown[] = [];
-  const add = (clause: string, value: unknown) => {
-    values.push(value);
-    clauses.push(clause.replace("?", `$${values.length}`));
-  };
+const columnExistsCache = new Map<string, boolean>();
 
-  if (filters.search) {
-    values.push(`%${filters.search}%`);
-    const index = values.length;
-    clauses.push(`(
-      b.booking_code ilike $${index}
-      or u.full_name ilike $${index}
-      or u.email ilike $${index}
-      or c.name ilike $${index}
-      or p.business_name ilike $${index}
-    )`);
-  }
-  if (filters.fromDate) add("b.booking_date >= ?::date", filters.fromDate);
-  if (filters.toDate) add("b.booking_date <= ?::date", filters.toDate);
-  if (filters.courtId) add("b.court_id = ?", filters.courtId);
-  if (filters.partnerId) add("c.partner_id = ?", filters.partnerId);
-  if (filters.userId) add("b.user_id = ?", filters.userId);
-  if (filters.bookingStatus) add("b.booking_status::text = ?", filters.bookingStatus);
-  if (filters.paymentStatus) add("b.payment_status::text = ?", filters.paymentStatus);
+async function columnExists(tableName: string, columnName: string) {
+  const cacheKey = `${tableName}.${columnName}`;
+  const cached = columnExistsCache.get(cacheKey);
+  if (cached !== undefined) return cached;
 
-  return {
-    where: clauses.length ? `where ${clauses.join(" and ")}` : "",
-    values
-  };
-}
-
-function adminCourtWhere(filters: {
-  search?: string;
-  partnerId?: string;
-  city?: string;
-  district?: string;
-  approvalStatus?: string;
-  activeStatus?: string;
-  verified?: string;
-  featured?: string;
-}) {
-  const clauses: string[] = [];
-  const values: unknown[] = [];
-  const add = (clause: string, value: unknown) => {
-    values.push(value);
-    clauses.push(clause.replace("?", `$${values.length}`));
-  };
-
-  if (filters.search) {
-    values.push(`%${filters.search}%`);
-    const index = values.length;
-    clauses.push(`(c.name ilike $${index} or c.address ilike $${index} or p.business_name ilike $${index})`);
-  }
-  if (filters.partnerId) add("c.partner_id = ?", filters.partnerId);
-  if (filters.city) add("c.city ilike ?", `%${filters.city}%`);
-  if (filters.district) add("c.district ilike ?", `%${filters.district}%`);
-  if (filters.approvalStatus) add("c.approval_status::text = ?", filters.approvalStatus);
-  if (filters.activeStatus) add("c.active_status::text = ?", filters.activeStatus);
-  if (filters.verified) add("c.verified = ?::boolean", filters.verified);
-  if (filters.featured) add("c.featured = ?::boolean", filters.featured);
-
-  return { where: clauses.length ? `where ${clauses.join(" and ")}` : "", values };
+  const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+    select exists(
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = ${tableName}
+        and column_name = ${columnName}
+    ) as "exists"
+  `;
+  const exists = Boolean(row?.exists);
+  columnExistsCache.set(cacheKey, exists);
+  return exists;
 }
 
 export const adminRepository = {
@@ -979,20 +925,25 @@ export const adminRepository = {
   },
 
   setVoucherStatus(id: string, status: "ACTIVE" | "DISABLED") {
-    return prisma.$executeRaw`update vouchers set status = ${status}::voucher_status, updated_at = now() where id = ${id}::uuid`;
+    return prisma.$executeRaw`update vouchers set status = ${status}::voucher_status, updated_at = now() where id = ${id}`;
   },
 
-  pendingBlogs(page: number, limit: number, search?: string) {
+  async pendingBlogs(page: number, limit: number, search?: string) {
     const pattern = search ? `%${search}%` : null;
+    const allowCommentsSelect = await columnExists("blog_posts", "allow_comments")
+      ? Prisma.sql`coalesce(b.allow_comments, true)`
+      : Prisma.sql`true`;
+
     return prisma.$transaction([
-      prisma.$queryRaw<any[]>`
+      prisma.$queryRaw<any[]>(Prisma.sql`
         select b.id, b.title, b.excerpt, b.content, b.cover_image_url as "coverImageUrl",
-          b.status::text, b.created_at as "createdAt", u.full_name as "authorName", u.email as "authorEmail"
+          b.status::text, b.visibility::text, ${allowCommentsSelect} as "allowComments",
+          b.created_at as "createdAt", u.full_name as "authorName", u.email as "authorEmail"
         from blog_posts b join users u on u.id = b.author_id
         where b.status = 'PENDING'::blog_post_status
           and (${pattern}::text is null or b.title ilike ${pattern} or u.full_name ilike ${pattern})
         order by b.created_at desc offset ${(page - 1) * limit} limit ${limit}
-      `,
+      `),
       prisma.$queryRaw<Array<{ count: bigint }>>`
         select count(*)::bigint as count from blog_posts b join users u on u.id = b.author_id
         where b.status = 'PENDING'::blog_post_status
@@ -1005,7 +956,7 @@ export const adminRepository = {
     return prisma.$executeRaw`
       update blog_posts set status = ${status}::blog_post_status,
         published_at = case when ${status} = 'PUBLISHED' then now() else published_at end, updated_at = now()
-      where id = ${id}::uuid and status = 'PENDING'::blog_post_status
+      where id = ${id} and status = 'PENDING'::blog_post_status
     `;
   },
 

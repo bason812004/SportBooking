@@ -1,6 +1,7 @@
-import { Link } from "react-router-dom";
-import { MapPin, Star } from "lucide-react";
+import { Star } from "lucide-react";
 import { motion } from "framer-motion";
+import { Link } from "react-router-dom";
+import { MapPin } from "lucide-react";
 import { Pill } from "./homeUtils";
 
 type CourtCardProps = {
@@ -23,7 +24,7 @@ export function CourtCard({ id, name, image, area, distance, price, rating, book
         <div className="relative h-56 overflow-hidden rounded-[1.35rem]">
           <img src={image} alt={name} loading="lazy" className="h-full w-full object-cover transition duration-700 group-hover:scale-110" />
           {badge && <div className="absolute left-3 top-3"><Pill tone="amber">{badge}</Pill></div>}
-          {fillRate && <span className="absolute bottom-3 right-3 rounded-full bg-white/95 px-3 py-1 text-xs font-black text-[#0f172a]">{fillRate} lấp đầy</span>}
+          {fillRate && <span className="absolute bottom-3 right-3 rounded-full bg-white/95 px-3 py-1 text-xs font-black text-[#0b1220]">{fillRate} lấp đầy</span>}
         </div>
         <div className="p-4">
           <div className="flex items-start justify-between gap-3">

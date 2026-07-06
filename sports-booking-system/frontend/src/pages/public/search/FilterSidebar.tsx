@@ -10,7 +10,7 @@ export function FilterSidebar({
   radiusKm,
   onSportTypeChange,
   onMinPriceChange,
-  onMaxPriceChange,
+  onMaxPriceChange, 
   onRadiusChange,
   onClear
 }: {
@@ -70,4 +70,3 @@ export function FilterSidebar({
     </aside>
   );
 }
-
