@@ -68,7 +68,7 @@ export function DashboardLayout() {
   const { user, logout } = useAuth();
   const { t } = useLanguage();
   const isAdmin = user?.role === "ADMIN";
-  const items: MenuItem[] = isAdmin ? menus.ADMIN : menus.PARTNER;
+  const items: MenuItem[] = isAdmin ? menus.ADMIN : menus.PARTNER.filter((item) => item.to !== "/partner/dashboard");
 
   return (
     <div className="min-h-screen bg-[#f7f8f8] text-[#111811]">
