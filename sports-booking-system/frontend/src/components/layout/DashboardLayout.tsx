@@ -61,7 +61,8 @@ const menus = {
   RECIPIENT: [
     { to: "/recipient/dashboard", label: "Bảng điều khiển", icon: Grid2X2 },
     { to: "/recipient/bookings", label: "Đơn đặt", icon: CalendarDays },
-    { to: "/recipient/calendar", label: "Lịch đặt sân", icon: CalendarDays }
+    { to: "/recipient/calendar", label: "Lịch đặt sân", icon: CalendarDays },
+    { to: "/recipient/court-surfaces", label: "Sân con", icon: UserRoundCheck }
   ]
 } satisfies Record<"PARTNER" | "ADMIN" | "RECIPIENT", MenuItem[]>;
 
@@ -73,8 +74,8 @@ export function DashboardLayout() {
   const items: MenuItem[] = isAdmin
     ? menus.ADMIN
     : isRecipient
-    ? menus.RECIPIENT
-    : menus.PARTNER;
+      ? menus.RECIPIENT
+      : menus.PARTNER;
 
   return (
     <div className="min-h-screen bg-[#f7f8f8] text-[#111811]">

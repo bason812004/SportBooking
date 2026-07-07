@@ -52,16 +52,16 @@ export function RecipientCalendarPage() {
             </h2>
             <div className="grid gap-3">
               {items?.map((item) => (
-                <div key={item.id} className="grid gap-2 rounded-xl bg-slate-50 p-4 border border-slate-100 hover:shadow-sm transition md:grid-cols-4 items-center">
+                <div key={item.id} className="grid gap-2 rounded-xl bg-slate-50 p-4 border border-slate-100 hover:shadow-sm transition md:grid-cols-5 items-center">
                   <span className="font-black text-slate-700">{`${item.startTime.slice(11, 16)} - ${item.endTime.slice(11, 16)}`}</span>
+                  <span className="font-semibold text-emerald-700">{item.courtSurface?.name || "Chưa xác định sân con"}</span>
                   <span className="font-medium text-slate-600">Khách: {item.user?.fullName || "Chưa cập nhật"}</span>
                   <span className="text-slate-500">SĐT: {item.user?.phone || "Chưa cung cấp"}</span>
                   <span className="md:text-right">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                      item.bookingStatus === "CONFIRMED" ? "bg-blue-100 text-blue-800" :
-                      item.bookingStatus === "PENDING" ? "bg-yellow-100 text-yellow-800" :
-                      "bg-green-100 text-green-800"
-                    }`}>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${item.bookingStatus === "CONFIRMED" ? "bg-blue-100 text-blue-800" :
+                        item.bookingStatus === "PENDING" ? "bg-yellow-100 text-yellow-800" :
+                          "bg-green-100 text-green-800"
+                      }`}>
                       {item.bookingStatus}
                     </span>
                   </span>

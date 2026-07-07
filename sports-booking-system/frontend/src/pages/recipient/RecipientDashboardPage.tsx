@@ -52,6 +52,7 @@ export function RecipientDashboardPage() {
               <tr className="bg-slate-50 border-b">
                 <th className="p-3 font-semibold text-slate-600">Khách hàng</th>
                 <th className="p-3 font-semibold text-slate-600">Email</th>
+                <th className="p-3 font-semibold text-slate-600">Sân con</th>
                 <th className="p-3 font-semibold text-slate-600">Ngày đặt</th>
                 <th className="p-3 font-semibold text-slate-600">Giờ chơi</th>
                 <th className="p-3 font-semibold text-slate-600">Trạng thái</th>
@@ -61,22 +62,22 @@ export function RecipientDashboardPage() {
             <tbody>
               {data.recentBookings.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-4 text-center text-slate-500">Chưa có đơn đặt nào.</td>
+                  <td colSpan={7} className="p-4 text-center text-slate-500">Chưa có đơn đặt nào.</td>
                 </tr>
               ) : (
                 data.recentBookings.map((item) => (
                   <tr key={item.id} className="border-b hover:bg-slate-50">
                     <td className="p-3 font-medium text-slate-800">{item.user?.fullName}</td>
                     <td className="p-3 text-slate-600">{item.user?.email}</td>
+                    <td className="p-3 text-slate-600">{item.courtSurface?.name || "Chưa xác định"}</td>
                     <td className="p-3 text-slate-600">{new Date(item.bookingDate).toLocaleDateString("vi-VN")}</td>
                     <td className="p-3 text-slate-600">{`${item.startTime.slice(11, 16)} - ${item.endTime.slice(11, 16)}`}</td>
                     <td className="p-3">
-                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                        item.bookingStatus === "CONFIRMED" ? "bg-blue-100 text-blue-800" :
-                        item.bookingStatus === "PENDING" ? "bg-yellow-100 text-yellow-800" :
-                        item.bookingStatus === "COMPLETED" ? "bg-green-100 text-green-800" :
-                        "bg-red-100 text-red-800"
-                      }`}>
+                      <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${item.bookingStatus === "CONFIRMED" ? "bg-blue-100 text-blue-800" :
+                          item.bookingStatus === "PENDING" ? "bg-yellow-100 text-yellow-800" :
+                            item.bookingStatus === "COMPLETED" ? "bg-green-100 text-green-800" :
+                              "bg-red-100 text-red-800"
+                        }`}>
                         {item.bookingStatus}
                       </span>
                     </td>
