@@ -1,7 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import {
   BarChart3,
-  Bell,
   CalendarCheck,
   CalendarDays,
   FileText,
@@ -124,11 +123,7 @@ export function DashboardLayout() {
         </Button>
       </aside>
       <main className="md:pl-80">
-        <div className="flex items-center justify-end gap-3 px-5 py-8 md:px-16">
-          <button className="rounded-full border border-[#b9cdb7] bg-white p-5">
-            <Bell className="h-6 w-6" />
-          </button>
-        </div>
+        <div className="px-5 py-3 md:px-16" />
         <div className="px-5 pb-12 md:px-16">
           <Outlet />
         </div>
