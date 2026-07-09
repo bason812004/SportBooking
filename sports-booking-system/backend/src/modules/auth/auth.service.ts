@@ -40,7 +40,7 @@ function activePendingResult(pending: {
   return Math.max(1, Math.ceil((pending.expiresAt.getTime() - Date.now()) / 1000));
 }
 
-async function createSession(user: { id: string; role: "USER" | "PARTNER" | "ADMIN" }) {
+async function createSession(user: { id: string; role: "USER" | "PARTNER" | "ADMIN" | "RECIPIENT" }) {
   const accessToken = generateAccessToken(user);
   const refreshToken = generateRefreshToken(user);
   await authRepository.createRefreshToken({

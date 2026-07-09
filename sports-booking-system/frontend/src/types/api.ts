@@ -409,6 +409,7 @@ export type BlogComment = {
   id: string;
   postId: string;
   content: string;
+  isEdited?: boolean;
   createdAt: string;
   updatedAt: string;
   user: { id: string; fullName: string; avatarUrl?: string | null };

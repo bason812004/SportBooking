@@ -186,36 +186,46 @@ export const bookingRepository = {
     });
   },
 
-  findConflictsInTransaction(
+  async findConflictsInTransaction(
     tx: Prisma.TransactionClient,
     courtId: string,
     date: string,
     slots: Array<{ startTime: string; endTime: string }>
   ) {
-    const activeStatuses = ["PENDING", "CONFIRMED", "COMPLETED"];
-    return Promise.all(
-      slots.map(async (slot) => {
-        const legacyBooking = await tx.booking.findFirst({
-          where: {
-            courtId,
-            bookingDate: toDbDate(date),
-            bookingStatus: { in: activeStatuses as any },
-            startTime: { lt: timeToDate(slot.endTime.slice(0,5)) },
-            endTime: { gt: timeToDate(slot.startTime.slice(0,5)) }
-          }
-        });
-        const slotBooking = await tx.bookingSlot.findFirst({
-          where: {
-            courtId,
-            bookingDate: toDbDate(date),
-            startTime: { lt: timeToDate(slot.endTime.slice(0,5)) },
-            endTime: { gt: timeToDate(slot.startTime.slice(0,5)) },
-            booking: { bookingStatus: { in: activeStatuses as any } }
-          }
-        });
-        return legacyBooking ?? slotBooking;
-      })
-    );
+    const activeStatuses = ["PENDING", "PENDING_PAYMENT", "CONFIRMED", "COMPLETED"];
+    const bookingDate = toDbDate(date);
+    const conflicts: Array<unknown> = [];
+
+    for (const slot of slots) {
+      const startTime = timeToDate(slot.startTime.slice(0, 5));
+      const endTime = timeToDate(slot.endTime.slice(0, 5));
+      const legacyBooking = await tx.booking.findFirst({
+        where: {
+          courtId,
+          bookingDate,
+          bookingStatus: { in: activeStatuses as any },
+          startTime: { lt: endTime },
+          endTime: { gt: startTime }
+        }
+      });
+      if (legacyBooking) {
+        conflicts.push(legacyBooking);
+        continue;
+      }
+
+      const slotBooking = await tx.bookingSlot.findFirst({
+        where: {
+          courtId,
+          bookingDate,
+          startTime: { lt: endTime },
+          endTime: { gt: startTime },
+          booking: { bookingStatus: { in: activeStatuses as any } }
+        }
+      });
+      conflicts.push(slotBooking);
+    }
+
+    return conflicts;
   },
 
   createCheckout(input: {
@@ -332,7 +342,7 @@ export const bookingRepository = {
 
         return { conflict: false as const, booking, payment };
       },
-      { isolationLevel: "Serializable" }
+      { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 }
     );
   },
 
@@ -423,7 +433,7 @@ export const bookingRepository = {
 
         return { conflict: false as const, booking };
       },
-      { isolationLevel: "Serializable" }
+      { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 }
     );
   },
 

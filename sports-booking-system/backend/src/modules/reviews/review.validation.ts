@@ -10,7 +10,7 @@ export const createReviewSchema = z.object({
 });
 
 export const updateReviewSchema = z.object({
-  params: z.object({ id: z.string().uuid() }),
+  params: z.object({ id: z.string().trim().min(1) }),
   body: z.object({
     rating: z.coerce.number().int().min(1).max(5),
     comment: z.string().trim().max(1000).optional().nullable()
@@ -18,5 +18,5 @@ export const updateReviewSchema = z.object({
 });
 
 export const deleteReviewSchema = z.object({
-  params: z.object({ id: z.string().uuid() })
+  params: z.object({ id: z.string().trim().min(1) })
 });

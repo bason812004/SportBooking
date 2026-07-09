@@ -42,6 +42,11 @@ async function ensureCourtDepositColumn() {
   columnExistsCache.set("courts.deposit_percent", true);
 }
 
+function shortUserId() {
+  const randomPart = Math.random().toString(36).slice(2, 10);
+  return `u${randomPart}${Date.now().toString(36).slice(-8)}`.slice(0, 20);
+}
+
 async function attachCourtDeposit<T extends { id: string }>(court: T | null) {
   if (!court) return court;
   await ensureCourtDepositColumn();
@@ -440,66 +445,95 @@ export const partnerRepository = {
   },
 
   listRecipients(partnerId: string) {
-    return prisma.user.findMany({
-      where: { partnerId, role: "RECIPIENT" as any },
-      select: {
-        id: true,
-        fullName: true,
-        email: true,
-        phone: true,
-        status: true,
-        managedCourtId: true,
-        managedCourt: {
-          select: {
-            id: true,
-            name: true
-          }
-        }
-      },
-      orderBy: { fullName: "asc" }
-    });
+    return prisma.$queryRaw`
+      select
+        u.id,
+        u.full_name as "fullName",
+        u.email,
+        u.phone,
+        u.status,
+        u.managed_court_id as "managedCourtId",
+        case when c.id is null then null else jsonb_build_object('id', c.id, 'name', c.name) end as "managedCourt"
+      from users u
+      left join courts c on c.id = u.managed_court_id
+      where u.partner_id = ${partnerId}
+        and u.role = 'RECIPIENT'::user_role
+      order by u.full_name asc
+    `;
   },
 
   findRecipient(id: string, partnerId: string) {
-    return prisma.user.findFirst({
-      where: { id, partnerId, role: "RECIPIENT" as any },
-      select: {
-        id: true,
-        fullName: true,
-        email: true,
-        phone: true,
-        status: true,
-        managedCourtId: true
-      }
-    });
+    return prisma.$queryRaw`
+      select
+        id,
+        full_name as "fullName",
+        email,
+        phone,
+        status,
+        managed_court_id as "managedCourtId"
+      from users
+      where id = ${id}
+        and partner_id = ${partnerId}
+        and role = 'RECIPIENT'::user_role
+      limit 1
+    `.then((rows: any) => rows[0] ?? null);
   },
 
   createRecipient(partnerId: string, data: { fullName: string; email: string; passwordHash: string; phone?: string; managedCourtId: string }) {
-    return prisma.user.create({
-      data: {
-        fullName: data.fullName,
-        email: data.email,
-        passwordHash: data.passwordHash,
-        phone: data.phone ?? null,
-        role: "RECIPIENT" as any,
-        status: "ACTIVE",
-        emailVerified: true,
-        partnerId,
-        managedCourtId: data.managedCourtId
-      }
-    });
+    return prisma.$queryRaw`
+      insert into users (
+        id, full_name, email, password_hash, phone, role, status,
+        email_verified, partner_id, managed_court_id
+      ) values (
+        ${shortUserId()},
+        ${data.fullName},
+        ${data.email},
+        ${data.passwordHash},
+        ${data.phone ?? null},
+        'RECIPIENT'::user_role,
+        'ACTIVE'::account_status,
+        true,
+        ${partnerId},
+        ${data.managedCourtId}
+      )
+      returning
+        id,
+        full_name as "fullName",
+        email,
+        phone,
+        status,
+        managed_court_id as "managedCourtId"
+    `.then((rows: any) => rows[0]);
   },
 
   updateRecipient(id: string, partnerId: string, data: { fullName?: string; passwordHash?: string; phone?: string; managedCourtId?: string }) {
-    return prisma.user.update({
-      where: { id, partnerId },
-      data: data as any
-    });
+    return prisma.$queryRaw`
+      update users
+      set
+        full_name = coalesce(${data.fullName ?? null}, full_name),
+        password_hash = coalesce(${data.passwordHash ?? null}, password_hash),
+        phone = coalesce(${data.phone ?? null}, phone),
+        managed_court_id = coalesce(${data.managedCourtId ?? null}, managed_court_id),
+        updated_at = now()
+      where id = ${id}
+        and partner_id = ${partnerId}
+        and role = 'RECIPIENT'::user_role
+      returning
+        id,
+        full_name as "fullName",
+        email,
+        phone,
+        status,
+        managed_court_id as "managedCourtId"
+    `.then((rows: any) => rows[0] ?? null);
   },
 
   deleteRecipient(id: string, partnerId: string) {
-    return prisma.user.delete({
-      where: { id, partnerId }
-    });
+    return prisma.$executeRaw`
+      delete from users
+      where id = ${id}
+        and partner_id = ${partnerId}
+        and role = 'RECIPIENT'::user_role
+    `;
   }
 };

@@ -6,10 +6,13 @@ import { bookingStartsAt, parseLimit, parsePage, timeToDate, timeToMinutes, toDb
 import { commissionService } from "../commission/commission.service.js";
 
 async function getManagedCourtId(userId: string) {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { managedCourtId: true }
-  });
+  const [user] = await prisma.$queryRaw<Array<{ managedCourtId: string | null }>>`
+    select managed_court_id as "managedCourtId"
+    from users
+    where id = ${userId}
+      and role = 'RECIPIENT'::user_role
+    limit 1
+  `;
   if (!user || !user.managedCourtId) {
     throw new ForbiddenError("Tài khoản của bạn chưa được phân công quản lý sân nào");
   }

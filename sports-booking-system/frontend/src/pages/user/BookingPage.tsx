@@ -77,13 +77,23 @@ export function BookingPage() {
   });
 
   const durationHours = useMemo(() => {
-    if (!selectedSlots.length) return 0;
-    const startMin = toMinutes(selectedSlots[0].startTime);
-    const endMin = toMinutes(selectedSlots[selectedSlots.length - 1].endTime);
-    return Math.max(0, (endMin - startMin) / 60);
+    return selectedSlots.reduce((total, slot) => {
+      const slotHours = Math.max(0, (toMinutes(slot.endTime) - toMinutes(slot.startTime)) / 60);
+      return total + slotHours;
+    }, 0);
   }, [selectedSlots]);
 
-  const fallbackCourtSubtotal = (court.data?.minPrice ?? 0) * durationHours;
+  const availableSlotPriceMap = useMemo(() => {
+    return new Map((availability.data?.slots ?? []).map((slot) => [`${slot.startTime}-${slot.endTime}`, Number(slot.price) || 0]));
+  }, [availability.data?.slots]);
+
+  const fallbackCourtSubtotal = useMemo(() => {
+    return selectedSlots.reduce((total, slot) => {
+      const slotHours = Math.max(0, (toMinutes(slot.endTime) - toMinutes(slot.startTime)) / 60);
+      const slotPrice = availableSlotPriceMap.get(`${slot.startTime}-${slot.endTime}`) ?? court.data?.minPrice ?? 0;
+      return total + slotPrice * slotHours;
+    }, 0);
+  }, [availableSlotPriceMap, court.data?.minPrice, selectedSlots]);
   const courtSubtotal = quote.data?.courtSubtotal ?? fallbackCourtSubtotal;
   const subtotal = appliedVoucher?.subtotal ?? quote.data?.subtotal ?? courtSubtotal;
   const discount = appliedVoucher?.discountAmount ?? quote.data?.voucherDiscountAmount ?? 0;
@@ -121,7 +131,23 @@ export function BookingPage() {
       },
       {
         onSuccess: (data) => {
-          setAppliedVoucher(data);
+          const currentSubtotal = quote.data?.subtotal ?? courtSubtotal;
+          const currentCourtSubtotal = quote.data?.courtSubtotal ?? courtSubtotal;
+          const currentServicesSubtotal = quote.data?.servicesSubtotal ?? 0;
+          if (currentSubtotal < Number(data.voucher.minBookingAmount ?? 0)) {
+            setAppliedVoucher(null);
+            toast.error(`Cần tối thiểu ${formatCurrency(data.voucher.minBookingAmount)} để áp dụng voucher này.`);
+            return;
+          }
+          const recalculatedDiscount = Math.round(estimateVoucherDiscount(data.voucher, currentSubtotal));
+          setAppliedVoucher({
+            ...data,
+            courtSubtotal: currentCourtSubtotal,
+            servicesSubtotal: currentServicesSubtotal,
+            subtotal: currentSubtotal,
+            discountAmount: recalculatedDiscount,
+            finalTotal: Math.max(0, currentSubtotal - recalculatedDiscount)
+          });
           setVoucherInput(data.voucher.code);
           toast.success(`Đã áp dụng voucher ${data.voucher.code}.`);
         },
@@ -163,7 +189,12 @@ export function BookingPage() {
   const firstImage = c.images?.[0]?.imageUrl;
   const openingTime = timeText(c.openingTime) || "05:00";
   const closingTime = timeText(c.closingTime) || "23:00";
-  const selectedTimeText = selectedSlots.length ? `${selectedSlots[0].startTime} - ${selectedSlots[selectedSlots.length - 1].endTime}` : "Chưa chọn giờ";
+  const selectedTimeText = selectedSlots.length === 0
+    ? "Chưa chọn giờ"
+    : selectedSlots.length === 1
+      ? `${selectedSlots[0].startTime} - ${selectedSlots[0].endTime}`
+      : `${selectedSlots.length} khung giờ đã chọn`;
+  const selectedSlotDetailText = selectedSlots.map((slot) => `${slot.startTime} - ${slot.endTime}`).join(", ");
   const canCheckout = selectedSlots.length > 0 && finalTotal > 0 && !quote.isError && agreedToPolicies;
 
   return (
@@ -228,6 +259,7 @@ export function BookingPage() {
                 <TimerReset className="h-4 w-4 text-emerald-600" />
                 <span className="font-bold text-slate-700">{selectedTimeText}</span>
                 <span className="text-slate-500">{durationHours ? `${durationHours} giờ` : "Chọn ít nhất một khung giờ"}</span>
+                {selectedSlotDetailText && <span className="basis-full text-xs font-medium text-slate-500 sm:basis-auto">{selectedSlotDetailText}</span>}
                 {selectedSlots.length > 0 && (
                   <button type="button" onClick={() => setSelectedSlots([])} className="ml-auto inline-flex items-center gap-1 text-xs font-bold text-rose-600">
                     <Trash2 className="h-3.5 w-3.5" />
@@ -569,7 +601,7 @@ function discountLabel(voucher: Voucher) {
   return voucher.discountType === "PERCENTAGE" ? `Giảm ${voucher.discountValue}%` : `Giảm ${formatCurrency(voucher.discountValue)}`;
 }
 
-function estimateVoucherDiscount(voucher: Voucher, subtotal: number) {
+function estimateVoucherDiscount(voucher: { discountType: "PERCENTAGE" | "FIXED_AMOUNT"; discountValue: number; maxDiscountAmount?: number | null }, subtotal: number) {
   const rawDiscount =
     voucher.discountType === "PERCENTAGE"
       ? subtotal * (Number(voucher.discountValue) / 100)

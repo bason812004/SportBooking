@@ -1,7 +1,25 @@
 import { prisma } from "../../config/db.js";
+function shortAnalyticsId() {
+    const randomPart = Math.random().toString(36).slice(2, 10);
+    const timePart = Date.now().toString(36).slice(-8);
+    return `ae${randomPart}${timePart}`.slice(0, 20);
+}
 export const analyticsRepository = {
     trackEvent(data) {
-        return prisma.analyticsEvent.create({ data });
+        const metadataJson = data.metadataJson == null ? null : JSON.stringify(data.metadataJson);
+        return prisma.$executeRaw `
+      insert into analytics_events (
+        id, user_id, partner_id, event_type, entity_type, entity_id, metadata_json
+      ) values (
+        ${shortAnalyticsId()},
+        ${data.userId ?? null},
+        ${data.partnerId ?? null},
+        ${data.eventType}::analytics_event_type,
+        ${data.entityType.slice(0, 80)},
+        ${data.entityId ?? null},
+        ${metadataJson}::jsonb
+      )
+    `;
     },
     partnerOverview(partnerId) {
         return prisma.$transaction([
@@ -36,7 +54,7 @@ export const analyticsRepository = {
       select extract(hour from b.start_time)::int as hour, count(*)::bigint as "bookingCount"
       from bookings b
       join courts c on c.id = b.court_id
-      where c.partner_id = ${partnerId}::uuid
+      where c.partner_id = ${partnerId}
         and b.booking_status not in ('CANCELLED'::booking_status, 'NO_SHOW'::booking_status)
       group by extract(hour from b.start_time)
       order by "bookingCount" desc, hour asc

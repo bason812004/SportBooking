@@ -149,7 +149,7 @@ export const recipientWriteSchema = z.object({
     emailSuffix: z.string().trim().min(1).regex(/^[A-Za-z0-9_-]+$/, "Phần đuôi email chỉ được chứa chữ cái, số và dấu gạch dưới/gạch ngang"),
     password: z.string().trim().min(6),
     phone: z.string().trim().max(30).optional(),
-    managedCourtId: z.string().uuid()
+    managedCourtId: z.string().trim().min(1)
   })
 });
 
@@ -158,6 +158,6 @@ export const recipientUpdateSchema = z.object({
     fullName: z.string().trim().min(2).max(120).optional(),
     password: z.string().trim().min(6).optional(),
     phone: z.string().trim().max(30).optional(),
-    managedCourtId: z.string().uuid().optional()
+    managedCourtId: z.string().trim().min(1).optional()
   })
 });
