@@ -15,9 +15,21 @@ export const recipientController = {
   updateCourtSurfaceStatus: asyncHandler(async (req, res) =>
     sendSuccess(res, await recipientService.updateCourtSurfaceStatus(req.user!.id, req.params.id, req.body.status))
   ),
+  surfaceAvailability: asyncHandler(async (req, res) =>
+    sendSuccess(
+      res,
+      await recipientService.surfaceAvailability(
+        req.user!.id,
+        req.params.id,
+        (req.query.date as string | undefined) ?? new Date().toISOString().slice(0, 10)
+      )
+    )
+  ),
   operations: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.operations(req.user!.id, req.query as any))),
   extendBooking: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.extendBooking(req.user!.id, req.params.id, req.body.minutes))),
   createWalkInBooking: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.createWalkInBooking(req.user!.id, req.body), 201)),
   earlyCheckInBooking: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.earlyCheckInBooking(req.user!.id, req.params.id))),
-  earlyCheckOutBooking: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.earlyCheckOutBooking(req.user!.id, req.params.id)))
+  earlyCheckOutBooking: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.earlyCheckOutBooking(req.user!.id, req.params.id))),
+  paymentStatus: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.paymentStatus(req.user!.id, req.params.id))),
+  confirmWalkInPayment: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.confirmWalkInPayment(req.user!.id, req.params.id)))
 };

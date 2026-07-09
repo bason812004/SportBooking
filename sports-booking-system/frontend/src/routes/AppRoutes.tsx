@@ -32,7 +32,6 @@ import { UserBlogsPage } from "../pages/user/UserBlogsPage";
 import { UserBlogFormPage } from "../pages/user/UserBlogFormPage";
 import { RecipientDashboardPage } from "../pages/recipient/RecipientDashboardPage";
 import { RecipientBookingsPage } from "../pages/recipient/RecipientBookingsPage";
-import { RecipientCalendarPage } from "../pages/recipient/RecipientCalendarPage";
 import { RecipientCourtSurfacesPage } from "../pages/recipient/RecipientCourtSurfacesPage";
 import { PartnerStaffPage } from "../pages/partner/PartnerStaffPage";
 import { PartnerDashboardPage } from "../pages/partner/PartnerDashboardPage";
@@ -140,7 +139,7 @@ export function AppRoutes() {
         <Route element={<DashboardLayout />}>
           <Route path="recipient/dashboard" element={<RecipientDashboardPage />} />
           <Route path="recipient/bookings" element={<RecipientBookingsPage />} />
-          <Route path="recipient/calendar" element={<RecipientCalendarPage />} />
+          <Route path="recipient/calendar" element={<Navigate to="/recipient/bookings?view=calendar" replace />} />
           <Route path="recipient/court-surfaces" element={<RecipientCourtSurfacesPage />} />
         </Route>
       </Route>

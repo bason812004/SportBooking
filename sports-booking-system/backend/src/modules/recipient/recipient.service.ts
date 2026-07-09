@@ -1,10 +1,23 @@
 import { BookingStatus, CourtActiveStatus, PaymentMethod } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+import { env } from "../../config/env.js";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
-import { bookingStartsAt, durationHours, parseLimit, parsePage, timeToDate, timeToMinutes, toDbDate } from "../../shared/utils/time.js";
+import {
+  bookingStartsAt,
+  ceilToFullHour,
+  dayTypeFor,
+  durationHours,
+  floorToFullHour,
+  parseLimit,
+  parsePage,
+  timeToDate,
+  timeToMinutes,
+  toDbDate
+} from "../../shared/utils/time.js";
 import { commissionService } from "../commission/commission.service.js";
 import { dynamicPricingService } from "../dynamic-pricing/dynamicPricing.service.js";
+import { paymentProvider } from "../payments/providers/index.js";
 
 function dbTime(value: Date) {
   return value.toISOString().slice(11, 16);
@@ -25,6 +38,27 @@ function bookingCode() {
   return `WI${stamp}${Math.floor(Math.random() * 900 + 100)}`;
 }
 
+function paymentReference() {
+  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  return `SBK-${stamp}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+}
+
+function bookingOrderBy(sortBy?: string, sortOrder?: string) {
+  const order: "asc" | "desc" = sortOrder === "asc" ? "asc" : "desc";
+  switch (sortBy) {
+    case "customerName":
+      return [{ user: { fullName: order } }, { createdAt: "desc" as const }];
+    case "totalPrice":
+      return [{ totalPrice: order }, { createdAt: "desc" as const }];
+    case "bookingStatus":
+      return [{ bookingStatus: order }, { createdAt: "desc" as const }];
+    case "paymentStatus":
+      return [{ paymentStatus: order }, { createdAt: "desc" as const }];
+    default:
+      return [{ bookingDate: order }, { startTime: order }, { createdAt: "desc" as const }];
+  }
+}
+
 async function nextPrefixedId(prefix: string, sequenceName: string) {
   const rows = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
     `select '${prefix}' || lpad(nextval('${sequenceName}')::text, 4, '0') as id`
@@ -37,6 +71,22 @@ function overlapWhere(startTime: Date, endTime: Date) {
     startTime: { lt: endTime },
     endTime: { gt: startTime }
   };
+}
+
+function overlapsSlot(slot: { startTime: string; endTime: string }, item: { startTime: Date; endTime: Date }) {
+  return timeToMinutes(slot.startTime) < timeToMinutes(dbTime(item.endTime)) && timeToMinutes(slot.endTime) > timeToMinutes(dbTime(item.startTime));
+}
+
+function slotPrice(slot: { startTime: string; endTime: string }, date: string, prices: Array<{ dayType: string; startTime: Date; endTime: Date; price: unknown }>) {
+  const dayType = dayTypeFor(date);
+  const matched = prices.find(
+    (price) =>
+      price.dayType === dayType &&
+      timeToMinutes(slot.startTime) >= timeToMinutes(dbTime(price.startTime)) &&
+      timeToMinutes(slot.endTime) <= timeToMinutes(dbTime(price.endTime))
+  );
+  if (matched) return Number(matched.price);
+  return prices.length ? Math.min(...prices.map((price) => Number(price.price))) : 0;
 }
 
 const activeOperationStatuses: BookingStatus[] = [BookingStatus.PENDING, BookingStatus.PENDING_PAYMENT, BookingStatus.CONFIRMED];
@@ -124,7 +174,10 @@ export const recipientService = {
     };
   },
 
-  async bookings(userId: string, query: { page?: string; limit?: string; status?: BookingStatus; fromDate?: string; toDate?: string }) {
+  async bookings(
+    userId: string,
+    query: { page?: string; limit?: string; status?: BookingStatus; fromDate?: string; toDate?: string; sortBy?: string; sortOrder?: string }
+  ) {
     const courtId = await getManagedCourtId(userId);
     const page = parsePage(query.page);
     const limit = parseLimit(query.limit);
@@ -152,7 +205,7 @@ export const recipientService = {
     const [items, total] = await Promise.all([
       prisma.booking.findMany({
         where: whereClause,
-        orderBy: { createdAt: "desc" },
+        orderBy: bookingOrderBy(query.sortBy, query.sortOrder),
         skip: (page - 1) * limit,
         take: limit,
         include: {
@@ -161,6 +214,13 @@ export const recipientService = {
               fullName: true,
               email: true,
               phone: true
+            }
+          },
+          courtSurface: {
+            select: {
+              id: true,
+              name: true,
+              code: true
             }
           }
         }
@@ -225,33 +285,43 @@ export const recipientService = {
     const courtId = await getManagedCourtId(userId);
     if (query.fromDate > query.toDate) throw new ValidationError("Khoảng ngày không hợp lệ");
 
-    const bookings = await prisma.booking.findMany({
-      where: {
-        courtId,
-        bookingDate: {
-          gte: toDbDate(query.fromDate),
-          lte: toDbDate(query.toDate)
+    const [court, items] = await Promise.all([
+      prisma.court.findUnique({ where: { id: courtId }, select: { openingTime: true, closingTime: true } }),
+      prisma.booking.findMany({
+        where: {
+          courtId,
+          bookingDate: {
+            gte: toDbDate(query.fromDate),
+            lte: toDbDate(query.toDate)
+          }
         },
-        bookingStatus: {
-          in: ["CONFIRMED", "PENDING", "COMPLETED"]
-        }
-      },
-      select: {
-        id: true,
-        bookingDate: true,
-        startTime: true,
-        endTime: true,
-        bookingStatus: true,
-        user: {
-          select: {
-            fullName: true,
-            phone: true
+        select: {
+          id: true,
+          bookingDate: true,
+          startTime: true,
+          endTime: true,
+          bookingStatus: true,
+          paymentStatus: true,
+          totalPrice: true,
+          courtSurfaceId: true,
+          courtSurface: {
+            select: { id: true, name: true, code: true }
+          },
+          user: {
+            select: {
+              fullName: true,
+              phone: true
+            }
           }
         }
-      }
-    });
+      })
+    ]);
+    if (!court) throw new NotFoundError("Khong tim thay co so duoc giao quan ly");
 
-    return bookings;
+    return {
+      court: { openingTime: dbTime(court.openingTime), closingTime: dbTime(court.closingTime) },
+      items
+    };
   },
 
   async courtSurfaces(userId: string) {
@@ -271,6 +341,48 @@ export const recipientService = {
       where: { id: courtSurfaceId },
       data: { status }
     });
+  },
+
+  async surfaceAvailability(userId: string, courtSurfaceId: string, date: string) {
+    const courtId = await getManagedCourtId(userId);
+    const surface = await prisma.courtSurface.findFirst({ where: { id: courtSurfaceId, courtId } });
+    if (!surface) throw new NotFoundError("Khong tim thay san con thuoc quyen quan ly cua ban");
+
+    const court = await prisma.court.findUnique({
+      where: { id: courtId },
+      select: { openingTime: true, closingTime: true, prices: true }
+    });
+    if (!court) throw new NotFoundError("Khong tim thay co so duoc giao quan ly");
+
+    const bookings = await prisma.booking.findMany({
+      where: {
+        courtId,
+        OR: [{ courtSurfaceId }, { courtSurfaceId: null }],
+        bookingDate: toDbDate(date),
+        bookingStatus: { in: activeOperationStatuses }
+      },
+      select: { startTime: true, endTime: true }
+    });
+
+    const opening = ceilToFullHour(timeToMinutes(dbTime(court.openingTime)));
+    const closing = floorToFullHour(timeToMinutes(dbTime(court.closingTime)));
+
+    const slots = [];
+    for (let cursor = opening; cursor < closing; cursor += 60) {
+      const slot = { startTime: minutesToTime(cursor), endTime: minutesToTime(cursor + 60) };
+      const status = bookings.some((booking) => overlapsSlot(slot, booking)) ? "BOOKED" : "AVAILABLE";
+      const price = slotPrice(slot, date, court.prices);
+      slots.push({ ...slot, status, price });
+    }
+
+    return {
+      courtSurfaceId,
+      date,
+      openingTime: dbTime(court.openingTime),
+      closingTime: dbTime(court.closingTime),
+      slotDurationMinutes: 60,
+      slots
+    };
   },
 
   async operations(userId: string, query: { date?: string; nowTime?: string }) {
@@ -477,6 +589,25 @@ export const recipientService = {
       }));
     const bookingId = await nextPrefixedId("b", "seq_bookings");
 
+    let paymentInput: { reference: string; expiresAt: Date; providerResult: Awaited<ReturnType<typeof paymentProvider.createQrPayment>> } | null = null;
+    if (input.paymentMethod === PaymentMethod.BANK_TRANSFER) {
+      const expiresAt = new Date(Date.now() + env.BOOKING_HOLD_EXPIRES_MINUTES * 60 * 1000);
+      const reference = paymentReference();
+      const orderId =
+        env.PAYMENT_PROVIDER === "PAYOS"
+          ? String(Number(String(Date.now()).slice(-9) + String(Math.floor(Math.random() * 1000)).padStart(3, "0")))
+          : `${reference}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+      const providerResult = await paymentProvider.createQrPayment({
+        amount: subtotal,
+        currency: "VND",
+        orderId,
+        paymentReference: reference,
+        description: "Thanh toan dat san tai quay",
+        expiresAt
+      });
+      paymentInput = { reference, expiresAt, providerResult };
+    }
+
     return prisma.$transaction(async (tx) => {
       const booking = await tx.booking.create({
         data: {
@@ -510,8 +641,62 @@ export const recipientService = {
         }
       });
 
-      return booking;
+      let payment = null;
+      if (paymentInput) {
+        payment = await tx.payment.create({
+          data: {
+            bookingId: booking.id,
+            userId: customer.id,
+            provider: paymentInput.providerResult.provider,
+            paymentMethod: "QR_TRANSFER",
+            paymentType: "FULL_PAYMENT",
+            amount: subtotal,
+            currency: "VND",
+            status: "PENDING",
+            externalOrderId: paymentInput.providerResult.externalOrderId,
+            qrCodeUrl: paymentInput.providerResult.qrCodeUrl ?? undefined,
+            qrPayload: paymentInput.providerResult.qrPayload ?? undefined,
+            paymentReference: paymentInput.reference,
+            expiresAt: paymentInput.expiresAt
+          }
+        });
+      }
+
+      return { booking, payment };
     });
+  },
+
+  async paymentStatus(userId: string, paymentId: string) {
+    const courtId = await getManagedCourtId(userId);
+    const payment = await prisma.payment.findFirst({
+      where: { id: paymentId, booking: { courtId } },
+      include: { booking: { select: { bookingStatus: true } } }
+    });
+    if (!payment) throw new NotFoundError("Khong tim thay thanh toan thuoc quyen quan ly cua ban");
+
+    return {
+      id: payment.id,
+      bookingId: payment.bookingId,
+      status: payment.status,
+      bookingStatus: payment.booking.bookingStatus,
+      amount: Number(payment.amount),
+      expiresAt: payment.expiresAt,
+      paidAt: payment.paidAt
+    };
+  },
+
+  async confirmWalkInPayment(userId: string, paymentId: string) {
+    const courtId = await getManagedCourtId(userId);
+    const payment = await prisma.payment.findFirst({ where: { id: paymentId, booking: { courtId } } });
+    if (!payment) throw new NotFoundError("Khong tim thay thanh toan thuoc quyen quan ly cua ban");
+    if (payment.status === "PAID") return payment;
+
+    const [updatedPayment] = await prisma.$transaction([
+      prisma.payment.update({ where: { id: paymentId }, data: { status: "PAID", paidAt: new Date() } }),
+      prisma.booking.update({ where: { id: payment.bookingId }, data: { paymentStatus: "PAID" } })
+    ]);
+
+    return updatedPayment;
   },
 
   async earlyCheckInBooking(userId: string, bookingId: string) {

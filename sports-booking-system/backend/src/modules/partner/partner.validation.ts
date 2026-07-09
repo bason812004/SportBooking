@@ -60,7 +60,9 @@ export const bookingQuerySchema = z.object({
     courtId: optionalQuery(z.string().uuid()),
     status: optionalQuery(z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"])),
     fromDate: optionalQuery(z.string().date()),
-    toDate: optionalQuery(z.string().date())
+    toDate: optionalQuery(z.string().date()),
+    sortBy: optionalQuery(z.enum(["bookingDate", "customerName", "totalPrice", "bookingStatus", "paymentStatus"])),
+    sortOrder: optionalQuery(z.enum(["asc", "desc"]))
   })
 });
 

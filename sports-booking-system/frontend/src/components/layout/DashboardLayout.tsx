@@ -63,7 +63,6 @@ const menus = {
   RECIPIENT: [
     { to: "/recipient/dashboard", label: "Bảng điều khiển", icon: Grid2X2, group: "Tổng quan" },
     { to: "/recipient/bookings", label: "Đơn đặt sân", icon: CalendarCheck, group: "Vận hành" },
-    { to: "/recipient/calendar", label: "Lịch đặt sân", icon: CalendarDays, group: "Vận hành" },
     { to: "/recipient/court-surfaces", label: "Sân con", icon: UserRoundCheck, group: "Vận hành" }
   ]
 } satisfies Record<"PARTNER" | "ADMIN" | "RECIPIENT", MenuItem[]>;

@@ -133,6 +133,7 @@ export type Booking = {
   refundAmount?: string;
   platformRetainedAmount?: string;
   court: Court;
+  courtSurface?: { id: string; name: string; code: string } | null;
   user?: { id?: string; fullName: string; email?: string; phone?: string };
   bookingServices?: BookingService[];
   bookingVoucher?: BookingVoucherInfo | null;

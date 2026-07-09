@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Image as ImageIcon,
@@ -7,15 +7,13 @@ import {
   LogIn,
   LogOut,
   PhoneCall,
-  PlusCircle,
   TimerReset,
   Users
 } from "lucide-react";
-import { recipientApi, type RecipientOperationItem } from "../../features/recipient/api/recipientApi";
+import { recipientApi, type RecipientOperationItem, type RecipientSurfaceAvailabilitySlot } from "../../features/recipient/api/recipientApi";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
-import { Input } from "../../components/ui/Input";
-import { Select } from "../../components/ui/Select";
+import { WalkInBookingForm } from "../../features/recipient/components/WalkInBookingForm";
 
 const statusMeta: Record<RecipientOperationItem["status"], { label: string; className: string }> = {
   AVAILABLE: { label: "Sân trống", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
@@ -27,26 +25,7 @@ const statusMeta: Record<RecipientOperationItem["status"], { label: string; clas
 };
 
 const extendOptions = [15, 30, 60];
-const nowValue = () => new Date().toTimeString().slice(0, 5);
 const todayValue = () => new Date().toISOString().slice(0, 10);
-
-type WalkInForm = {
-  customerName: string;
-  customerPhone: string;
-  startTime: string;
-  minutes: number;
-  paymentMethod: "CASH" | "BANK_TRANSFER" | "E_WALLET";
-  note: string;
-};
-
-const defaultWalkInForm = (): WalkInForm => ({
-  customerName: "",
-  customerPhone: "",
-  startTime: nowValue(),
-  minutes: 60,
-  paymentMethod: "CASH",
-  note: ""
-});
 
 function SummaryCard({ label, value, tone }: { label: string; value: number; tone: string }) {
   return (
@@ -57,7 +36,47 @@ function SummaryCard({ label, value, tone }: { label: string; value: number; ton
   );
 }
 
-function SurfaceTile({ item, selected, onSelect }: { item: RecipientOperationItem; selected: boolean; onSelect: () => void }) {
+function MiniSlotStrip({ slots, opening, closing, loading }: { slots: RecipientSurfaceAvailabilitySlot[]; opening: string; closing: string; loading: boolean }) {
+  if (loading) {
+    return (
+      <div className="flex h-2.5 gap-0.5">
+        {Array.from({ length: 12 }).map((_, index) => (
+          <div key={index} className="flex-1 animate-pulse rounded-full bg-slate-100" />
+        ))}
+      </div>
+    );
+  }
+  if (!slots.length) return null;
+  return (
+    <div className="flex h-2.5 gap-0.5" title={`Giờ hoạt động ${opening} - ${closing}`}>
+      {slots.map((slot) => (
+        <div
+          key={`${slot.startTime}-${slot.endTime}`}
+          className={`flex-1 rounded-full ${slot.status === "BOOKED" ? "bg-rose-400" : "bg-emerald-400"}`}
+          title={`${slot.startTime} - ${slot.endTime}: ${slot.status === "BOOKED" ? "Đã đặt" : "Trống"}`}
+        />
+      ))}
+    </div>
+  );
+}
+
+function SurfaceTile({
+  item,
+  selected,
+  onSelect,
+  availabilitySlots,
+  availabilityLoading,
+  opening,
+  closing
+}: {
+  item: RecipientOperationItem;
+  selected: boolean;
+  onSelect: () => void;
+  availabilitySlots?: RecipientSurfaceAvailabilitySlot[];
+  availabilityLoading: boolean;
+  opening: string;
+  closing: string;
+}) {
   const meta = statusMeta[item.status];
   const surface = item.surface;
   const preview = item.currentBooking
@@ -113,6 +132,9 @@ function SurfaceTile({ item, selected, onSelect }: { item: RecipientOperationIte
             </span>
           ) : null}
         </div>
+        {surface.status === "ACTIVE" ? (
+          <MiniSlotStrip slots={availabilitySlots ?? []} opening={opening} closing={closing} loading={availabilityLoading} />
+        ) : null}
         <div className={`mt-auto rounded-lg border px-2 py-1.5 text-sm ${customerHighlightClass}`}>
           <p className={`text-xs font-black uppercase tracking-wide ${hasCustomerOnCourt ? "text-current" : "text-slate-500"}`}>{preview.label}</p>
           <p className={`${hasCustomerOnCourt ? "mt-0.5 text-base font-black leading-tight" : "mt-0.5 font-semibold"} truncate`}>{preview.text}</p>
@@ -125,7 +147,6 @@ function SurfaceTile({ item, selected, onSelect }: { item: RecipientOperationIte
 export function RecipientCourtSurfacesPage() {
   const queryClient = useQueryClient();
   const [selectedSurfaceId, setSelectedSurfaceId] = useState<string | null>(null);
-  const [walkInForm, setWalkInForm] = useState<WalkInForm>(defaultWalkInForm());
 
   const operations = useQuery({
     queryKey: ["recipient-operations"],
@@ -138,6 +159,16 @@ export function RecipientCourtSurfacesPage() {
     () => items.find((item) => item.surface.id === selectedSurfaceId) ?? items[0] ?? null,
     [items, selectedSurfaceId]
   );
+
+  const today = todayValue();
+  const allSurfaceAvailability = useQueries({
+    queries: items.map((item) => ({
+      queryKey: ["recipient-surface-availability", item.surface.id],
+      queryFn: () => recipientApi.surfaceAvailability(item.surface.id, today),
+      enabled: item.surface.status === "ACTIVE",
+      staleTime: 30_000
+    }))
+  });
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["recipient-operations"] });
 
@@ -186,28 +217,6 @@ export function RecipientCourtSurfacesPage() {
     onError: (error: any) => toast.error(error.message || "Không thể xác nhận trả sân")
   });
 
-  const createWalkIn = useMutation({
-    mutationFn: () => {
-      if (!selected) throw new Error("Chọn sân con trước khi đặt nhanh");
-      return recipientApi.createWalkInBooking({
-        courtSurfaceId: selected.surface.id,
-        customerName: walkInForm.customerName,
-        customerPhone: walkInForm.customerPhone,
-        bookingDate: todayValue(),
-        startTime: walkInForm.startTime,
-        minutes: walkInForm.minutes,
-        paymentMethod: walkInForm.paymentMethod,
-        note: walkInForm.note || undefined
-      });
-    },
-    onSuccess: () => {
-      toast.success("Đã tạo booking tại quầy cho khách");
-      setWalkInForm(defaultWalkInForm());
-      refresh();
-    },
-    onError: (error: any) => toast.error(error.message || "Không thể tạo booking, khung giờ đã có khách khác")
-  });
-
   if (operations.isLoading) return <LoadingState />;
   if (operations.isError) return <ErrorState message={operations.error.message} onRetry={refresh} />;
 
@@ -241,8 +250,17 @@ export function RecipientCourtSurfacesPage() {
       ) : (
         <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
           <div className="grid auto-rows-[260px] grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {items.map((item) => (
-              <SurfaceTile key={item.surface.id} item={item} selected={selected?.surface.id === item.surface.id} onSelect={() => setSelectedSurfaceId(item.surface.id)} />
+            {items.map((item, index) => (
+              <SurfaceTile
+                key={item.surface.id}
+                item={item}
+                selected={selected?.surface.id === item.surface.id}
+                onSelect={() => setSelectedSurfaceId(item.surface.id)}
+                availabilitySlots={allSurfaceAvailability[index]?.data?.slots}
+                availabilityLoading={allSurfaceAvailability[index]?.isLoading ?? false}
+                opening={allSurfaceAvailability[index]?.data?.openingTime ?? "06:00"}
+                closing={allSurfaceAvailability[index]?.data?.closingTime ?? "23:00"}
+              />
             ))}
           </div>
 
@@ -354,48 +372,7 @@ export function RecipientCourtSurfacesPage() {
                 )}
 
                 {!selected.currentBooking && selected.surface.status === "ACTIVE" ? (
-                  <form
-                    className="space-y-2.5 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      createWalkIn.mutate();
-                    }}
-                  >
-                    <p className="flex items-center gap-1 text-xs font-bold uppercase tracking-wide text-emerald-700">
-                      <PlusCircle className="h-3.5 w-3.5" />
-                      Đặt sân tại quầy
-                    </p>
-                    <Input label="Tên khách" value={walkInForm.customerName} onChange={(event) => setWalkInForm({ ...walkInForm, customerName: event.target.value })} required />
-                    <Input label="Số điện thoại" value={walkInForm.customerPhone} onChange={(event) => setWalkInForm({ ...walkInForm, customerPhone: event.target.value })} required />
-                    <div className="grid grid-cols-2 gap-2">
-                      <Input label="Bắt đầu" type="time" value={walkInForm.startTime} onChange={(event) => setWalkInForm({ ...walkInForm, startTime: event.target.value })} required />
-                      <Select
-                        label="Thời lượng"
-                        value={String(walkInForm.minutes)}
-                        onChange={(event) => setWalkInForm({ ...walkInForm, minutes: Number(event.target.value) })}
-                        options={[
-                          { value: "30", label: "30 phút" },
-                          { value: "60", label: "60 phút" },
-                          { value: "90", label: "90 phút" },
-                          { value: "120", label: "120 phút" }
-                        ]}
-                      />
-                    </div>
-                    <Select
-                      label="Thanh toán"
-                      value={walkInForm.paymentMethod}
-                      onChange={(event) => setWalkInForm({ ...walkInForm, paymentMethod: event.target.value as WalkInForm["paymentMethod"] })}
-                      options={[
-                        { value: "CASH", label: "Tiền mặt" },
-                        { value: "BANK_TRANSFER", label: "Chuyển khoản" },
-                        { value: "E_WALLET", label: "Ví điện tử" }
-                      ]}
-                    />
-                    <Input label="Ghi chú" value={walkInForm.note} onChange={(event) => setWalkInForm({ ...walkInForm, note: event.target.value })} />
-                    <Button className="w-full" disabled={createWalkIn.isPending}>
-                      {createWalkIn.isPending ? "Đang tạo..." : "Xác nhận nhận sân"}
-                    </Button>
-                  </form>
+                  <WalkInBookingForm key={selected.surface.id} courtSurfaceId={selected.surface.id} onBookingCreated={refresh} />
                 ) : null}
 
                 <Button

@@ -19,6 +19,18 @@ export const courtSurfaceStatusSchema = z.object({
   })
 });
 
+export const surfaceAvailabilityQuerySchema = z.object({
+  query: z.object({
+    date: z.string().date().optional()
+  })
+});
+
+export const paymentIdParamSchema = z.object({
+  params: z.object({
+    id: z.string().uuid()
+  })
+});
+
 export const walkInBookingSchema = z.object({
   body: z.object({
     courtSurfaceId: z.string().trim().min(1).max(40),
