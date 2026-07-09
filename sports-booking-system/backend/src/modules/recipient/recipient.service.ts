@@ -1,4 +1,4 @@
-import { BookingStatus, CourtActiveStatus } from "@prisma/client";
+import { BookingStatus, CourtActiveStatus, PaymentMethod } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
@@ -10,22 +10,37 @@ function dbTime(value: Date) {
   return value.toISOString().slice(11, 16);
 }
 
-function addMinutes(time: Date, minutes: number) {
-  const next = new Date(time);
-  next.setUTCMinutes(next.getUTCMinutes() + minutes);
-  return next;
+function addMinutes(value: Date, minutes: number) {
+  return timeToDate(minutesToTime(timeToMinutes(dbTime(value)) + minutes));
+}
+
+function minutesToTime(total: number) {
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
 function bookingCode() {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
-  return `BK${stamp}${Math.floor(Math.random() * 900 + 100)}`;
+  return `WI${stamp}${Math.floor(Math.random() * 900 + 100)}`;
 }
 
-function normalizePhone(value: string) {
-  return value.trim().replace(/[^\d+]/g, "");
+async function nextPrefixedId(prefix: string, sequenceName: string) {
+  const rows = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+    `select '${prefix}' || lpad(nextval('${sequenceName}')::text, 4, '0') as id`
+  );
+  return rows[0].id;
 }
 
-const extendableBookingStatuses: BookingStatus[] = [BookingStatus.PENDING, BookingStatus.CONFIRMED];
+function overlapWhere(startTime: Date, endTime: Date) {
+  return {
+    startTime: { lt: endTime },
+    endTime: { gt: startTime }
+  };
+}
+
+const activeOperationStatuses: BookingStatus[] = [BookingStatus.PENDING, BookingStatus.PENDING_PAYMENT, BookingStatus.CONFIRMED];
+const extendableBookingStatuses: BookingStatus[] = [BookingStatus.PENDING, BookingStatus.PENDING_PAYMENT, BookingStatus.CONFIRMED];
 
 async function getManagedCourtId(userId: string) {
   const user = await prisma.user.findUnique({
@@ -264,14 +279,14 @@ export const recipientService = {
     const courtId = await getManagedCourtId(userId);
     return prisma.courtSurface.findMany({
       where: { courtId },
-      orderBy: { sortOrder: "asc" }
+      orderBy: [{ sortOrder: "asc" }, { code: "asc" }]
     });
   },
 
   async updateCourtSurfaceStatus(userId: string, courtSurfaceId: string, status: CourtActiveStatus) {
     const courtId = await getManagedCourtId(userId);
     const surface = await prisma.courtSurface.findFirst({ where: { id: courtSurfaceId, courtId } });
-    if (!surface) throw new NotFoundError("Không tìm thấy sân con thuộc quyền quản lý của bạn");
+    if (!surface) throw new NotFoundError("Khong tim thay san con thuoc quyen quan ly cua ban");
 
     return prisma.courtSurface.update({
       where: { id: courtSurfaceId },
@@ -288,18 +303,18 @@ export const recipientService = {
     const court = await prisma.court.findUnique({
       where: { id: courtId },
       include: {
-        surfaces: { orderBy: { sortOrder: "asc" } },
+        surfaces: { orderBy: [{ sortOrder: "asc" }, { code: "asc" }] },
         bookings: {
           where: {
             bookingDate: toDbDate(selectedDate),
-            bookingStatus: { in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] }
+            bookingStatus: { in: activeOperationStatuses }
           },
           include: { user: { select: { id: true, fullName: true, phone: true, email: true } } },
           orderBy: { startTime: "asc" }
         }
       }
     });
-    if (!court) throw new NotFoundError("Không tìm thấy cơ sở được giao quản lý");
+    if (!court) throw new NotFoundError("Khong tim thay co so duoc giao quan ly");
 
     const items = court.surfaces.map((surface) => {
       const bookings = court.bookings
@@ -330,17 +345,17 @@ export const recipientService = {
       const serializeBooking = (booking?: (typeof bookings)[number]) =>
         booking
           ? {
-            id: booking.id,
-            bookingCode: booking.bookingCode,
-            customerName: booking.user.fullName,
-            customerPhone: booking.user.phone,
-            customerEmail: booking.user.email,
-            startTime: booking.start,
-            endTime: booking.end,
-            bookingStatus: booking.bookingStatus,
-            paymentStatus: booking.paymentStatus,
-            totalPrice: Number(booking.totalPrice)
-          }
+              id: booking.id,
+              bookingCode: booking.bookingCode,
+              customerName: booking.user.fullName,
+              customerPhone: booking.user.phone,
+              customerEmail: booking.user.email,
+              startTime: booking.start,
+              endTime: booking.end,
+              bookingStatus: booking.bookingStatus,
+              paymentStatus: booking.paymentStatus,
+              totalPrice: Number(booking.totalPrice)
+            }
           : null;
 
       return {
@@ -382,49 +397,52 @@ export const recipientService = {
   async extendBooking(userId: string, bookingId: string, minutes: number) {
     const courtId = await getManagedCourtId(userId);
     const booking = await prisma.booking.findFirst({ where: { id: bookingId, courtId } });
-    if (!booking) throw new NotFoundError("Không tìm thấy đơn đặt sân thuộc quyền quản lý của bạn");
+    if (!booking) throw new NotFoundError("Khong tim thay don dat san thuoc quyen quan ly cua ban");
     if (!extendableBookingStatuses.includes(booking.bookingStatus)) {
-      throw new ValidationError("Chỉ có thể gia hạn đơn đang chờ xử lý hoặc đã xác nhận");
+      throw new ValidationError("Chi co the gia han don dang cho xu ly hoac da xac nhan");
     }
 
-    const date = booking.bookingDate.toISOString().slice(0, 10);
-    const startTime = dbTime(booking.endTime);
     const newEndTime = addMinutes(booking.endTime, minutes);
-    const endTime = dbTime(newEndTime);
-
     const conflict = await prisma.booking.findFirst({
       where: {
         id: { not: booking.id },
-        courtId: booking.courtId,
+        courtId,
         OR: booking.courtSurfaceId ? [{ courtSurfaceId: booking.courtSurfaceId }, { courtSurfaceId: null }] : undefined,
         bookingDate: booking.bookingDate,
-        bookingStatus: { in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
-        startTime: { lt: newEndTime },
-        endTime: { gt: booking.endTime }
+        bookingStatus: { in: activeOperationStatuses },
+        ...overlapWhere(booking.endTime, newEndTime)
       }
     });
-    if (conflict) throw new ConflictError("Sân này đã có lịch sau đó. Hãy chuyển khách sang sân trống.", "BOOKING_EXTENSION_CONFLICT");
+    if (conflict) throw new ConflictError("San nay da co lich sau do. Hay chuyen khach sang san trong.", "BOOKING_EXTENSION_CONFLICT");
 
-    const dynamicPrice = await dynamicPricingService.calculate(booking.courtId, { date, startTime, endTime });
+    const date = booking.bookingDate.toISOString().slice(0, 10);
+    const startTime = dbTime(booking.endTime);
+    const endTime = dbTime(newEndTime);
+    const dynamicPrice = await dynamicPricingService.calculate(courtId, { date, startTime, endTime });
     const hours = durationHours(startTime, endTime);
     const subtotal = dynamicPrice.finalPrice * hours;
-    const pricing = {
-      basePrice: dynamicPrice.basePrice * hours,
-      dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
-      subtotal,
-      totalPrice: subtotal
-    };
 
-    return prisma.booking.update({
-      where: { id: booking.id },
-      data: {
-        endTime: newEndTime,
-        basePrice: { increment: pricing.basePrice },
-        dynamicAdjustmentAmount: { increment: pricing.dynamicAdjustmentAmount },
-        subtotal: { increment: pricing.subtotal },
-        totalPrice: { increment: pricing.totalPrice }
-      },
-      include: { court: true, user: { select: { id: true, fullName: true, phone: true } } }
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.booking.update({
+        where: { id: booking.id },
+        data: {
+          endTime: newEndTime,
+          basePrice: { increment: dynamicPrice.basePrice * hours },
+          dynamicAdjustmentAmount: { increment: dynamicPrice.dynamicAdjustmentAmount * hours },
+          subtotal: { increment: subtotal },
+          totalPrice: { increment: subtotal }
+        }
+      });
+
+      await tx.bookingSlot.updateMany({
+        where: { bookingId: booking.id, endTime: booking.endTime },
+        data: {
+          endTime: newEndTime,
+          slotPrice: { increment: subtotal }
+        }
+      });
+
+      return updated;
     });
   },
 
@@ -437,153 +455,125 @@ export const recipientService = {
       bookingDate: string;
       startTime: string;
       minutes: number;
-      paymentMethod: "CASH" | "BANK_TRANSFER" | "E_WALLET";
+      paymentMethod: PaymentMethod;
       note?: string;
     }
   ) {
     const courtId = await getManagedCourtId(userId);
-    const surface = await prisma.courtSurface.findFirst({ where: { id: input.courtSurfaceId, courtId } });
-    if (!surface || surface.status !== "ACTIVE") throw new ValidationError("Sân con không hợp lệ hoặc đang tạm ngưng");
+    const surface = await prisma.courtSurface.findFirst({ where: { id: input.courtSurfaceId, courtId, status: CourtActiveStatus.ACTIVE } });
+    if (!surface) throw new NotFoundError("San con khong ton tai hoac dang tam ngung");
 
-    const endTimeDate = addMinutes(timeToDate(input.startTime), input.minutes);
-    const endTime = dbTime(endTimeDate);
-    if (timeToMinutes(input.startTime) >= timeToMinutes(endTime)) throw new ValidationError("Khung giờ không hợp lệ");
-
+    const startTime = timeToDate(input.startTime);
+    const endTime = timeToDate(minutesToTime(timeToMinutes(input.startTime) + input.minutes));
     const conflict = await prisma.booking.findFirst({
       where: {
         courtId,
-        OR: [{ courtSurfaceId: surface.id }, { courtSurfaceId: null }],
+        OR: [{ courtSurfaceId: input.courtSurfaceId }, { courtSurfaceId: null }],
         bookingDate: toDbDate(input.bookingDate),
-        bookingStatus: { in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
-        startTime: { lt: endTimeDate },
-        endTime: { gt: timeToDate(input.startTime) }
+        bookingStatus: { in: activeOperationStatuses },
+        ...overlapWhere(startTime, endTime)
       }
     });
-    if (conflict) throw new ConflictError("Sân con này đã có lịch trong khung giờ đã chọn", "BOOKING_CONFLICT");
-
-    const phone = normalizePhone(input.customerPhone);
-    const customer =
-      (await prisma.user.findFirst({
-        where: { role: "USER", OR: [{ phone }, { email: `walkin_${phone}@sportsbooking.local` }] }
-      })) ??
-      (await prisma.user.create({
-        data: {
-          fullName: input.customerName.trim(),
-          phone,
-          email: `walkin_${phone}@sportsbooking.local`,
-          role: "USER",
-          provider: "LOCAL",
-          emailVerified: false,
-          status: "ACTIVE"
-        }
-      }));
+    if (conflict) throw new ConflictError("Khung gio nay da co khach khac", "WALK_IN_BOOKING_CONFLICT");
 
     const dynamicPrice = await dynamicPricingService.calculate(courtId, {
       date: input.bookingDate,
       startTime: input.startTime,
-      endTime
+      endTime: dbTime(endTime)
     });
-    const hours = durationHours(input.startTime, endTime);
+    const hours = durationHours(input.startTime, dbTime(endTime));
     const subtotal = dynamicPrice.finalPrice * hours;
 
-    return prisma.booking.create({
-      data: {
-        bookingCode: bookingCode(),
-        userId: customer.id,
-        courtId,
-        courtSurfaceId: surface.id,
-        bookingDate: toDbDate(input.bookingDate),
-        startTime: timeToDate(input.startTime),
-        endTime: endTimeDate,
-        basePrice: dynamicPrice.basePrice * hours,
-        dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
-        subtotal,
-        totalPrice: subtotal,
-        depositAmount: 0,
-        paymentMethod: input.paymentMethod,
-        paymentStatus: "UNPAID",
-        bookingStatus: "CONFIRMED",
-        note: input.note || `Khách vãng lai tại quầy: ${input.customerName.trim()} - ${phone}`
-      },
-      include: { court: true, user: { select: { id: true, fullName: true, phone: true } }, courtSurface: true }
+    const existingUser = await prisma.user.findFirst({ where: { phone: input.customerPhone } });
+    const customer =
+      existingUser ??
+      (await prisma.user.create({
+        data: {
+          id: await nextPrefixedId("u", "seq_users"),
+          fullName: input.customerName,
+          email: `walkin-${input.customerPhone.replace(/\D/g, "") || Date.now()}-${Date.now()}@walkin.sportsbooking.local`,
+          phone: input.customerPhone,
+          emailVerified: false
+        }
+      }));
+    const bookingId = await nextPrefixedId("b", "seq_bookings");
+
+    return prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.create({
+        data: {
+          id: bookingId,
+          bookingCode: bookingCode(),
+          userId: customer.id,
+          courtId,
+          courtSurfaceId: input.courtSurfaceId,
+          bookingDate: toDbDate(input.bookingDate),
+          startTime,
+          endTime,
+          basePrice: dynamicPrice.basePrice * hours,
+          dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
+          subtotal,
+          totalPrice: subtotal,
+          paymentMethod: input.paymentMethod,
+          paymentStatus: input.paymentMethod === PaymentMethod.CASH ? "PAID" : "UNPAID",
+          bookingStatus: BookingStatus.CONFIRMED,
+          note: input.note
+        }
+      });
+
+      await tx.bookingSlot.create({
+        data: {
+          bookingId: booking.id,
+          courtId,
+          bookingDate: toDbDate(input.bookingDate),
+          startTime,
+          endTime,
+          slotPrice: subtotal
+        }
+      });
+
+      return booking;
     });
   },
 
   async earlyCheckInBooking(userId: string, bookingId: string) {
     const courtId = await getManagedCourtId(userId);
     const booking = await prisma.booking.findFirst({ where: { id: bookingId, courtId } });
-    if (!booking) throw new NotFoundError("Không tìm thấy đơn đặt sân thuộc quyền quản lý của bạn");
+    if (!booking) throw new NotFoundError("Khong tim thay don dat san thuoc quyen quan ly cua ban");
     if (!extendableBookingStatuses.includes(booking.bookingStatus)) {
-      throw new ValidationError("Chỉ có thể check-in sớm đơn đang chờ xử lý hoặc đã xác nhận");
+      throw new ValidationError("Chi co the check-in don dang cho xu ly hoac da xac nhan");
     }
 
-    const now = new Date();
-    const today = now.toISOString().slice(0, 10);
+    const today = new Date().toISOString().slice(0, 10);
     const date = booking.bookingDate.toISOString().slice(0, 10);
-    if (date !== today) throw new ValidationError("Chỉ có thể check-in sớm cho booking hôm nay");
+    if (date !== today) throw new ValidationError("Chi co the check-in som cho booking hom nay");
 
-    const currentTime = now.toTimeString().slice(0, 5);
-    const originalStartTime = dbTime(booking.startTime);
-    const originalEndTime = dbTime(booking.endTime);
-    if (timeToMinutes(currentTime) >= timeToMinutes(originalStartTime)) {
-      throw new ValidationError("Booking đã đến giờ bắt đầu hoặc đang diễn ra");
-    }
-    if (timeToMinutes(currentTime) >= timeToMinutes(originalEndTime)) {
-      throw new ValidationError("Khung giờ booking không hợp lệ để check-in sớm");
-    }
-    if (timeToMinutes(originalStartTime) - timeToMinutes(currentTime) > 30) {
-      throw new ValidationError("Chỉ có thể check-in sớm khi booking sắp đến giờ");
+    const currentTime = new Date().toTimeString().slice(0, 5);
+    if (timeToMinutes(currentTime) >= timeToMinutes(dbTime(booking.startTime))) {
+      return booking;
     }
 
+    const newStartTime = timeToDate(currentTime);
     const conflict = await prisma.booking.findFirst({
       where: {
         id: { not: booking.id },
-        courtId: booking.courtId,
+        courtId,
         OR: booking.courtSurfaceId ? [{ courtSurfaceId: booking.courtSurfaceId }, { courtSurfaceId: null }] : undefined,
         bookingDate: booking.bookingDate,
-        bookingStatus: { in: [BookingStatus.PENDING, BookingStatus.CONFIRMED] },
-        startTime: { lt: booking.startTime },
-        endTime: { gt: timeToDate(currentTime) }
+        bookingStatus: { in: activeOperationStatuses },
+        ...overlapWhere(newStartTime, booking.startTime)
       }
     });
-    if (conflict) throw new ConflictError("Sân hiện không trống để check-in sớm", "EARLY_CHECK_IN_CONFLICT");
+    if (conflict) throw new ConflictError("San dang co khach, khong the check-in som", "EARLY_CHECK_IN_CONFLICT");
 
-    const dynamicPrice = await dynamicPricingService.calculate(booking.courtId, {
-      date,
-      startTime: currentTime,
-      endTime: originalStartTime
-    });
-    const hours = durationHours(currentTime, originalStartTime);
-    const subtotal = dynamicPrice.finalPrice * hours;
-    const pricing = {
-      basePrice: dynamicPrice.basePrice * hours,
-      dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
-      subtotal,
-      totalPrice: subtotal
-    };
-
-    const newStartTime = timeToDate(currentTime);
     return prisma.$transaction(async (tx) => {
       const updated = await tx.booking.update({
         where: { id: booking.id },
-        data: {
-          startTime: newStartTime,
-          basePrice: { increment: pricing.basePrice },
-          dynamicAdjustmentAmount: { increment: pricing.dynamicAdjustmentAmount },
-          subtotal: { increment: pricing.subtotal },
-          totalPrice: { increment: pricing.totalPrice }
-        },
-        include: { court: true, user: { select: { id: true, fullName: true, phone: true } } }
+        data: { startTime: newStartTime, bookingStatus: BookingStatus.CONFIRMED }
       });
-
       await tx.bookingSlot.updateMany({
         where: { bookingId: booking.id, startTime: booking.startTime },
-        data: {
-          startTime: newStartTime,
-          slotPrice: { increment: pricing.totalPrice }
-        }
+        data: { startTime: newStartTime }
       });
-
       return updated;
     });
   },
@@ -591,25 +581,22 @@ export const recipientService = {
   async earlyCheckOutBooking(userId: string, bookingId: string) {
     const courtId = await getManagedCourtId(userId);
     const booking = await prisma.booking.findFirst({ where: { id: bookingId, courtId } });
-    if (!booking) throw new NotFoundError("Không tìm thấy đơn đặt sân thuộc quyền quản lý của bạn");
+    if (!booking) throw new NotFoundError("Khong tim thay don dat san thuoc quyen quan ly cua ban");
     if (!extendableBookingStatuses.includes(booking.bookingStatus)) {
-      throw new ValidationError("Chỉ có thể check-out sớm đơn đang chờ xử lý hoặc đã xác nhận");
+      throw new ValidationError("Chi co the check-out don dang cho xu ly hoac da xac nhan");
     }
 
-    const now = new Date();
-    const today = now.toISOString().slice(0, 10);
+    const today = new Date().toISOString().slice(0, 10);
     const date = booking.bookingDate.toISOString().slice(0, 10);
-    if (date !== today) throw new ValidationError("Chỉ có thể check-out sớm cho booking hôm nay");
+    if (date !== today) throw new ValidationError("Chi co the check-out cho booking hom nay");
 
-    const currentTime = now.toTimeString().slice(0, 5);
-    const originalStartTime = dbTime(booking.startTime);
-    const originalEndTime = dbTime(booking.endTime);
-    if (timeToMinutes(currentTime) <= timeToMinutes(originalStartTime) || timeToMinutes(currentTime) >= timeToMinutes(originalEndTime)) {
-      throw new ValidationError("Chỉ có thể check-out sớm khi booking đang diễn ra");
+    const currentTime = new Date().toTimeString().slice(0, 5);
+    if (timeToMinutes(currentTime) <= timeToMinutes(dbTime(booking.startTime)) || timeToMinutes(currentTime) >= timeToMinutes(dbTime(booking.endTime))) {
+      throw new ValidationError("Chi co the check-out khi booking dang dien ra");
     }
 
     const newEndTime = timeToDate(currentTime);
-    const checkoutNote = `Khách check-out sớm lúc ${currentTime}`;
+    const checkoutNote = `Khach check-out luc ${currentTime}`;
     return prisma.$transaction(async (tx) => {
       const updated = await tx.booking.update({
         where: { id: booking.id },

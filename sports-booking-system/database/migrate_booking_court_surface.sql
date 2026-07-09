@@ -1,30 +1,47 @@
--- Gan booking voi san con de van hanh dung tung san thuc te.
--- Chay file nay tren database hien co sau khi da co bang court_surfaces.
+-- Link each booking to the exact child court/surface used by the customer.
+-- The column type follows court_surfaces.id so this works for both varchar-id
+-- seed databases and uuid-id migrated databases.
 
-alter table bookings
-  add column if not exists court_surface_id varchar(20) references court_surfaces(id);
+do $$
+declare
+  surface_type text;
+begin
+  select
+    case
+      when data_type = 'uuid' then 'uuid'
+      when data_type = 'character varying' and character_maximum_length is not null then 'varchar(' || character_maximum_length || ')'
+      when data_type = 'character varying' then 'varchar'
+      else udt_name
+    end
+  into surface_type
+  from information_schema.columns
+  where table_name = 'court_surfaces'
+    and column_name = 'id';
 
-alter table booking_slots
-  add column if not exists court_surface_id varchar(20) references court_surfaces(id);
+  if surface_type is null then
+    raise exception 'court_surfaces.id column was not found';
+  end if;
+
+  if not exists (
+    select 1
+    from information_schema.columns
+    where table_name = 'bookings'
+      and column_name = 'court_surface_id'
+  ) then
+    execute format('alter table bookings add column court_surface_id %s', surface_type);
+  end if;
+
+  if not exists (
+    select 1
+    from information_schema.table_constraints
+    where table_name = 'bookings'
+      and constraint_name = 'bookings_court_surface_id_fkey'
+  ) then
+    alter table bookings
+      add constraint bookings_court_surface_id_fkey
+      foreign key (court_surface_id) references court_surfaces(id) on delete set null;
+  end if;
+end $$;
 
 create index if not exists idx_bookings_court_surface_id
   on bookings(court_surface_id);
-
-create index if not exists idx_bookings_surface_schedule_conflict
-  on bookings(court_surface_id, booking_date, start_time, end_time, booking_status);
-
-create index if not exists idx_booking_slots_surface_schedule
-  on booking_slots(court_surface_id, booking_date, start_time, end_time);
-
--- Du lieu cu chua co court_surface_id duoc giu null de backend xu ly nhu booking legacy cua ca cum san.
--- Neu muon gan tam booking cu vao san con dau tien, co the can nhac cau lenh ben duoi sau khi kiem tra trung lich:
---
--- update bookings b
--- set court_surface_id = (
---   select cs.id
---   from court_surfaces cs
---   where cs.court_id = b.court_id and cs.status = 'ACTIVE'
---   order by cs.sort_order, cs.code
---   limit 1
--- )
--- where b.court_surface_id is null;

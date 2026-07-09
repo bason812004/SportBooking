@@ -438,10 +438,18 @@ export const partnerRepository = {
       : Prisma.sql`true`;
 
     return prisma.$queryRaw<any[]>(Prisma.sql`
-      select id, title, slug, excerpt, content, cover_image_url as "coverImageUrl",
-        status::text, visibility::text, created_at as "createdAt", updated_at as "updatedAt",
-        published_at as "publishedAt", ${allowCommentsSelect} as "allowComments"
-      from blog_posts where author_id = ${userId} order by created_at desc
+      select b.id, b.title, b.slug, b.excerpt, b.content, b.cover_image_url as "coverImageUrl",
+        b.status::text, b.visibility::text, b.created_at as "createdAt", b.updated_at as "updatedAt",
+        b.published_at as "publishedAt", ${allowCommentsSelect} as "allowComments",
+        reject_reason.reason as "rejectionReason"
+      from blog_posts b
+      left join lateral (
+        select mh.reason from moderation_history mh
+        where mh.entity_type = 'BLOG' and mh.entity_id = b.id and mh.action = 'REJECTED'
+        order by mh.created_at desc
+        limit 1
+      ) reject_reason on true
+      where b.author_id = ${userId} order by b.created_at desc
     `);
   },
 
@@ -451,10 +459,18 @@ export const partnerRepository = {
       : Prisma.sql`true`;
 
     return prisma.$queryRaw<any[]>(Prisma.sql`
-      select id, title, slug, excerpt, content, cover_image_url as "coverImageUrl",
-        status::text, visibility::text, created_at as "createdAt", updated_at as "updatedAt",
-        published_at as "publishedAt", ${allowCommentsSelect} as "allowComments"
-      from blog_posts where id = ${id} and author_id = ${userId} limit 1
+      select b.id, b.title, b.slug, b.excerpt, b.content, b.cover_image_url as "coverImageUrl",
+        b.status::text, b.visibility::text, b.created_at as "createdAt", b.updated_at as "updatedAt",
+        b.published_at as "publishedAt", ${allowCommentsSelect} as "allowComments",
+        reject_reason.reason as "rejectionReason"
+      from blog_posts b
+      left join lateral (
+        select mh.reason from moderation_history mh
+        where mh.entity_type = 'BLOG' and mh.entity_id = b.id and mh.action = 'REJECTED'
+        order by mh.created_at desc
+        limit 1
+      ) reject_reason on true
+      where b.id = ${id} and b.author_id = ${userId} limit 1
     `);
   },
 

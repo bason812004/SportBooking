@@ -543,7 +543,7 @@ create table bookings (
   booking_code varchar(30) not null unique,
   user_id varchar(20) not null references users(id),
   court_id varchar(20) not null references courts(id),
-  court_surface_id varchar(20) references court_surfaces(id),
+  court_surface_id varchar(20) references court_surfaces(id) on delete set null,
   booking_date date not null,
   start_time time not null,
   end_time time not null,

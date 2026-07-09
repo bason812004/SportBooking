@@ -259,6 +259,7 @@ export type PartnerBlog = {
   createdAt: string;
   updatedAt: string;
   publishedAt?: string | null;
+  rejectionReason?: string | null;
 };
 
 export type PartnerTournament = {
@@ -595,6 +596,7 @@ export type BlogPost = {
   category?: { id: string; name: string; slug: string } | null;
   author: { id: string; fullName: string; avatarUrl?: string | null };
   viewCount?: number;
+  rejectionReason?: string | null;
 };
 
 export type BlogComment = {

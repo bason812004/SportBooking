@@ -22,6 +22,179 @@ async function columnExists(tableName: string, columnName: string) {
   return exists;
 }
 
+function bookingWhere(filters: {
+  search?: string;
+  fromDate?: string;
+  toDate?: string;
+  courtId?: string;
+  partnerId?: string;
+  userId?: string;
+  bookingStatus?: string;
+  paymentStatus?: string;
+}) {
+  const clauses: string[] = [];
+  const values: unknown[] = [];
+  const add = (clause: string, value: unknown) => {
+    values.push(value);
+    clauses.push(clause.replace("?", `$${values.length}`));
+  };
+
+  if (filters.search) {
+    values.push(`%${filters.search}%`);
+    const index = values.length;
+    clauses.push(`(
+      b.booking_code ilike $${index}
+      or u.full_name ilike $${index}
+      or u.email ilike $${index}
+      or c.name ilike $${index}
+      or p.business_name ilike $${index}
+    )`);
+  }
+  if (filters.fromDate) add("b.booking_date >= ?::date", filters.fromDate);
+  if (filters.toDate) add("b.booking_date <= ?::date", filters.toDate);
+  if (filters.courtId) add("b.court_id = ?", filters.courtId);
+  if (filters.partnerId) add("c.partner_id = ?", filters.partnerId);
+  if (filters.userId) add("b.user_id = ?", filters.userId);
+  if (filters.bookingStatus) add("b.booking_status::text = ?", filters.bookingStatus);
+  if (filters.paymentStatus) add("b.payment_status::text = ?", filters.paymentStatus);
+
+  return {
+    where: clauses.length ? `where ${clauses.join(" and ")}` : "",
+    values
+  };
+}
+
+const BOOKING_SORT_COLUMNS: Record<string, string> = {
+  bookingCode: "b.booking_code",
+  customerName: "u.full_name",
+  bookingDate: "b.booking_date",
+  totalPrice: "b.total_price",
+  bookingStatus: "b.booking_status::text",
+  paymentStatus: "b.payment_status::text"
+};
+
+function bookingOrderBy(sortBy?: string, sortOrder?: string) {
+  const direction = sortOrder === "asc" ? "asc" : "desc";
+  const column = sortBy && BOOKING_SORT_COLUMNS[sortBy] ? BOOKING_SORT_COLUMNS[sortBy] : BOOKING_SORT_COLUMNS.bookingDate;
+  if (column === BOOKING_SORT_COLUMNS.bookingDate) {
+    return `b.booking_date ${direction}, b.start_time ${direction}, b.created_at desc`;
+  }
+  return `${column} ${direction}, b.created_at desc`;
+}
+
+function adminCourtWhere(filters: {
+  search?: string;
+  partnerId?: string;
+  city?: string;
+  district?: string;
+  approvalStatus?: string;
+  activeStatus?: string;
+  verified?: string;
+  featured?: string;
+}) {
+  const clauses: string[] = [];
+  const values: unknown[] = [];
+  const add = (clause: string, value: unknown) => {
+    values.push(value);
+    clauses.push(clause.replace("?", `$${values.length}`));
+  };
+
+  if (filters.search) {
+    values.push(`%${filters.search}%`);
+    const index = values.length;
+    clauses.push(`(c.name ilike $${index} or c.address ilike $${index} or p.business_name ilike $${index})`);
+  }
+  if (filters.partnerId) add("c.partner_id = ?", filters.partnerId);
+  if (filters.city) add("c.city ilike ?", `%${filters.city}%`);
+  if (filters.district) add("c.district ilike ?", `%${filters.district}%`);
+  if (filters.approvalStatus) add("c.approval_status::text = ?", filters.approvalStatus);
+  if (filters.activeStatus) add("c.active_status::text = ?", filters.activeStatus);
+  if (filters.verified) add("c.verified = ?::boolean", filters.verified);
+  if (filters.featured) add("c.featured = ?::boolean", filters.featured);
+
+  return { where: clauses.length ? `where ${clauses.join(" and ")}` : "", values };
+}
+
+const COURT_SORT_COLUMNS: Record<string, string> = {
+  name: "c.name",
+  businessName: "p.business_name",
+  city: "c.city",
+  minPrice: "price.min_price",
+  approvalStatus: "c.approval_status::text",
+  activeStatus: "c.active_status::text",
+  updateRequestedAt: "c.update_requested_at"
+};
+
+function adminCourtOrderBy(sortBy?: string, sortOrder?: string) {
+  const direction = sortOrder === "asc" ? "asc" : "desc";
+  const column = sortBy ? COURT_SORT_COLUMNS[sortBy] : undefined;
+  if (!column) return "c.created_at desc";
+  if (column === COURT_SORT_COLUMNS.city) {
+    return `c.city ${direction}, c.district ${direction}, c.created_at desc`;
+  }
+  return `${column} ${direction}, c.created_at desc`;
+}
+
+const USER_SORT_FIELDS = new Set(["fullName", "email", "role", "status"]);
+
+function userOrderBy(sortBy?: string, sortOrder?: string): Prisma.UserOrderByWithRelationInput {
+  const direction = sortOrder === "asc" ? "asc" : "desc";
+  if (sortBy && USER_SORT_FIELDS.has(sortBy)) {
+    return { [sortBy]: direction };
+  }
+  return { createdAt: "desc" };
+}
+
+const FINANCE_TX_SORT_COLUMNS: Record<string, string> = {
+  bookingCode: "b.booking_code",
+  transactionType: "ct.transaction_type",
+  eventType: "ct.event_type",
+  grossAmount: "ct.gross_amount",
+  commissionAmount: "ct.commission_amount",
+  netAmount: "ct.net_amount",
+  payoutStatus: "coalesce(po.status, 'PENDING')"
+};
+
+function financeTransactionOrderBy(sortBy?: string, sortOrder?: string) {
+  const direction = sortOrder === "asc" ? "asc" : "desc";
+  const column = sortBy ? FINANCE_TX_SORT_COLUMNS[sortBy] : undefined;
+  if (!column) return "ct.created_at desc";
+  return `${column} ${direction}, ct.created_at desc`;
+}
+
+const FINANCE_REFUND_SORT_COLUMNS: Record<string, string> = {
+  bookingCode: "b.booking_code",
+  customerName: "u.full_name",
+  totalPrice: "b.total_price",
+  refundAmount: "b.refund_amount",
+  platformRetainedAmount: "b.platform_retained_amount",
+  paymentStatus: "b.payment_status::text"
+};
+
+function financeRefundOrderBy(sortBy?: string, sortOrder?: string) {
+  const direction = sortOrder === "asc" ? "asc" : "desc";
+  const column = sortBy ? FINANCE_REFUND_SORT_COLUMNS[sortBy] : undefined;
+  if (!column) return "coalesce(b.cancelled_at, b.updated_at, b.created_at) desc";
+  return `${column} ${direction}, coalesce(b.cancelled_at, b.updated_at, b.created_at) desc`;
+}
+
+const AUDIT_LOG_SORT_FIELDS = new Set(["action", "entityType", "createdAt"]);
+
+function auditLogOrderBy(sortBy?: string, sortOrder?: string): Prisma.AuditLogOrderByWithRelationInput {
+  const direction = sortOrder === "asc" ? "asc" : "desc";
+  if (sortBy === "actorName") return { actor: { fullName: direction } };
+  if (sortBy && AUDIT_LOG_SORT_FIELDS.has(sortBy)) return { [sortBy]: direction };
+  return { createdAt: "desc" };
+}
+
+const BLOCKCHAIN_LOG_SORT_FIELDS = new Set(["entityType", "network", "status", "attempts"]);
+
+function blockchainLogOrderBy(sortBy?: string, sortOrder?: string): Prisma.BlockchainLogOrderByWithRelationInput {
+  const direction = sortOrder === "asc" ? "asc" : "desc";
+  if (sortBy && BLOCKCHAIN_LOG_SORT_FIELDS.has(sortBy)) return { [sortBy]: direction };
+  return { createdAt: "desc" };
+}
+
 export const adminRepository = {
   async courtLocations() {
     const rows = await prisma.$queryRaw<Array<{ city: string; district: string }>>`
@@ -69,7 +242,7 @@ export const adminRepository = {
     ]);
   },
 
-  users(page: number, limit: number, filters: { search?: string; role?: any; status?: any }) {
+  users(page: number, limit: number, filters: { search?: string; role?: any; status?: any; sortBy?: string; sortOrder?: string }) {
     const where: Prisma.UserWhereInput = {
       role: filters.role,
       status: filters.status,
@@ -85,7 +258,7 @@ export const adminRepository = {
       prisma.user.findMany({
         where,
         select: { id: true, fullName: true, email: true, phone: true, role: true, status: true, createdAt: true },
-        orderBy: { createdAt: "desc" },
+        orderBy: userOrderBy(filters.sortBy, filters.sortOrder),
         skip: (page - 1) * limit,
         take: limit
       }),
@@ -106,21 +279,7 @@ export const adminRepository = {
     sortOrder?: string;
   }) {
     const { where, values } = bookingWhere(filters);
-
-    const sortColumnMap: Record<string, string> = {
-      bookingCode: "b.booking_code",
-      customerName: "u.full_name",
-      bookingDate: "b.booking_date",
-      totalPrice: "b.total_price",
-      bookingStatus: "b.booking_status",
-      paymentStatus: "b.payment_status"
-    };
-    const sortCol = filters.sortBy && sortColumnMap[filters.sortBy];
-    const sortDir = filters.sortOrder === "asc" ? "asc" : "desc";
-    const orderBy = sortCol
-      ? `${sortCol} ${sortDir} nulls last${sortCol === "b.booking_date" ? `, b.start_time ${sortDir}` : ""}`
-      : "b.booking_date desc, b.start_time desc";
-
+    const orderBy = bookingOrderBy(filters.sortBy, filters.sortOrder);
     const listValues = [...values, limit, (page - 1) * limit];
     const limitIndex = values.length + 1;
     const offsetIndex = values.length + 2;
@@ -295,8 +454,11 @@ export const adminRepository = {
     activeStatus?: string;
     verified?: string;
     featured?: string;
+    sortBy?: string;
+    sortOrder?: string;
   }) {
     const { where, values } = adminCourtWhere(filters);
+    const orderBy = adminCourtOrderBy(filters.sortBy, filters.sortOrder);
     const listValues = [...values, limit, (page - 1) * limit];
     const limitIndex = values.length + 1;
     const offsetIndex = values.length + 2;
@@ -323,7 +485,7 @@ export const adminRepository = {
         select min(price) as min_price from court_prices where court_id = c.id
       ) price on true
       ${where}
-      order by c.created_at desc
+      order by ${orderBy}
       limit $${limitIndex} offset $${offsetIndex}
     `, ...listValues);
     const countRows = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
@@ -426,7 +588,10 @@ export const adminRepository = {
     transactionType?: string;
     eventType?: string;
     payoutStatus?: string;
+    sortBy?: string;
+    sortOrder?: string;
   }) {
+    const orderBy = financeTransactionOrderBy(filters.sortBy, filters.sortOrder);
     const clauses = ["ct.created_at >= $1", "ct.created_at < $2"];
     const values: unknown[] = [filters.from, filters.to, filters.month];
     const add = (clause: string, value: unknown) => {
@@ -459,7 +624,7 @@ export const adminRepository = {
       join partner_profiles p on p.id = ct.partner_id
       left join partner_payouts po on po.partner_id = ct.partner_id and po.payout_month = $3
       ${where}
-      order by ct.created_at desc
+      order by ${orderBy}
       limit $${limitIndex} offset $${offsetIndex}
     `, ...values, limit, (page - 1) * limit);
     const countRows = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
@@ -480,7 +645,10 @@ export const adminRepository = {
     search?: string;
     partnerId?: string;
     paymentStatus?: string;
+    sortBy?: string;
+    sortOrder?: string;
   }) {
+    const orderBy = financeRefundOrderBy(filters.sortBy, filters.sortOrder);
     const clauses = [
       "coalesce(b.cancelled_at, b.updated_at, b.created_at) >= $1",
       "coalesce(b.cancelled_at, b.updated_at, b.created_at) < $2",
@@ -515,7 +683,7 @@ export const adminRepository = {
       join courts c on c.id = b.court_id
       join partner_profiles p on p.id = c.partner_id
       ${where}
-      order by coalesce(b.cancelled_at, b.updated_at, b.created_at) desc
+      order by ${orderBy}
       limit $${limitIndex} offset $${offsetIndex}
     `, ...values, limit, (page - 1) * limit);
     const countRows = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
@@ -928,27 +1096,32 @@ export const adminRepository = {
     return prisma.$executeRaw`update vouchers set status = ${status}::voucher_status, updated_at = now() where id = ${id}`;
   },
 
-  async pendingBlogs(page: number, limit: number, search?: string) {
-    const pattern = search ? `%${search}%` : null;
+  async pendingBlogs(page: number, limit: number, filters: { search?: string; status?: string }) {
+    const pattern = filters.search ? `%${filters.search}%` : null;
     const allowCommentsSelect = await columnExists("blog_posts", "allow_comments")
       ? Prisma.sql`coalesce(b.allow_comments, true)`
       : Prisma.sql`true`;
+    const validStatuses = ["PENDING", "PUBLISHED", "REJECTED", "HIDDEN"];
+    const statusClause = filters.status && validStatuses.includes(filters.status)
+      ? Prisma.sql`b.status = ${filters.status}::blog_post_status`
+      : Prisma.sql`b.status != 'DRAFT'::blog_post_status`;
 
     return prisma.$transaction([
       prisma.$queryRaw<any[]>(Prisma.sql`
         select b.id, b.title, b.excerpt, b.content, b.cover_image_url as "coverImageUrl",
           b.status::text, b.visibility::text, ${allowCommentsSelect} as "allowComments",
-          b.created_at as "createdAt", u.full_name as "authorName", u.email as "authorEmail"
+          b.created_at as "createdAt", u.full_name as "authorName", u.email as "authorEmail",
+          u.role::text as "authorRole"
         from blog_posts b join users u on u.id = b.author_id
-        where b.status = 'PENDING'::blog_post_status
+        where ${statusClause}
           and (${pattern}::text is null or b.title ilike ${pattern} or u.full_name ilike ${pattern})
         order by b.created_at desc offset ${(page - 1) * limit} limit ${limit}
       `),
-      prisma.$queryRaw<Array<{ count: bigint }>>`
+      prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
         select count(*)::bigint as count from blog_posts b join users u on u.id = b.author_id
-        where b.status = 'PENDING'::blog_post_status
+        where ${statusClause}
           and (${pattern}::text is null or b.title ilike ${pattern} or u.full_name ilike ${pattern})
-      `
+      `)
     ]);
   },
 
@@ -987,20 +1160,20 @@ export const adminRepository = {
     `;
   },
 
-  auditLogs(page: number, limit: number, search?: string) {
-    const where: Prisma.AuditLogWhereInput = search ? {
+  auditLogs(page: number, limit: number, filters: { search?: string; sortBy?: string; sortOrder?: string }) {
+    const where: Prisma.AuditLogWhereInput = filters.search ? {
       OR: [
-        { action: { contains: search, mode: "insensitive" } },
-        { entityType: { contains: search, mode: "insensitive" } },
-        { entityId: { contains: search, mode: "insensitive" } },
-        { actor: { fullName: { contains: search, mode: "insensitive" } } }
+        { action: { contains: filters.search, mode: "insensitive" } },
+        { entityType: { contains: filters.search, mode: "insensitive" } },
+        { entityId: { contains: filters.search, mode: "insensitive" } },
+        { actor: { fullName: { contains: filters.search, mode: "insensitive" } } }
       ]
     } : {};
     return prisma.$transaction([
       prisma.auditLog.findMany({
         where,
         include: { actor: { select: { fullName: true, email: true, role: true } } },
-        orderBy: { createdAt: "desc" },
+        orderBy: auditLogOrderBy(filters.sortBy, filters.sortOrder),
         skip: (page - 1) * limit,
         take: limit
       }),
@@ -1008,7 +1181,7 @@ export const adminRepository = {
     ]);
   },
 
-  blockchainLogs(page: number, limit: number, filters: { search?: string; status?: string }) {
+  blockchainLogs(page: number, limit: number, filters: { search?: string; status?: string; sortBy?: string; sortOrder?: string }) {
     const where: Prisma.BlockchainLogWhereInput = {
       status: filters.status,
       OR: filters.search ? [
@@ -1018,7 +1191,7 @@ export const adminRepository = {
       ] : undefined
     };
     return prisma.$transaction([
-      prisma.blockchainLog.findMany({ where, orderBy: { createdAt: "desc" }, skip: (page - 1) * limit, take: limit }),
+      prisma.blockchainLog.findMany({ where, orderBy: blockchainLogOrderBy(filters.sortBy, filters.sortOrder), skip: (page - 1) * limit, take: limit }),
       prisma.blockchainLog.count({ where })
     ]);
   },

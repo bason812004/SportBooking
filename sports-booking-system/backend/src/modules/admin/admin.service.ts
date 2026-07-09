@@ -2,7 +2,7 @@ import { NotFoundError, ValidationError } from "../../shared/errors/AppError.js"
 import { paginationMeta } from "../../shared/utils/response.js";
 import { parseLimit, parsePage } from "../../shared/utils/time.js";
 import { slugify } from "../../shared/utils/slug.js";
-import { commissionService } from "../commission/commission.service.js";
+import { commissionService, monthRange } from "../commission/commission.service.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { voucherRepository } from "../vouchers/voucher.repository.js";
@@ -79,7 +79,9 @@ export const adminService = {
     const [items, total] = await adminRepository.users(page, limit, {
       search: query.search || undefined,
       role: query.role || undefined,
-      status: query.status || undefined
+      status: query.status || undefined,
+      sortBy: query.sortBy || undefined,
+      sortOrder: query.sortOrder || undefined
     });
     return { items, meta: paginationMeta(page, limit, total) };
   },
@@ -210,7 +212,9 @@ export const adminService = {
       partnerId: query.partnerId || undefined,
       transactionType: query.transactionType || undefined,
       eventType: query.eventType || undefined,
-      payoutStatus: query.payoutStatus || undefined
+      payoutStatus: query.payoutStatus || undefined,
+      sortBy: query.sortBy || undefined,
+      sortOrder: query.sortOrder || undefined
     });
     return { items, meta: paginationMeta(page, limit, total) };
   },
@@ -224,7 +228,9 @@ export const adminService = {
       to: range.to,
       search: query.search || undefined,
       partnerId: query.partnerId || undefined,
-      paymentStatus: query.paymentStatus || undefined
+      paymentStatus: query.paymentStatus || undefined,
+      sortBy: query.sortBy || undefined,
+      sortOrder: query.sortOrder || undefined
     });
     return { items, meta: paginationMeta(page, limit, total) };
   },
@@ -351,7 +357,9 @@ export const adminService = {
       approvalStatus: query.approvalStatus || undefined,
       activeStatus: query.activeStatus || undefined,
       verified: query.verified || undefined,
-      featured: query.featured || undefined
+      featured: query.featured || undefined,
+      sortBy: query.sortBy || undefined,
+      sortOrder: query.sortOrder || undefined
     });
     return { items, meta: paginationMeta(page, limit, total) };
   },
@@ -449,7 +457,10 @@ export const adminService = {
 
   async pendingBlogs(query: any) {
     const page = parsePage(query.page), limit = parseLimit(query.limit);
-    const [items, count] = await adminRepository.pendingBlogs(page, limit, query.search || undefined);
+    const [items, count] = await adminRepository.pendingBlogs(page, limit, {
+      search: query.search || undefined,
+      status: query.status || "PENDING"
+    });
     return paginatedRaw(items, count, page, limit);
   },
   async moderateBlog(actorId: string, id: string, status: "PUBLISHED" | "REJECTED", reason?: string) {
@@ -473,7 +484,11 @@ export const adminService = {
 
   async auditLogs(query: any) {
     const page = parsePage(query.page), limit = parseLimit(query.limit);
-    const [items, total] = await adminRepository.auditLogs(page, limit, query.search);
+    const [items, total] = await adminRepository.auditLogs(page, limit, {
+      search: query.search || undefined,
+      sortBy: query.sortBy || undefined,
+      sortOrder: query.sortOrder || undefined
+    });
     return { items, meta: paginationMeta(page, limit, total) };
   },
   verifyAuditLogs() { return verifyAuditChain(); },
@@ -481,7 +496,9 @@ export const adminService = {
     const page = parsePage(query.page), limit = parseLimit(query.limit);
     const [items, total] = await adminRepository.blockchainLogs(page, limit, {
       search: query.search || undefined,
-      status: query.status || undefined
+      status: query.status || undefined,
+      sortBy: query.sortBy || undefined,
+      sortOrder: query.sortOrder || undefined
     });
     return { items, meta: paginationMeta(page, limit, total) };
   },

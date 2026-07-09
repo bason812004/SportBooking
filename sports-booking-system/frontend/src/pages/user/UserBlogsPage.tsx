@@ -77,6 +77,11 @@ export function UserBlogsPage() {
                         </span>
                         {wasUpdated(blog.createdAt, blog.updatedAt) && <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-black text-amber-800">Đã cập nhật</span>}
                       </div>
+                      {blog.status === "REJECTED" && blog.rejectionReason && (
+                        <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-800">
+                          Lý do từ chối: {blog.rejectionReason}
+                        </p>
+                      )}
                       <h2 className="mt-3 break-words text-2xl font-black">{blog.title}</h2>
                       {blog.excerpt && <p className="mt-2 line-clamp-2 text-sm text-slate-600">{blog.excerpt}</p>}
                       <p className="mt-2 text-sm text-slate-500">Cập nhật {new Date(blog.updatedAt ?? blog.createdAt).toLocaleString("vi-VN")}</p>

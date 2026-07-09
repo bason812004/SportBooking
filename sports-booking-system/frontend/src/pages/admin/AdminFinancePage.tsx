@@ -1,11 +1,13 @@
-import { useState, type ReactNode } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState, type ReactNode } from "react";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, ReceiptText, RefreshCcw, WalletCards } from "lucide-react";
 import { toast } from "sonner";
 import { ErrorState, LoadingState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
+import { SortableTh } from "../../components/common/SortableTh";
+import { useUrlSort } from "../../hooks/useUrlSort";
 import { adminApi } from "../../features/admin/api/adminApi";
 import type { AdminFinancePartner } from "../../types/api";
 
@@ -28,25 +30,63 @@ const eventLabels: Record<string, string> = {
   REFUND: "Hoàn tiền"
 };
 
+type RecSortField = "businessName" | "transactionCount" | "grossAmount" | "commissionAmount" | "netAmount" | "refundAmount" | "payoutStatus" | "paidAt";
+const REC_SORT_FIELDS: RecSortField[] = ["businessName", "transactionCount", "grossAmount", "commissionAmount", "netAmount", "refundAmount", "payoutStatus", "paidAt"];
+
+function compareReconciliation(a: AdminFinancePartner, b: AdminFinancePartner, field: RecSortField, order: "asc" | "desc") {
+  const direction = order === "asc" ? 1 : -1;
+  let result = 0;
+  if (field === "businessName" || field === "payoutStatus") {
+    result = a[field].localeCompare(b[field]);
+  } else if (field === "paidAt") {
+    result = (a.paidAt ? new Date(a.paidAt).getTime() : 0) - (b.paidAt ? new Date(b.paidAt).getTime() : 0);
+  } else {
+    result = Number(a[field] ?? 0) - Number(b[field] ?? 0);
+  }
+  return result * direction;
+}
+
+type TxSortField = "bookingCode" | "transactionType" | "eventType" | "grossAmount" | "commissionAmount" | "netAmount" | "payoutStatus";
+const TX_SORT_FIELDS: TxSortField[] = ["bookingCode", "transactionType", "eventType", "grossAmount", "commissionAmount", "netAmount", "payoutStatus"];
+
+type RefundSortField = "bookingCode" | "customerName" | "totalPrice" | "refundAmount" | "platformRetainedAmount" | "paymentStatus";
+const REFUND_SORT_FIELDS: RefundSortField[] = ["bookingCode", "customerName", "totalPrice", "refundAmount", "platformRetainedAmount", "paymentStatus"];
+
 export function AdminFinancePage() {
   const queryClient = useQueryClient();
   const [month, setMonth] = useState(currentMonth);
   const [tab, setTab] = useState<"reconciliation" | "transactions" | "refunds">("reconciliation");
   const [search, setSearch] = useState("");
   const [partnerId, setPartnerId] = useState("");
+  const [txPage, setTxPage] = useState(1);
+  const [refundPage, setRefundPage] = useState(1);
+
+  const recSort = useUrlSort<RecSortField>({ fields: REC_SORT_FIELDS, default: null, paramPrefix: "rec" });
+  const txSort = useUrlSort<TxSortField>({ fields: TX_SORT_FIELDS, default: null, paramPrefix: "tx" });
+  const refundSort = useUrlSort<RefundSortField>({ fields: REFUND_SORT_FIELDS, default: null, paramPrefix: "refund" });
+  const handleTxSort = (field: TxSortField) => { setTxPage(1); txSort.handleSort(field); };
+  const handleRefundSort = (field: RefundSortField) => { setRefundPage(1); refundSort.handleSort(field); };
 
   const reconciliation = useQuery({
     queryKey: ["admin-finance-reconciliation", month],
     queryFn: () => adminApi.financeReconciliation(month)
   });
   const transactions = useQuery({
-    queryKey: ["admin-finance-transactions", month, search, partnerId],
-    queryFn: () => adminApi.financeTransactions({ month, search, partnerId, limit: 50 })
+    queryKey: ["admin-finance-transactions", month, search, partnerId, txPage, txSort.sortField, txSort.sortOrder],
+    queryFn: () => adminApi.financeTransactions({ month, search, partnerId, page: txPage, limit: 10, sortBy: txSort.sortField ?? undefined, sortOrder: txSort.sortOrder }),
+    placeholderData: keepPreviousData
   });
   const refunds = useQuery({
-    queryKey: ["admin-finance-refunds", month, search, partnerId],
-    queryFn: () => adminApi.financeRefunds({ month, search, partnerId, limit: 50 })
+    queryKey: ["admin-finance-refunds", month, search, partnerId, refundPage, refundSort.sortField, refundSort.sortOrder],
+    queryFn: () => adminApi.financeRefunds({ month, search, partnerId, page: refundPage, limit: 10, sortBy: refundSort.sortField ?? undefined, sortOrder: refundSort.sortOrder }),
+    placeholderData: keepPreviousData
   });
+
+  const sortedPartners = useMemo(() => {
+    const partners = reconciliation.data?.partners ?? [];
+    if (!recSort.sortField) return partners;
+    return [...partners].sort((a, b) => compareReconciliation(a, b, recSort.sortField as RecSortField, recSort.sortOrder));
+  }, [reconciliation.data, recSort.sortField, recSort.sortOrder]);
 
   const payout = useMutation({
     mutationFn: ({ partner, status }: { partner: AdminFinancePartner; status: string }) =>
@@ -83,7 +123,7 @@ export function AdminFinancePage() {
           <p className="text-sm text-slate-600">Theo dõi giao dịch, hoàn tiền, đối soát doanh thu partner và trạng thái payout.</p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
-          <Input label="Tháng" type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
+          <Input label="Tháng" type="month" value={month} onChange={(event) => { setTxPage(1); setRefundPage(1); setMonth(event.target.value); }} />
           <Button variant="secondary" disabled={exportReport.isPending} onClick={() => exportReport.mutate()}>
             <Download className="h-4 w-4" />
             Export CSV
@@ -116,8 +156,8 @@ export function AdminFinancePage() {
       </div>
 
       <div className="grid gap-3 rounded-lg border bg-white p-4 md:grid-cols-2">
-        <Input label="Tìm kiếm" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Mã booking, sân, partner, khách hàng" />
-        <Input label="ID partner" value={partnerId} onChange={(event) => setPartnerId(event.target.value)} placeholder="pp0001" />
+        <Input label="Tìm kiếm" value={search} onChange={(event) => { setTxPage(1); setRefundPage(1); setSearch(event.target.value); }} placeholder="Mã booking, sân, partner, khách hàng" />
+        <Input label="ID partner" value={partnerId} onChange={(event) => { setTxPage(1); setRefundPage(1); setPartnerId(event.target.value); }} placeholder="pp0001" />
       </div>
 
       {tab === "reconciliation" && reconciliation.data && (
@@ -125,18 +165,18 @@ export function AdminFinancePage() {
           <table className="w-full min-w-[1120px] text-sm">
             <thead>
               <tr className="bg-slate-50 text-left">
-                <th className="p-3">Partner</th>
-                <th className="text-right">Giao dịch</th>
-                <th className="text-right">Doanh thu</th>
-                <th className="text-right">Hoa hồng</th>
-                <th className="text-right">Thực nhận</th>
-                <th className="text-right">Hoàn tiền</th>
-                <th>Trạng thái payout</th>
-                <th>Đã chi trả</th>
+                <SortableTh className="p-3" label="Partner" field="businessName" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
+                <SortableTh className="text-right" label="Giao dịch" field="transactionCount" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
+                <SortableTh className="text-right" label="Doanh thu" field="grossAmount" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
+                <SortableTh className="text-right" label="Hoa hồng" field="commissionAmount" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
+                <SortableTh className="text-right" label="Thực nhận" field="netAmount" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
+                <SortableTh className="text-right" label="Hoàn tiền" field="refundAmount" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
+                <SortableTh label="Trạng thái payout" field="payoutStatus" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
+                <SortableTh label="Đã chi trả" field="paidAt" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
               </tr>
             </thead>
             <tbody>
-              {reconciliation.data.partners.map((partner) => (
+              {sortedPartners.map((partner) => (
                 <tr key={partner.partnerId} className="border-t">
                   <td className="p-3 font-medium">{partner.businessName}<br /><span className="text-xs text-slate-500">{partner.partnerId}</span></td>
                   <td className="text-right">{partner.transactionCount}</td>
@@ -165,13 +205,13 @@ export function AdminFinancePage() {
           <table className="w-full min-w-[1160px] text-sm">
             <thead>
               <tr className="bg-slate-50 text-left">
-                <th className="p-3">Booking</th>
+                <SortableTh className="p-3" label="Booking" field="bookingCode" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
                 <th>Partner / sân</th>
-                <th>Loại</th>
-                <th className="text-right">Doanh thu</th>
-                <th className="text-right">Hoa hồng</th>
-                <th className="text-right">Thực nhận</th>
-                <th>Payout</th>
+                <SortableTh label="Loại" field="transactionType" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
+                <SortableTh className="text-right" label="Doanh thu" field="grossAmount" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
+                <SortableTh className="text-right" label="Hoa hồng" field="commissionAmount" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
+                <SortableTh className="text-right" label="Thực nhận" field="netAmount" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
+                <SortableTh label="Payout" field="payoutStatus" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
                 <th>Ngày ghi nhận</th>
               </tr>
             </thead>
@@ -192,19 +232,20 @@ export function AdminFinancePage() {
           </table>
         </QueryTable>
       )}
+      {tab === "transactions" && <Pager page={txPage} total={transactions.data?.meta.totalPages ?? 1} setPage={setTxPage} />}
 
       {tab === "refunds" && (
         <QueryTable loading={refunds.isLoading} error={refunds.error?.message}>
           <table className="w-full min-w-[1120px] text-sm">
             <thead>
               <tr className="bg-slate-50 text-left">
-                <th className="p-3">Booking</th>
-                <th>Khách hàng</th>
+                <SortableTh className="p-3" label="Booking" field="bookingCode" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
+                <SortableTh label="Khách hàng" field="customerName" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
                 <th>Partner / sân</th>
-                <th className="text-right">Tổng tiền</th>
-                <th className="text-right">Hoàn tiền</th>
-                <th className="text-right">Nền tảng giữ lại</th>
-                <th>Trạng thái</th>
+                <SortableTh className="text-right" label="Tổng tiền" field="totalPrice" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
+                <SortableTh className="text-right" label="Hoàn tiền" field="refundAmount" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
+                <SortableTh className="text-right" label="Nền tảng giữ lại" field="platformRetainedAmount" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
+                <SortableTh label="Trạng thái" field="paymentStatus" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
                 <th>Thời gian</th>
               </tr>
             </thead>
@@ -225,6 +266,17 @@ export function AdminFinancePage() {
           </table>
         </QueryTable>
       )}
+      {tab === "refunds" && <Pager page={refundPage} total={refunds.data?.meta.totalPages ?? 1} setPage={setRefundPage} />}
+    </div>
+  );
+}
+
+function Pager({ page, total, setPage }: { page: number; total: number; setPage: (value: number) => void }) {
+  return (
+    <div className="flex justify-end gap-3">
+      <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Trước</Button>
+      <span className="py-2">{page}/{Math.max(total, 1)}</span>
+      <Button variant="secondary" disabled={page >= total} onClick={() => setPage(page + 1)}>Sau</Button>
     </div>
   );
 }

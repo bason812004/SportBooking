@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -9,6 +10,8 @@ import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { ErrorState, LoadingState } from "../../components/common/States";
+import { SortableTh } from "../../components/common/SortableTh";
+import { useUrlSort } from "../../hooks/useUrlSort";
 
 const bookingStatuses = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"];
 const paymentStatuses = ["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"];
@@ -51,8 +54,14 @@ type BookingAdminForm = {
 
 const currentYear = new Date().getFullYear();
 
-const emptyFilters: Filters = {
+function currentYearRange() {
+  const year = new Date().getFullYear();
+  return { fromDate: `${year}-01-01`, toDate: `${year}-12-31` };
+}
+
+const defaultFilters: Filters = {
   search: "",
+  ...currentYearRange(),
   fromDate: `${currentYear}-01-01`,
   toDate: `${currentYear}-12-31`,
   courtId: "",
@@ -61,6 +70,10 @@ const emptyFilters: Filters = {
   paymentStatus: "",
   bookingStatus: ""
 };
+
+type SortField = "bookingCode" | "customerName" | "bookingDate" | "totalPrice" | "bookingStatus" | "paymentStatus";
+
+const SORT_FIELDS: SortField[] = ["bookingCode", "customerName", "bookingDate", "totalPrice", "bookingStatus", "paymentStatus"];
 
 type SortField = "bookingCode" | "customerName" | "bookingDate" | "totalPrice" | "bookingStatus" | "paymentStatus";
 
@@ -90,6 +103,16 @@ export function AdminBookingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string | null>(null);
+  const [filters, setFilters] = useState<Filters>(defaultFilters);
+
+  const { sortField, sortOrder, handleSort: sortBy } = useUrlSort<SortField>({
+    fields: SORT_FIELDS,
+    default: { field: "bookingDate", order: "desc" }
+  });
+  const handleSort = (field: SortField) => {
+    setPage(1);
+    sortBy(field);
+  };
   const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [sortBy, setSortBy] = useState<SortField | "">(((searchParams.get("sortBy") ?? "") as SortField | ""));
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">(searchParams.get("sortOrder") === "asc" ? "asc" : "desc");
@@ -123,6 +146,9 @@ export function AdminBookingsPage() {
   }, [sortBy, sortOrder, setSearchParams, searchParams]);
 
   const list = useQuery({
+    queryKey: ["admin-bookings", page, filters, sortField, sortOrder],
+    queryFn: () => adminApi.bookings({ page, limit: 10, ...filters, sortBy: sortField ?? undefined, sortOrder }),
+    placeholderData: keepPreviousData
     queryKey: ["admin-bookings", page, filters, sortBy, sortOrder],
     queryFn: () => adminApi.bookings({ page, limit: 10, ...filters, sortBy: sortBy || undefined, sortOrder: sortBy ? sortOrder : undefined })
   });
@@ -142,6 +168,7 @@ export function AdminBookingsPage() {
           <h1 className="text-3xl font-bold">Quản lý đơn đặt sân</h1>
           <p className="text-sm text-slate-600">Theo dõi, lọc và xử lý booking toàn hệ thống.</p>
         </div>
+        <Button variant="secondary" onClick={() => { setPage(1); setFilters(defaultFilters); }}>
         <Button variant="secondary" onClick={() => { setPage(1); setFilters(emptyFilters); setSortBy(""); setSortOrder("desc"); }}>
           Xóa lọc
         </Button>
@@ -162,6 +189,13 @@ export function AdminBookingsPage() {
         <table className="w-full min-w-[980px] text-sm">
           <thead>
             <tr className="bg-slate-50 text-left">
+              <SortableTh className="p-3" label="Mã đơn" field="bookingCode" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+              <SortableTh label="Khách hàng" field="customerName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+              <th>Sân / đối tác</th>
+              <SortableTh label="Lịch đặt" field="bookingDate" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+              <SortableTh label="Tổng tiền" field="totalPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+              <SortableTh label="Đơn" field="bookingStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+              <SortableTh label="Thanh toán" field="paymentStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
               <SortableHeader label="Mã đơn" field="bookingCode" active={sortBy === "bookingCode"} order={sortOrder} onToggle={toggleSort} />
               <SortableHeader label="Khách hàng" field="customerName" active={sortBy === "customerName"} order={sortOrder} onToggle={toggleSort} />
               <th className="p-3">Sân / đối tác</th>
