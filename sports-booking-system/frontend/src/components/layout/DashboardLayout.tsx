@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import {
   BarChart3,
+  Bell,
   CalendarCheck,
   CalendarDays,
   FileText,
@@ -130,11 +131,7 @@ export function DashboardLayout() {
             <LogOut className="h-4 w-4" />
             {t("Đăng xuất")}
           </Button>
-        )}
-        <Button className="mt-4 h-12 rounded-lg" variant="secondary" onClick={logout}>
-          <LogOut className="h-4 w-4" />
-          {t("Đăng xuất")}
-        </Button>
+        </div>
       </aside>
       <main className="md:pl-80">
         <div className="px-5 py-3 md:px-16" />

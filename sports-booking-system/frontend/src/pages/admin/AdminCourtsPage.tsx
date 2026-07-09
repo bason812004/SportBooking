@@ -1,5 +1,5 @@
 import { useEffect, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BadgeCheck, Eye, Lock, Megaphone, Star, Unlock } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
@@ -44,6 +44,34 @@ export function AdminCourtsPage() {
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [selected, setSelected] = useState<string | null>(null);
+
+  const { sortField, sortOrder, handleSort: sortBy } = useUrlSort<SortField>({
+    fields: SORT_FIELDS,
+    default: { field: "updateRequestedAt", order: "desc" }
+  });
+  const handleSort = (field: SortField) => {
+    setPage(1);
+    sortBy(field);
+  };
+  const locations = useQuery({
+    queryKey: ["admin-court-locations"],
+    queryFn: adminApi.courtLocations
+  });
+  const cityOptions = [
+    { value: "", label: "Tất cả" },
+    ...(locations.data?.cities ?? []).map((city) => ({ value: city, label: city }))
+  ];
+  const districtOptions = [
+    { value: "", label: "Tất cả" },
+    ...((filters.city ? locations.data?.districts?.[filters.city] : []) ?? []).map((district) => ({ value: district, label: district }))
+  ];
+  const handleCityChange = (value: string) => {
+    setPage(1);
+    setFilters((current) => ({ ...current, city: value, district: "" }));
+  };
+  const handleDistrictChange = (value: string) => {
+    updateFilter(setPage, setFilters, "district", value);
+  };
 
   const courts = useQuery({
     queryKey: ["admin-courts", page, filters, sortField, sortOrder],

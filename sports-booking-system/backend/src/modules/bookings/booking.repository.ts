@@ -90,6 +90,12 @@ export const bookingRepository = {
     });
   },
 
+  courtSurface(courtId: string, surfaceId: string) {
+    return prisma.courtSurface.findFirst({
+      where: { id: surfaceId, courtId, status: "ACTIVE" }
+    });
+  },
+
   async courtDepositPercent(id: string) {
     await ensureCourtDepositColumn();
     const [row] = await prisma.$queryRaw<Array<{ depositPercent: number | null }>>`
@@ -348,6 +354,7 @@ export const bookingRepository = {
     bookingCode: string;
     userId: string;
     courtId: string;
+    courtSurfaceId?: string | null;
     bookingDate: string;
     slots: Array<{ startTime: string; endTime: string; price: number }>;
     services: Array<{ serviceId: string; quantity: number; price: number }>;
@@ -360,7 +367,7 @@ export const bookingRepository = {
   }) {
     return prisma.$transaction(
       async (tx) => {
-        const conflicts = await this.findConflictsInTransaction(tx, input.courtId, input.bookingDate, input.slots);
+        const conflicts = await this.findConflictsInTransaction(tx, input.courtId, input.courtSurfaceId, input.bookingDate, input.slots);
         if (conflicts.some(Boolean)) return { conflict: true as const };
 
         const sortedSlots = [...input.slots].sort((left, right) => left.startTime.localeCompare(right.startTime));
@@ -373,6 +380,7 @@ export const bookingRepository = {
             bookingCode: input.bookingCode,
             userId: input.userId,
             courtId: input.courtId,
+            courtSurfaceId: input.courtSurfaceId ?? undefined,
             bookingDate: toDbDate(input.bookingDate),
             startTime: timeToDate(firstSlot.startTime),
             endTime: timeToDate(lastSlot.endTime),
@@ -389,6 +397,7 @@ export const bookingRepository = {
             bookingSlots: {
               create: sortedSlots.map((slot) => ({
                 courtId: input.courtId,
+                courtSurfaceId: input.courtSurfaceId ?? undefined,
                 bookingDate: toDbDate(input.bookingDate),
                 startTime: timeToDate(slot.startTime),
                 endTime: timeToDate(slot.endTime),

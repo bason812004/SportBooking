@@ -168,6 +168,7 @@ export const partnerRepository = {
       where: { id: courtId, partnerId },
       include: { category: true, images: true, prices: true, services: true, surfaces: { where: { status: "ACTIVE" }, orderBy: { sortOrder: "asc" } } }
     });
+    return attachCourtDeposit(court);
   },
 
   courtSurfaceByPartner(courtSurfaceId: string, partnerId: string) {
@@ -175,7 +176,6 @@ export const partnerRepository = {
       where: { id: courtSurfaceId, status: "ACTIVE", court: { partnerId } },
       include: { court: { include: { category: true, images: { orderBy: { sortOrder: "asc" }, take: 1 } } } }
     });
-    return attachCourtDeposit(court);
   },
 
   async createCourt(data: Prisma.CourtUncheckedCreateInput, depositPercent?: number | null) {

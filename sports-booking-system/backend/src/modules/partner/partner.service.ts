@@ -32,6 +32,11 @@ function addMinutes(time: Date, minutes: number) {
   return next;
 }
 
+function bookingCode() {
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  return `CB${stamp}${Math.floor(Math.random() * 900 + 100)}`;
+}
+
 const extendableBookingStatuses: BookingStatus[] = [BookingStatus.PENDING, BookingStatus.CONFIRMED];
 
 async function pricingFor(courtId: string, date: string, startTime: string, endTime: string) {

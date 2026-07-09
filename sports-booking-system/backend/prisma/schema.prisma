@@ -348,6 +348,8 @@ model PartnerProfile {
   analyticsEvents        AnalyticsEvent[]
   tournaments            Tournament[]
   recipients             User[]                  @relation("PartnerRecipients")
+  payouts                PartnerPayout[]
+  notification_campaigns NotificationCampaign[]
 
   @@index([userId], map: "idx_partner_profiles_user_id")
   @@index([approvalStatus], map: "idx_partner_profiles_approval_status")
@@ -424,6 +426,7 @@ model Court {
   vouchers            Voucher[]
   tournaments         Tournament[]
   recipients          User[]                   @relation("CourtRecipient")
+  team_recruitment_posts team_recruitment_posts[]
 
   @@index([partnerId], map: "idx_courts_partner_id")
   @@index([categoryId], map: "idx_courts_category_id")
@@ -471,6 +474,7 @@ model CourtSurface {
 
   court Court @relation(fields: [courtId], references: [id], onDelete: Cascade)
   bookings Booking[]
+  bookingSlots BookingSlot[]
 
   @@index([courtId], map: "idx_court_surfaces_court_id")
   @@map("court_surfaces")
@@ -607,6 +611,7 @@ model Booking {
   review                 Review?
   commissionTransactions CommissionTransaction[]
   bookingVoucher         BookingVoucher?
+  booking_admin_actions  booking_admin_actions[]
 
   @@index([userId], map: "idx_bookings_user_id")
   @@index([courtId], map: "idx_bookings_court_id")

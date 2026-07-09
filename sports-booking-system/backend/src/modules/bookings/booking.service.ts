@@ -173,6 +173,7 @@ export const bookingService = {
         bookingCode: bookingCode(),
         userId,
         courtId: input.courtId,
+        courtSurfaceId: quote.courtSurface?.id ?? null,
         bookingDate: input.bookingDate,
         slots: quote.slots,
         services: quote.services,

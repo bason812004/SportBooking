@@ -605,6 +605,7 @@ export type BlogComment = {
   content: string;
   createdAt: string;
   updatedAt: string;
+  isEdited?: boolean;
   user: { id: string; fullName: string; avatarUrl?: string | null };
 };
 
