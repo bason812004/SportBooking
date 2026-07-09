@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
 import type { AdminBooking } from "../../types/api";
@@ -8,6 +8,8 @@ import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { ErrorState, LoadingState } from "../../components/common/States";
+import { SortableTh } from "../../components/common/SortableTh";
+import { useUrlSort } from "../../hooks/useUrlSort";
 
 const bookingStatuses = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"];
 const paymentStatuses = ["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"];
@@ -48,10 +50,14 @@ type BookingAdminForm = {
   actionNote: string;
 };
 
-const emptyFilters: Filters = {
+function currentYearRange() {
+  const year = new Date().getFullYear();
+  return { fromDate: `${year}-01-01`, toDate: `${year}-12-31` };
+}
+
+const defaultFilters: Filters = {
   search: "",
-  fromDate: "",
-  toDate: "",
+  ...currentYearRange(),
   courtId: "",
   partnerId: "",
   userId: "",
@@ -59,15 +65,29 @@ const emptyFilters: Filters = {
   bookingStatus: ""
 };
 
+type SortField = "bookingCode" | "customerName" | "bookingDate" | "totalPrice" | "bookingStatus" | "paymentStatus";
+
+const SORT_FIELDS: SortField[] = ["bookingCode", "customerName", "bookingDate", "totalPrice", "bookingStatus", "paymentStatus"];
+
 export function AdminBookingsPage() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string | null>(null);
-  const [filters, setFilters] = useState<Filters>(emptyFilters);
+  const [filters, setFilters] = useState<Filters>(defaultFilters);
+
+  const { sortField, sortOrder, handleSort: sortBy } = useUrlSort<SortField>({
+    fields: SORT_FIELDS,
+    default: { field: "bookingDate", order: "desc" }
+  });
+  const handleSort = (field: SortField) => {
+    setPage(1);
+    sortBy(field);
+  };
 
   const list = useQuery({
-    queryKey: ["admin-bookings", page, filters],
-    queryFn: () => adminApi.bookings({ page, limit: 10, ...filters })
+    queryKey: ["admin-bookings", page, filters, sortField, sortOrder],
+    queryFn: () => adminApi.bookings({ page, limit: 10, ...filters, sortBy: sortField ?? undefined, sortOrder }),
+    placeholderData: keepPreviousData
   });
   const detail = useQuery({
     queryKey: ["admin-booking", selected],
@@ -85,7 +105,7 @@ export function AdminBookingsPage() {
           <h1 className="text-3xl font-bold">Quản lý đơn đặt sân</h1>
           <p className="text-sm text-slate-600">Theo dõi, lọc và xử lý booking toàn hệ thống.</p>
         </div>
-        <Button variant="secondary" onClick={() => { setPage(1); setFilters(emptyFilters); }}>
+        <Button variant="secondary" onClick={() => { setPage(1); setFilters(defaultFilters); }}>
           Xóa lọc
         </Button>
       </div>
@@ -105,13 +125,13 @@ export function AdminBookingsPage() {
         <table className="w-full min-w-[980px] text-sm">
           <thead>
             <tr className="bg-slate-50 text-left">
-              <th className="p-3">Mã đơn</th>
-              <th>Khách hàng</th>
+              <SortableTh className="p-3" label="Mã đơn" field="bookingCode" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+              <SortableTh label="Khách hàng" field="customerName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
               <th>Sân / đối tác</th>
-              <th>Lịch đặt</th>
-              <th>Tổng tiền</th>
-              <th>Đơn</th>
-              <th>Thanh toán</th>
+              <SortableTh label="Lịch đặt" field="bookingDate" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+              <SortableTh label="Tổng tiền" field="totalPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+              <SortableTh label="Đơn" field="bookingStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+              <SortableTh label="Thanh toán" field="paymentStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
               <th></th>
             </tr>
           </thead>

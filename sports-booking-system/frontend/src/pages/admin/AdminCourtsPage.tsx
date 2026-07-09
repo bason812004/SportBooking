@@ -1,5 +1,5 @@
 import { useEffect, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BadgeCheck, Eye, Lock, Megaphone, Star, Unlock } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
@@ -8,6 +8,8 @@ import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { ErrorState, LoadingState } from "../../components/common/States";
+import { SortableTh } from "../../components/common/SortableTh";
+import { useUrlSort } from "../../hooks/useUrlSort";
 
 const approvalLabels: Record<string, string> = {
   PENDING: "Chờ duyệt",
@@ -33,15 +35,25 @@ const fallbackCourtImage = "https://images.unsplash.com/photo-1574629810360-7efb
 
 type Filters = typeof emptyFilters;
 
+type SortField = "name" | "businessName" | "city" | "minPrice" | "approvalStatus" | "activeStatus" | "updateRequestedAt";
+const SORT_FIELDS: SortField[] = ["name", "businessName", "city", "minPrice", "approvalStatus", "activeStatus", "updateRequestedAt"];
+
 export function AdminCourtsPage() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [selected, setSelected] = useState<string | null>(null);
 
+  const { sortField, sortOrder, handleSort: sortBy } = useUrlSort<SortField>({ fields: SORT_FIELDS, default: null });
+  const handleSort = (field: SortField) => {
+    setPage(1);
+    sortBy(field);
+  };
+
   const courts = useQuery({
-    queryKey: ["admin-courts", page, filters],
-    queryFn: () => adminApi.courts({ page, limit: 10, ...filters })
+    queryKey: ["admin-courts", page, filters, sortField, sortOrder],
+    queryFn: () => adminApi.courts({ page, limit: 10, ...filters, sortBy: sortField ?? undefined, sortOrder }),
+    placeholderData: keepPreviousData
   });
   const detail = useQuery({
     queryKey: ["admin-court", selected],
@@ -84,14 +96,14 @@ export function AdminCourtsPage() {
         <table className="w-full min-w-[1120px] text-sm">
           <thead>
             <tr className="bg-slate-50 text-left">
-              <th className="p-3">Sân</th>
-              <th>Đối tác</th>
-              <th>Địa điểm</th>
-              <th>Giá từ</th>
-              <th>Duyệt</th>
-              <th>Hoạt động</th>
+              <SortableTh className="p-3" label="Sân" field="name" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+              <SortableTh label="Đối tác" field="businessName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+              <SortableTh label="Địa điểm" field="city" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+              <SortableTh label="Giá từ" field="minPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+              <SortableTh label="Duyệt" field="approvalStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+              <SortableTh label="Hoạt động" field="activeStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
               <th>Nhãn</th>
-              <th>Yêu cầu cập nhật</th>
+              <SortableTh label="Yêu cầu cập nhật" field="updateRequestedAt" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
               <th></th>
             </tr>
           </thead>

@@ -33,13 +33,40 @@ export const paymentRepository = {
     status: "PAID" | "FAILED" | "EXPIRED";
     amount: number;
     rawPayload: Prisma.InputJsonValue;
+    paymentReference?: string;
   }) {
     return prisma.$transaction(async (tx) => {
-      const payment = await this.findByExternalOrderId(input.externalOrderId, tx);
-      if (!payment) return null;
+      let payment = null;
+      if (input.externalOrderId) {
+        payment = await this.findByExternalOrderId(input.externalOrderId, tx);
+      }
+      if (!payment && input.paymentReference) {
+        payment = await tx.payment.findFirst({
+          where: { paymentReference: input.paymentReference },
+          include: { booking: { include: { court: true } } }
+        });
+      }
+      if (!payment && input.externalOrderId) {
+        payment = await tx.payment.findFirst({
+          where: {
+            OR: [
+              { paymentReference: input.externalOrderId },
+              { externalOrderId: { startsWith: input.externalOrderId } }
+            ]
+          },
+          include: { booking: { include: { court: true } } }
+        });
+      }
+      if (!payment) {
+        console.log(`[applyWebhook] Payment not found for externalOrderId: "${input.externalOrderId}", reference: "${input.paymentReference}"`);
+        return null;
+      }
 
       const existingTransaction = await this.findTransaction(input.provider, input.externalTransactionId, tx);
-      if (existingTransaction) return { payment, idempotent: true };
+      if (existingTransaction) {
+        console.log(`[applyWebhook] Transaction already processed (idempotent): provider=${input.provider}, txId=${input.externalTransactionId}`);
+        return { payment, idempotent: true };
+      }
 
       await tx.paymentTransaction.create({
         data: {
@@ -54,10 +81,11 @@ export const paymentRepository = {
       });
 
       const paid = input.status === "PAID" && Number(payment.amount) === input.amount;
+      console.log(`[applyWebhook] Match result: paid=${paid}. Expected: amount=${payment.amount}, status="PAID". Received: amount=${input.amount}, status="${input.status}"`);
       const updatedPayment = await tx.payment.update({
         where: { id: payment.id },
         data: {
-          status: paid ? "PAID" : "UNPAID",
+          status: paid ? "PAID" : "FAILED",
           externalTransactionId: input.externalTransactionId,
           paidAt: paid ? new Date() : undefined
         },
@@ -68,7 +96,7 @@ export const paymentRepository = {
         where: { id: payment.bookingId },
         data: {
           bookingStatus: paid ? "CONFIRMED" : "CANCELLED",
-          paymentStatus: paid ? "PAID" : "UNPAID"
+          paymentStatus: paid ? "PAID" : "FAILED"
         }
       });
 
@@ -79,12 +107,12 @@ export const paymentRepository = {
   expirePendingPayment(paymentId: string) {
     return prisma.$transaction(async (tx) => {
       const payment = await tx.payment.findUnique({ where: { id: paymentId } });
-      if (!payment || payment.status !== "UNPAID" || payment.expiresAt.getTime() > Date.now()) return payment;
+      if (!payment || (payment.status !== "PENDING" && payment.status !== "UNPAID") || payment.expiresAt.getTime() > Date.now()) return payment;
       await tx.booking.update({
         where: { id: payment.bookingId },
-        data: { bookingStatus: "CANCELLED", paymentStatus: "UNPAID" }
+        data: { bookingStatus: "CANCELLED", paymentStatus: "EXPIRED" }
       });
-      return tx.payment.update({ where: { id: paymentId }, data: { status: "UNPAID" } });
+      return tx.payment.update({ where: { id: paymentId }, data: { status: "EXPIRED" } });
     });
   }
 };

@@ -1,4 +1,5 @@
 import { OAuth2Client } from "google-auth-library";
+import type { UserRole } from "@prisma/client";
 import { env } from "../../config/env.js";
 import { AppError, AuthError, ConflictError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { omitPassword } from "../../shared/utils/response.js";
@@ -40,7 +41,7 @@ function activePendingResult(pending: {
   return Math.max(1, Math.ceil((pending.expiresAt.getTime() - Date.now()) / 1000));
 }
 
-async function createSession(user: { id: string; role: "USER" | "PARTNER" | "ADMIN" }) {
+async function createSession(user: { id: string; role: UserRole }) {
   const accessToken = generateAccessToken(user);
   const refreshToken = generateRefreshToken(user);
   await authRepository.createRefreshToken({

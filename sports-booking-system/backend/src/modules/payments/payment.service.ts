@@ -8,7 +8,7 @@ export const paymentService = {
   async detail(userId: string, paymentId: string) {
     const payment = await paymentRepository.findForUser(paymentId, userId);
     if (!payment) throw new NotFoundError("Khong tim thay thanh toan");
-    if (payment.status === "UNPAID" && payment.expiresAt.getTime() <= Date.now()) {
+    if ((payment.status === "PENDING" || payment.status === "UNPAID") && payment.expiresAt.getTime() <= Date.now()) {
       await paymentRepository.expirePendingPayment(payment.id);
       const expiredPayment = await paymentRepository.findForUser(paymentId, userId);
       if (!expiredPayment) throw new NotFoundError("Khong tim thay thanh toan");

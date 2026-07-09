@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const time = z.string().regex(/^\d{2}:\d{2}$/);
+const time = z.string().regex(/^(?:[01]\d|2[0-3]):00$/, "Gio phai la gio chan, vi du 06:00");
 const optionalQuery = <T extends z.ZodTypeAny>(schema: T) =>
   z.preprocess((value) => value === "" ? undefined : value, schema.optional());
 
@@ -16,7 +16,8 @@ export const courtWriteSchema = z.object({
     latitude: z.number().optional(),
     longitude: z.number().optional(),
     openingTime: time,
-    closingTime: time
+    closingTime: time,
+    depositPercent: z.coerce.number().min(0).max(49.99).optional().nullable()
   })
 });
 
@@ -92,7 +93,14 @@ export const blogWriteSchema = z.object({
     excerpt: z.string().trim().max(1000).optional(),
     content: z.string().trim().min(20),
     coverImageUrl: z.union([z.string().url(), z.literal(""), z.null()]).optional(),
-    visibility: z.enum(["PUBLIC", "PRIVATE"]).default("PUBLIC")
+    visibility: z.enum(["PUBLIC", "PRIVATE"]).default("PUBLIC"),
+    allowComments: z.boolean().default(true)
+  })
+});
+
+export const blogCommentsToggleSchema = z.object({
+  body: z.object({
+    allowComments: z.boolean()
   })
 });
 
@@ -106,6 +114,8 @@ export const tournamentWriteSchema = z.object({
     startDate: z.string().datetime(),
     endDate: z.string().datetime(),
     registrationDeadline: z.string().datetime(),
+
+
     maxParticipants: z.number().int().positive(),
     entryFee: z.number().nonnegative(),
     prizeDescription: z.string().trim().max(2000).optional()
@@ -130,5 +140,24 @@ export const voucherWriteSchema = z.object({
     ),
     startDate: z.string().datetime(),
     endDate: z.string().datetime()
+  })
+});
+
+export const recipientWriteSchema = z.object({
+  body: z.object({
+    fullName: z.string().trim().min(2).max(120),
+    emailSuffix: z.string().trim().min(1).regex(/^[A-Za-z0-9_-]+$/, "Phần đuôi email chỉ được chứa chữ cái, số và dấu gạch dưới/gạch ngang"),
+    password: z.string().trim().min(6),
+    phone: z.string().trim().max(30).optional(),
+    managedCourtId: z.string().uuid()
+  })
+});
+
+export const recipientUpdateSchema = z.object({
+  body: z.object({
+    fullName: z.string().trim().min(2).max(120).optional(),
+    password: z.string().trim().min(6).optional(),
+    phone: z.string().trim().max(30).optional(),
+    managedCourtId: z.string().uuid().optional()
   })
 });

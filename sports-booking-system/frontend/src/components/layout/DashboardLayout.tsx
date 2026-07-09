@@ -59,26 +59,41 @@ const menus = {
     { to: "/admin/reports", label: "Báo cáo", icon: BarChart3, group: "Bảo mật" },
     { to: "/admin/audit-logs", label: "Nhật ký kiểm toán", icon: CalendarDays, group: "Bảo mật" },
     { to: "/admin/blockchain-logs", label: "Nhật ký blockchain", icon: Link2, group: "Bảo mật" }
+  ],
+  RECIPIENT: [
+    { to: "/recipient/dashboard", label: "Bảng điều khiển", icon: Grid2X2, group: "Tổng quan" },
+    { to: "/recipient/bookings", label: "Đơn đặt sân", icon: CalendarCheck, group: "Vận hành" },
+    { to: "/recipient/calendar", label: "Lịch đặt sân", icon: CalendarDays, group: "Vận hành" },
+    { to: "/recipient/court-surfaces", label: "Sân con", icon: UserRoundCheck, group: "Vận hành" }
   ]
-} satisfies Record<"PARTNER" | "ADMIN", MenuItem[]>;
+} satisfies Record<"PARTNER" | "ADMIN" | "RECIPIENT", MenuItem[]>;
 
 export function DashboardLayout() {
   const { user, logout } = useAuth();
   const { t } = useLanguage();
   const isAdmin = user?.role === "ADMIN";
-  const items: MenuItem[] = isAdmin ? menus.ADMIN : menus.PARTNER;
+  const isRecipient = user?.role === "RECIPIENT";
+  const items: MenuItem[] = isAdmin
+    ? menus.ADMIN
+    : isRecipient
+    ? menus.RECIPIENT
+    : menus.PARTNER;
+  const portalTitle = isAdmin ? "SportBooking" : isRecipient ? t("Cổng nhân viên") : t("Cổng đối tác");
+  const portalSubtitle = isAdmin ? t("Cổng quản trị") : isRecipient ? t("Quản lý đặt sân") : t("Quản lý cơ sở");
+  const profileName = isAdmin ? "Super Admin" : user?.fullName ?? (isRecipient ? t("Nhân viên") : t("Đối tác"));
+  const profileRole = isAdmin ? t("Quản lý hệ thống") : isRecipient ? t("Nhân viên nhận sân") : t("Quản lý cơ sở");
 
   return (
     <div className="min-h-screen bg-[#f7f8f8] text-[#111811]">
       <aside className="fixed inset-y-0 left-0 hidden w-80 border-r border-[#c8d8c3] bg-[#eaf3e7] md:flex md:flex-col">
         <div className="shrink-0 px-6 pb-4 pt-6">
-          <p className="text-3xl font-extrabold leading-tight text-[#02712a]">{isAdmin ? "SportBooking" : t("Cổng đối tác")}</p>
-          <p className="mt-2 font-semibold tracking-widest">{isAdmin ? t("Cổng quản trị") : t("Quản lý cơ sở")}</p>
+          <p className="text-3xl font-extrabold leading-tight text-[#02712a]">{portalTitle}</p>
+          <p className="mt-2 font-semibold tracking-widest">{portalSubtitle}</p>
           <div className="mt-8 flex items-center gap-4 rounded-lg bg-white/45 p-4">
             <img className="h-14 w-14 rounded-full object-cover" src="https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=200&q=80" alt="Profile" />
             <div className="min-w-0">
-              <p className="truncate font-bold">{isAdmin ? "Super Admin" : user?.fullName ?? t("Đối tác")}</p>
-              <p className="truncate text-sm text-slate-600">{isAdmin ? t("Quản lý hệ thống") : t("Quản lý cơ sở")}</p>
+              <p className="truncate font-bold">{profileName}</p>
+              <p className="truncate text-sm text-slate-600">{profileRole}</p>
             </div>
           </div>
         </div>
@@ -105,7 +120,7 @@ export function DashboardLayout() {
         </nav>
 
         <div className="shrink-0 border-t border-[#c8d8c3] bg-[#eaf3e7] p-4">
-          {!isAdmin && (
+          {!isAdmin && !isRecipient && (
             <Button className="mb-3 h-12 w-full rounded-lg bg-[#24c866] text-base text-[#05270e] hover:bg-[#16a34a]" onClick={() => window.location.assign("/partner/courts/create")}>
               <Plus className="h-5 w-5" />
               {t("Thêm sân mới")}
@@ -118,11 +133,7 @@ export function DashboardLayout() {
         </div>
       </aside>
       <main className="md:pl-80">
-        <div className="flex items-center justify-end gap-3 px-5 py-8 md:px-16">
-          <button className="rounded-full border border-[#b9cdb7] bg-white p-5">
-            <Bell className="h-6 w-6" />
-          </button>
-        </div>
+        <div className="px-5 py-3 md:px-16" />
         <div className="px-5 pb-12 md:px-16">
           <Outlet />
         </div>

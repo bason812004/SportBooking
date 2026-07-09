@@ -79,7 +79,59 @@ insert into court_categories (id, name, slug, description) values
 ('cc0004', 'Cau long', 'cau-long', 'San cau long co tham va den'),
 ('cc0005', 'Bong ro', 'bong-ro', 'San bong ro 3x3 va 5x5'),
 ('cc0006', 'Pickleball', 'pickleball', 'San pickleball moi');
+BEGIN;
 
+SET client_encoding = 'UTF8';
+
+INSERT INTO court_categories (
+  id,
+  name,
+  slug,
+  description
+)
+VALUES
+(
+  'cc0001',
+  'Bóng đá mini',
+  'bong-da-mini',
+  'Sân bóng đá 5-7 người'
+),
+(
+  'cc0002',
+  'Tennis',
+  'tennis',
+  'Sân tennis tiêu chuẩn'
+),
+(
+  'cc0003',
+  'Bóng chuyền',
+  'bong-chuyen',
+  'Sân bóng chuyền trong nhà và ngoài trời'
+),
+(
+  'cc0004',
+  'Cầu lông',
+  'cau-long',
+  'Sân cầu lông có thảm và đèn'
+),
+(
+  'cc0005',
+  'Bóng rổ',
+  'bong-ro',
+  'Sân bóng rổ 3x3 và 5x5'
+),
+(
+  'cc0006',
+  'Pickleball',
+  'pickleball',
+  'Sân pickleball mới'
+)
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  slug = EXCLUDED.slug,
+  description = EXCLUDED.description;
+
+COMMIT;
 -- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 -- 4. COURTS
 -- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -357,6 +409,214 @@ insert into vouchers (id, partner_id, court_id, code, title, description, discou
 ('v0009','pp0004','c0016','RIVERDN40','Giáº£m 40.000Ä‘ Pickleball Riverside','Æ¯u Ä‘Ã£i khai trÆ°Æ¡ng cho nhÃ³m pickleball táº¡i ÄÃ  Náºµng.','FIXED_AMOUNT',40000,null,220000,100,19,'2026-06-01 00:00:00+07','2026-07-31 23:59:59+07','ACTIVE'),
 ('v0010','pp0005','c0018','MEKONG20','Giáº£m 20% Mekong Hall','DÃ nh cho ngÆ°á»i chÆ¡i cáº§u lÃ´ng Ä‘áº·t sÃ¢n sÃ¡ng sá»›m.','PERCENTAGE',20,50000,160000,95,10,'2026-06-01 00:00:00+07','2026-08-20 23:59:59+07','ACTIVE')
 on conflict (code) do nothing;
+BEGIN;
+
+SET client_encoding = 'UTF8';
+
+DELETE FROM vouchers
+WHERE code IN (
+  'SALA50K',
+  'TENNIS20',
+  'CAULONG30',
+  'PICKLE15',
+  'MYDINH70',
+  'CAUGIAY10',
+  'GAMUDA100',
+  'VSLASH25',
+  'RIVERDN40',
+  'MEKONG20'
+);
+
+INSERT INTO vouchers (
+  id,
+  partner_id,
+  court_id,
+  code,
+  title,
+  description,
+  discount_type,
+  discount_value,
+  max_discount_amount,
+  min_booking_amount,
+  usage_limit,
+  used_count,
+  start_date,
+  end_date,
+  status
+)
+VALUES
+(
+  'v0001',
+  'pp0001',
+  'c0001',
+  'SALA50K',
+  'Giảm 50.000đ sân bóng Sala',
+  'Áp dụng cho đơn đặt sân từ 300.000đ tại Sân bóng Sala 1.',
+  'FIXED_AMOUNT',
+  50000,
+  NULL,
+  300000,
+  120,
+  18,
+  '2026-06-01 00:00:00+07',
+  '2026-07-31 23:59:59+07',
+  'ACTIVE'
+),
+(
+  'v0002',
+  'pp0001',
+  'c0002',
+  'TENNIS20',
+  'Giảm 20% Tennis Riverside',
+  'Ưu đãi cho khung giờ sáng tại Tennis Riverside.',
+  'PERCENTAGE',
+  20,
+  80000,
+  250000,
+  80,
+  9,
+  '2026-06-01 00:00:00+07',
+  '2026-08-15 23:59:59+07',
+  'ACTIVE'
+),
+(
+  'v0003',
+  'pp0001',
+  'c0003',
+  'CAULONG30',
+  'Giảm 30.000đ cầu lông Phú Nhuận',
+  'Voucher cho nhóm đặt sân cầu lông từ 2 giờ.',
+  'FIXED_AMOUNT',
+  30000,
+  NULL,
+  180000,
+  150,
+  25,
+  '2026-06-05 00:00:00+07',
+  '2026-07-20 23:59:59+07',
+  'ACTIVE'
+),
+(
+  'v0004',
+  'pp0001',
+  'c0004',
+  'PICKLE15',
+  'Giảm 15% Pickleball Tân Bình',
+  'Áp dụng cho đặt sân pickleball vào ngày thường.',
+  'PERCENTAGE',
+  15,
+  60000,
+  200000,
+  100,
+  14,
+  '2026-06-01 00:00:00+07',
+  '2026-08-01 23:59:59+07',
+  'ACTIVE'
+),
+(
+  'v0005',
+  'pp0002',
+  'c0006',
+  'MYDINH70',
+  'Giảm 70.000đ sân Mỹ Đình',
+  'Ưu đãi cho đội bóng đặt sân tối thiểu 2 giờ.',
+  'FIXED_AMOUNT',
+  70000,
+  NULL,
+  400000,
+  70,
+  11,
+  '2026-06-10 00:00:00+07',
+  '2026-08-31 23:59:59+07',
+  'ACTIVE'
+),
+(
+  'v0006',
+  'pp0002',
+  'c0007',
+  'CAUGIAY10',
+  'Giảm 10% Tennis Cầu Giấy',
+  'Dành cho người chơi mới tại Tennis Cầu Giấy.',
+  'PERCENTAGE',
+  10,
+  50000,
+  200000,
+  90,
+  8,
+  '2026-06-01 00:00:00+07',
+  '2026-07-15 23:59:59+07',
+  'ACTIVE'
+),
+(
+  'v0007',
+  'pp0003',
+  'c0011',
+  'GAMUDA100',
+  'Giảm 100.000đ The One Gamuda',
+  'Voucher cho trận giao hữu sân bóng đặt trước cuối tuần.',
+  'FIXED_AMOUNT',
+  100000,
+  NULL,
+  500000,
+  60,
+  7,
+  '2026-06-01 00:00:00+07',
+  '2026-09-01 23:59:59+07',
+  'ACTIVE'
+),
+(
+  'v0008',
+  'pp0003',
+  'c0012',
+  'VSLASH25',
+  'Giảm 25% V-Slash Gò Vấp',
+  'Áp dụng cho khung giờ trưa và chiều sớm.',
+  'PERCENTAGE',
+  25,
+  70000,
+  180000,
+  110,
+  16,
+  '2026-06-01 00:00:00+07',
+  '2026-08-10 23:59:59+07',
+  'ACTIVE'
+),
+(
+  'v0009',
+  'pp0004',
+  'c0016',
+  'RIVERDN40',
+  'Giảm 40.000đ Pickleball Riverside',
+  'Ưu đãi khai trương cho nhóm pickleball tại Đà Nẵng.',
+  'FIXED_AMOUNT',
+  40000,
+  NULL,
+  220000,
+  100,
+  19,
+  '2026-06-01 00:00:00+07',
+  '2026-07-31 23:59:59+07',
+  'ACTIVE'
+),
+(
+  'v0010',
+  'pp0005',
+  'c0018',
+  'MEKONG20',
+  'Giảm 20% Mekong Hall',
+  'Dành cho người chơi cầu lông đặt sân sáng sớm.',
+  'PERCENTAGE',
+  20,
+  50000,
+  160000,
+  95,
+  10,
+  '2026-06-01 00:00:00+07',
+  '2026-08-20 23:59:59+07',
+  'ACTIVE'
+);
+
+COMMIT;
 
 -- â”€â”€ Blog posts (bp) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 insert into blog_posts (id, author_id, title, slug, excerpt, content, cover_image_url, category_id, status, visibility, created_at, updated_at, published_at) values

@@ -1,4 +1,5 @@
 import { api } from "../../../lib/axios";
+import { repairObject } from "../../../lib/text";
 import type { ApiResponse, Category, Court, Paginated } from "../../../types/api";
 
 export type CourtFilters = {
@@ -9,6 +10,8 @@ export type CourtFilters = {
   province?: string;
   district?: string;
   categoryId?: string;
+  minPrice?: string;
+  maxPrice?: string;
   latitude?: number;
   longitude?: number;
   radiusKm?: number;
@@ -35,11 +38,11 @@ export type AvailabilitySlot = {
 export const courtApi = {
   async list(filters: CourtFilters = {}) {
     const { data } = await api.get<ApiResponse<Paginated<Court>>>("/courts", { params: filters });
-    return data.data;
+    return repairObject(data.data);
   },
   async detail(id: string) {
     const { data } = await api.get<ApiResponse<Court>>(`/courts/${id}`);
-    return data.data;
+    return repairObject(data.data);
   },
   async availability(id: string, date: string) {
     const { data } = await api.get<ApiResponse<{
@@ -58,11 +61,11 @@ export const courtApi = {
   },
   async categories() {
     const { data } = await api.get<ApiResponse<Category[]>>("/categories");
-    return data.data;
+    return repairObject(data.data);
   },
   async sportTypes() {
     const { data } = await api.get<ApiResponse<SportTypeOption[]>>("/sport-types");
-    return data.data;
+    return repairObject(data.data);
   },
   async reviews(id: string) {
     const { data } = await api.get<ApiResponse<Array<{ id: string; rating: number; comment?: string; user: { fullName: string } }>>>(

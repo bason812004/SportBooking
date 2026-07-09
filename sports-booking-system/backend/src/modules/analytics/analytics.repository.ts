@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 
 export const analyticsRepository = {
-  trackEvent(data: {
+  async trackEvent(data: {
     userId?: string | null;
     partnerId?: string | null;
     eventType:
@@ -23,7 +23,10 @@ export const analyticsRepository = {
     entityId?: string | null;
     metadataJson?: Prisma.InputJsonValue;
   }) {
-    return prisma.analyticsEvent.create({ data });
+    const rows = await prisma.$queryRaw<Array<{ id: string }>>`
+      select 'ae' || lpad(nextval('seq_analytics_events')::text, 4, '0') as id
+    `;
+    return prisma.analyticsEvent.create({ data: { id: rows[0].id, ...data } });
   },
 
   partnerOverview(partnerId: string) {

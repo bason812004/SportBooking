@@ -8,13 +8,19 @@ export const rejectSchema = z.object({
 const optionalQuery = <T extends z.ZodTypeAny>(schema: T) =>
   z.preprocess((value) => value === "" ? undefined : value, schema.optional());
 
+const sortQueryFields = {
+  sortBy: optionalQuery(z.string().trim().max(60)),
+  sortOrder: optionalQuery(z.enum(["asc", "desc"]))
+};
+
 export const userQuerySchema = z.object({
   query: z.object({
     page: z.string().optional(),
     limit: z.string().optional(),
     search: optionalQuery(z.string().trim().max(160)),
     role: optionalQuery(z.enum(["USER", "PARTNER", "ADMIN"])),
-    status: optionalQuery(z.enum(["ACTIVE", "LOCKED"]))
+    status: optionalQuery(z.enum(["ACTIVE", "LOCKED"])),
+    ...sortQueryFields
   })
 });
 
@@ -32,7 +38,8 @@ export const listQuerySchema = z.object({
     page: z.string().optional(),
     limit: z.string().optional(),
     search: optionalQuery(z.string().trim().max(180)),
-    status: optionalQuery(z.string().trim().max(50))
+    status: optionalQuery(z.string().trim().max(50)),
+    ...sortQueryFields
   })
 });
 
@@ -47,7 +54,8 @@ export const bookingQuerySchema = z.object({
     partnerId: optionalQuery(z.string().trim().max(40)),
     userId: optionalQuery(z.string().trim().max(40)),
     bookingStatus: optionalQuery(z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"])),
-    paymentStatus: optionalQuery(z.enum(["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"]))
+    paymentStatus: optionalQuery(z.enum(["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"])),
+    ...sortQueryFields
   })
 });
 
@@ -84,7 +92,8 @@ export const adminCourtQuerySchema = z.object({
     approvalStatus: optionalQuery(z.enum(["PENDING", "APPROVED", "REJECTED"])),
     activeStatus: optionalQuery(z.enum(["ACTIVE", "INACTIVE"])),
     verified: optionalQuery(z.enum(["true", "false"])),
-    featured: optionalQuery(z.enum(["true", "false"]))
+    featured: optionalQuery(z.enum(["true", "false"])),
+    ...sortQueryFields
   })
 });
 
@@ -147,7 +156,8 @@ export const financeTransactionQuerySchema = z.object({
     partnerId: optionalQuery(z.string().trim().max(40)),
     transactionType: optionalQuery(z.enum(["EARNING", "REVERSAL"])),
     eventType: optionalQuery(z.enum(["COMPLETED", "NO_SHOW", "REFUND"])),
-    payoutStatus: optionalQuery(z.enum(["PENDING", "PROCESSING", "PAID", "FAILED", "CANCELLED"]))
+    payoutStatus: optionalQuery(z.enum(["PENDING", "PROCESSING", "PAID", "FAILED", "CANCELLED"])),
+    ...sortQueryFields
   })
 });
 
@@ -158,7 +168,8 @@ export const financeRefundQuerySchema = z.object({
     month: optionalQuery(z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)),
     search: optionalQuery(z.string().trim().max(180)),
     partnerId: optionalQuery(z.string().trim().max(40)),
-    paymentStatus: optionalQuery(z.enum(["PARTIALLY_REFUNDED", "REFUNDED"]))
+    paymentStatus: optionalQuery(z.enum(["PARTIALLY_REFUNDED", "REFUNDED"])),
+    ...sortQueryFields
   })
 });
 

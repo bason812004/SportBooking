@@ -9,7 +9,8 @@
     "test": "tsx --test src/**/*.test.ts",
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
-    "prisma:pull": "prisma db pull"
+    "prisma:pull": "prisma db pull",
+    "db:migrate": "node migrate_db.cjs"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

@@ -1,7 +1,10 @@
 import { prisma } from "../../config/db.js";
 export const analyticsRepository = {
-    trackEvent(data) {
-        return prisma.analyticsEvent.create({ data });
+    async trackEvent(data) {
+        const rows = await prisma.$queryRaw `
+      select 'ae' || lpad(nextval('seq_analytics_events')::text, 4, '0') as id
+    `;
+        return prisma.analyticsEvent.create({ data: { id: rows[0].id, ...data } });
     },
     partnerOverview(partnerId) {
         return prisma.$transaction([

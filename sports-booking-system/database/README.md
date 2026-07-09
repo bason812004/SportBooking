@@ -19,6 +19,12 @@ Run in this order:
 2. `03_diagnose_court_search.sql` to inspect visibility problems
 3. Your own insert/update script, based on `04_insert_court_template.sql`
 4. `05_seed_test_bookings_old_status.sql` if you need sample booking schedules for availability testing
+5. `06_user_voucher_wallet.sql` if your current DB is missing or has an old `user_vouchers` table
+6. `07_blog_moderation_comments_search.sql` if your current DB is missing blog comment toggles/search indexes
+7. `08_team_post_group_chat.sql` if your current DB is missing team chat member/message tables
+8. `09_court_deposit_percent.sql` if your current DB is missing court-level deposit percent settings
+
+`01_existing_db_migrations.sql` already includes the user voucher wallet fix. The standalone `06_user_voucher_wallet.sql` is useful when you only want to patch voucher claiming on an existing database.
 
 ## Test bookings
 

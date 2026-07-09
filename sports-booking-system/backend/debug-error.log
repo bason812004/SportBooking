@@ -1,0 +1,17 @@
+PrismaClientKnownRequestError: 
+Invalid `tx.booking.create()` invocation in
+D:\zzz_NamCuoi\DoAn\sports-booking-system\backend\src\modules\bookings\booking.repository.ts:203:42
+
+  200 const sortedSlots = [...input.slots].sort((left, right) => left.startTime.localeCompare(right.startTime));
+  201 const firstSlot = sortedSlots[0];
+  202 const lastSlot = sortedSlots[sortedSlots.length - 1];
+→ 203 const booking = await tx.booking.create(
+The provided value for the column is too long for the column's type. Column: (not available)
+    at ei.handleRequestError (D:\zzz_NamCuoi\DoAn\sports-booking-system\backend\node_modules\@prisma\client\src\runtime\RequestHandler.ts:228:13)
+    at ei.handleAndLogRequestError (D:\zzz_NamCuoi\DoAn\sports-booking-system\backend\node_modules\@prisma\client\src\runtime\RequestHandler.ts:174:12)
+    at ei.request (D:\zzz_NamCuoi\DoAn\sports-booking-system\backend\node_modules\@prisma\client\src\runtime\RequestHandler.ts:143:12)
+    at async a (D:\zzz_NamCuoi\DoAn\sports-booking-system\backend\node_modules\@prisma\client\src\runtime\getPrismaClient.ts:833:24)
+    at async prisma.$transaction.isolationLevel (D:\zzz_NamCuoi\DoAn\sports-booking-system\backend\src\modules\bookings\booking.repository.ts:203:25)
+    at async Proxy._transactionWithCallback (D:\zzz_NamCuoi\DoAn\sports-booking-system\backend\node_modules\@prisma\client\src\runtime\getPrismaClient.ts:722:18)
+    at async Object.checkout (D:\zzz_NamCuoi\DoAn\sports-booking-system\backend\src\modules\bookings\booking.service.ts:133:20)
+    at async <anonymous> (D:\zzz_NamCuoi\DoAn\sports-booking-system\backend\src\modules\payments\payment.controller.ts:37:22)

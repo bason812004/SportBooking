@@ -1,5 +1,26 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+
+const columnExistsCache = new Map<string, boolean>();
+
+async function columnExists(tableName: string, columnName: string) {
+  const cacheKey = `${tableName}.${columnName}`;
+  const cached = columnExistsCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+    select exists(
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = ${tableName}
+        and column_name = ${columnName}
+    ) as "exists"
+  `;
+  const exists = Boolean(row?.exists);
+  columnExistsCache.set(cacheKey, exists);
+  return exists;
+}
 
 function bookingWhere(filters: {
   search?: string;
@@ -43,6 +64,24 @@ function bookingWhere(filters: {
   };
 }
 
+const BOOKING_SORT_COLUMNS: Record<string, string> = {
+  bookingCode: "b.booking_code",
+  customerName: "u.full_name",
+  bookingDate: "b.booking_date",
+  totalPrice: "b.total_price",
+  bookingStatus: "b.booking_status::text",
+  paymentStatus: "b.payment_status::text"
+};
+
+function bookingOrderBy(sortBy?: string, sortOrder?: string) {
+  const direction = sortOrder === "asc" ? "asc" : "desc";
+  const column = sortBy && BOOKING_SORT_COLUMNS[sortBy] ? BOOKING_SORT_COLUMNS[sortBy] : BOOKING_SORT_COLUMNS.bookingDate;
+  if (column === BOOKING_SORT_COLUMNS.bookingDate) {
+    return `b.booking_date ${direction}, b.start_time ${direction}, b.created_at desc`;
+  }
+  return `${column} ${direction}, b.created_at desc`;
+}
+
 function adminCourtWhere(filters: {
   search?: string;
   partnerId?: string;
@@ -76,6 +115,86 @@ function adminCourtWhere(filters: {
   return { where: clauses.length ? `where ${clauses.join(" and ")}` : "", values };
 }
 
+const COURT_SORT_COLUMNS: Record<string, string> = {
+  name: "c.name",
+  businessName: "p.business_name",
+  city: "c.city",
+  minPrice: "price.min_price",
+  approvalStatus: "c.approval_status::text",
+  activeStatus: "c.active_status::text",
+  updateRequestedAt: "c.update_requested_at"
+};
+
+function adminCourtOrderBy(sortBy?: string, sortOrder?: string) {
+  const direction = sortOrder === "asc" ? "asc" : "desc";
+  const column = sortBy ? COURT_SORT_COLUMNS[sortBy] : undefined;
+  if (!column) return "c.created_at desc";
+  if (column === COURT_SORT_COLUMNS.city) {
+    return `c.city ${direction}, c.district ${direction}, c.created_at desc`;
+  }
+  return `${column} ${direction}, c.created_at desc`;
+}
+
+const USER_SORT_FIELDS = new Set(["fullName", "email", "role", "status"]);
+
+function userOrderBy(sortBy?: string, sortOrder?: string): Prisma.UserOrderByWithRelationInput {
+  const direction = sortOrder === "asc" ? "asc" : "desc";
+  if (sortBy && USER_SORT_FIELDS.has(sortBy)) {
+    return { [sortBy]: direction };
+  }
+  return { createdAt: "desc" };
+}
+
+const FINANCE_TX_SORT_COLUMNS: Record<string, string> = {
+  bookingCode: "b.booking_code",
+  transactionType: "ct.transaction_type",
+  eventType: "ct.event_type",
+  grossAmount: "ct.gross_amount",
+  commissionAmount: "ct.commission_amount",
+  netAmount: "ct.net_amount",
+  payoutStatus: "coalesce(po.status, 'PENDING')"
+};
+
+function financeTransactionOrderBy(sortBy?: string, sortOrder?: string) {
+  const direction = sortOrder === "asc" ? "asc" : "desc";
+  const column = sortBy ? FINANCE_TX_SORT_COLUMNS[sortBy] : undefined;
+  if (!column) return "ct.created_at desc";
+  return `${column} ${direction}, ct.created_at desc`;
+}
+
+const FINANCE_REFUND_SORT_COLUMNS: Record<string, string> = {
+  bookingCode: "b.booking_code",
+  customerName: "u.full_name",
+  totalPrice: "b.total_price",
+  refundAmount: "b.refund_amount",
+  platformRetainedAmount: "b.platform_retained_amount",
+  paymentStatus: "b.payment_status::text"
+};
+
+function financeRefundOrderBy(sortBy?: string, sortOrder?: string) {
+  const direction = sortOrder === "asc" ? "asc" : "desc";
+  const column = sortBy ? FINANCE_REFUND_SORT_COLUMNS[sortBy] : undefined;
+  if (!column) return "coalesce(b.cancelled_at, b.updated_at, b.created_at) desc";
+  return `${column} ${direction}, coalesce(b.cancelled_at, b.updated_at, b.created_at) desc`;
+}
+
+const AUDIT_LOG_SORT_FIELDS = new Set(["action", "entityType", "createdAt"]);
+
+function auditLogOrderBy(sortBy?: string, sortOrder?: string): Prisma.AuditLogOrderByWithRelationInput {
+  const direction = sortOrder === "asc" ? "asc" : "desc";
+  if (sortBy === "actorName") return { actor: { fullName: direction } };
+  if (sortBy && AUDIT_LOG_SORT_FIELDS.has(sortBy)) return { [sortBy]: direction };
+  return { createdAt: "desc" };
+}
+
+const BLOCKCHAIN_LOG_SORT_FIELDS = new Set(["entityType", "network", "status", "attempts"]);
+
+function blockchainLogOrderBy(sortBy?: string, sortOrder?: string): Prisma.BlockchainLogOrderByWithRelationInput {
+  const direction = sortOrder === "asc" ? "asc" : "desc";
+  if (sortBy && BLOCKCHAIN_LOG_SORT_FIELDS.has(sortBy)) return { [sortBy]: direction };
+  return { createdAt: "desc" };
+}
+
 export const adminRepository = {
   dashboard() {
     const now = new Date();
@@ -105,7 +224,7 @@ export const adminRepository = {
     ]);
   },
 
-  users(page: number, limit: number, filters: { search?: string; role?: any; status?: any }) {
+  users(page: number, limit: number, filters: { search?: string; role?: any; status?: any; sortBy?: string; sortOrder?: string }) {
     const where: Prisma.UserWhereInput = {
       role: filters.role,
       status: filters.status,
@@ -121,7 +240,7 @@ export const adminRepository = {
       prisma.user.findMany({
         where,
         select: { id: true, fullName: true, email: true, phone: true, role: true, status: true, createdAt: true },
-        orderBy: { createdAt: "desc" },
+        orderBy: userOrderBy(filters.sortBy, filters.sortOrder),
         skip: (page - 1) * limit,
         take: limit
       }),
@@ -138,8 +257,11 @@ export const adminRepository = {
     userId?: string;
     bookingStatus?: string;
     paymentStatus?: string;
+    sortBy?: string;
+    sortOrder?: string;
   }) {
     const { where, values } = bookingWhere(filters);
+    const orderBy = bookingOrderBy(filters.sortBy, filters.sortOrder);
     const listValues = [...values, limit, (page - 1) * limit];
     const limitIndex = values.length + 1;
     const offsetIndex = values.length + 2;
@@ -174,7 +296,7 @@ export const adminRepository = {
       join courts c on c.id = b.court_id
       join partner_profiles p on p.id = c.partner_id
       ${where}
-      order by b.created_at desc
+      order by ${orderBy}
       limit $${limitIndex} offset $${offsetIndex}
     `, ...listValues);
     const countRows = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
@@ -314,8 +436,11 @@ export const adminRepository = {
     activeStatus?: string;
     verified?: string;
     featured?: string;
+    sortBy?: string;
+    sortOrder?: string;
   }) {
     const { where, values } = adminCourtWhere(filters);
+    const orderBy = adminCourtOrderBy(filters.sortBy, filters.sortOrder);
     const listValues = [...values, limit, (page - 1) * limit];
     const limitIndex = values.length + 1;
     const offsetIndex = values.length + 2;
@@ -342,7 +467,7 @@ export const adminRepository = {
         select min(price) as min_price from court_prices where court_id = c.id
       ) price on true
       ${where}
-      order by c.created_at desc
+      order by ${orderBy}
       limit $${limitIndex} offset $${offsetIndex}
     `, ...listValues);
     const countRows = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
@@ -445,7 +570,10 @@ export const adminRepository = {
     transactionType?: string;
     eventType?: string;
     payoutStatus?: string;
+    sortBy?: string;
+    sortOrder?: string;
   }) {
+    const orderBy = financeTransactionOrderBy(filters.sortBy, filters.sortOrder);
     const clauses = ["ct.created_at >= $1", "ct.created_at < $2"];
     const values: unknown[] = [filters.from, filters.to, filters.month];
     const add = (clause: string, value: unknown) => {
@@ -478,7 +606,7 @@ export const adminRepository = {
       join partner_profiles p on p.id = ct.partner_id
       left join partner_payouts po on po.partner_id = ct.partner_id and po.payout_month = $3
       ${where}
-      order by ct.created_at desc
+      order by ${orderBy}
       limit $${limitIndex} offset $${offsetIndex}
     `, ...values, limit, (page - 1) * limit);
     const countRows = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
@@ -499,7 +627,10 @@ export const adminRepository = {
     search?: string;
     partnerId?: string;
     paymentStatus?: string;
+    sortBy?: string;
+    sortOrder?: string;
   }) {
+    const orderBy = financeRefundOrderBy(filters.sortBy, filters.sortOrder);
     const clauses = [
       "coalesce(b.cancelled_at, b.updated_at, b.created_at) >= $1",
       "coalesce(b.cancelled_at, b.updated_at, b.created_at) < $2",
@@ -534,7 +665,7 @@ export const adminRepository = {
       join courts c on c.id = b.court_id
       join partner_profiles p on p.id = c.partner_id
       ${where}
-      order by coalesce(b.cancelled_at, b.updated_at, b.created_at) desc
+      order by ${orderBy}
       limit $${limitIndex} offset $${offsetIndex}
     `, ...values, limit, (page - 1) * limit);
     const countRows = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
@@ -944,25 +1075,35 @@ export const adminRepository = {
   },
 
   setVoucherStatus(id: string, status: "ACTIVE" | "DISABLED") {
-    return prisma.$executeRaw`update vouchers set status = ${status}::voucher_status, updated_at = now() where id = ${id}::uuid`;
+    return prisma.$executeRaw`update vouchers set status = ${status}::voucher_status, updated_at = now() where id = ${id}`;
   },
 
-  pendingBlogs(page: number, limit: number, search?: string) {
-    const pattern = search ? `%${search}%` : null;
+  async pendingBlogs(page: number, limit: number, filters: { search?: string; status?: string }) {
+    const pattern = filters.search ? `%${filters.search}%` : null;
+    const allowCommentsSelect = await columnExists("blog_posts", "allow_comments")
+      ? Prisma.sql`coalesce(b.allow_comments, true)`
+      : Prisma.sql`true`;
+    const validStatuses = ["PENDING", "PUBLISHED", "REJECTED", "HIDDEN"];
+    const statusClause = filters.status && validStatuses.includes(filters.status)
+      ? Prisma.sql`b.status = ${filters.status}::blog_post_status`
+      : Prisma.sql`b.status != 'DRAFT'::blog_post_status`;
+
     return prisma.$transaction([
-      prisma.$queryRaw<any[]>`
+      prisma.$queryRaw<any[]>(Prisma.sql`
         select b.id, b.title, b.excerpt, b.content, b.cover_image_url as "coverImageUrl",
-          b.status::text, b.created_at as "createdAt", u.full_name as "authorName", u.email as "authorEmail"
+          b.status::text, b.visibility::text, ${allowCommentsSelect} as "allowComments",
+          b.created_at as "createdAt", u.full_name as "authorName", u.email as "authorEmail",
+          u.role::text as "authorRole"
         from blog_posts b join users u on u.id = b.author_id
-        where b.status = 'PENDING'::blog_post_status
+        where ${statusClause}
           and (${pattern}::text is null or b.title ilike ${pattern} or u.full_name ilike ${pattern})
         order by b.created_at desc offset ${(page - 1) * limit} limit ${limit}
-      `,
-      prisma.$queryRaw<Array<{ count: bigint }>>`
+      `),
+      prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
         select count(*)::bigint as count from blog_posts b join users u on u.id = b.author_id
-        where b.status = 'PENDING'::blog_post_status
+        where ${statusClause}
           and (${pattern}::text is null or b.title ilike ${pattern} or u.full_name ilike ${pattern})
-      `
+      `)
     ]);
   },
 
@@ -970,7 +1111,7 @@ export const adminRepository = {
     return prisma.$executeRaw`
       update blog_posts set status = ${status}::blog_post_status,
         published_at = case when ${status} = 'PUBLISHED' then now() else published_at end, updated_at = now()
-      where id = ${id}::uuid and status = 'PENDING'::blog_post_status
+      where id = ${id} and status = 'PENDING'::blog_post_status
     `;
   },
 
@@ -1001,20 +1142,20 @@ export const adminRepository = {
     `;
   },
 
-  auditLogs(page: number, limit: number, search?: string) {
-    const where: Prisma.AuditLogWhereInput = search ? {
+  auditLogs(page: number, limit: number, filters: { search?: string; sortBy?: string; sortOrder?: string }) {
+    const where: Prisma.AuditLogWhereInput = filters.search ? {
       OR: [
-        { action: { contains: search, mode: "insensitive" } },
-        { entityType: { contains: search, mode: "insensitive" } },
-        { entityId: { contains: search, mode: "insensitive" } },
-        { actor: { fullName: { contains: search, mode: "insensitive" } } }
+        { action: { contains: filters.search, mode: "insensitive" } },
+        { entityType: { contains: filters.search, mode: "insensitive" } },
+        { entityId: { contains: filters.search, mode: "insensitive" } },
+        { actor: { fullName: { contains: filters.search, mode: "insensitive" } } }
       ]
     } : {};
     return prisma.$transaction([
       prisma.auditLog.findMany({
         where,
         include: { actor: { select: { fullName: true, email: true, role: true } } },
-        orderBy: { createdAt: "desc" },
+        orderBy: auditLogOrderBy(filters.sortBy, filters.sortOrder),
         skip: (page - 1) * limit,
         take: limit
       }),
@@ -1022,7 +1163,7 @@ export const adminRepository = {
     ]);
   },
 
-  blockchainLogs(page: number, limit: number, filters: { search?: string; status?: string }) {
+  blockchainLogs(page: number, limit: number, filters: { search?: string; status?: string; sortBy?: string; sortOrder?: string }) {
     const where: Prisma.BlockchainLogWhereInput = {
       status: filters.status,
       OR: filters.search ? [
@@ -1032,7 +1173,7 @@ export const adminRepository = {
       ] : undefined
     };
     return prisma.$transaction([
-      prisma.blockchainLog.findMany({ where, orderBy: { createdAt: "desc" }, skip: (page - 1) * limit, take: limit }),
+      prisma.blockchainLog.findMany({ where, orderBy: blockchainLogOrderBy(filters.sortBy, filters.sortOrder), skip: (page - 1) * limit, take: limit }),
       prisma.blockchainLog.count({ where })
     ]);
   },

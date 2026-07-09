@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink } from "react-router-dom";
-import { CalendarCheck, FileText, Gift, LogOut, Menu, Search, ShieldCheck, User, UsersRound, X } from "lucide-react";
+import { CalendarCheck, FileText, Gift, LogOut, Menu, MessageCircle, Search, ShieldCheck, User, UsersRound, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { APP_NAME } from "../../lib/constants";
 import { useAuth } from "../../features/auth/hooks/useAuth";
@@ -80,6 +80,11 @@ export function SiteHeader() {
             <NavLink onClick={() => setMobileOpen(false)} className={({ isActive }) => mobileNavClass(isActive)} to={isAuthenticated ? "/user/profile" : "/login"}>
               {t("user.account")}
             </NavLink>
+            {isAuthenticated && (
+              <NavLink onClick={() => setMobileOpen(false)} className={({ isActive }) => mobileNavClass(isActive)} to="/user/team-groups">
+                {t("user.joinedGroups")}
+              </NavLink>
+            )}
           </div>
           <div className="mt-5 flex flex-wrap items-center gap-3">
             {!isAuthenticated && <Link to="/register" onClick={() => setMobileOpen(false)} className="rounded-full bg-slate-950 px-5 py-3 text-sm font-black text-white">{t("actions.register")}</Link>}
@@ -113,6 +118,7 @@ function UserMenu({ role, onLogout }: { role?: string; onLogout: () => void }) {
     { label: t("user.profile"), to: profilePath, icon: User },
     { label: t("user.bookingHistory"), to: "/user/bookings", icon: CalendarCheck },
     { label: t("user.myVouchers"), to: "/user/vouchers", icon: Gift },
+    { label: t("user.joinedGroups"), to: "/user/team-groups", icon: MessageCircle },
     { label: t("user.myTeammatePosts"), to: "/user/teammates", icon: UsersRound },
     { label: t("user.myPosts"), to: "/user/blogs", icon: FileText }
   ];

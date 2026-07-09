@@ -14,6 +14,8 @@ import { TournamentDetailPage } from "../pages/public/TournamentDetailPage";
 import { TeammateCreatePage } from "../pages/public/TeammateCreatePage";
 import { TeammateDetailPage } from "../pages/public/TeammateDetailPage";
 import { TeammatesPage } from "../pages/public/TeammatesPage";
+import { PoliciesPage } from "../pages/public/PoliciesPage";
+import { SupportPage } from "../pages/public/SupportPage";
 import { LoginPage } from "../pages/auth/LoginPage";
 import { RegisterPage } from "../pages/auth/RegisterPage";
 import { RegisterPartnerPage } from "../pages/auth/RegisterPartnerPage";
@@ -22,6 +24,17 @@ import { PaymentPage } from "../pages/user/PaymentPage";
 import { UserProfilePage } from "../pages/user/UserProfilePage";
 import { UserBookingsPage } from "../pages/user/UserBookingsPage";
 import { UserBookingDetailPage } from "../pages/user/UserBookingDetailPage";
+import { UserVouchersPage } from "../pages/user/UserVouchersPage";
+import { UserTeammatesPage } from "../pages/user/UserTeammatesPage";
+import { UserJoinedGroupsPage } from "../pages/user/UserJoinedGroupsPage";
+import { TeamGroupChatPage } from "../pages/user/TeamGroupChatPage";
+import { UserBlogsPage } from "../pages/user/UserBlogsPage";
+import { UserBlogFormPage } from "../pages/user/UserBlogFormPage";
+import { RecipientDashboardPage } from "../pages/recipient/RecipientDashboardPage";
+import { RecipientBookingsPage } from "../pages/recipient/RecipientBookingsPage";
+import { RecipientCalendarPage } from "../pages/recipient/RecipientCalendarPage";
+import { RecipientCourtSurfacesPage } from "../pages/recipient/RecipientCourtSurfacesPage";
+import { PartnerStaffPage } from "../pages/partner/PartnerStaffPage";
 import { PartnerDashboardPage } from "../pages/partner/PartnerDashboardPage";
 import { PartnerCourtsPage } from "../pages/partner/PartnerCourtsPage";
 import { PartnerCourtFormPage } from "../pages/partner/PartnerCourtFormPage";
@@ -29,7 +42,6 @@ import { PartnerBookingsPage } from "../pages/partner/PartnerBookingsPage";
 import { PartnerStatisticsPage } from "../pages/partner/PartnerStatisticsPage";
 import { PartnerVouchersPage } from "../pages/partner/PartnerVouchersPage";
 import { PartnerVoucherFormPage } from "../pages/partner/PartnerVoucherFormPage";
-import { PartnerPlaceholderPage } from "../pages/partner/PartnerPlaceholderPage";
 import { PartnerCourtResourcesPage } from "../pages/partner/PartnerCourtResourcesPage";
 import { PartnerSettingsPage } from "../pages/partner/PartnerSettingsPage";
 import { PartnerCalendarPage } from "../pages/partner/PartnerCalendarPage";
@@ -78,16 +90,23 @@ export function AppRoutes() {
         <Route path="teammates/:id" element={<TeammateDetailPage />} />
         <Route path="courts" element={<CourtsPage />} />
         <Route path="courts/:id" element={<CourtDetailPage />} />
+        <Route path="policies" element={<PoliciesPage />} />
+        <Route path="support" element={<SupportPage />} />
         <Route element={<ProtectedRoute roles={["USER"]} />}>
           <Route path="teammates/create" element={<TeammateCreatePage />} />
+          <Route path="user/teammates/:id/edit" element={<TeammateCreatePage />} />
           <Route path="booking/:courtId" element={<BookingPage />} />
           <Route path="payment/:paymentId" element={<PaymentPage />} />
           <Route path="user/profile" element={<UserProfilePage />} />
           <Route path="user/bookings" element={<UserBookingsPage />} />
           <Route path="user/bookings/:id" element={<UserBookingDetailPage />} />
-          <Route path="user/vouchers" element={<PartnerPlaceholderPage title="Voucher" />} />
-          <Route path="user/teammates" element={<PartnerPlaceholderPage title="Bài đăng tìm đồng đội của tôi" />} />
-          <Route path="user/blogs" element={<PartnerPlaceholderPage title="Bài viết của tôi" />} />
+          <Route path="user/vouchers" element={<UserVouchersPage />} />
+          <Route path="user/teammates" element={<UserTeammatesPage />} />
+          <Route path="user/team-groups" element={<UserJoinedGroupsPage />} />
+          <Route path="user/team-groups/:id/chat" element={<TeamGroupChatPage />} />
+          <Route path="user/blogs" element={<UserBlogsPage />} />
+          <Route path="user/blogs/create" element={<UserBlogFormPage />} />
+          <Route path="user/blogs/:id/edit" element={<UserBlogFormPage />} />
         </Route>
       </Route>
 
@@ -113,6 +132,16 @@ export function AppRoutes() {
           <Route path="partner/calendar" element={<PartnerCalendarPage />} />
           <Route path="partner/statistics" element={<PartnerStatisticsPage />} />
           <Route path="partner/settings" element={<PartnerSettingsPage />} />
+          <Route path="partner/staff" element={<PartnerStaffPage />} />
+        </Route>
+      </Route>
+
+      <Route element={<ProtectedRoute roles={["RECIPIENT"]} />}>
+        <Route element={<DashboardLayout />}>
+          <Route path="recipient/dashboard" element={<RecipientDashboardPage />} />
+          <Route path="recipient/bookings" element={<RecipientBookingsPage />} />
+          <Route path="recipient/calendar" element={<RecipientCalendarPage />} />
+          <Route path="recipient/court-surfaces" element={<RecipientCourtSurfacesPage />} />
         </Route>
       </Route>
 

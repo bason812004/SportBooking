@@ -1,4 +1,4 @@
-export type Role = "USER" | "PARTNER" | "ADMIN";
+export type Role = "USER" | "PARTNER" | "ADMIN" | "RECIPIENT";
 
 export type ApiResponse<T> = {
   success: boolean;
@@ -54,6 +54,7 @@ export type Court = {
   courtCount?: number;
   priceNote?: string;
   goldenPriceNote?: string;
+  depositPercent?: number | null;
   articleContent?: string;
   directions?: string;
   surfaceInfo?: string;
@@ -62,14 +63,50 @@ export type Court = {
   averageRating?: number;
   reviewCount?: number;
   category: Category;
+  partner?: {
+    id: string;
+    businessName: string;
+    address?: string | null;
+    approvalStatus?: "PENDING" | "APPROVED" | "REJECTED";
+    user?: { fullName: string; email: string; phone?: string | null };
+  };
   images: Array<{ id: string; imageUrl: string; publicId?: string; sortOrder: number }>;
   surfaces?: Array<{ id: string; code: string; name: string; capacity?: string; surface?: string; size?: string; imageUrl?: string; sortOrder: number }>;
   amenities: Array<{ id: string; name: string }>;
   prices: Array<{ id: string; dayType: string; startTime: string; endTime: string; price: string; note?: string }>;
   services: Array<{ id: string; name: string; description?: string; price: string; status: string }>;
-  reviews?: Array<{ id: string; rating: number; comment?: string; createdAt: string; user: { id: string; fullName: string; avatarUrl?: string } }>;
+  reviews?: Array<{ id: string; rating: number; comment?: string | null; createdAt: string; updatedAt?: string; user: { id: string; fullName: string; avatarUrl?: string | null } }>;
   ratingBreakdown?: Array<{ rating: number; count: number; percent: number }>;
   nearbyCourts?: Court[];
+};
+
+export type BookingService = {
+  id: string;
+  serviceId: string;
+  quantity: number;
+  price: string;
+  service: {
+    id: string;
+    name: string;
+    description?: string | null;
+    price: string;
+  };
+};
+
+export type BookingVoucherInfo = {
+  id: string;
+  bookingId: string;
+  voucherId: string;
+  discountAmount: string;
+  voucher: {
+    id: string;
+    code: string;
+    title: string;
+    discountType: "PERCENTAGE" | "FIXED_AMOUNT";
+    discountValue: number;
+    partner?: { id: string; businessName: string } | null;
+    court?: { id: string; name: string; city: string; district: string } | null;
+  };
 };
 
 export type Booking = {
@@ -78,6 +115,8 @@ export type Booking = {
   bookingDate: string;
   startTime: string;
   endTime: string;
+  createdAt: string;
+  updatedAt?: string;
   basePrice?: string;
   dynamicAdjustmentAmount?: string;
   subtotal?: string;
@@ -87,11 +126,31 @@ export type Booking = {
   paymentMethod: string;
   paymentStatus: string;
   bookingStatus: string;
+  cancelReason?: string | null;
+  note?: string | null;
+  cancelledAt?: string | null;
   depositAmount?: string;
   refundAmount?: string;
   platformRetainedAmount?: string;
   court: Court;
   user?: { id?: string; fullName: string; email?: string; phone?: string };
+  bookingServices?: BookingService[];
+  bookingVoucher?: BookingVoucherInfo | null;
+  payments?: Array<{
+    id: string;
+    status: string;
+    amount: string;
+    paymentMethod: string;
+    paymentType: string;
+    expiresAt?: string;
+    createdAt: string;
+  }>;
+  review?: {
+    id: string;
+    rating: number;
+    comment?: string | null;
+    createdAt: string;
+  } | null;
 };
 
 export type PartnerProfile = {
@@ -131,9 +190,11 @@ export type PartnerBlog = {
   coverImageUrl?: string | null;
   status: string;
   visibility: "PUBLIC" | "PRIVATE";
+  allowComments?: boolean;
   createdAt: string;
   updatedAt: string;
   publishedAt?: string | null;
+  rejectionReason?: string | null;
 };
 
 export type PartnerTournament = {
@@ -380,12 +441,28 @@ export type Voucher = {
   minBookingAmount: number;
   usageLimit?: number | null;
   usedCount: number;
+  clickCount?: number;
   startDate: string;
   endDate: string;
   status: string;
   partner: { id: string; businessName: string };
   court?: { id: string; name: string; city: string; district: string; imageUrl?: string | null } | null;
 };
+
+export type PartnerVoucher = Omit<Voucher, "partner"> & {
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type MyVoucher = Voucher & {
+  userVoucherId: string;
+  status: UserVoucherStatus;
+  voucherStatus?: string;
+  claimedAt: string;
+  usedAt?: string | null;
+};
+
+export type UserVoucherStatus = "CLAIMED" | "USED" | "EXPIRED";
 
 export type DynamicPrice = {
   courtId: string;
@@ -406,9 +483,36 @@ export type DemandPrediction = {
   message?: { vi: string; en: string };
 };
 
-export type PartnerVoucher = Omit<Voucher, "partner"> & {
-  createdAt: string;
-  updatedAt: string;
+export type VoucherValidatePayload = {
+  voucherId?: string;
+  code?: string;
+  courtId: string;
+  bookingDate: string;
+  startTime: string;
+  endTime: string;
+  services?: Array<{ serviceId: string; quantity: number }>;
+};
+
+export type VoucherValidateResult = {
+  voucher: {
+    id: string;
+    code: string;
+    title: string;
+    description?: string | null;
+    discountType: "PERCENTAGE" | "FIXED_AMOUNT";
+    discountValue: number;
+    maxDiscountAmount?: number | null;
+    minBookingAmount: number;
+    endDate: string;
+    usageLimit?: number | null;
+    usedCount: number;
+  };
+  courtSubtotal: number;
+  servicesSubtotal: number;
+  subtotal: number;
+  discountAmount: number;
+  finalTotal: number;
+  message: string;
 };
 
 export type BlogPost = {
@@ -420,10 +524,23 @@ export type BlogPost = {
   coverImageUrl?: string | null;
   status: string;
   visibility: string;
+  allowComments?: boolean;
   createdAt: string;
+  updatedAt?: string;
   publishedAt?: string | null;
   category?: { id: string; name: string; slug: string } | null;
   author: { id: string; fullName: string; avatarUrl?: string | null };
+  viewCount?: number;
+  rejectionReason?: string | null;
+};
+
+export type BlogComment = {
+  id: string;
+  postId: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  user: { id: string; fullName: string; avatarUrl?: string | null };
 };
 
 export type Tournament = {
@@ -468,7 +585,17 @@ export type TeamRecruitmentPost = {
   createdBy: { id: string; fullName: string; avatarUrl?: string | null };
 };
 
+export type TeamPostMessage = {
+  id: string;
+  postId: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  sender: { id: string; fullName: string; avatarUrl?: string | null };
+};
+
 export type TeamRecruitmentInput = {
+  courtId?: string | null;
   title: string;
   sportType: string;
   courtName: string;

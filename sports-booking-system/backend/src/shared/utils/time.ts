@@ -23,6 +23,19 @@ export function timeToMinutes(time: string) {
   return hours * 60 + minutes;
 }
 
+export function isFullHour(time: string) {
+  const [hours, minutes] = time.split(":").map(Number);
+  return Number.isInteger(hours) && Number.isInteger(minutes) && minutes === 0;
+}
+
+export function ceilToFullHour(totalMinutes: number) {
+  return Math.ceil(totalMinutes / 60) * 60;
+}
+
+export function floorToFullHour(totalMinutes: number) {
+  return Math.floor(totalMinutes / 60) * 60;
+}
+
 export function durationHours(startTime: string, endTime: string) {
   return (timeToMinutes(endTime) - timeToMinutes(startTime)) / 60;
 }
