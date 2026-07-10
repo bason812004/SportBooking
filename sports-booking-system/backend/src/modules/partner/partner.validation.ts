@@ -165,6 +165,13 @@ export const courtStatusSchema = z.object({
   })
 });
 
+export const courtSurfaceStatusSchema = z.object({
+  params: z.object({ id, surfaceId: id }),
+  body: z.object({
+    status: z.enum(["ACTIVE", "INACTIVE"])
+  })
+});
+
 export const courtBlockWriteSchema = z.object({
   body: z.object({
     courtSurfaceId: z.union([id, z.null()]).optional(),

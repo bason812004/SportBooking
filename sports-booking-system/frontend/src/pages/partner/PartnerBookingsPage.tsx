@@ -10,41 +10,18 @@ import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { SortableTh } from "../../components/common/SortableTh";
+import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { useUrlSort } from "../../hooks/useUrlSort";
 import { BookingCalendarGrid } from "../../components/booking/BookingCalendarGrid";
+import { StatusBadge } from "../../components/common/StatusBadge";
+import { PageHero } from "../../components/common/PageHero";
+import { bookingStatusTones, paymentStatusTones } from "../../lib/statusTones";
 
 type Action = "confirm" | "reject" | "complete" | "no-show";
 
 type SortField = "customerName" | "bookingDate" | "totalPrice" | "bookingStatus" | "paymentStatus";
 
 const SORT_FIELDS: SortField[] = ["customerName", "bookingDate", "totalPrice", "bookingStatus", "paymentStatus"];
-
-const bookingStatusTones: Record<string, string> = {
-  PENDING: "bg-amber-100 text-amber-800",
-  PENDING_PAYMENT: "bg-amber-100 text-amber-800",
-  CONFIRMED: "bg-blue-100 text-blue-800",
-  COMPLETED: "bg-emerald-100 text-emerald-800",
-  CANCELLED: "bg-slate-200 text-slate-700",
-  REJECTED: "bg-rose-100 text-rose-800",
-  EXPIRED: "bg-slate-200 text-slate-700",
-  NO_SHOW: "bg-rose-100 text-rose-800"
-};
-
-const paymentStatusTones: Record<string, string> = {
-  UNPAID: "bg-slate-200 text-slate-700",
-  PENDING: "bg-amber-100 text-amber-800",
-  PROCESSING: "bg-amber-100 text-amber-800",
-  PAID: "bg-emerald-100 text-emerald-800",
-  FAILED: "bg-rose-100 text-rose-800",
-  EXPIRED: "bg-slate-200 text-slate-700",
-  CANCELLED: "bg-slate-200 text-slate-700",
-  PARTIALLY_REFUNDED: "bg-amber-100 text-amber-800",
-  REFUNDED: "bg-rose-100 text-rose-800"
-};
-
-function StatusBadge({ value, tones }: { value: string; tones: Record<string, string> }) {
-  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${tones[value] ?? "bg-slate-100 text-slate-700"}`}>{value}</span>;
-}
 
 function todayValue() {
   return new Date().toISOString().slice(0, 10);
@@ -168,30 +145,31 @@ export function PartnerBookingsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold">Đơn đặt sân</h1>
-          <p className="text-slate-600">Theo dõi booking theo từng sân, ngày và trạng thái. Dùng "Can thiệp" khi cần xử lý thay nhân viên phụ trách.</p>
-        </div>
-        <div className="flex overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <button
-            type="button"
-            onClick={() => setViewMode("table")}
-            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-bold transition ${viewMode === "table" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
-          >
-            <Table2 className="h-4 w-4" />
-            Bảng
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode("calendar")}
-            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-bold transition ${viewMode === "calendar" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
-          >
-            <CalendarDays className="h-4 w-4" />
-            Lịch
-          </button>
-        </div>
-      </div>
+      <PageHero
+        eyebrow="Vận hành"
+        title="Đơn đặt sân"
+        subtitle={'Theo dõi booking theo từng sân, ngày và trạng thái. Dùng "Can thiệp" khi cần xử lý thay nhân viên phụ trách.'}
+        actions={
+          <div className="flex overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <button
+              type="button"
+              onClick={() => setViewMode("table")}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-bold transition ${viewMode === "table" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
+            >
+              <Table2 className="h-4 w-4" />
+              Bảng
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("calendar")}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-bold transition ${viewMode === "calendar" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
+            >
+              <CalendarDays className="h-4 w-4" />
+              Lịch
+            </button>
+          </div>
+        }
+      />
 
       {viewMode === "table" ? (
         <div className="grid gap-3 rounded-2xl border border-line bg-white p-4 md:grid-cols-4">
@@ -233,61 +211,59 @@ export function PartnerBookingsPage() {
           <EmptyState title="Chưa có đơn phù hợp" />
         ) : (
           <>
-            <div className="overflow-auto rounded-2xl border border-line bg-white">
-              <table className="w-full min-w-[1050px] text-sm">
-                <thead className="bg-slate-50 text-left">
-                  <tr>
-                    <th className="p-3">Mã</th>
-                    <SortableTh label="Khách hàng" field="customerName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-                    <th>Sân</th>
-                    <SortableTh label="Ngày chơi" field="bookingDate" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-                    <th>Thời gian</th>
-                    <SortableTh label="Thanh toán" field="paymentStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-                    <SortableTh label="Trạng thái" field="bookingStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-                    <SortableTh className="text-right" label="Tổng tiền" field="totalPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bookings.data?.items.map((booking) => (
-                    <tr key={booking.id} className="border-t">
-                      <td className="p-3 font-medium">{booking.bookingCode}</td>
-                      <td>
-                        {booking.user?.fullName}
-                        <br />
-                        <span className="text-xs text-slate-500">{booking.user?.phone}</span>
-                      </td>
-                      <td>{booking.court.name}</td>
-                      <td>{new Date(booking.bookingDate).toLocaleDateString("vi-VN")}</td>
-                      <td>{booking.startTime.slice(11, 16)}-{booking.endTime.slice(11, 16)}</td>
-                      <td><StatusBadge value={booking.paymentStatus} tones={paymentStatusTones} /></td>
-                      <td><StatusBadge value={booking.bookingStatus} tones={bookingStatusTones} /></td>
-                      <td className="text-right">{Number(booking.totalPrice).toLocaleString("vi-VN")} đ</td>
-                      <td className="p-3">
-                        {actionsForStatus(booking.bookingStatus).length === 0 ? null : interveningId === booking.id ? (
-                          <div className="space-y-1.5">
-                            <div className="flex flex-wrap gap-2">
-                              {actionsForStatus(booking.bookingStatus).map((action) => (
-                                <Button key={action} variant={action === "reject" || action === "no-show" ? "danger" : "secondary"} disabled={statusMutation.isPending} onClick={() => run(booking.id, action)}>
-                                  {actionLabel[action]}
-                                </Button>
-                              ))}
-                              <Button variant="secondary" onClick={() => setInterveningId(null)}>Đóng</Button>
-                            </div>
-                            <p className="text-xs text-amber-700">Đang can thiệp trực tiếp — ưu tiên để nhân viên phụ trách xử lý khi có thể.</p>
+            <Table minWidth="1050px">
+              <THead>
+                <tr>
+                  <Th>Mã</Th>
+                  <SortableTh label="Khách hàng" field="customerName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <Th>Sân</Th>
+                  <SortableTh label="Ngày chơi" field="bookingDate" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <Th>Thời gian</Th>
+                  <SortableTh label="Thanh toán" field="paymentStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <SortableTh label="Trạng thái" field="bookingStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <SortableTh className="text-right" label="Tổng tiền" field="totalPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <Th></Th>
+                </tr>
+              </THead>
+              <TBody>
+                {bookings.data?.items.map((booking) => (
+                  <Tr key={booking.id}>
+                    <Td className="font-medium">{booking.bookingCode}</Td>
+                    <Td>
+                      {booking.user?.fullName}
+                      <br />
+                      <span className="text-xs text-slate-500">{booking.user?.phone}</span>
+                    </Td>
+                    <Td>{booking.court.name}</Td>
+                    <Td>{new Date(booking.bookingDate).toLocaleDateString("vi-VN")}</Td>
+                    <Td>{booking.startTime.slice(11, 16)}-{booking.endTime.slice(11, 16)}</Td>
+                    <Td><StatusBadge value={booking.paymentStatus} tones={paymentStatusTones} /></Td>
+                    <Td><StatusBadge value={booking.bookingStatus} tones={bookingStatusTones} /></Td>
+                    <Td className="text-right">{Number(booking.totalPrice).toLocaleString("vi-VN")} đ</Td>
+                    <Td>
+                      {actionsForStatus(booking.bookingStatus).length === 0 ? null : interveningId === booking.id ? (
+                        <div className="space-y-1.5">
+                          <div className="flex flex-wrap gap-2">
+                            {actionsForStatus(booking.bookingStatus).map((action) => (
+                              <Button key={action} variant={action === "reject" || action === "no-show" ? "danger" : "secondary"} disabled={statusMutation.isPending} onClick={() => run(booking.id, action)}>
+                                {actionLabel[action]}
+                              </Button>
+                            ))}
+                            <Button variant="secondary" onClick={() => setInterveningId(null)}>Đóng</Button>
                           </div>
-                        ) : (
-                          <Button variant="secondary" onClick={() => setInterveningId(booking.id)}>
-                            <ShieldAlert className="h-4 w-4" />
-                            Can thiệp
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                          <p className="text-xs text-amber-700">Đang can thiệp trực tiếp — ưu tiên để nhân viên phụ trách xử lý khi có thể.</p>
+                        </div>
+                      ) : (
+                        <Button variant="secondary" onClick={() => setInterveningId(booking.id)}>
+                          <ShieldAlert className="h-4 w-4" />
+                          Can thiệp
+                        </Button>
+                      )}
+                    </Td>
+                  </Tr>
+                ))}
+              </TBody>
+            </Table>
 
             <div className="flex items-center justify-end gap-3">
               <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Trang trước</Button>

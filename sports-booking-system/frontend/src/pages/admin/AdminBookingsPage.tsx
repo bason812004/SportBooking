@@ -9,6 +9,7 @@ import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { ErrorState, LoadingState } from "../../components/common/States";
 import { SortableTh } from "../../components/common/SortableTh";
+import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { useUrlSort } from "../../hooks/useUrlSort";
 
 const bookingStatuses = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"];
@@ -121,41 +122,39 @@ export function AdminBookingsPage() {
         <Select label="Trạng thái đơn" value={filters.bookingStatus} onChange={(event) => updateFilter(setPage, setFilters, "bookingStatus", event.target.value)} options={withAll(bookingStatuses, bookingStatusLabels)} />
       </div>
 
-      <div className="overflow-auto rounded-lg border bg-white">
-        <table className="w-full min-w-[980px] text-sm">
-          <thead>
-            <tr className="bg-slate-50 text-left">
-              <SortableTh className="p-3" label="Mã đơn" field="bookingCode" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <SortableTh label="Khách hàng" field="customerName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <th>Sân / đối tác</th>
-              <SortableTh label="Lịch đặt" field="bookingDate" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <SortableTh label="Tổng tiền" field="totalPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <SortableTh label="Đơn" field="bookingStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <SortableTh label="Thanh toán" field="paymentStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {list.data?.items.map((booking) => (
-              <tr key={booking.id} className="border-t align-top">
-                <td className="p-3 font-bold">{booking.bookingCode}</td>
-                <td>{booking.user?.fullName}<br /><span className="text-xs text-slate-500">{booking.user?.email}</span></td>
-                <td>{booking.court.name}<br /><span className="text-xs text-slate-500">{booking.court.partner?.businessName}</span></td>
-                <td>{formatDate(booking.bookingDate)}<br /><span className="text-xs text-slate-500">{formatTime(booking.startTime)} - {formatTime(booking.endTime)}</span></td>
-                <td>{formatMoney(booking.totalPrice)}</td>
-                <td><StatusBadge value={booking.bookingStatus} labels={bookingStatusLabels} /></td>
-                <td><StatusBadge value={booking.paymentStatus} labels={paymentStatusLabels} /></td>
-                <td className="p-3 text-right">
-                  <Button variant="secondary" onClick={() => setSelected(booking.id)}>
-                    Chi tiết
-                  </Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {!list.data?.items.length && <p className="p-6 text-center text-slate-500">Không có đơn đặt sân phù hợp</p>}
-      </div>
+      <Table minWidth="980px">
+        <THead>
+          <tr>
+            <SortableTh label="Mã đơn" field="bookingCode" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh label="Khách hàng" field="customerName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <Th>Sân / đối tác</Th>
+            <SortableTh label="Lịch đặt" field="bookingDate" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh label="Tổng tiền" field="totalPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh label="Đơn" field="bookingStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh label="Thanh toán" field="paymentStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <Th></Th>
+          </tr>
+        </THead>
+        <TBody>
+          {list.data?.items.map((booking) => (
+            <Tr key={booking.id} className="align-top">
+              <Td className="font-bold">{booking.bookingCode}</Td>
+              <Td>{booking.user?.fullName}<br /><span className="text-xs text-slate-500">{booking.user?.email}</span></Td>
+              <Td>{booking.court.name}<br /><span className="text-xs text-slate-500">{booking.court.partner?.businessName}</span></Td>
+              <Td>{formatDate(booking.bookingDate)}<br /><span className="text-xs text-slate-500">{formatTime(booking.startTime)} - {formatTime(booking.endTime)}</span></Td>
+              <Td>{formatMoney(booking.totalPrice)}</Td>
+              <Td><StatusBadge value={booking.bookingStatus} labels={bookingStatusLabels} /></Td>
+              <Td><StatusBadge value={booking.paymentStatus} labels={paymentStatusLabels} /></Td>
+              <Td className="text-right">
+                <Button variant="secondary" onClick={() => setSelected(booking.id)}>
+                  Chi tiết
+                </Button>
+              </Td>
+            </Tr>
+          ))}
+        </TBody>
+      </Table>
+      {!list.data?.items.length && <p className="p-6 text-center text-slate-500">Không có đơn đặt sân phù hợp</p>}
 
       <Pager page={page} total={list.data?.meta.totalPages ?? 1} setPage={setPage} />
 
@@ -255,21 +254,19 @@ function BookingDetail({ booking, onUpdated }: { booking: AdminBooking; onUpdate
           <Metric label="Nền tảng giữ lại" value={formatMoney(booking.platformRetainedAmount ?? 0)} />
         </div>
 
-        <div className="overflow-auto rounded-lg border">
-          <table className="w-full text-sm">
-            <thead><tr className="bg-slate-50 text-left"><th className="p-3">Dịch vụ</th><th>Số lượng</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
-            <tbody>
-              {booking.bookingServices?.length ? booking.bookingServices.map((item) => (
-                <tr key={item.id} className="border-t">
-                  <td className="p-3">{item.service.name}</td>
-                  <td>{item.quantity}</td>
-                  <td>{formatMoney(item.price)}</td>
-                  <td>{formatMoney(item.price * item.quantity)}</td>
-                </tr>
-              )) : <tr className="border-t"><td className="p-3 text-slate-500" colSpan={4}>Không có dịch vụ kèm theo</td></tr>}
-            </tbody>
-          </table>
-        </div>
+        <Table>
+          <THead><tr><Th>Dịch vụ</Th><Th>Số lượng</Th><Th>Đơn giá</Th><Th>Thành tiền</Th></tr></THead>
+          <TBody>
+            {booking.bookingServices?.length ? booking.bookingServices.map((item) => (
+              <Tr key={item.id}>
+                <Td>{item.service.name}</Td>
+                <Td>{item.quantity}</Td>
+                <Td>{formatMoney(item.price)}</Td>
+                <Td>{formatMoney(item.price * item.quantity)}</Td>
+              </Tr>
+            )) : <Tr><Td className="text-slate-500" colSpan={4}>Không có dịch vụ kèm theo</Td></Tr>}
+          </TBody>
+        </Table>
       </section>
 
       <section className="space-y-4 xl:sticky xl:top-0 xl:self-start">

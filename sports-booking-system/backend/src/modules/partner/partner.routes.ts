@@ -7,6 +7,7 @@ import { validate } from "../../middlewares/validate.middleware.js";
 import {
   courtWriteSchema,
   courtStatusSchema,
+  courtSurfaceStatusSchema,
   courtBlockWriteSchema,
   courtBlockParamsSchema,
   bookingQuerySchema,
@@ -36,6 +37,7 @@ partnerRoutes.get("/courts", partnerController.courts);
 partnerRoutes.post("/courts", validate(courtWriteSchema), partnerController.createCourt);
 partnerRoutes.get("/courts/:id", partnerController.courtDetail);
 partnerRoutes.get("/courts/:id/surfaces", partnerController.courtSurfaces);
+partnerRoutes.put("/courts/:id/surfaces/:surfaceId/status", validate(courtSurfaceStatusSchema), partnerController.updateCourtSurfaceStatus);
 partnerRoutes.put("/courts/:id", validate(courtWriteSchema.partial()), partnerController.updateCourt);
 partnerRoutes.delete("/courts/:id", partnerController.deactivateCourt);
 partnerRoutes.put("/courts/:id/status", validate(courtStatusSchema), partnerController.updateCourtStatus);

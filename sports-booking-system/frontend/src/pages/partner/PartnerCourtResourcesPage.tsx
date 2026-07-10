@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
-import { ErrorState, LoadingState } from "../../components/common/States";
+import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { partnerApi } from "../../features/partner/api/partnerApi";
 
@@ -60,6 +60,14 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
       await refreshBlocks();
     },
     onError: (error: any) => toast.error(error.message || "Không thể hủy lịch nghỉ")
+  });
+  const toggleSurfaceStatus = useMutation({
+    mutationFn: ({ surfaceId, status }: { surfaceId: string; status: "ACTIVE" | "INACTIVE" }) => partnerApi.updateCourtSurfaceStatus(id, surfaceId, status),
+    onSuccess: async () => {
+      toast.success("Đã cập nhật trạng thái sân con");
+      await refresh();
+    },
+    onError: (error: any) => toast.error(error.message || "Không thể cập nhật trạng thái sân con")
   });
 
   const savePrice = useMutation({
@@ -119,9 +127,13 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
             <Input label="Giá (đ)" type="number" {...priceForm.register("price", { valueAsNumber: true, min: 0 })} />
             <div className="flex items-end"><Button className="w-full">{editingId ? "Cập nhật" : "Thêm giá"}</Button></div>
           </form>
-          <div className="rounded-2xl border border-line bg-white">
-            {data.prices.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 border-b p-4 last:border-0"><span>{item.dayType} · {item.startTime.slice(11,16)}-{item.endTime.slice(11,16)} · <b>{Number(item.price).toLocaleString("vi-VN")} đ</b></span><div className="flex gap-2"><Button variant="secondary" onClick={() => { setEditingId(item.id); priceForm.reset({ dayType: item.dayType, startTime: item.startTime.slice(11,16), endTime: item.endTime.slice(11,16), price: Number(item.price), note: item.note }); }}>Sửa</Button><Button variant="danger" onClick={() => setRemoveTarget({ type: "price", resourceId: item.id })}>Xóa</Button></div></div>)}
-          </div>
+          {data.prices.length === 0 ? (
+            <EmptyState title="Chưa có bảng giá nào." description="Thêm mức giá ở form phía trên để khách hàng thấy giá khi đặt sân." />
+          ) : (
+            <div className="rounded-2xl border border-line bg-white">
+              {data.prices.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 border-b p-4 last:border-0"><span>{item.dayType} · {item.startTime.slice(11,16)}-{item.endTime.slice(11,16)} · <b>{Number(item.price).toLocaleString("vi-VN")} đ</b></span><div className="flex gap-2"><Button variant="secondary" onClick={() => { setEditingId(item.id); priceForm.reset({ dayType: item.dayType, startTime: item.startTime.slice(11,16), endTime: item.endTime.slice(11,16), price: Number(item.price), note: item.note }); }}>Sửa</Button><Button variant="danger" onClick={() => setRemoveTarget({ type: "price", resourceId: item.id })}>Xóa</Button></div></div>)}
+            </div>
+          )}
         </>
       )}
 
@@ -133,13 +145,21 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
             <Select label="Trạng thái" options={[{ value: "ACTIVE", label: "Hoạt động" }, { value: "INACTIVE", label: "Tạm ẩn" }]} {...serviceForm.register("status")} />
             <div className="flex items-end"><Button className="w-full">{editingId ? "Cập nhật" : "Thêm dịch vụ"}</Button></div>
           </form>
-          <div className="rounded-2xl border border-line bg-white">
-            {data.services.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 border-b p-4 last:border-0"><span><b>{item.name}</b> · {Number(item.price).toLocaleString("vi-VN")} đ · {item.status}</span><div className="flex gap-2"><Button variant="secondary" onClick={() => { setEditingId(item.id); serviceForm.reset({ name: item.name, description: item.description, price: Number(item.price), status: item.status }); }}>Sửa</Button><Button variant="danger" onClick={() => setRemoveTarget({ type: "service", resourceId: item.id })}>Ẩn</Button></div></div>)}
-          </div>
+          {data.services.length === 0 ? (
+            <EmptyState title="Chưa có dịch vụ đi kèm nào." description="Thêm dịch vụ ở form phía trên (nước uống, thuê vợt, áo bib...) để khách hàng chọn thêm khi đặt sân." />
+          ) : (
+            <div className="rounded-2xl border border-line bg-white">
+              {data.services.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 border-b p-4 last:border-0"><span><b>{item.name}</b> · {Number(item.price).toLocaleString("vi-VN")} đ · {item.status}</span><div className="flex gap-2"><Button variant="secondary" onClick={() => { setEditingId(item.id); serviceForm.reset({ name: item.name, description: item.description, price: Number(item.price), status: item.status }); }}>Sửa</Button><Button variant="danger" onClick={() => setRemoveTarget({ type: "service", resourceId: item.id })}>Ẩn</Button></div></div>)}
+            </div>
+          )}
         </>
       )}
 
-      {mode === "images" && (
+      {mode === "images" && data.images.length === 0 && (
+        <EmptyState title="Sân chưa có ảnh nào." description="Ảnh giúp khách hàng nhận diện sân dễ hơn khi tìm kiếm và đặt sân." />
+      )}
+
+      {mode === "images" && data.images.length > 0 && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {data.images.sort((a,b) => a.sortOrder-b.sortOrder).map((image, index) => (
             <div key={image.id} className="overflow-hidden rounded-2xl border border-line bg-white">
@@ -155,6 +175,33 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
 
       {mode === "blocks" && (
         <>
+          <div className="rounded-2xl border border-line bg-white">
+            <p className="border-b p-4 text-sm font-bold text-slate-500">Sân con</p>
+            {!data.surfaces?.length ? (
+              <div className="p-4"><EmptyState title="Cụm sân này chưa có sân con nào." /></div>
+            ) : (
+              data.surfaces.map((surface) => (
+                <div key={surface.id} className="flex flex-wrap items-center justify-between gap-3 border-b p-4 last:border-0">
+                  <span>
+                    <b>{surface.name}</b> · Mã: {surface.code} ·{" "}
+                    <span className={surface.status === "INACTIVE" ? "text-slate-500" : "text-emerald-700"}>
+                      {surface.status === "INACTIVE" ? "Tạm ngưng" : "Hoạt động"}
+                    </span>
+                  </span>
+                  {surface.status === "INACTIVE" ? (
+                    <Button variant="secondary" disabled={toggleSurfaceStatus.isPending} onClick={() => toggleSurfaceStatus.mutate({ surfaceId: surface.id, status: "ACTIVE" })}>
+                      Kích hoạt lại
+                    </Button>
+                  ) : (
+                    <Button variant="danger" disabled={toggleSurfaceStatus.isPending} onClick={() => toggleSurfaceStatus.mutate({ surfaceId: surface.id, status: "INACTIVE" })}>
+                      Tạm ngưng
+                    </Button>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+
           <form className="grid gap-3 rounded-2xl border border-line bg-white p-5 md:grid-cols-5" onSubmit={blockForm.handleSubmit((v) => createBlock.mutate(v))}>
             <Select
               label="Sân con"
@@ -173,7 +220,7 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
           ) : blocks.isError ? (
             <ErrorState message={blocks.error.message} />
           ) : !blocks.data?.length ? (
-            <p className="rounded-2xl border border-dashed border-slate-200 bg-white p-6 text-center text-sm text-slate-500">Chưa có lịch nghỉ/bảo trì nào.</p>
+            <EmptyState title="Chưa có lịch nghỉ/bảo trì nào." description="Tạo lịch nghỉ ở form phía trên khi cần đóng cửa sớm hoặc bảo trì." />
           ) : (
             <div className="rounded-2xl border border-line bg-white">
               {blocks.data.map((block) => (

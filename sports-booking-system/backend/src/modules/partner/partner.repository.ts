@@ -156,7 +156,7 @@ export const partnerRepository = {
   async courtByPartner(courtId: string, partnerId: string) {
     const court = await prisma.court.findFirst({
       where: { id: courtId, partnerId },
-      include: { category: true, images: true, prices: true, services: true }
+      include: { category: true, images: true, prices: true, services: true, surfaces: true }
     });
     return attachCourtDeposit(court);
   },
@@ -297,6 +297,16 @@ export const partnerRepository = {
       where: { courtId },
       orderBy: [{ sortOrder: "asc" }, { code: "asc" }]
     });
+  },
+
+  courtSurfaceByPartner(surfaceId: string, courtId: string, partnerId: string) {
+    return prisma.courtSurface.findFirst({
+      where: { id: surfaceId, courtId, court: { partnerId } }
+    });
+  },
+
+  updateCourtSurfaceStatus(surfaceId: string, status: "ACTIVE" | "INACTIVE") {
+    return prisma.courtSurface.update({ where: { id: surfaceId }, data: { status } });
   },
 
   courtBlocks(courtId: string) {

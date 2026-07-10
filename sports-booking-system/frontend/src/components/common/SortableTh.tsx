@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import clsx from "clsx";
 
 type SortOrder = "asc" | "desc";
 
@@ -20,7 +21,7 @@ export function SortableTh<F extends string>({
   const isActive = field === sortField;
   const icon = isActive ? (sortOrder === "asc" ? "▲" : "▼") : "⇅";
   return (
-    <th className={className}>
+    <th className={clsx("p-3 first:pl-4 last:pr-4", className)}>
       <button
         type="button"
         onClick={() => onSort(field)}

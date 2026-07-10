@@ -4,6 +4,7 @@ import { ErrorState, LoadingState } from "../../components/common/States";
 import { Input } from "../../components/ui/Input";
 import { SortableTh } from "../../components/common/SortableTh";
 import { useUrlSort } from "../../hooks/useUrlSort";
+import { THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { partnerApi } from "../../features/partner/api/partnerApi";
 
 const currentMonth = new Date().toISOString().slice(0, 7);
@@ -68,39 +69,39 @@ export function PartnerStatisticsPage() {
         </div>
         <div className="overflow-auto">
           <table className="w-full min-w-[900px] text-sm">
-            <thead className="bg-slate-50 text-left">
+            <THead>
               <tr>
-                <th className="p-3">Mã booking</th>
-                <SortableTh className="p-3" label="Sân" field="court" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-                <SortableTh className="p-3" label="Ngày đặt" field="bookingDate" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-                <th className="p-3">Sự kiện</th>
-                <SortableTh className="p-3 text-right" label="Doanh thu gốc" field="grossAmount" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-                <SortableTh className="p-3 text-right" label="Hoa hồng" field="commissionAmount" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-                <SortableTh className="p-3 text-right" label="Thực nhận" field="netAmount" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                <Th>Mã booking</Th>
+                <SortableTh label="Sân" field="court" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                <SortableTh label="Ngày đặt" field="bookingDate" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                <Th>Sự kiện</Th>
+                <SortableTh className="text-right" label="Doanh thu gốc" field="grossAmount" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                <SortableTh className="text-right" label="Hoa hồng" field="commissionAmount" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                <SortableTh className="text-right" label="Thực nhận" field="netAmount" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
               </tr>
-            </thead>
-            <tbody>
+            </THead>
+            <TBody>
               {sortedItems.map((item) => (
-                <tr key={item.id} className="border-t border-line">
-                  <td className="p-3 font-medium">{item.bookingCode}</td>
-                  <td className="p-3">{item.court.name}</td>
-                  <td className="p-3">{new Date(item.bookingDate).toLocaleDateString("vi-VN")}</td>
-                  <td className="p-3">{item.eventType === "NO_SHOW" ? "Khách không đến" : "Hoàn thành"}</td>
-                  <td className="p-3 text-right">{money(item.grossAmount)}</td>
-                  <td className="p-3 text-right text-red-600">
+                <Tr key={item.id}>
+                  <Td className="font-medium">{item.bookingCode}</Td>
+                  <Td>{item.court.name}</Td>
+                  <Td>{new Date(item.bookingDate).toLocaleDateString("vi-VN")}</Td>
+                  <Td>{item.eventType === "NO_SHOW" ? "Khách không đến" : "Hoàn thành"}</Td>
+                  <Td className="text-right">{money(item.grossAmount)}</Td>
+                  <Td className="text-right text-red-600">
                     {money(item.commissionAmount)} ({item.commissionRate}%)
-                  </td>
-                  <td className="p-3 text-right font-semibold text-emerald-700">{money(item.netAmount)}</td>
-                </tr>
+                  </Td>
+                  <Td className="text-right font-semibold text-emerald-700">{money(item.netAmount)}</Td>
+                </Tr>
               ))}
               {report.items.length === 0 && (
                 <tr>
-                  <td className="p-8 text-center text-slate-500" colSpan={7}>
+                  <Td className="p-8 text-center text-slate-500" colSpan={7}>
                     Chưa có booking hoàn thành trong tháng này.
-                  </td>
+                  </Td>
                 </tr>
               )}
-            </tbody>
+            </TBody>
           </table>
         </div>
       </section>

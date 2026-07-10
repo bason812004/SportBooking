@@ -1,53 +1,37 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { CalendarDays, TrendingUp, UserRoundCheck, WalletCards } from "lucide-react";
+import { CalendarDays, ClipboardList, TrendingUp, UserRoundCheck, WalletCards } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { partnerApi } from "../../features/partner/api/partnerApi";
 import { EmptyState, LoadingState, ErrorState } from "../../components/common/States";
+import { PageHero } from "../../components/common/PageHero";
+import { StatCard } from "../../components/common/StatCard";
+import { StatusBadge } from "../../components/common/StatusBadge";
+import { bookingStatusTones } from "../../lib/statusTones";
 import { Button } from "../../components/ui/Button";
+import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 
 export function PartnerDashboardPage() {
   const dashboard = useQuery({ queryKey: ["partner-dashboard"], queryFn: partnerApi.dashboard });
   if (dashboard.isLoading) return <LoadingState />;
   if (dashboard.isError) return <ErrorState message={dashboard.error.message} />;
   const data = dashboard.data!;
-  const stats = [
-    { label: "Sân đang hoạt động", value: data.courts, icon: UserRoundCheck, to: undefined },
-    { label: "Booking hôm nay", value: data.bookingsToday, icon: CalendarDays, to: undefined },
-    { label: "Thực nhận tháng", value: `${data.revenue.toLocaleString("vi-VN")} đ`, icon: WalletCards, to: undefined },
-    { label: "Đơn chờ xác nhận", value: data.pendingBookings, icon: CalendarDays, to: "/partner/bookings?status=PENDING" }
-  ];
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-4xl font-black">Tổng quan đối tác</h1>
-        <p className="mt-2 text-slate-600">Số liệu vận hành được cập nhật trực tiếp từ booking và giao dịch hoa hồng.</p>
-      </div>
+      <PageHero eyebrow="Vận hành" title="Tổng quan đối tác" subtitle="Số liệu vận hành được cập nhật trực tiếp từ booking và giao dịch hoa hồng." />
 
       <div className="grid gap-4 lg:grid-cols-4">
-        {stats.map((item) => {
-          const card = (
-            <div className={`rounded-2xl border bg-white p-5 ${item.to ? "transition hover:border-emerald-300 hover:shadow-md" : ""}`}>
-              <div className="flex justify-between">
-                <p className="text-slate-600">{item.label}</p>
-                <item.icon className="h-5 w-5 text-emerald-700" />
-              </div>
-              <p className="mt-3 text-3xl font-black">{item.value}</p>
-              {item.label === "Thực nhận tháng" && (
-                <p className="mt-2 flex items-center gap-1 text-sm text-emerald-700">
-                  <TrendingUp className="h-4 w-4" />
-                  {data.revenueGrowth === null ? "Chưa có kỳ trước" : `${data.revenueGrowth.toFixed(1)}% so với tháng trước`}
-                </p>
-              )}
-            </div>
-          );
-          return item.to ? (
-            <Link key={item.label} to={item.to}>{card}</Link>
-          ) : (
-            <div key={item.label}>{card}</div>
-          );
-        })}
+        <StatCard label="Sân đang hoạt động" value={data.courts} icon={UserRoundCheck} iconBg="bg-slate-100 text-slate-700" />
+        <StatCard label="Booking hôm nay" value={data.bookingsToday} icon={CalendarDays} iconBg="bg-blue-100 text-blue-700" />
+        <StatCard
+          label="Thực nhận tháng"
+          value={`${data.revenue.toLocaleString("vi-VN")} đ`}
+          icon={WalletCards}
+          iconBg="bg-emerald-100 text-emerald-700"
+          footnote={data.revenueGrowth === null ? "Chưa có kỳ trước" : `↑ ${data.revenueGrowth.toFixed(1)}% so với tháng trước`}
+        />
+        <StatCard label="Đơn chờ xác nhận" value={data.pendingBookings} icon={ClipboardList} iconBg="bg-amber-100 text-amber-700" to="/partner/bookings?status=PENDING" />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1fr_380px]">
@@ -91,31 +75,31 @@ export function PartnerDashboardPage() {
             <EmptyState title="Chưa có booking nào gần đây." />
           </div>
         ) : (
-          <div className="mt-4 overflow-auto">
-            <table className="w-full min-w-[700px] text-sm">
-              <thead>
-                <tr className="border-t bg-slate-50 text-left">
-                  <th className="p-3 font-semibold text-slate-600">Mã đơn</th>
-                  <th className="font-semibold text-slate-600">Khách hàng</th>
-                  <th className="font-semibold text-slate-600">Sân</th>
-                  <th className="font-semibold text-slate-600">Ngày</th>
-                  <th className="font-semibold text-slate-600">Trạng thái</th>
-                  <th className="text-right font-semibold text-slate-600">Tổng tiền</th>
+          <div className="mt-4">
+            <Table minWidth="700px">
+              <THead>
+                <tr>
+                  <Th>Mã đơn</Th>
+                  <Th>Khách hàng</Th>
+                  <Th>Sân</Th>
+                  <Th>Ngày</Th>
+                  <Th>Trạng thái</Th>
+                  <Th className="text-right">Tổng tiền</Th>
                 </tr>
-              </thead>
-              <tbody>
+              </THead>
+              <TBody>
                 {data.recentBookings.map((item) => (
-                  <tr key={item.id} className="border-t">
-                    <td className="p-3 font-medium">{item.bookingCode}</td>
-                    <td>{item.user?.fullName}</td>
-                    <td>{item.court.name}</td>
-                    <td>{new Date(item.bookingDate).toLocaleDateString("vi-VN")}</td>
-                    <td>{item.bookingStatus}</td>
-                    <td className="text-right">{Number(item.totalPrice).toLocaleString("vi-VN")} đ</td>
-                  </tr>
+                  <Tr key={item.id}>
+                    <Td className="font-medium">{item.bookingCode}</Td>
+                    <Td>{item.user?.fullName}</Td>
+                    <Td>{item.court.name}</Td>
+                    <Td>{new Date(item.bookingDate).toLocaleDateString("vi-VN")}</Td>
+                    <Td><StatusBadge value={item.bookingStatus} tones={bookingStatusTones} /></Td>
+                    <Td className="text-right">{Number(item.totalPrice).toLocaleString("vi-VN")} đ</Td>
+                  </Tr>
                 ))}
-              </tbody>
-            </table>
+              </TBody>
+            </Table>
           </div>
         )}
       </section>

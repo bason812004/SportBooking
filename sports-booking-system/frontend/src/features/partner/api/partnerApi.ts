@@ -172,6 +172,10 @@ export const partnerApi = {
     const { data } = await api.get<ApiResponse<PartnerCourtSurface[]>>(`/partner/courts/${courtId}/surfaces`);
     return data.data;
   },
+  async updateCourtSurfaceStatus(courtId: string, surfaceId: string, status: "ACTIVE" | "INACTIVE") {
+    const { data } = await api.put<ApiResponse<PartnerCourtSurface>>(`/partner/courts/${courtId}/surfaces/${surfaceId}/status`, { status });
+    return data.data;
+  },
   async courtBlocks(courtId: string) {
     const { data } = await api.get<ApiResponse<PartnerCourtBlock[]>>(`/partner/courts/${courtId}/blocks`);
     return data.data;

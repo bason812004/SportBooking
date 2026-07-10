@@ -7,6 +7,7 @@ import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { SortableTh } from "../../components/common/SortableTh";
+import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { useUrlSort } from "../../hooks/useUrlSort";
 import { adminApi } from "../../features/admin/api/adminApi";
 import type { AdminFinancePartner } from "../../types/api";
@@ -161,11 +162,11 @@ export function AdminFinancePage() {
       </div>
 
       {tab === "reconciliation" && reconciliation.data && (
-        <div className="overflow-auto rounded-lg border bg-white">
-          <table className="w-full min-w-[1120px] text-sm">
-            <thead>
-              <tr className="bg-slate-50 text-left">
-                <SortableTh className="p-3" label="Partner" field="businessName" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
+        <>
+          <Table minWidth="1120px">
+            <THead>
+              <tr>
+                <SortableTh label="Partner" field="businessName" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
                 <SortableTh className="text-right" label="Giao dịch" field="transactionCount" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
                 <SortableTh className="text-right" label="Doanh thu" field="grossAmount" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
                 <SortableTh className="text-right" label="Hoa hồng" field="commissionAmount" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
@@ -174,96 +175,96 @@ export function AdminFinancePage() {
                 <SortableTh label="Trạng thái payout" field="payoutStatus" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
                 <SortableTh label="Đã chi trả" field="paidAt" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
               </tr>
-            </thead>
-            <tbody>
+            </THead>
+            <TBody>
               {sortedPartners.map((partner) => (
-                <tr key={partner.partnerId} className="border-t">
-                  <td className="p-3 font-medium">{partner.businessName}<br /><span className="text-xs text-slate-500">{partner.partnerId}</span></td>
-                  <td className="text-right">{partner.transactionCount}</td>
-                  <td className="text-right">{money(partner.grossAmount)}</td>
-                  <td className="text-right text-red-600">{money(partner.commissionAmount)}</td>
-                  <td className="text-right font-semibold text-emerald-700">{money(partner.netAmount)}</td>
-                  <td className="text-right">{money(partner.refundAmount)}<br /><span className="text-xs text-slate-500">{partner.refundCount} lượt</span></td>
-                  <td className="py-2">
+                <Tr key={partner.partnerId}>
+                  <Td className="font-medium">{partner.businessName}<br /><span className="text-xs text-slate-500">{partner.partnerId}</span></Td>
+                  <Td className="text-right">{partner.transactionCount}</Td>
+                  <Td className="text-right">{money(partner.grossAmount)}</Td>
+                  <Td className="text-right text-red-600">{money(partner.commissionAmount)}</Td>
+                  <Td className="text-right font-semibold text-emerald-700">{money(partner.netAmount)}</Td>
+                  <Td className="text-right">{money(partner.refundAmount)}<br /><span className="text-xs text-slate-500">{partner.refundCount} lượt</span></Td>
+                  <Td>
                     <Select
                       value={partner.payoutStatus}
                       onChange={(event) => payout.mutate({ partner, status: event.target.value })}
                       options={payoutStatuses.map((status) => ({ value: status, label: payoutLabels[status] }))}
                     />
-                  </td>
-                  <td>{partner.paidAt ? new Date(partner.paidAt).toLocaleString("vi-VN") : "-"}</td>
-                </tr>
+                  </Td>
+                  <Td>{partner.paidAt ? new Date(partner.paidAt).toLocaleString("vi-VN") : "-"}</Td>
+                </Tr>
               ))}
-            </tbody>
-          </table>
+            </TBody>
+          </Table>
           {!reconciliation.data.partners.length && <p className="p-6 text-center text-slate-500">Chưa có dữ liệu đối soát tháng này</p>}
-        </div>
+        </>
       )}
 
       {tab === "transactions" && (
         <QueryTable loading={transactions.isLoading} error={transactions.error?.message}>
-          <table className="w-full min-w-[1160px] text-sm">
-            <thead>
-              <tr className="bg-slate-50 text-left">
-                <SortableTh className="p-3" label="Booking" field="bookingCode" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
-                <th>Partner / sân</th>
+          <Table minWidth="1160px">
+            <THead>
+              <tr>
+                <SortableTh label="Booking" field="bookingCode" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
+                <Th>Partner / sân</Th>
                 <SortableTh label="Loại" field="transactionType" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
                 <SortableTh className="text-right" label="Doanh thu" field="grossAmount" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
                 <SortableTh className="text-right" label="Hoa hồng" field="commissionAmount" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
                 <SortableTh className="text-right" label="Thực nhận" field="netAmount" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
                 <SortableTh label="Payout" field="payoutStatus" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
-                <th>Ngày ghi nhận</th>
+                <Th>Ngày ghi nhận</Th>
               </tr>
-            </thead>
-            <tbody>
+            </THead>
+            <TBody>
               {transactions.data?.items.map((item) => (
-                <tr key={item.id} className="border-t">
-                  <td className="p-3 font-medium">{item.bookingCode}<br /><span className="text-xs text-slate-500">{new Date(item.bookingDate).toLocaleDateString("vi-VN")}</span></td>
-                  <td>{item.businessName}<br /><span className="text-xs text-slate-500">{item.courtName}</span></td>
-                  <td>{transactionLabels[item.transactionType] ?? item.transactionType}<br /><span className="text-xs text-slate-500">{eventLabels[item.eventType] ?? item.eventType}</span></td>
-                  <td className="text-right">{money(item.grossAmount)}</td>
-                  <td className="text-right text-red-600">{money(item.commissionAmount)}<br /><span className="text-xs text-slate-500">{item.commissionRate}%</span></td>
-                  <td className="text-right font-semibold text-emerald-700">{money(item.netAmount)}</td>
-                  <td><Status value={item.payoutStatus} /></td>
-                  <td>{new Date(item.createdAt).toLocaleString("vi-VN")}</td>
-                </tr>
+                <Tr key={item.id}>
+                  <Td className="font-medium">{item.bookingCode}<br /><span className="text-xs text-slate-500">{new Date(item.bookingDate).toLocaleDateString("vi-VN")}</span></Td>
+                  <Td>{item.businessName}<br /><span className="text-xs text-slate-500">{item.courtName}</span></Td>
+                  <Td>{transactionLabels[item.transactionType] ?? item.transactionType}<br /><span className="text-xs text-slate-500">{eventLabels[item.eventType] ?? item.eventType}</span></Td>
+                  <Td className="text-right">{money(item.grossAmount)}</Td>
+                  <Td className="text-right text-red-600">{money(item.commissionAmount)}<br /><span className="text-xs text-slate-500">{item.commissionRate}%</span></Td>
+                  <Td className="text-right font-semibold text-emerald-700">{money(item.netAmount)}</Td>
+                  <Td><Status value={item.payoutStatus} /></Td>
+                  <Td>{new Date(item.createdAt).toLocaleString("vi-VN")}</Td>
+                </Tr>
               ))}
-            </tbody>
-          </table>
+            </TBody>
+          </Table>
         </QueryTable>
       )}
       {tab === "transactions" && <Pager page={txPage} total={transactions.data?.meta.totalPages ?? 1} setPage={setTxPage} />}
 
       {tab === "refunds" && (
         <QueryTable loading={refunds.isLoading} error={refunds.error?.message}>
-          <table className="w-full min-w-[1120px] text-sm">
-            <thead>
-              <tr className="bg-slate-50 text-left">
-                <SortableTh className="p-3" label="Booking" field="bookingCode" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
+          <Table minWidth="1120px">
+            <THead>
+              <tr>
+                <SortableTh label="Booking" field="bookingCode" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
                 <SortableTh label="Khách hàng" field="customerName" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
-                <th>Partner / sân</th>
+                <Th>Partner / sân</Th>
                 <SortableTh className="text-right" label="Tổng tiền" field="totalPrice" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
                 <SortableTh className="text-right" label="Hoàn tiền" field="refundAmount" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
                 <SortableTh className="text-right" label="Nền tảng giữ lại" field="platformRetainedAmount" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
                 <SortableTh label="Trạng thái" field="paymentStatus" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
-                <th>Thời gian</th>
+                <Th>Thời gian</Th>
               </tr>
-            </thead>
-            <tbody>
+            </THead>
+            <TBody>
               {refunds.data?.items.map((item) => (
-                <tr key={item.id} className="border-t">
-                  <td className="p-3 font-medium">{item.bookingCode}<br /><span className="text-xs text-slate-500">{new Date(item.bookingDate).toLocaleDateString("vi-VN")}</span></td>
-                  <td>{item.user.fullName}<br /><span className="text-xs text-slate-500">{item.user.email}</span></td>
-                  <td>{item.court.partner.businessName}<br /><span className="text-xs text-slate-500">{item.court.name}</span></td>
-                  <td className="text-right">{money(item.totalPrice)}</td>
-                  <td className="text-right text-red-600">{money(item.refundAmount)}</td>
-                  <td className="text-right">{money(item.platformRetainedAmount)}</td>
-                  <td>{item.paymentStatus}</td>
-                  <td>{new Date(item.refundedAt).toLocaleString("vi-VN")}</td>
-                </tr>
+                <Tr key={item.id}>
+                  <Td className="font-medium">{item.bookingCode}<br /><span className="text-xs text-slate-500">{new Date(item.bookingDate).toLocaleDateString("vi-VN")}</span></Td>
+                  <Td>{item.user.fullName}<br /><span className="text-xs text-slate-500">{item.user.email}</span></Td>
+                  <Td>{item.court.partner.businessName}<br /><span className="text-xs text-slate-500">{item.court.name}</span></Td>
+                  <Td className="text-right">{money(item.totalPrice)}</Td>
+                  <Td className="text-right text-red-600">{money(item.refundAmount)}</Td>
+                  <Td className="text-right">{money(item.platformRetainedAmount)}</Td>
+                  <Td>{item.paymentStatus}</Td>
+                  <Td>{new Date(item.refundedAt).toLocaleString("vi-VN")}</Td>
+                </Tr>
               ))}
-            </tbody>
-          </table>
+            </TBody>
+          </Table>
         </QueryTable>
       )}
       {tab === "refunds" && <Pager page={refundPage} total={refunds.data?.meta.totalPages ?? 1} setPage={setRefundPage} />}
@@ -304,7 +305,7 @@ function TabButton({ active, children, onClick }: { active: boolean; children: R
 function QueryTable({ loading, error, children }: { loading: boolean; error?: string; children: ReactNode }) {
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
-  return <div className="overflow-auto rounded-lg border bg-white">{children}</div>;
+  return <>{children}</>;
 }
 
 function Status({ value }: { value: string }) {

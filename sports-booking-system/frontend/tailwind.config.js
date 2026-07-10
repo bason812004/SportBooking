@@ -8,7 +8,7 @@ export default {
         field: "#f6f8fb",
         court: "#1f8a5b",
         line: "#d7dee8",
-        action: "#2563eb"
+        action: "#059669"
       }
     }
   },

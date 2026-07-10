@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { recipientApi, type RecipientOperationItem, type RecipientSurfaceAvailabilitySlot } from "../../features/recipient/api/recipientApi";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
+import { PageHero } from "../../components/common/PageHero";
 import { Button } from "../../components/ui/Button";
 import { WalkInBookingForm } from "../../features/recipient/components/WalkInBookingForm";
 
@@ -252,25 +253,17 @@ export function RecipientCourtSurfacesPage() {
 
   return (
     <div className="space-y-5">
-      <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-700 via-teal-700 to-slate-900 p-4 text-white shadow-xl">
-        <div className="absolute -right-16 -top-20 h-64 w-64 rounded-full bg-white/10" />
-        <div className="relative flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="flex items-center gap-2 text-xl font-black">
-              Quản lý sân
-              <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-100">Vận hành</span>
-            </h1>
-            <p className="mt-1 text-sm text-white/70">
-              Theo dõi khách đang sử dụng từng sân con của {data.court.name} - cập nhật lúc {data.nowTime} ngày{" "}
-              {new Date(data.date).toLocaleDateString("vi-VN")}.
-            </p>
-          </div>
+      <PageHero
+        eyebrow="Vận hành"
+        title="Quản lý sân"
+        subtitle={`Theo dõi khách đang sử dụng từng sân con của ${data.court.name} - cập nhật lúc ${data.nowTime} ngày ${new Date(data.date).toLocaleDateString("vi-VN")}.`}
+        actions={
           <Button variant="secondary" onClick={() => refresh()}>
             <RefreshCcw className="h-4 w-4" />
             Làm mới
           </Button>
-        </div>
-      </section>
+        }
+      />
 
       <div className="flex divide-x divide-slate-200 overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
         <SummaryStat label="Đang có khách" value={data.summary.occupied} tone="text-blue-700" iconBg="bg-blue-100 text-blue-700" icon={Users} />

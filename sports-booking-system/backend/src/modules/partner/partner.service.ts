@@ -337,6 +337,13 @@ export const partnerService = {
     return partnerRepository.courtSurfaces(courtId);
   },
 
+  async updateCourtSurfaceStatus(userId: string, courtId: string, surfaceId: string, status: "ACTIVE" | "INACTIVE") {
+    const profile = await getProfile(userId);
+    const surface = await partnerRepository.courtSurfaceByPartner(surfaceId, courtId, profile.id);
+    if (!surface) throw new NotFoundError("Khong tim thay san con thuoc cum san cua ban");
+    return partnerRepository.updateCourtSurfaceStatus(surfaceId, status);
+  },
+
   async courtBlocks(userId: string, courtId: string) {
     const profile = await getProfile(userId);
     const court = await partnerRepository.courtByPartner(courtId, profile.id);

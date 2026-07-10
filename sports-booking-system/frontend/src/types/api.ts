@@ -71,7 +71,7 @@ export type Court = {
     user?: { fullName: string; email: string; phone?: string | null };
   };
   images: Array<{ id: string; imageUrl: string; publicId?: string; sortOrder: number }>;
-  surfaces?: Array<{ id: string; code: string; name: string; capacity?: string; surface?: string; size?: string; imageUrl?: string; sortOrder: number }>;
+  surfaces?: Array<{ id: string; code: string; name: string; capacity?: string; surface?: string; size?: string; imageUrl?: string; sortOrder: number; status?: "ACTIVE" | "INACTIVE" }>;
   amenities: Array<{ id: string; name: string }>;
   prices: Array<{ id: string; dayType: string; startTime: string; endTime: string; price: string; note?: string }>;
   services: Array<{ id: string; name: string; description?: string; price: string; status: string }>;

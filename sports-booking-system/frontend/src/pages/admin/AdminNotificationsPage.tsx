@@ -7,6 +7,7 @@ import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { adminApi } from "../../features/admin/api/adminApi";
+import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 
 const notificationTypes = [
   { value: "SYSTEM", label: "Hệ thống" },
@@ -128,43 +129,41 @@ export function AdminNotificationsPage() {
           <Input label="Tìm kiếm" value={search} onChange={(event) => { setPage(1); setSearch(event.target.value); }} placeholder="Tiêu đề, nội dung, admin gửi" />
         </div>
 
-        <div className="overflow-auto rounded-lg border bg-white">
-          <table className="w-full min-w-[920px] text-sm">
-            <thead>
-              <tr className="bg-slate-50 text-left">
-                <th className="p-3">Thông báo</th>
-                <th>Loại</th>
-                <th>Đối tượng</th>
-                <th>Người nhận</th>
-                <th>Admin gửi</th>
-                <th>Thời gian</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {campaigns.data?.items.map((campaign) => (
-                <tr key={campaign.id} className="border-t align-top">
-                  <td className="p-3">
-                    <p className="font-bold">{campaign.title}</p>
-                    <p className="line-clamp-2 text-xs text-slate-500">{campaign.content}</p>
-                  </td>
-                  <td>{typeLabel(campaign.type)}</td>
-                  <td>{targetLabel(campaign)}</td>
-                  <td>{campaign.recipientCount}</td>
-                  <td>{campaign.sender?.fullName ?? "-"}</td>
-                  <td>{new Date(campaign.createdAt).toLocaleString("vi-VN")}</td>
-                  <td className="p-3 text-right">
-                    <Button variant="secondary" onClick={() => setSelected(campaign.id)}>
-                      <Eye className="h-4 w-4" />
-                      Chi tiết
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {!campaigns.data?.items.length && <p className="p-6 text-center text-slate-500">Chưa có thông báo nào</p>}
-        </div>
+        <Table minWidth="920px">
+          <THead>
+            <tr>
+              <Th>Thông báo</Th>
+              <Th>Loại</Th>
+              <Th>Đối tượng</Th>
+              <Th>Người nhận</Th>
+              <Th>Admin gửi</Th>
+              <Th>Thời gian</Th>
+              <Th></Th>
+            </tr>
+          </THead>
+          <TBody>
+            {campaigns.data?.items.map((campaign) => (
+              <Tr key={campaign.id} className="align-top">
+                <Td>
+                  <p className="font-bold">{campaign.title}</p>
+                  <p className="line-clamp-2 text-xs text-slate-500">{campaign.content}</p>
+                </Td>
+                <Td>{typeLabel(campaign.type)}</Td>
+                <Td>{targetLabel(campaign)}</Td>
+                <Td>{campaign.recipientCount}</Td>
+                <Td>{campaign.sender?.fullName ?? "-"}</Td>
+                <Td>{new Date(campaign.createdAt).toLocaleString("vi-VN")}</Td>
+                <Td className="text-right">
+                  <Button variant="secondary" onClick={() => setSelected(campaign.id)}>
+                    <Eye className="h-4 w-4" />
+                    Chi tiết
+                  </Button>
+                </Td>
+              </Tr>
+            ))}
+          </TBody>
+        </Table>
+        {!campaigns.data?.items.length && <p className="p-6 text-center text-slate-500">Chưa có thông báo nào</p>}
 
         <div className="flex justify-end gap-2">
           <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Trước</Button>
@@ -192,30 +191,28 @@ export function AdminNotificationsPage() {
                       <Info label="Đối tượng" value={targetLabel(detail.data)} />
                       <Info label="Người nhận" value={String(detail.data.recipientCount)} />
                     </div>
-                    <div className="overflow-auto rounded-lg border">
-                      <table className="w-full min-w-[720px] text-sm">
-                        <thead>
-                          <tr className="bg-slate-50 text-left">
-                            <th className="p-3">Người nhận</th>
-                            <th>Email</th>
-                            <th>Vai trò</th>
-                            <th>Trạng thái đọc</th>
-                            <th>Thời gian</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {detail.data.recipients?.map((item) => (
-                            <tr key={item.id} className="border-t">
-                              <td className="p-3 font-medium">{item.user.fullName}</td>
-                              <td>{item.user.email}</td>
-                              <td>{item.user.role}</td>
-                              <td>{item.isRead ? "Đã đọc" : "Chưa đọc"}</td>
-                              <td>{new Date(item.createdAt).toLocaleString("vi-VN")}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <Table minWidth="720px">
+                      <THead>
+                        <tr>
+                          <Th>Người nhận</Th>
+                          <Th>Email</Th>
+                          <Th>Vai trò</Th>
+                          <Th>Trạng thái đọc</Th>
+                          <Th>Thời gian</Th>
+                        </tr>
+                      </THead>
+                      <TBody>
+                        {detail.data.recipients?.map((item) => (
+                          <Tr key={item.id}>
+                            <Td className="font-medium">{item.user.fullName}</Td>
+                            <Td>{item.user.email}</Td>
+                            <Td>{item.user.role}</Td>
+                            <Td>{item.isRead ? "Đã đọc" : "Chưa đọc"}</Td>
+                            <Td>{new Date(item.createdAt).toLocaleString("vi-VN")}</Td>
+                          </Tr>
+                        ))}
+                      </TBody>
+                    </Table>
                   </div>
                 )}
               </div>

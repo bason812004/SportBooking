@@ -2,9 +2,12 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CalendarOff, Image, Layers, Lock, MapPin, Plus, Star, Unlock, Wrench } from "lucide-react";
+import { BadgeCheck, Boxes, CalendarOff, Clock, Image, Layers, Lock, MapPin, Plus, Star, Unlock, Wrench } from "lucide-react";
 import { partnerApi } from "../../features/partner/api/partnerApi";
 import { LoadingState, ErrorState, EmptyState } from "../../components/common/States";
+import { PageHero } from "../../components/common/PageHero";
+import { StatCard } from "../../components/common/StatCard";
+import { StatusBadge } from "../../components/common/StatusBadge";
 import { Button } from "../../components/ui/Button";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { useLanguage } from "../../lib/i18n";
@@ -48,26 +51,47 @@ export function PartnerCourtsPage() {
 
   if (courts.isLoading) return <LoadingState />;
   if (courts.isError) return <ErrorState message={courts.error.message} />;
+
+  const totalCourts = courts.data?.length ?? 0;
+  const activeCourts = courts.data?.filter((court) => court.activeStatus === "ACTIVE").length ?? 0;
+  const pendingCourts = courts.data?.filter((court) => court.approvalStatus === "PENDING").length ?? 0;
+  const totalSurfaces = courts.data?.reduce((sum, court) => sum + (court.courtCount ?? court.surfaces?.length ?? 0), 0) ?? 0;
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{t("Sân của tôi")}</h1>
-        <Link to="/partner/courts/create"><Button><Plus className="h-4 w-4" />{t("Thêm sân")}</Button></Link>
-      </div>
+      <PageHero
+        eyebrow="Vận hành"
+        title={t("Sân của tôi")}
+        subtitle={t("Quản lý cụm sân, giá, dịch vụ và lịch nghỉ của bạn.")}
+        actions={<Link to="/partner/courts/create"><Button variant="secondary"><Plus className="h-4 w-4" />{t("Thêm sân")}</Button></Link>}
+      />
+
+      {totalCourts > 0 && (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Tổng số cụm sân" value={totalCourts} icon={Layers} iconBg="bg-slate-100 text-slate-700" />
+          <StatCard label="Đang hoạt động" value={activeCourts} icon={Unlock} iconBg="bg-emerald-100 text-emerald-700" />
+          <StatCard label="Chờ duyệt" value={pendingCourts} icon={BadgeCheck} iconBg="bg-amber-100 text-amber-700" />
+          <StatCard label="Tổng sân con" value={totalSurfaces} icon={Boxes} iconBg="bg-blue-100 text-blue-700" />
+        </div>
+      )}
+
       {courts.data?.length === 0 && <EmptyState title={t("Chưa có sân")} />}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {courts.data?.map((court) => (
-          <div key={court.id} className="flex flex-col overflow-hidden rounded-xl border border-line bg-white shadow-sm transition hover:shadow-md">
+          <div key={court.id} className="flex flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
             <div className="relative aspect-[4/3] w-full">
               <img className="h-full w-full object-cover" src={court.images?.[0]?.imageUrl || fallbackCourtImage} alt={court.name} />
+              <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/50 to-transparent" />
               <div className="absolute left-2 top-2 flex flex-wrap gap-1.5">
-                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${approvalToneClasses[court.approvalStatus] ?? "bg-slate-100 text-slate-700"}`}>
-                  {approvalLabels[court.approvalStatus] ?? court.approvalStatus}
-                </span>
-                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${activeToneClasses[court.activeStatus] ?? "bg-slate-100 text-slate-700"}`}>
-                  {activeLabels[court.activeStatus] ?? court.activeStatus}
-                </span>
+                <StatusBadge value={court.approvalStatus} tones={approvalToneClasses} labels={approvalLabels} />
+                <StatusBadge value={court.activeStatus} tones={activeToneClasses} labels={activeLabels} />
               </div>
+              {court.verified && (
+                <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-white/95 px-2.5 py-1 text-xs font-semibold text-emerald-700 shadow-sm">
+                  <BadgeCheck className="h-3.5 w-3.5" />
+                  Verified
+                </span>
+              )}
             </div>
 
             <div className="flex flex-1 flex-col gap-3 p-4">
@@ -76,6 +100,10 @@ export function PartnerCourtsPage() {
                 <p className="mt-1 flex items-center gap-1 text-sm text-slate-500">
                   <MapPin className="h-3.5 w-3.5 shrink-0" />
                   {court.category?.name} · {court.district}, {court.city}
+                </p>
+                <p className="mt-1 flex items-center gap-1 text-sm text-slate-500">
+                  <Clock className="h-3.5 w-3.5 shrink-0" />
+                  {court.openingTime?.slice(0, 5)} - {court.closingTime?.slice(0, 5)}
                 </p>
               </div>
 
@@ -96,22 +124,26 @@ export function PartnerCourtsPage() {
                 )}
               </div>
 
-              <div className="mt-auto flex flex-wrap gap-2 pt-1">
-                <Link className="flex-1" to={`/partner/courts/${court.id}/edit`}><Button className="w-full" variant="secondary">Sửa</Button></Link>
-                <Link className="flex-1" to={`/partner/courts/${court.id}/prices`}><Button className="w-full" variant="secondary"><Wrench className="h-4 w-4" />Giá & dịch vụ</Button></Link>
-                <Link className="flex-1" to={`/partner/courts/${court.id}/images`}><Button className="w-full" variant="secondary"><Image className="h-4 w-4" />Ảnh</Button></Link>
-                <Link className="flex-1" to={`/partner/courts/${court.id}/blocks`}><Button className="w-full" variant="secondary"><CalendarOff className="h-4 w-4" />Lịch nghỉ</Button></Link>
-                {court.activeStatus === "ACTIVE" ? (
-                  <Button className="flex-1" variant="danger" disabled={toggleStatus.isPending} onClick={() => setDeactivateTarget({ id: court.id, name: court.name })}>
-                    <Lock className="h-4 w-4" />
-                    Tạm ngưng
-                  </Button>
-                ) : (
-                  <Button className="flex-1" variant="secondary" disabled={toggleStatus.isPending} onClick={() => toggleStatus.mutate({ id: court.id, activeStatus: "ACTIVE" })}>
-                    <Unlock className="h-4 w-4" />
-                    Kích hoạt lại
-                  </Button>
-                )}
+              <div className="mt-auto space-y-3 pt-1">
+                <div className="grid grid-cols-2 gap-2">
+                  <Link to={`/partner/courts/${court.id}/edit`}><Button className="w-full" variant="secondary">Sửa</Button></Link>
+                  <Link to={`/partner/courts/${court.id}/prices`}><Button className="w-full" variant="secondary"><Wrench className="h-4 w-4" />Giá & dịch vụ</Button></Link>
+                  <Link to={`/partner/courts/${court.id}/images`}><Button className="w-full" variant="secondary"><Image className="h-4 w-4" />Ảnh</Button></Link>
+                  <Link to={`/partner/courts/${court.id}/blocks`}><Button className="w-full" variant="secondary"><CalendarOff className="h-4 w-4" />Lịch nghỉ</Button></Link>
+                </div>
+                <div className="border-t border-line pt-3">
+                  {court.activeStatus === "ACTIVE" ? (
+                    <Button className="w-full" variant="danger" disabled={toggleStatus.isPending} onClick={() => setDeactivateTarget({ id: court.id, name: court.name })}>
+                      <Lock className="h-4 w-4" />
+                      Tạm ngưng
+                    </Button>
+                  ) : (
+                    <Button className="w-full" variant="secondary" disabled={toggleStatus.isPending} onClick={() => toggleStatus.mutate({ id: court.id, activeStatus: "ACTIVE" })}>
+                      <Unlock className="h-4 w-4" />
+                      Kích hoạt lại
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
           </div>
