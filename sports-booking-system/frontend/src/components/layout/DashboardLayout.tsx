@@ -35,7 +35,7 @@ const menus = {
     { to: "/partner/dashboard", label: "Bảng điều khiển", icon: Grid2X2, group: "Tổng quan" },
     { to: "/partner/courts", label: "Quản lý sân", icon: UserRoundCheck, group: "Vận hành" },
     { to: "/partner/bookings", label: "Đơn đặt", icon: CalendarDays, group: "Vận hành" },
-    { to: "/partner/calendar", label: "Lịch đặt sân", icon: CalendarDays, group: "Vận hành" },
+    { to: "/partner/staff", label: "Nhân viên", icon: Users, group: "Vận hành" },
     { to: "/partner/vouchers", label: "Voucher", icon: Gift, group: "Nội dung" },
     { to: "/partner/blogs", label: "Bài viết", icon: FileText, group: "Nội dung" },
     { to: "/partner/tournaments", label: "Giải đấu", icon: Trophy, group: "Nội dung" },
@@ -63,7 +63,7 @@ const menus = {
   RECIPIENT: [
     { to: "/recipient/dashboard", label: "Bảng điều khiển", icon: Grid2X2, group: "Tổng quan" },
     { to: "/recipient/bookings", label: "Đơn đặt sân", icon: CalendarCheck, group: "Vận hành" },
-    { to: "/recipient/court-surfaces", label: "Sân con", icon: UserRoundCheck, group: "Vận hành" }
+    { to: "/recipient/court-surfaces", label: "Quản lý sân", icon: UserRoundCheck, group: "Vận hành" }
   ]
 } satisfies Record<"PARTNER" | "ADMIN" | "RECIPIENT", MenuItem[]>;
 

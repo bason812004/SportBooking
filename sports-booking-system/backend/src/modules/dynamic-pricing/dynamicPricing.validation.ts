@@ -1,9 +1,11 @@
 import { z } from "zod";
 
 const timeSchema = z.string().regex(/^\d{2}:\d{2}$/);
+// IDs in this app are custom prefixed varchar (e.g. "c0001"), not real UUIDs.
+const id = z.string().trim().min(1).max(40);
 
 export const dynamicPriceQuerySchema = z.object({
-  params: z.object({ courtId: z.string().uuid() }),
+  params: z.object({ courtId: id }),
   query: z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     startTime: timeSchema,
@@ -12,11 +14,11 @@ export const dynamicPriceQuerySchema = z.object({
 });
 
 export const pricingRuleParamsSchema = z.object({
-  params: z.object({ id: z.string().uuid() })
+  params: z.object({ id })
 });
 
 const pricingRuleBodySchema = z.object({
-    courtId: z.string().uuid(),
+    courtId: id,
     name: z.string().min(2).max(160),
     description: z.string().optional(),
     ruleType: z.enum(["PEAK_HOUR", "OFF_PEAK_HOUR", "WEEKEND", "HOLIDAY", "HIGH_DEMAND", "LOW_DEMAND", "CUSTOM"]),

@@ -11,7 +11,7 @@ import { Select } from "../../components/ui/Select";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { SortableTh } from "../../components/common/SortableTh";
 import { useUrlSort } from "../../hooks/useUrlSort";
-import { BookingCalendarGrid } from "../../features/recipient/components/BookingCalendarGrid";
+import { BookingCalendarGrid } from "../../components/booking/BookingCalendarGrid";
 import { WalkInBookingForm } from "../../features/recipient/components/WalkInBookingForm";
 
 type Action = "confirm" | "reject" | "complete" | "no-show";
@@ -41,7 +41,7 @@ function shiftDate(date: string, days: number) {
   return next.toISOString().slice(0, 10);
 }
 
-const defaultFilters = { status: "CONFIRMED", ...currentYearRange() };
+const defaultFilters = { status: "PENDING", ...currentYearRange() };
 
 function Overlay({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
   return (
@@ -62,7 +62,7 @@ export function RecipientBookingsPage() {
   const viewMode = searchParams.get("view") === "calendar" ? "calendar" : "table";
 
   const [page, setPage] = useState(1);
-  const [filters, setFilters] = useState(defaultFilters);
+  const [filters, setFilters] = useState(() => ({ ...defaultFilters, status: searchParams.get("status") ?? defaultFilters.status }));
   const [confirm, setConfirm] = useState<{ id: string; action: Action } | null>(null);
   const [calendarDetail, setCalendarDetail] = useState<RecipientCalendarBooking | null>(null);
   const [walkInCell, setWalkInCell] = useState<{ courtSurfaceId: string; startTime: string } | null>(null);

@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { recipientApi, type RecipientWalkInPayment } from "../api/recipientApi";
+import { recipientApi, type RecipientSurfaceAvailabilitySlot, type RecipientWalkInPayment } from "../api/recipientApi";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
 import { Select } from "../../../components/ui/Select";
@@ -26,6 +26,17 @@ const defaultWalkInForm = (): WalkInForm => ({
   paymentMethod: "CASH",
   note: ""
 });
+
+function mergeBookedRanges(slots: RecipientSurfaceAvailabilitySlot[]): string[] {
+  const sorted = [...slots].filter((slot) => slot.status === "BOOKED").sort((a, b) => a.startTime.localeCompare(b.startTime));
+  const ranges: { start: string; end: string }[] = [];
+  for (const slot of sorted) {
+    const last = ranges[ranges.length - 1];
+    if (last && last.end === slot.startTime) last.end = slot.endTime;
+    else ranges.push({ start: slot.startTime, end: slot.endTime });
+  }
+  return ranges.map((range) => `${range.start}–${range.end}`);
+}
 
 function toggleContiguousSlot(current: SlotGridSelection[], slot: SlotGridSelection): SlotGridSelection[] {
   if (current.length === 0) return [slot];
@@ -60,17 +71,30 @@ export function WalkInBookingForm({
   const [walkInForm, setWalkInForm] = useState<WalkInForm>(defaultWalkInForm());
   const [walkInSlots, setWalkInSlots] = useState<SlotGridSelection[]>(initialSlot ? [initialSlot] : []);
   const [activeWalkInPayment, setActiveWalkInPayment] = useState<RecipientWalkInPayment | null>(null);
+  const [mode, setMode] = useState<"grid" | "now">("grid");
+  const [customStart, setCustomStart] = useState(nowValue());
+  const [customMinutes, setCustomMinutes] = useState(60);
 
   useEffect(() => {
     setWalkInSlots(initialSlot ? [initialSlot] : []);
     setActiveWalkInPayment(null);
+    setMode("grid");
+    setCustomStart(nowValue());
+    setCustomMinutes(60);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [courtSurfaceId, effectiveDate]);
+
+  useEffect(() => {
+    if (!isToday && mode === "now") setMode("grid");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isToday]);
 
   const surfaceAvailability = useQuery({
     queryKey: ["recipient-surface-availability", courtSurfaceId, effectiveDate],
     queryFn: () => recipientApi.surfaceAvailability(courtSurfaceId, effectiveDate)
   });
+
+  const bookedRanges = useMemo(() => mergeBookedRanges(surfaceAvailability.data?.slots ?? []), [surfaceAvailability.data?.slots]);
 
   const walkInPaymentStatus = useQuery({
     queryKey: ["recipient-payment-status", activeWalkInPayment?.id],
@@ -84,15 +108,25 @@ export function WalkInBookingForm({
 
   const createWalkIn = useMutation({
     mutationFn: () => {
-      if (walkInSlots.length === 0) throw new Error("Chọn ít nhất một khung giờ");
-      const sortedSlots = [...walkInSlots].sort((a, b) => a.startTime.localeCompare(b.startTime));
+      let startTime: string;
+      let minutes: number;
+      if (mode === "now") {
+        if (!customStart) throw new Error("Chọn giờ bắt đầu");
+        startTime = customStart;
+        minutes = customMinutes;
+      } else {
+        if (walkInSlots.length === 0) throw new Error("Chọn ít nhất một khung giờ");
+        const sortedSlots = [...walkInSlots].sort((a, b) => a.startTime.localeCompare(b.startTime));
+        startTime = sortedSlots[0].startTime;
+        minutes = sortedSlots.length * 60;
+      }
       return recipientApi.createWalkInBooking({
         courtSurfaceId,
         customerName: walkInForm.customerName,
         customerPhone: walkInForm.customerPhone,
         bookingDate: effectiveDate,
-        startTime: sortedSlots[0].startTime,
-        minutes: sortedSlots.length * 60,
+        startTime,
+        minutes,
         paymentMethod: walkInForm.paymentMethod,
         note: walkInForm.note || undefined
       });
@@ -180,31 +214,63 @@ export function WalkInBookingForm({
       <Input label="Số điện thoại" value={walkInForm.customerPhone} onChange={(event) => setWalkInForm({ ...walkInForm, customerPhone: event.target.value })} required />
 
       <div>
-        <span className="mb-1.5 block text-xs font-black uppercase tracking-wide text-slate-500">Chọn khung giờ</span>
-        <div className="max-h-56 overflow-y-auto pr-1">
-          <SlotGrid
-            slots={surfaceAvailability.data?.slots ?? []}
-            selected={walkInSlots}
-            opening={surfaceAvailability.data?.openingTime ?? "06:00"}
-            closing={surfaceAvailability.data?.closingTime ?? "23:00"}
-            minStartTime={isToday ? nowValue() : undefined}
-            onToggle={(slot) => setWalkInSlots((current) => toggleContiguousSlot(current, slot))}
-            loading={surfaceAvailability.isLoading}
-            minPrice={0}
-            columnsClassName="grid-cols-3"
-          />
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-xs font-black uppercase tracking-wide text-slate-500">Chọn khung giờ</span>
+          {isToday ? (
+            <div className="flex overflow-hidden rounded-lg border border-emerald-200 text-xs font-bold">
+              <button type="button" onClick={() => setMode("grid")} className={`px-2 py-1 transition ${mode === "grid" ? "bg-emerald-600 text-white" : "bg-white text-emerald-700"}`}>
+                Theo khung giờ
+              </button>
+              <button type="button" onClick={() => setMode("now")} className={`px-2 py-1 transition ${mode === "now" ? "bg-emerald-600 text-white" : "bg-white text-emerald-700"}`}>
+                Bắt đầu ngay
+              </button>
+            </div>
+          ) : null}
         </div>
-        {walkInSlots.length > 0 ? (
-          <div className="mt-2 flex items-center justify-between rounded-lg bg-white px-2.5 py-1.5 text-xs">
-            <span className="font-bold text-slate-700">
-              {[...walkInSlots].sort((a, b) => a.startTime.localeCompare(b.startTime))[0].startTime} -{" "}
-              {[...walkInSlots].sort((a, b) => a.startTime.localeCompare(b.startTime))[walkInSlots.length - 1].endTime} ({walkInSlots.length} giờ)
-            </span>
-            <button type="button" onClick={() => setWalkInSlots([])} className="font-bold text-rose-600">
-              Bỏ chọn
-            </button>
+
+        {mode === "now" ? (
+          <div className="space-y-2">
+            <p className={`rounded-lg px-2.5 py-1.5 text-xs font-bold ${bookedRanges.length ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>
+              {bookedRanges.length ? `Đã có khách: ${bookedRanges.join(", ")}` : "Sân trống cả ngày hôm nay"}
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <Input label="Giờ bắt đầu" type="time" value={customStart} onChange={(event) => setCustomStart(event.target.value)} required />
+              <Select
+                label="Thời lượng"
+                value={String(customMinutes)}
+                onChange={(event) => setCustomMinutes(Number(event.target.value))}
+                options={[30, 60, 90, 120, 150, 180].map((value) => ({ value: String(value), label: `${value} phút` }))}
+              />
+            </div>
           </div>
-        ) : null}
+        ) : (
+          <>
+            <div className="max-h-56 overflow-y-auto pr-1">
+              <SlotGrid
+                slots={surfaceAvailability.data?.slots ?? []}
+                selected={walkInSlots}
+                opening={surfaceAvailability.data?.openingTime ?? "06:00"}
+                closing={surfaceAvailability.data?.closingTime ?? "23:00"}
+                minStartTime={isToday ? nowValue() : undefined}
+                onToggle={(slot) => setWalkInSlots((current) => toggleContiguousSlot(current, slot))}
+                loading={surfaceAvailability.isLoading}
+                minPrice={0}
+                columnsClassName="grid-cols-3"
+              />
+            </div>
+            {walkInSlots.length > 0 ? (
+              <div className="mt-2 flex items-center justify-between rounded-lg bg-white px-2.5 py-1.5 text-xs">
+                <span className="font-bold text-slate-700">
+                  {[...walkInSlots].sort((a, b) => a.startTime.localeCompare(b.startTime))[0].startTime} -{" "}
+                  {[...walkInSlots].sort((a, b) => a.startTime.localeCompare(b.startTime))[walkInSlots.length - 1].endTime} ({walkInSlots.length} giờ)
+                </span>
+                <button type="button" onClick={() => setWalkInSlots([])} className="font-bold text-rose-600">
+                  Bỏ chọn
+                </button>
+              </div>
+            ) : null}
+          </>
+        )}
       </div>
 
       <Select
@@ -218,7 +284,7 @@ export function WalkInBookingForm({
         ]}
       />
       <Input label="Ghi chú" value={walkInForm.note} onChange={(event) => setWalkInForm({ ...walkInForm, note: event.target.value })} />
-      <Button className="w-full" disabled={createWalkIn.isPending || walkInSlots.length === 0}>
+      <Button className="w-full" disabled={createWalkIn.isPending || (mode === "now" ? !customStart : walkInSlots.length === 0)}>
         {createWalkIn.isPending ? "Đang tạo..." : "Xác nhận nhận sân"}
       </Button>
     </form>

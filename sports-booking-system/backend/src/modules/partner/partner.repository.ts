@@ -22,6 +22,22 @@ async function columnExists(tableName: string, columnName: string) {
   return exists;
 }
 
+function bookingOrderBy(sortBy?: string, sortOrder?: string): Prisma.BookingOrderByWithRelationInput[] {
+  const order: "asc" | "desc" = sortOrder === "asc" ? "asc" : "desc";
+  switch (sortBy) {
+    case "customerName":
+      return [{ user: { fullName: order } }, { createdAt: "desc" }];
+    case "totalPrice":
+      return [{ totalPrice: order }, { createdAt: "desc" }];
+    case "bookingStatus":
+      return [{ bookingStatus: order }, { createdAt: "desc" }];
+    case "paymentStatus":
+      return [{ paymentStatus: order }, { createdAt: "desc" }];
+    default:
+      return [{ bookingDate: order }, { startTime: order }, { createdAt: "desc" }];
+  }
+}
+
 async function ensureAllowCommentsColumn() {
   if (await columnExists("blog_posts", "allow_comments")) return;
 
@@ -223,7 +239,7 @@ export const partnerRepository = {
     partnerId: string,
     page: number,
     limit: number,
-    filters: { courtId?: string; status?: BookingStatus; fromDate?: Date; toDate?: Date }
+    filters: { courtId?: string; status?: BookingStatus; search?: string; fromDate?: Date; toDate?: Date; sortBy?: string; sortOrder?: string }
   ) {
     const where: Prisma.BookingWhereInput = {
       court: { partnerId },
@@ -232,13 +248,20 @@ export const partnerRepository = {
       bookingDate:
         filters.fromDate || filters.toDate
           ? { gte: filters.fromDate, lte: filters.toDate }
-          : undefined
+          : undefined,
+      OR: filters.search
+        ? [
+            { bookingCode: { contains: filters.search, mode: "insensitive" } },
+            { user: { fullName: { contains: filters.search, mode: "insensitive" } } },
+            { user: { phone: { contains: filters.search, mode: "insensitive" } } }
+          ]
+        : undefined
     };
     return prisma.$transaction([
       prisma.booking.findMany({
         where,
         include: { user: { select: { id: true, fullName: true, email: true, phone: true } }, court: true },
-        orderBy: [{ bookingDate: "desc" }, { startTime: "asc" }],
+        orderBy: bookingOrderBy(filters.sortBy, filters.sortOrder),
         skip: (page - 1) * limit,
         take: limit
       }),
@@ -253,20 +276,49 @@ export const partnerRepository = {
     });
   },
 
-  calendar(partnerId: string, fromDate: Date, toDate: Date, courtId?: string) {
+  calendar(partnerId: string, fromDate: Date, toDate: Date, courtId: string) {
     return prisma.booking.findMany({
       where: {
         court: { partnerId },
         courtId,
-        bookingDate: { gte: fromDate, lte: toDate },
-        bookingStatus: { not: "CANCELLED" }
+        bookingDate: { gte: fromDate, lte: toDate }
       },
       include: {
         user: { select: { fullName: true, phone: true } },
-        court: { select: { id: true, name: true } }
+        court: { select: { id: true, name: true } },
+        courtSurface: { select: { id: true, name: true, code: true } }
       },
       orderBy: [{ bookingDate: "asc" }, { startTime: "asc" }]
     });
+  },
+
+  courtSurfaces(courtId: string) {
+    return prisma.courtSurface.findMany({
+      where: { courtId },
+      orderBy: [{ sortOrder: "asc" }, { code: "asc" }]
+    });
+  },
+
+  courtBlocks(courtId: string) {
+    return prisma.courtAvailabilityBlock.findMany({
+      where: { courtId, status: "ACTIVE" },
+      include: { courtSurface: { select: { id: true, name: true, code: true } } },
+      orderBy: [{ blockDate: "asc" }, { startTime: "asc" }]
+    });
+  },
+
+  createCourtBlock(data: Prisma.CourtAvailabilityBlockUncheckedCreateInput) {
+    return prisma.courtAvailabilityBlock.create({ data });
+  },
+
+  blockByCourtAndPartner(blockId: string, courtId: string, partnerId: string) {
+    return prisma.courtAvailabilityBlock.findFirst({
+      where: { id: blockId, courtId, court: { partnerId } }
+    });
+  },
+
+  cancelCourtBlock(blockId: string) {
+    return prisma.courtAvailabilityBlock.update({ where: { id: blockId }, data: { status: "INACTIVE" } });
   },
 
   updateBookingStatus(bookingId: string, status: BookingStatus) {

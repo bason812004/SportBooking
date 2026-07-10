@@ -80,7 +80,7 @@ export function SlotGrid({
               isSelected ? "border-emerald-600 bg-emerald-600 text-white shadow-sm" : disabled ? "cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300" : "border-slate-200 bg-white text-slate-700 hover:border-emerald-400 hover:bg-emerald-50"
             )}
           >
-            <span className="block text-sm font-black">{slot.startTime}</span>
+            <span className="block text-xs font-black sm:text-sm">{slot.startTime} - {slot.endTime}</span>
             <span className={clsx("mt-1 block text-xs font-bold", isSelected ? "text-emerald-50" : "text-emerald-700")}>{formatCurrency(slot.price)}</span>
             {disabled && <span className="mt-1 block text-[10px] font-black uppercase text-rose-400">Đã kín</span>}
           </button>

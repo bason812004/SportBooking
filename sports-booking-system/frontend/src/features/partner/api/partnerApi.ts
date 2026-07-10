@@ -12,6 +12,50 @@ import type {
   PartnerVoucher
 } from "../../../types/api";
 
+export type PartnerCourtSurface = {
+  id: string;
+  courtId: string;
+  code: string;
+  name: string;
+  capacity?: string | null;
+  surface?: string | null;
+  size?: string | null;
+  imageUrl?: string | null;
+  status: "ACTIVE" | "INACTIVE";
+  sortOrder: number;
+};
+
+export type PartnerCourtBlock = {
+  id: string;
+  courtId: string;
+  courtSurfaceId: string | null;
+  courtSurface: { id: string; name: string; code: string } | null;
+  blockDate: string;
+  startTime: string;
+  endTime: string;
+  reason?: string | null;
+  status: "ACTIVE" | "INACTIVE";
+};
+
+export type PartnerCalendarBooking = {
+  id: string;
+  bookingDate: string;
+  startTime: string;
+  endTime: string;
+  bookingStatus: string;
+  paymentStatus: string;
+  totalPrice: string;
+  courtSurfaceId: string | null;
+  courtSurface: { id: string; name: string; code: string } | null;
+  court: { id: string; name: string };
+  user: { fullName: string; phone?: string | null } | null;
+};
+
+export type PartnerCalendar = {
+  court: { openingTime: string; closingTime: string };
+  items: PartnerCalendarBooking[];
+};
+
 export type PartnerVoucherPayload = {
   courtId?: string | null;
   code: string;
@@ -49,6 +93,10 @@ export const partnerApi = {
   },
   async updateCourt(id: string, payload: Record<string, unknown>) {
     const { data } = await api.put<ApiResponse<Court>>(`/partner/courts/${id}`, payload);
+    return data.data;
+  },
+  async updateCourtStatus(id: string, activeStatus: "ACTIVE" | "INACTIVE") {
+    const { data } = await api.put<ApiResponse<Court>>(`/partner/courts/${id}/status`, { activeStatus });
     return data.data;
   },
   async courtDetail(id: string) {
@@ -116,8 +164,24 @@ export const partnerApi = {
     });
     return data.data;
   },
-  async calendar(params: { fromDate: string; toDate: string; courtId?: string }) {
-    const { data } = await api.get<ApiResponse<Booking[]>>("/partner/calendar", { params });
+  async calendar(params: { fromDate: string; toDate: string; courtId: string }) {
+    const { data } = await api.get<ApiResponse<PartnerCalendar>>("/partner/calendar", { params });
+    return data.data;
+  },
+  async courtSurfaces(courtId: string) {
+    const { data } = await api.get<ApiResponse<PartnerCourtSurface[]>>(`/partner/courts/${courtId}/surfaces`);
+    return data.data;
+  },
+  async courtBlocks(courtId: string) {
+    const { data } = await api.get<ApiResponse<PartnerCourtBlock[]>>(`/partner/courts/${courtId}/blocks`);
+    return data.data;
+  },
+  async createCourtBlock(courtId: string, payload: { courtSurfaceId?: string | null; blockDate: string; startTime: string; endTime: string; reason?: string }) {
+    const { data } = await api.post<ApiResponse<PartnerCourtBlock>>(`/partner/courts/${courtId}/blocks`, payload);
+    return data.data;
+  },
+  async cancelCourtBlock(courtId: string, blockId: string) {
+    const { data } = await api.delete<ApiResponse<PartnerCourtBlock>>(`/partner/courts/${courtId}/blocks/${blockId}`);
     return data.data;
   },
   async vouchers() {

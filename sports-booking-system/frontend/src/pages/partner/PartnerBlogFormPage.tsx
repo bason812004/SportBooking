@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
+import { ErrorState, LoadingState } from "../../components/common/States";
 import { partnerApi } from "../../features/partner/api/partnerApi";
 
 type Values = {
@@ -47,6 +48,9 @@ export function PartnerBlogFormPage() {
     },
     onError: (error) => toast.error(error.message)
   });
+
+  if (id && detail.isLoading) return <LoadingState />;
+  if (id && detail.isError) return <ErrorState message={detail.error.message} />;
 
   return (
     <form className="space-y-5 rounded-2xl border bg-white p-6" onSubmit={form.handleSubmit((values) => save.mutate(values))}>

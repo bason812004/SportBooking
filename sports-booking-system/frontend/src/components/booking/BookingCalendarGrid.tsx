@@ -1,9 +1,20 @@
 import { useEffect, useMemo, useRef } from "react";
 import clsx from "clsx";
-import type { RecipientCalendarBooking, RecipientCourtSurface } from "../api/recipientApi";
 
 const PX_PER_MINUTE = 1.2;
 const UNASSIGNED_COLUMN_ID = "__unassigned";
+
+export type CalendarGridSurface = { id: string; name: string; code: string };
+
+export type CalendarGridBooking = {
+  id: string;
+  startTime: string;
+  endTime: string;
+  bookingStatus: string;
+  paymentStatus: string;
+  courtSurfaceId: string | null;
+  user: { fullName: string; phone?: string | null } | null;
+};
 
 function toMinutes(time: string) {
   const [hours, minutes] = time.slice(0, 5).split(":").map(Number);
@@ -21,7 +32,7 @@ const statusStyle: Record<string, string> = {
 };
 const defaultStatusStyle = "bg-rose-100 border-rose-400 text-rose-800 opacity-60";
 
-export function BookingCalendarGrid({
+export function BookingCalendarGrid<T extends CalendarGridBooking>({
   date,
   bookings,
   courtSurfaces,
@@ -31,12 +42,12 @@ export function BookingCalendarGrid({
   onSelectEmptyCell
 }: {
   date: string;
-  bookings: RecipientCalendarBooking[];
-  courtSurfaces: RecipientCourtSurface[];
+  bookings: T[];
+  courtSurfaces: CalendarGridSurface[];
   opening: string;
   closing: string;
-  onSelectBooking: (booking: RecipientCalendarBooking) => void;
-  onSelectEmptyCell: (courtSurfaceId: string, startTime: string) => void;
+  onSelectBooking: (booking: T) => void;
+  onSelectEmptyCell?: (courtSurfaceId: string, startTime: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const openMin = toMinutes(opening);
@@ -57,7 +68,7 @@ export function BookingCalendarGrid({
   }, [courtSurfaces, bookings]);
 
   const bookingsByColumn = useMemo(() => {
-    const map = new Map<string, RecipientCalendarBooking[]>();
+    const map = new Map<string, T[]>();
     for (const booking of bookings) {
       const key = booking.courtSurfaceId ?? UNASSIGNED_COLUMN_ID;
       if (!map.has(key)) map.set(key, []);
@@ -102,7 +113,8 @@ export function BookingCalendarGrid({
                 {column.code ? ` (${column.code})` : ""}
               </div>
               <div className="relative" style={{ height: gridHeight }}>
-                {column.id !== UNASSIGNED_COLUMN_ID &&
+                {onSelectEmptyCell &&
+                  column.id !== UNASSIGNED_COLUMN_ID &&
                   hourMarks.map((mark) => (
                     <button
                       key={mark}

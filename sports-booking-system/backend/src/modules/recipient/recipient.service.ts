@@ -567,6 +567,17 @@ export const recipientService = {
     });
     if (conflict) throw new ConflictError("Khung gio nay da co khach khac", "WALK_IN_BOOKING_CONFLICT");
 
+    const activeBlock = await prisma.courtAvailabilityBlock.findFirst({
+      where: {
+        courtId,
+        status: "ACTIVE",
+        blockDate: toDbDate(input.bookingDate),
+        OR: [{ courtSurfaceId: null }, { courtSurfaceId: input.courtSurfaceId }],
+        ...overlapWhere(startTime, endTime)
+      }
+    });
+    if (activeBlock) throw new ConflictError("San dang trong lich nghi/bao tri, khong the dat", "WALK_IN_BOOKING_BLOCKED");
+
     const dynamicPrice = await dynamicPricingService.calculate(courtId, {
       date: input.bookingDate,
       startTime: input.startTime,

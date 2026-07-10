@@ -12,6 +12,10 @@ export const partnerController = {
   courtDetail: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.courtDetail(req.user!.id, req.params.id))),
   updateCourt: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateCourt(req.user!.id, req.params.id, req.body))),
   deactivateCourt: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deactivateCourt(req.user!.id, req.params.id))),
+  updateCourtStatus: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateCourtStatus(req.user!.id, req.params.id, req.body.activeStatus))),
+  courtBlocks: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.courtBlocks(req.user!.id, req.params.id))),
+  createCourtBlock: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.createCourtBlock(req.user!.id, req.params.id, req.body), 201)),
+  cancelCourtBlock: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.cancelCourtBlock(req.user!.id, req.params.id, req.params.blockId))),
   addImage: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.addImage(req.user!.id, req.params.id, req.body, req.file), 201)),
   deleteImage: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deleteImage(req.user!.id, req.params.imageId))),
   reorderImages: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.reorderImages(req.user!.id, req.params.id, req.body.imageIds))),
@@ -30,6 +34,7 @@ export const partnerController = {
     sendSuccess(res, await partnerService.revenue(req.user!.id, req.query.month as string | undefined))
   ),
   calendar: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.calendar(req.user!.id, req.query as any))),
+  courtSurfaces: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.courtSurfaces(req.user!.id, req.params.id))),
   vouchers: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.vouchers(req.user!.id))),
   voucherDetail: asyncHandler(async (req, res) =>
     sendSuccess(res, await partnerService.voucherDetail(req.user!.id, req.params.id))

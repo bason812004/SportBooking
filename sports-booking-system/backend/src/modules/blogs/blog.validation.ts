@@ -36,6 +36,6 @@ export const blogCommentSchema = z.object({
 export const blogCommentParamsSchema = z.object({
   params: z.object({
     slug: z.string().trim().min(1),
-    commentId: z.string().uuid()
+    commentId: z.string().trim().min(1).max(40)
   })
 });

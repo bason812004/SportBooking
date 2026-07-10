@@ -2,11 +2,16 @@ import { useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
+  AlertTriangle,
+  CalendarClock,
+  CheckCircle2,
+  Clock,
   Image as ImageIcon,
   LayoutGrid,
   LogIn,
   LogOut,
   PhoneCall,
+  RefreshCcw,
   TimerReset,
   Users
 } from "lucide-react";
@@ -27,11 +32,28 @@ const statusMeta: Record<RecipientOperationItem["status"], { label: string; clas
 const extendOptions = [15, 30, 60];
 const todayValue = () => new Date().toISOString().slice(0, 10);
 
-function SummaryCard({ label, value, tone }: { label: string; value: number; tone: string }) {
+function SummaryStat({
+  label,
+  value,
+  tone,
+  iconBg,
+  icon: Icon
+}: {
+  label: string;
+  value: number;
+  tone: string;
+  iconBg: string;
+  icon: typeof Users;
+}) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <p className="text-sm font-semibold text-slate-500">{label}</p>
-      <p className={`mt-2 text-2xl font-black ${tone}`}>{value}</p>
+    <div className="flex flex-1 items-center gap-2.5 px-3 py-2.5 first:pl-0 last:pr-0">
+      <span className={`rounded-lg p-1.5 ${iconBg}`}>
+        <Icon className="h-4 w-4" />
+      </span>
+      <div>
+        <p className="text-xs font-semibold text-slate-500">{label}</p>
+        <p className={`text-lg font-black leading-tight ${tone}`}>{value}</p>
+      </div>
     </div>
   );
 }
@@ -99,7 +121,7 @@ function SurfaceTile({
       type="button"
       onClick={onSelect}
       className={`flex h-[260px] flex-col overflow-hidden rounded-xl border bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg ${
-        selected ? "border-blue-500 ring-2 ring-blue-200" : "border-slate-200"
+        selected ? "border-blue-500 bg-blue-50/40 ring-4 ring-blue-200" : "border-slate-200"
       }`}
     >
       <div className="relative h-28 shrink-0 bg-slate-100">
@@ -111,6 +133,12 @@ function SurfaceTile({
           </div>
         )}
         <span className={`absolute left-3 top-3 rounded-full border px-3 py-1 text-xs font-black ${meta.className}`}>{meta.label}</span>
+        {selected ? (
+          <span className="absolute right-3 top-3 flex items-center gap-1 rounded-full bg-blue-600 px-2.5 py-1 text-xs font-black text-white shadow">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Đang chọn
+          </span>
+        ) : null}
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
@@ -224,25 +252,32 @@ export function RecipientCourtSurfacesPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-800">Sân con</h1>
-          <p className="text-slate-600">
-            Theo dõi khách đang sử dụng từng sân con của {data.court.name} - cập nhật lúc {data.nowTime} ngày{" "}
-            {new Date(data.date).toLocaleDateString("vi-VN")}.
-          </p>
+      <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-700 via-teal-700 to-slate-900 p-4 text-white shadow-xl">
+        <div className="absolute -right-16 -top-20 h-64 w-64 rounded-full bg-white/10" />
+        <div className="relative flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="flex items-center gap-2 text-xl font-black">
+              Quản lý sân
+              <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-100">Vận hành</span>
+            </h1>
+            <p className="mt-1 text-sm text-white/70">
+              Theo dõi khách đang sử dụng từng sân con của {data.court.name} - cập nhật lúc {data.nowTime} ngày{" "}
+              {new Date(data.date).toLocaleDateString("vi-VN")}.
+            </p>
+          </div>
+          <Button variant="secondary" onClick={() => refresh()}>
+            <RefreshCcw className="h-4 w-4" />
+            Làm mới
+          </Button>
         </div>
-        <Button variant="secondary" onClick={() => refresh()}>
-          Làm mới
-        </Button>
-      </div>
+      </section>
 
-      <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-5">
-        <SummaryCard label="Đang có khách" value={data.summary.occupied} tone="text-blue-700" />
-        <SummaryCard label="Sắp hết giờ" value={data.summary.endingSoon} tone="text-amber-700" />
-        <SummaryCard label="Quá giờ" value={data.summary.overdue} tone="text-red-700" />
-        <SummaryCard label="Sắp có khách" value={data.summary.reservedSoon} tone="text-indigo-700" />
-        <SummaryCard label="Đang trống" value={data.summary.available} tone="text-emerald-700" />
+      <div className="flex divide-x divide-slate-200 overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <SummaryStat label="Đang có khách" value={data.summary.occupied} tone="text-blue-700" iconBg="bg-blue-100 text-blue-700" icon={Users} />
+        <SummaryStat label="Sắp hết giờ" value={data.summary.endingSoon} tone="text-amber-700" iconBg="bg-amber-100 text-amber-700" icon={Clock} />
+        <SummaryStat label="Quá giờ" value={data.summary.overdue} tone="text-red-700" iconBg="bg-red-100 text-red-700" icon={AlertTriangle} />
+        <SummaryStat label="Sắp có khách" value={data.summary.reservedSoon} tone="text-indigo-700" iconBg="bg-indigo-100 text-indigo-700" icon={CalendarClock} />
+        <SummaryStat label="Đang trống" value={data.summary.available} tone="text-emerald-700" iconBg="bg-emerald-100 text-emerald-700" icon={CheckCircle2} />
       </div>
 
       {items.length === 0 ? (
@@ -264,20 +299,18 @@ export function RecipientCourtSurfacesPage() {
             ))}
           </div>
 
-          <aside className="h-max rounded-2xl border border-slate-200 bg-white p-4 xl:sticky xl:top-4">
+          <aside className="rounded-2xl border border-slate-200 bg-white p-3.5 xl:sticky xl:top-4 xl:max-h-[calc(100vh-13rem)] xl:overflow-y-auto">
             {selected ? (
-              <div className="space-y-3">
+              <div className="space-y-2.5">
                 <div>
                   <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-black ${statusMeta[selected.status].className}`}>
                     {statusMeta[selected.status].label}
                   </span>
-                  <h2 className="mt-2 text-2xl font-black text-slate-800">{selected.surface.name}</h2>
-                  <p className="mt-1 text-sm font-semibold text-slate-500">Mã sân: {selected.surface.code}</p>
                 </div>
 
                 {selected.status === "OVERDUE" && selected.latestEndedBooking ? (
-                  <div className="space-y-3">
-                    <div className="rounded-xl border border-red-100 bg-red-50/70 p-3">
+                  <div className="space-y-2.5">
+                    <div className="rounded-xl border border-red-100 bg-red-50/70 p-2.5">
                       <p className="text-xs font-bold uppercase tracking-wide text-red-700">Khách đã quá giờ</p>
                       <p className="mt-1 font-black text-slate-800">{selected.latestEndedBooking.customerName}</p>
                       {selected.latestEndedBooking.customerPhone ? (
@@ -313,8 +346,8 @@ export function RecipientCourtSurfacesPage() {
                     </Button>
                   </div>
                 ) : selected.currentBooking ? (
-                  <div className="space-y-3">
-                    <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3">
+                  <div className="space-y-2.5">
+                    <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-2.5">
                       <p className="text-xs font-bold uppercase tracking-wide text-blue-700">Khách đang chơi</p>
                       <p className="mt-1 font-black text-slate-800">{selected.currentBooking.customerName}</p>
                       {selected.currentBooking.customerPhone ? (
@@ -352,8 +385,8 @@ export function RecipientCourtSurfacesPage() {
                     </Button>
                   </div>
                 ) : selected.nextBooking ? (
-                  <div className="space-y-3">
-                    <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3">
+                  <div className="space-y-2.5">
+                    <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-2.5">
                       <p className="text-xs font-bold uppercase tracking-wide text-indigo-700">Khách sắp nhận sân</p>
                       <p className="mt-1 font-black text-slate-800">{selected.nextBooking.customerName}</p>
                       <p className="text-sm text-slate-600">
@@ -365,11 +398,7 @@ export function RecipientCourtSurfacesPage() {
                       {earlyCheckIn.isPending ? "Đang check-in..." : "Check-in sớm"}
                     </Button>
                   </div>
-                ) : (
-                  <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-2.5 text-sm font-semibold text-emerald-700">
-                    Sân đang trống, chưa có khách đặt tiếp theo hôm nay.
-                  </div>
-                )}
+                ) : null}
 
                 {!selected.currentBooking && selected.surface.status === "ACTIVE" ? (
                   <WalkInBookingForm key={selected.surface.id} courtSurfaceId={selected.surface.id} onBookingCreated={refresh} />

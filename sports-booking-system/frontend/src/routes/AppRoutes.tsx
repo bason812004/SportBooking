@@ -43,7 +43,6 @@ import { PartnerVouchersPage } from "../pages/partner/PartnerVouchersPage";
 import { PartnerVoucherFormPage } from "../pages/partner/PartnerVoucherFormPage";
 import { PartnerCourtResourcesPage } from "../pages/partner/PartnerCourtResourcesPage";
 import { PartnerSettingsPage } from "../pages/partner/PartnerSettingsPage";
-import { PartnerCalendarPage } from "../pages/partner/PartnerCalendarPage";
 import { PartnerBlogsPage } from "../pages/partner/PartnerBlogsPage";
 import { PartnerBlogFormPage } from "../pages/partner/PartnerBlogFormPage";
 import { PartnerTournamentsPage } from "../pages/partner/PartnerTournamentsPage";
@@ -118,6 +117,7 @@ export function AppRoutes() {
           <Route path="partner/courts/:id/prices" element={<PartnerCourtResourcesPage mode="prices" />} />
           <Route path="partner/courts/:id/services" element={<PartnerCourtResourcesPage mode="services" />} />
           <Route path="partner/courts/:id/images" element={<PartnerCourtResourcesPage mode="images" />} />
+          <Route path="partner/courts/:id/blocks" element={<PartnerCourtResourcesPage mode="blocks" />} />
           <Route path="partner/bookings" element={<PartnerBookingsPage />} />
           <Route path="partner/vouchers" element={<PartnerVouchersPage />} />
           <Route path="partner/vouchers/create" element={<PartnerVoucherFormPage />} />
@@ -128,7 +128,7 @@ export function AppRoutes() {
           <Route path="partner/blogs" element={<PartnerBlogsPage />} />
           <Route path="partner/blogs/create" element={<PartnerBlogFormPage />} />
           <Route path="partner/blogs/:id/edit" element={<PartnerBlogFormPage />} />
-          <Route path="partner/calendar" element={<PartnerCalendarPage />} />
+          <Route path="partner/calendar" element={<Navigate to="/partner/bookings?view=calendar" replace />} />
           <Route path="partner/statistics" element={<PartnerStatisticsPage />} />
           <Route path="partner/settings" element={<PartnerSettingsPage />} />
           <Route path="partner/staff" element={<PartnerStaffPage />} />

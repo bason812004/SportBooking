@@ -17,6 +17,10 @@ async function getProfile(userId: string) {
   return profile;
 }
 
+function dbTime(value: Date) {
+  return value.toISOString().slice(11, 16);
+}
+
 export const partnerService = {
   async dashboard(userId: string) {
     const profile = await getProfile(userId);
@@ -124,6 +128,13 @@ export const partnerService = {
     return partnerRepository.updateCourt(courtId, { activeStatus: "INACTIVE" });
   },
 
+  async updateCourtStatus(userId: string, courtId: string, activeStatus: "ACTIVE" | "INACTIVE") {
+    const profile = await getProfile(userId);
+    const existing = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!existing) throw new NotFoundError("Khong tim thay san cua ban");
+    return partnerRepository.updateCourt(courtId, { activeStatus });
+  },
+
   async addImage(userId: string, courtId: string, input: { imageUrl?: string; sortOrder?: number }, file?: Express.Multer.File) {
     const profile = await getProfile(userId);
     const court = await partnerRepository.courtByPartner(courtId, profile.id);
@@ -223,7 +234,17 @@ export const partnerService = {
 
   async bookings(
     userId: string,
-    query: { page?: string; limit?: string; courtId?: string; status?: BookingStatus; fromDate?: string; toDate?: string }
+    query: {
+      page?: string;
+      limit?: string;
+      courtId?: string;
+      status?: BookingStatus;
+      search?: string;
+      fromDate?: string;
+      toDate?: string;
+      sortBy?: string;
+      sortOrder?: string;
+    }
   ) {
     const profile = await getProfile(userId);
     const page = parsePage(query.page);
@@ -234,8 +255,11 @@ export const partnerService = {
     const [items, total] = await partnerRepository.bookings(profile.id, page, limit, {
       courtId: query.courtId,
       status: query.status,
+      search: query.search,
       fromDate: query.fromDate ? toDbDate(query.fromDate) : undefined,
-      toDate: query.toDate ? toDbDate(query.toDate) : undefined
+      toDate: query.toDate ? toDbDate(query.toDate) : undefined,
+      sortBy: query.sortBy,
+      sortOrder: query.sortOrder
     });
     return { items, meta: paginationMeta(page, limit, total) };
   },
@@ -296,7 +320,58 @@ export const partnerService = {
   async calendar(userId: string, query: { fromDate: string; toDate: string; courtId?: string }) {
     const profile = await getProfile(userId);
     if (query.fromDate > query.toDate) throw new ValidationError("Khoang ngay khong hop le");
-    return partnerRepository.calendar(profile.id, toDbDate(query.fromDate), toDbDate(query.toDate), query.courtId);
+    if (!query.courtId) throw new ValidationError("Vui long chon 1 san de xem lich");
+    const court = await partnerRepository.courtByPartner(query.courtId, profile.id);
+    if (!court) throw new NotFoundError("Khong tim thay san cua ban");
+    const items = await partnerRepository.calendar(profile.id, toDbDate(query.fromDate), toDbDate(query.toDate), query.courtId);
+    return {
+      court: { openingTime: dbTime(court.openingTime), closingTime: dbTime(court.closingTime) },
+      items
+    };
+  },
+
+  async courtSurfaces(userId: string, courtId: string) {
+    const profile = await getProfile(userId);
+    const court = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!court) throw new NotFoundError("Khong tim thay san cua ban");
+    return partnerRepository.courtSurfaces(courtId);
+  },
+
+  async courtBlocks(userId: string, courtId: string) {
+    const profile = await getProfile(userId);
+    const court = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!court) throw new NotFoundError("Khong tim thay san cua ban");
+    return partnerRepository.courtBlocks(courtId);
+  },
+
+  async createCourtBlock(
+    userId: string,
+    courtId: string,
+    input: { courtSurfaceId?: string | null; blockDate: string; startTime: string; endTime: string; reason?: string }
+  ) {
+    const profile = await getProfile(userId);
+    const court = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!court) throw new NotFoundError("Khong tim thay san cua ban");
+    if (timeToMinutes(input.startTime) >= timeToMinutes(input.endTime)) throw new ValidationError("Gio ket thuc phai sau gio bat dau");
+    if (input.courtSurfaceId) {
+      const surfaces = await partnerRepository.courtSurfaces(courtId);
+      if (!surfaces.some((surface) => surface.id === input.courtSurfaceId)) throw new NotFoundError("San con khong thuoc cum san nay");
+    }
+    return partnerRepository.createCourtBlock({
+      courtId,
+      courtSurfaceId: input.courtSurfaceId ?? null,
+      blockDate: toDbDate(input.blockDate),
+      startTime: timeToDate(input.startTime),
+      endTime: timeToDate(input.endTime),
+      reason: input.reason
+    });
+  },
+
+  async cancelCourtBlock(userId: string, courtId: string, blockId: string) {
+    const profile = await getProfile(userId);
+    const block = await partnerRepository.blockByCourtAndPartner(blockId, courtId, profile.id);
+    if (!block) throw new NotFoundError("Khong tim thay lich nghi nay");
+    return partnerRepository.cancelCourtBlock(blockId);
   },
 
   async vouchers(userId: string) {
