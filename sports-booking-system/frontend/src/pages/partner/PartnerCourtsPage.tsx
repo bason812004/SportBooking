@@ -11,6 +11,7 @@ import { StatusBadge } from "../../components/common/StatusBadge";
 import { Button } from "../../components/ui/Button";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { useLanguage } from "../../lib/i18n";
+import { timeText } from "../../lib/format";
 
 const fallbackCourtImage = "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=640&q=80";
 
@@ -55,7 +56,7 @@ export function PartnerCourtsPage() {
   const totalCourts = courts.data?.length ?? 0;
   const activeCourts = courts.data?.filter((court) => court.activeStatus === "ACTIVE").length ?? 0;
   const pendingCourts = courts.data?.filter((court) => court.approvalStatus === "PENDING").length ?? 0;
-  const totalSurfaces = courts.data?.reduce((sum, court) => sum + (court.courtCount ?? court.surfaces?.length ?? 0), 0) ?? 0;
+  const totalSurfaces = courts.data?.reduce((sum, court) => sum + (court.surfaceCount ?? 0), 0) ?? 0;
 
   return (
     <div className="space-y-4">
@@ -78,7 +79,8 @@ export function PartnerCourtsPage() {
       {courts.data?.length === 0 && <EmptyState title={t("Chưa có sân")} />}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {courts.data?.map((court) => (
-          <div key={court.id} className="flex flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+          <div key={court.id} className="flex flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+            <Link to={`/partner/courts/${court.id}/prices`} className="block cursor-pointer">
             <div className="relative aspect-[4/3] w-full">
               <img className="h-full w-full object-cover" src={court.images?.[0]?.imageUrl || fallbackCourtImage} alt={court.name} />
               <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/50 to-transparent" />
@@ -94,23 +96,21 @@ export function PartnerCourtsPage() {
               )}
             </div>
 
-            <div className="flex flex-1 flex-col gap-3 p-4">
-              <div>
-                <p className="text-lg font-bold leading-tight">{court.name}</p>
-                <p className="mt-1 flex items-center gap-1 text-sm text-slate-500">
-                  <MapPin className="h-3.5 w-3.5 shrink-0" />
-                  {court.category?.name} · {court.district}, {court.city}
-                </p>
-                <p className="mt-1 flex items-center gap-1 text-sm text-slate-500">
-                  <Clock className="h-3.5 w-3.5 shrink-0" />
-                  {court.openingTime?.slice(0, 5)} - {court.closingTime?.slice(0, 5)}
-                </p>
-              </div>
+            <div className="p-4 pb-0">
+              <p className="text-lg font-bold leading-tight">{court.name}</p>
+              <p className="mt-1 flex items-center gap-1 text-sm text-slate-500">
+                <MapPin className="h-3.5 w-3.5 shrink-0" />
+                {court.category?.name} · {court.district}, {court.city}
+              </p>
+              <p className="mt-1 flex items-center gap-1 text-sm text-slate-500">
+                <Clock className="h-3.5 w-3.5 shrink-0" />
+                {timeText(court.openingTime)} - {timeText(court.closingTime)}
+              </p>
 
-              <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-slate-600">
                 <span className="flex items-center gap-1">
                   <Layers className="h-3.5 w-3.5" />
-                  {court.courtCount ?? court.surfaces?.length ?? 0} sân con
+                  {court.surfaceCount ?? 0} sân con
                 </span>
                 {typeof court.averageRating === "number" && court.averageRating > 0 && (
                   <span className="flex items-center gap-1">
@@ -123,27 +123,28 @@ export function PartnerCourtsPage() {
                   <span className="font-medium text-slate-900">Từ {formatMoney(court.minPrice)}</span>
                 )}
               </div>
+            </div>
+            </Link>
 
-              <div className="mt-auto space-y-3 pt-1">
-                <div className="grid grid-cols-2 gap-2">
-                  <Link to={`/partner/courts/${court.id}/edit`}><Button className="w-full" variant="secondary">Sửa</Button></Link>
-                  <Link to={`/partner/courts/${court.id}/prices`}><Button className="w-full" variant="secondary"><Wrench className="h-4 w-4" />Giá & dịch vụ</Button></Link>
-                  <Link to={`/partner/courts/${court.id}/images`}><Button className="w-full" variant="secondary"><Image className="h-4 w-4" />Ảnh</Button></Link>
-                  <Link to={`/partner/courts/${court.id}/blocks`}><Button className="w-full" variant="secondary"><CalendarOff className="h-4 w-4" />Lịch nghỉ</Button></Link>
-                </div>
-                <div className="border-t border-line pt-3">
-                  {court.activeStatus === "ACTIVE" ? (
-                    <Button className="w-full" variant="danger" disabled={toggleStatus.isPending} onClick={() => setDeactivateTarget({ id: court.id, name: court.name })}>
-                      <Lock className="h-4 w-4" />
-                      Tạm ngưng
-                    </Button>
-                  ) : (
-                    <Button className="w-full" variant="secondary" disabled={toggleStatus.isPending} onClick={() => toggleStatus.mutate({ id: court.id, activeStatus: "ACTIVE" })}>
-                      <Unlock className="h-4 w-4" />
-                      Kích hoạt lại
-                    </Button>
-                  )}
-                </div>
+            <div className="mt-auto space-y-3 p-4 pt-3">
+              <div className="grid grid-cols-2 gap-2">
+                <Link to={`/partner/courts/${court.id}/edit`}><Button className="w-full" variant="secondary">Sửa</Button></Link>
+                <Link to={`/partner/courts/${court.id}/prices`}><Button className="w-full" variant="secondary"><Wrench className="h-4 w-4" />Giá & dịch vụ</Button></Link>
+                <Link to={`/partner/courts/${court.id}/images`}><Button className="w-full" variant="secondary"><Image className="h-4 w-4" />Ảnh</Button></Link>
+                <Link to={`/partner/courts/${court.id}/blocks`}><Button className="w-full" variant="secondary"><CalendarOff className="h-4 w-4" />Lịch nghỉ</Button></Link>
+              </div>
+              <div className="border-t border-line pt-3">
+                {court.activeStatus === "ACTIVE" ? (
+                  <Button className="w-full" variant="danger" disabled={toggleStatus.isPending} onClick={() => setDeactivateTarget({ id: court.id, name: court.name })}>
+                    <Lock className="h-4 w-4" />
+                    Tạm ngưng
+                  </Button>
+                ) : (
+                  <Button className="w-full" variant="secondary" disabled={toggleStatus.isPending} onClick={() => toggleStatus.mutate({ id: court.id, activeStatus: "ACTIVE" })}>
+                    <Unlock className="h-4 w-4" />
+                    Kích hoạt lại
+                  </Button>
+                )}
               </div>
             </div>
           </div>

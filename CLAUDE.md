@@ -181,7 +181,7 @@ npm start
 - Existing database starts with `database/01_existing_db_migrations.sql`; apply later migrations only when missing those changes.
 - Realtime requires authenticated Socket.IO connection; connect frontend realtime only after login.
 - Uploads use memory storage and cloud storage; do not add local persistent image storage.
-- Demand prediction is currently rule-based and may return `INSUFFICIENT_DATA`.
+- Demand prediction is rule-based by default and may return `INSUFFICIENT_DATA`. An optional trained ML path exists (`sports-booking-system/ml/`, served via FastAPI) and is used only when `ML_SERVICE_URL` is set and a court has >= `ML_MIN_HISTORY` bookings (default 50); it always falls back to the rule-based model on any error. See `docs/RESEARCH_DIRECTION.md` and `ml/README_ML.md`.
 - Worktree may already contain unrelated changes; do not revert them.
 
 ## Human-in-the-Loop

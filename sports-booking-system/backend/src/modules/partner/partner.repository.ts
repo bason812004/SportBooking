@@ -82,6 +82,33 @@ async function attachCourtDeposits<T extends { id: string }>(courts: T[]) {
   return courts.map((court) => ({ ...court, depositPercent: deposits.get(court.id) ?? null }));
 }
 
+async function ensureCourtSurfaces<T extends { id: string; courtCount: number; surfaces: Array<{ code: string; sortOrder: number }> }>(court: T): Promise<T> {
+  const target = court.courtCount ?? 1;
+  const existing = court.surfaces ?? [];
+  if (existing.length >= target) return court;
+
+  const existingCodes = new Set(existing.map((surface) => surface.code));
+  const nextSortOrder = existing.reduce((max, surface) => Math.max(max, surface.sortOrder), -1) + 1;
+  const rowsToCreate: Prisma.CourtSurfaceUncheckedCreateInput[] = [];
+  let candidate = existing.length + 1;
+  while (rowsToCreate.length < target - existing.length) {
+    const code = String(candidate).padStart(2, "0");
+    if (!existingCodes.has(code)) {
+      rowsToCreate.push({
+        courtId: court.id,
+        code,
+        name: `Sân ${candidate}`,
+        sortOrder: nextSortOrder + rowsToCreate.length
+      });
+      existingCodes.add(code);
+    }
+    candidate += 1;
+  }
+
+  const created = await prisma.$transaction(rowsToCreate.map((data) => prisma.courtSurface.create({ data })));
+  return { ...court, surfaces: [...existing, ...created] };
+}
+
 export const partnerRepository = {
   profileByUser(userId: string) {
     return prisma.partnerProfile.findUnique({
@@ -147,7 +174,7 @@ export const partnerRepository = {
   async listCourts(partnerId: string) {
     const courts = await prisma.court.findMany({
       where: { partnerId },
-      include: { category: true, images: true, prices: true, services: true },
+      include: { category: true, images: true, prices: true, services: true, _count: { select: { surfaces: true } } },
       orderBy: { createdAt: "desc" }
     });
     return attachCourtDeposits(courts);
@@ -156,9 +183,10 @@ export const partnerRepository = {
   async courtByPartner(courtId: string, partnerId: string) {
     const court = await prisma.court.findFirst({
       where: { id: courtId, partnerId },
-      include: { category: true, images: true, prices: true, services: true, surfaces: true }
+      include: { category: true, images: true, prices: true, services: true, surfaces: { orderBy: [{ sortOrder: "asc" }, { code: "asc" }] } }
     });
-    return attachCourtDeposit(court);
+    if (!court) return null;
+    return attachCourtDeposit(await ensureCourtSurfaces(court));
   },
 
   async createCourt(data: Prisma.CourtUncheckedCreateInput, depositPercent?: number | null) {
@@ -317,8 +345,51 @@ export const partnerRepository = {
     });
   },
 
+  courtDayBookings(courtId: string, date: Date) {
+    return prisma.booking.findMany({
+      where: {
+        courtId,
+        bookingDate: date,
+        bookingStatus: { notIn: ["CANCELLED", "NO_SHOW"] }
+      },
+      select: { id: true, startTime: true, endTime: true, bookingStatus: true, courtSurfaceId: true, payments: { select: { expiresAt: true, status: true } } },
+      orderBy: { startTime: "asc" }
+    });
+  },
+
+  courtDayBookingSlots(courtId: string, date: Date) {
+    return prisma.bookingSlot.findMany({
+      where: {
+        courtId,
+        bookingDate: date,
+        booking: { bookingStatus: { notIn: ["CANCELLED", "NO_SHOW"] } }
+      },
+      select: {
+        id: true,
+        bookingId: true,
+        startTime: true,
+        endTime: true,
+        court_surface_id: true,
+        booking: { select: { bookingStatus: true, payments: { select: { expiresAt: true, status: true } } } }
+      },
+      orderBy: { startTime: "asc" }
+    });
+  },
+
+  courtDayBlocks(courtId: string, date: Date) {
+    return prisma.courtAvailabilityBlock.findMany({
+      where: { courtId, blockDate: date, status: "ACTIVE" },
+      select: { id: true, startTime: true, endTime: true, reason: true, courtSurfaceId: true },
+      orderBy: { startTime: "asc" }
+    });
+  },
+
   createCourtBlock(data: Prisma.CourtAvailabilityBlockUncheckedCreateInput) {
     return prisma.courtAvailabilityBlock.create({ data });
+  },
+
+  createCourtBlocks(data: Prisma.CourtAvailabilityBlockCreateManyInput[]) {
+    return prisma.courtAvailabilityBlock.createMany({ data });
   },
 
   blockByCourtAndPartner(blockId: string, courtId: string, partnerId: string) {

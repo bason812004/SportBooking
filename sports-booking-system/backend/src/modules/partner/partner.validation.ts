@@ -186,6 +186,23 @@ export const courtBlockParamsSchema = z.object({
   params: z.object({ id, blockId: id })
 });
 
+export const courtAvailabilityGridQuerySchema = z.object({
+  params: z.object({ id }),
+  query: z.object({ date: z.string().date() })
+});
+
+export const courtBlockBulkWriteSchema = z.object({
+  body: z.object({
+    courtSurfaceId: z.union([id, z.null()]).optional(),
+    startDate: z.string().date(),
+    endDate: z.string().date(),
+    weekdays: z.array(z.number().int().min(0).max(6)).min(1).optional(),
+    startTime: flexTime,
+    endTime: flexTime,
+    reason: z.string().trim().max(255).optional()
+  })
+});
+
 export const recipientUpdateSchema = z.object({
   body: z.object({
     fullName: z.string().trim().min(2).max(120).optional(),

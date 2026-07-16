@@ -37,6 +37,33 @@ export type PartnerCourtBlock = {
   status: "ACTIVE" | "INACTIVE";
 };
 
+export type PartnerSurfaceSlot = {
+  startTime: string;
+  endTime: string;
+  status: "AVAILABLE" | "PENDING_PAYMENT" | "BOOKED" | "BLOCKED";
+  price: number;
+  bookingId: string | null;
+  blockId: string | null;
+};
+
+export type PartnerSurfaceGrid = {
+  surfaceId: string;
+  surfaceName: string;
+  code: string;
+  status: "ACTIVE" | "INACTIVE";
+  slots: PartnerSurfaceSlot[];
+};
+
+export type PartnerCourtBlockBulkPayload = {
+  courtSurfaceId?: string | null;
+  startDate: string;
+  endDate: string;
+  weekdays?: number[];
+  startTime: string;
+  endTime: string;
+  reason?: string;
+};
+
 export type PartnerCalendarBooking = {
   id: string;
   bookingDate: string;
@@ -186,6 +213,14 @@ export const partnerApi = {
   },
   async cancelCourtBlock(courtId: string, blockId: string) {
     const { data } = await api.delete<ApiResponse<PartnerCourtBlock>>(`/partner/courts/${courtId}/blocks/${blockId}`);
+    return data.data;
+  },
+  async courtAvailabilityGrid(courtId: string, date: string) {
+    const { data } = await api.get<ApiResponse<PartnerSurfaceGrid[]>>(`/partner/courts/${courtId}/availability-grid`, { params: { date } });
+    return data.data;
+  },
+  async createCourtBlockBulk(courtId: string, payload: PartnerCourtBlockBulkPayload) {
+    const { data } = await api.post<ApiResponse<{ created: number }>>(`/partner/courts/${courtId}/blocks/bulk`, payload);
     return data.data;
   },
   async vouchers() {

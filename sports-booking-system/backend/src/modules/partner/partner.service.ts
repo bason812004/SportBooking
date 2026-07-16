@@ -4,6 +4,7 @@ import { ForbiddenError, NotFoundError, ValidationError, ConflictError } from ".
 import { cloudinaryService } from "../../shared/services/cloudinary.service.js";
 import { paginationMeta } from "../../shared/utils/response.js";
 import { bookingStartsAt, parseLimit, parsePage, timeToDate, timeToMinutes, toDbDate } from "../../shared/utils/time.js";
+import { buildSlotGrid } from "../../shared/utils/slotGrid.js";
 import { uniqueSlug } from "../../shared/utils/slug.js";
 import { commissionService } from "../commission/commission.service.js";
 import { voucherService } from "../vouchers/voucher.service.js";
@@ -20,6 +21,8 @@ async function getProfile(userId: string) {
 function dbTime(value: Date) {
   return value.toISOString().slice(11, 16);
 }
+
+const MAX_BULK_BLOCK_DAYS = 92;
 
 export const partnerService = {
   async dashboard(userId: string) {
@@ -75,7 +78,8 @@ export const partnerService = {
 
   async courts(userId: string) {
     const profile = await getProfile(userId);
-    return partnerRepository.listCourts(profile.id);
+    const courts = await partnerRepository.listCourts(profile.id);
+    return courts.map(({ _count, ...court }) => ({ ...court, surfaceCount: _count.surfaces }));
   },
 
   async courtDetail(userId: string, courtId: string) {
@@ -379,6 +383,75 @@ export const partnerService = {
     const block = await partnerRepository.blockByCourtAndPartner(blockId, courtId, profile.id);
     if (!block) throw new NotFoundError("Khong tim thay lich nghi nay");
     return partnerRepository.cancelCourtBlock(blockId);
+  },
+
+  async courtAvailabilityGrid(userId: string, courtId: string, date: string) {
+    const profile = await getProfile(userId);
+    const court = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!court) throw new NotFoundError("Khong tim thay san cua ban");
+
+    const dbDate = toDbDate(date);
+    const [bookings, bookingSlotsRaw, blocks] = await Promise.all([
+      partnerRepository.courtDayBookings(courtId, dbDate),
+      partnerRepository.courtDayBookingSlots(courtId, dbDate),
+      partnerRepository.courtDayBlocks(courtId, dbDate)
+    ]);
+    const bookingSlots = bookingSlotsRaw.map((bookingSlot) => ({ ...bookingSlot, courtSurfaceId: bookingSlot.court_surface_id }));
+
+    return (court.surfaces ?? []).map((surface) => ({
+      surfaceId: surface.id,
+      surfaceName: surface.name,
+      code: surface.code,
+      status: surface.status,
+      slots: buildSlotGrid({
+        date,
+        openingTime: court.openingTime,
+        closingTime: court.closingTime,
+        bookings,
+        bookingSlots,
+        blocks,
+        prices: court.prices,
+        courtSurfaceId: surface.id
+      })
+    }));
+  },
+
+  async createCourtBlockBulk(
+    userId: string,
+    courtId: string,
+    input: { courtSurfaceId?: string | null; startDate: string; endDate: string; weekdays?: number[]; startTime: string; endTime: string; reason?: string }
+  ) {
+    const profile = await getProfile(userId);
+    const court = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!court) throw new NotFoundError("Khong tim thay san cua ban");
+    if (timeToMinutes(input.startTime) >= timeToMinutes(input.endTime)) throw new ValidationError("Gio ket thuc phai sau gio bat dau");
+    if (input.startDate > input.endDate) throw new ValidationError("Ngay bat dau phai truoc hoac bang ngay ket thuc");
+    if (input.courtSurfaceId && !court.surfaces.some((surface) => surface.id === input.courtSurfaceId)) {
+      throw new NotFoundError("San con khong thuoc cum san nay");
+    }
+
+    const weekdaySet = input.weekdays && input.weekdays.length ? new Set(input.weekdays) : null;
+    const dates: string[] = [];
+    const cursor = new Date(`${input.startDate}T00:00:00.000Z`);
+    const end = new Date(`${input.endDate}T00:00:00.000Z`);
+    while (cursor <= end) {
+      if (!weekdaySet || weekdaySet.has(cursor.getUTCDay())) dates.push(cursor.toISOString().slice(0, 10));
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+      if (dates.length > MAX_BULK_BLOCK_DAYS) throw new ValidationError(`Chi duoc chan toi da ${MAX_BULK_BLOCK_DAYS} ngay moi lan`);
+    }
+    if (!dates.length) throw new ValidationError("Khong co ngay nao phu hop trong khoang da chon");
+
+    const result = await partnerRepository.createCourtBlocks(
+      dates.map((blockDate) => ({
+        courtId,
+        courtSurfaceId: input.courtSurfaceId ?? null,
+        blockDate: toDbDate(blockDate),
+        startTime: timeToDate(input.startTime),
+        endTime: timeToDate(input.endTime),
+        reason: input.reason
+      }))
+    );
+    return { created: result.count };
   },
 
   async vouchers(userId: string) {

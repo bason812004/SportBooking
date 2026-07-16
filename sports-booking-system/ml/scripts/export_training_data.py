@@ -1,8 +1,15 @@
 import os
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 import pandas as pd
 import psycopg2
+
+
+def strip_unsupported_query_params(database_url: str) -> str:
+    """Prisma connection strings may carry params (e.g. pgbouncer=true) psycopg2 rejects."""
+    parsed = urlparse(database_url)
+    return urlunparse(parsed._replace(query=""))
 
 
 QUERY = """
@@ -35,7 +42,7 @@ def main() -> None:
     output = Path(os.environ.get("TRAINING_DATA_PATH", "ml/models/demand_training_data.csv"))
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    with psycopg2.connect(database_url) as conn:
+    with psycopg2.connect(strip_unsupported_query_params(database_url)) as conn:
         frame = pd.read_sql_query(QUERY, conn)
 
     frame.to_csv(output, index=False)

@@ -10,6 +10,8 @@ import {
   courtSurfaceStatusSchema,
   courtBlockWriteSchema,
   courtBlockParamsSchema,
+  courtBlockBulkWriteSchema,
+  courtAvailabilityGridQuerySchema,
   bookingQuerySchema,
   blogCommentsToggleSchema,
   blogWriteSchema,
@@ -41,8 +43,10 @@ partnerRoutes.put("/courts/:id/surfaces/:surfaceId/status", validate(courtSurfac
 partnerRoutes.put("/courts/:id", validate(courtWriteSchema.partial()), partnerController.updateCourt);
 partnerRoutes.delete("/courts/:id", partnerController.deactivateCourt);
 partnerRoutes.put("/courts/:id/status", validate(courtStatusSchema), partnerController.updateCourtStatus);
+partnerRoutes.get("/courts/:id/availability-grid", validate(courtAvailabilityGridQuerySchema), partnerController.courtAvailabilityGrid);
 partnerRoutes.get("/courts/:id/blocks", partnerController.courtBlocks);
 partnerRoutes.post("/courts/:id/blocks", validate(courtBlockWriteSchema), partnerController.createCourtBlock);
+partnerRoutes.post("/courts/:id/blocks/bulk", validate(courtBlockBulkWriteSchema), partnerController.createCourtBlockBulk);
 partnerRoutes.delete("/courts/:id/blocks/:blockId", validate(courtBlockParamsSchema), partnerController.cancelCourtBlock);
 partnerRoutes.post("/courts/:id/images", upload.single("image"), validate(imageSchema), partnerController.addImage);
 partnerRoutes.delete("/images/:imageId", partnerController.deleteImage);

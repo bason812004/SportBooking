@@ -379,6 +379,7 @@ model Booking {
   bookingServices          BookingService[]
   bookingSlots             BookingSlot[]
   bookingVoucher           BookingVoucher?
+  payments                 Payment[]
   court                    Court                   @relation(fields: [courtId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   courtSurface             CourtSurface?           @relation(fields: [courtSurfaceId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   user                     User                    @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -451,6 +452,7 @@ model Payment {
   createdAt             DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   transactions          PaymentTransaction[]
+  booking               Booking              @relation(fields: [bookingId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([bookingId], map: "idx_payments_booking_id")
   @@index([userId], map: "idx_payments_user_id")
