@@ -66,6 +66,33 @@ async function attachCourtDeposits<T extends { id: string }>(courts: T[]) {
   return courts.map((court) => ({ ...court, depositPercent: deposits.get(court.id) ?? null }));
 }
 
+async function ensureCourtSurfaces<T extends { id: string; courtCount: number; surfaces: Array<{ code: string; sortOrder: number }> }>(court: T): Promise<T> {
+  const target = court.courtCount ?? 1;
+  const existing = court.surfaces ?? [];
+  if (existing.length >= target) return court;
+
+  const existingCodes = new Set(existing.map((surface) => surface.code));
+  const nextSortOrder = existing.reduce((max, surface) => Math.max(max, surface.sortOrder), -1) + 1;
+  const rowsToCreate: Prisma.CourtSurfaceUncheckedCreateInput[] = [];
+  let candidate = existing.length + 1;
+  while (rowsToCreate.length < target - existing.length) {
+    const code = String(candidate).padStart(2, "0");
+    if (!existingCodes.has(code)) {
+      rowsToCreate.push({
+        courtId: court.id,
+        code,
+        name: `Sân ${candidate}`,
+        sortOrder: nextSortOrder + rowsToCreate.length
+      });
+      existingCodes.add(code);
+    }
+    candidate += 1;
+  }
+
+  const created = await prisma.$transaction(rowsToCreate.map((data) => prisma.courtSurface.create({ data })));
+  return { ...court, surfaces: [...existing, ...created] };
+}
+
 export const partnerRepository = {
   profileByUser(userId: string) {
     return prisma.partnerProfile.findUnique({
@@ -157,7 +184,7 @@ export const partnerRepository = {
   async listCourts(partnerId: string) {
     const courts = await prisma.court.findMany({
       where: { partnerId },
-      include: { category: true, images: true, prices: true, services: true, surfaces: { where: { status: "ACTIVE" }, orderBy: { sortOrder: "asc" } } },
+      include: { category: true, images: true, prices: true, services: true, _count: { select: { surfaces: true } } },
       orderBy: { createdAt: "desc" }
     });
     return attachCourtDeposits(courts);
@@ -166,16 +193,10 @@ export const partnerRepository = {
   async courtByPartner(courtId: string, partnerId: string) {
     const court = await prisma.court.findFirst({
       where: { id: courtId, partnerId },
-      include: { category: true, images: true, prices: true, services: true, surfaces: { where: { status: "ACTIVE" }, orderBy: { sortOrder: "asc" } } }
+      include: { category: true, images: true, prices: true, services: true, surfaces: { orderBy: [{ sortOrder: "asc" }, { code: "asc" }] } }
     });
-    return attachCourtDeposit(court);
-  },
-
-  courtSurfaceByPartner(courtSurfaceId: string, partnerId: string) {
-    return prisma.courtSurface.findFirst({
-      where: { id: courtSurfaceId, status: "ACTIVE", court: { partnerId } },
-      include: { court: { include: { category: true, images: { orderBy: { sortOrder: "asc" }, take: 1 } } } }
-    });
+    if (!court) return null;
+    return attachCourtDeposit(await ensureCourtSurfaces(court));
   },
 
   async createCourt(data: Prisma.CourtUncheckedCreateInput, depositPercent?: number | null) {
@@ -302,78 +323,81 @@ export const partnerRepository = {
     });
   },
 
-  operationCourts(partnerId: string, date: Date) {
-    return prisma.court.findMany({
-      where: { partnerId },
-      include: {
-        category: true,
-        images: { orderBy: { sortOrder: "asc" }, take: 1 },
-        surfaces: { where: { status: "ACTIVE" }, orderBy: { sortOrder: "asc" } },
-        bookings: {
-          where: {
-            bookingDate: date,
-            bookingStatus: { in: ["PENDING", "CONFIRMED"] }
-          },
-          include: { user: { select: { id: true, fullName: true, phone: true, email: true } }, courtSurface: true },
-          orderBy: { startTime: "asc" }
-        }
-      },
-      orderBy: { name: "asc" }
+  courtSurfaces(courtId: string) {
+    return prisma.courtSurface.findMany({
+      where: { courtId },
+      orderBy: [{ sortOrder: "asc" }, { code: "asc" }]
     });
   },
 
-  findScheduleConflict(courtId: string, courtSurfaceId: string | null | undefined, date: Date, startTime: Date, endTime: Date, excludeBookingId?: string) {
-    return prisma.booking.findFirst({
+  courtSurfaceByPartner(surfaceId: string, courtId: string, partnerId: string) {
+    return prisma.courtSurface.findFirst({
+      where: { id: surfaceId, courtId, court: { partnerId } }
+    });
+  },
+
+  updateCourtSurfaceStatus(surfaceId: string, status: "ACTIVE" | "INACTIVE") {
+    return prisma.courtSurface.update({ where: { id: surfaceId }, data: { status } });
+  },
+
+  courtBlocks(courtId: string) {
+    return prisma.courtAvailabilityBlock.findMany({
+      where: { courtId, status: "ACTIVE" },
+      include: { courtSurface: { select: { id: true, name: true, code: true } } },
+      orderBy: [{ blockDate: "asc" }, { startTime: "asc" }]
+    });
+  },
+
+  courtDayBookings(courtId: string, date: Date) {
+    return prisma.booking.findMany({
       where: {
-        id: excludeBookingId ? { not: excludeBookingId } : undefined,
         courtId,
-        OR: courtSurfaceId ? [{ courtSurfaceId }, { courtSurfaceId: null }] : undefined,
         bookingDate: date,
-        bookingStatus: { in: ["PENDING", "CONFIRMED"] },
-        startTime: { lt: endTime },
-        endTime: { gt: startTime }
+        bookingStatus: { notIn: ["CANCELLED", "NO_SHOW"] }
       },
-      include: { user: { select: { fullName: true, phone: true } }, court: { select: { id: true, name: true } } }
+      select: { id: true, startTime: true, endTime: true, bookingStatus: true, courtSurfaceId: true, payments: { select: { expiresAt: true, status: true } } },
+      orderBy: { startTime: "asc" }
     });
   },
 
-  extendBooking(bookingId: string, endTime: Date, pricing: { basePrice: number; dynamicAdjustmentAmount: number; subtotal: number; totalPrice: number }) {
-    return prisma.booking.update({
-      where: { id: bookingId },
-      data: {
-        endTime,
-        basePrice: { increment: pricing.basePrice },
-        dynamicAdjustmentAmount: { increment: pricing.dynamicAdjustmentAmount },
-        subtotal: { increment: pricing.subtotal },
-        totalPrice: { increment: pricing.totalPrice }
+  courtDayBookingSlots(courtId: string, date: Date) {
+    return prisma.bookingSlot.findMany({
+      where: {
+        courtId,
+        bookingDate: date,
+        booking: { bookingStatus: { notIn: ["CANCELLED", "NO_SHOW"] } }
       },
-      include: { court: true, user: { select: { id: true, fullName: true, phone: true } } }
+      select: {
+        id: true,
+        bookingId: true,
+        startTime: true,
+        endTime: true,
+        court_surface_id: true,
+        booking: { select: { bookingStatus: true, payments: { select: { expiresAt: true, status: true } } } }
+      },
+      orderBy: { startTime: "asc" }
     });
   },
 
-  earlyCheckInBooking(bookingId: string, oldStartTime: Date, startTime: Date, pricing: { basePrice: number; dynamicAdjustmentAmount: number; subtotal: number; totalPrice: number }) {
-    return prisma.$transaction(async (tx) => {
-      const booking = await tx.booking.update({
-        where: { id: bookingId },
-        data: {
-          startTime,
-          basePrice: { increment: pricing.basePrice },
-          dynamicAdjustmentAmount: { increment: pricing.dynamicAdjustmentAmount },
-          subtotal: { increment: pricing.subtotal },
-          totalPrice: { increment: pricing.totalPrice }
-        },
-        include: { court: true, user: { select: { id: true, fullName: true, phone: true } } }
-      });
+  courtDayBlocks(courtId: string, date: Date) {
+    return prisma.courtAvailabilityBlock.findMany({
+      where: { courtId, blockDate: date, status: "ACTIVE" },
+      select: { id: true, startTime: true, endTime: true, reason: true, courtSurfaceId: true },
+      orderBy: { startTime: "asc" }
+    });
+  },
 
-      await tx.bookingSlot.updateMany({
-        where: { bookingId, startTime: oldStartTime },
-        data: {
-          startTime,
-          slotPrice: { increment: pricing.totalPrice }
-        }
-      });
+  createCourtBlock(data: Prisma.CourtAvailabilityBlockUncheckedCreateInput) {
+    return prisma.courtAvailabilityBlock.create({ data });
+  },
 
-      return booking;
+  createCourtBlocks(data: Prisma.CourtAvailabilityBlockCreateManyInput[]) {
+    return prisma.courtAvailabilityBlock.createMany({ data });
+  },
+
+  blockByCourtAndPartner(blockId: string, courtId: string, partnerId: string) {
+    return prisma.courtAvailabilityBlock.findFirst({
+      where: { id: blockId, courtId, court: { partnerId } }
     });
   },
 

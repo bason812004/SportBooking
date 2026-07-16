@@ -40,7 +40,10 @@ const envSchema = z.object({
   PAYMENT_BANK_ACCOUNT: z.string().default("0986966745"),
   PAYMENT_BANK_OWNER: z.string().default("NGUYEN BA SON"),
   PAYMENT_QR_EXPIRES_MINUTES: z.coerce.number().int().positive().default(15),
-  BOOKING_HOLD_EXPIRES_MINUTES: z.coerce.number().int().positive().default(15)
+  BOOKING_HOLD_EXPIRES_MINUTES: z.coerce.number().int().positive().default(15),
+  ML_SERVICE_URL: z.string().optional(),
+  ML_SERVICE_TIMEOUT_MS: z.coerce.number().int().positive().default(2000),
+  ML_MIN_HISTORY: z.coerce.number().int().positive().default(50)
 });
 
 export const env = envSchema.parse(process.env);

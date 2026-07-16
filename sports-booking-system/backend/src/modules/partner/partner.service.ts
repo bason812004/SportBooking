@@ -3,7 +3,7 @@ import { prisma } from "../../config/db.js";
 import { ForbiddenError, NotFoundError, ValidationError, ConflictError } from "../../shared/errors/AppError.js";
 import { cloudinaryService } from "../../shared/services/cloudinary.service.js";
 import { paginationMeta } from "../../shared/utils/response.js";
-import { bookingStartsAt, durationHours, parseLimit, parsePage, timeToDate, timeToMinutes, toDbDate } from "../../shared/utils/time.js";
+import { bookingStartsAt, parseLimit, parsePage, timeToDate, timeToMinutes, toDbDate } from "../../shared/utils/time.js";
 import { uniqueSlug } from "../../shared/utils/slug.js";
 import { commissionService } from "../commission/commission.service.js";
 import { dynamicPricingService } from "../dynamic-pricing/dynamicPricing.service.js";
@@ -20,35 +20,6 @@ async function getProfile(userId: string) {
 
 function dbTime(value: Date) {
   return value.toISOString().slice(11, 16);
-}
-
-function normalizePhone(value: string) {
-  return value.trim().replace(/[^\d+]/g, "");
-}
-
-function addMinutes(time: Date, minutes: number) {
-  const next = new Date(time);
-  next.setUTCMinutes(next.getUTCMinutes() + minutes);
-  return next;
-}
-
-function bookingCode() {
-  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
-  return `CB${stamp}${Math.floor(Math.random() * 900 + 100)}`;
-}
-
-const extendableBookingStatuses: BookingStatus[] = [BookingStatus.PENDING, BookingStatus.CONFIRMED];
-
-async function pricingFor(courtId: string, date: string, startTime: string, endTime: string) {
-  const dynamicPrice = await dynamicPricingService.calculate(courtId, { date, startTime, endTime });
-  const hours = durationHours(startTime, endTime);
-  const subtotal = dynamicPrice.finalPrice * hours;
-  return {
-    basePrice: dynamicPrice.basePrice * hours,
-    dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
-    subtotal,
-    totalPrice: subtotal
-  };
 }
 
 export const partnerService = {
@@ -105,7 +76,8 @@ export const partnerService = {
 
   async courts(userId: string) {
     const profile = await getProfile(userId);
-    return partnerRepository.listCourts(profile.id);
+    const courts = await partnerRepository.listCourts(profile.id);
+    return courts.map(({ _count, ...court }) => ({ ...court, surfaceCount: _count.surfaces }));
   },
 
   async courtDetail(userId: string, courtId: string) {
@@ -646,6 +618,75 @@ export const partnerService = {
     const profile = await getProfile(userId);
     if (query.fromDate > query.toDate) throw new ValidationError("Khoang ngay khong hop le");
     return partnerRepository.calendar(profile.id, toDbDate(query.fromDate), toDbDate(query.toDate), query.courtId);
+  },
+
+  async courtAvailabilityGrid(userId: string, courtId: string, date: string) {
+    const profile = await getProfile(userId);
+    const court = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!court) throw new NotFoundError("Khong tim thay san cua ban");
+
+    const dbDate = toDbDate(date);
+    const [bookings, bookingSlotsRaw, blocks] = await Promise.all([
+      partnerRepository.courtDayBookings(courtId, dbDate),
+      partnerRepository.courtDayBookingSlots(courtId, dbDate),
+      partnerRepository.courtDayBlocks(courtId, dbDate)
+    ]);
+    const bookingSlots = bookingSlotsRaw.map((bookingSlot) => ({ ...bookingSlot, courtSurfaceId: bookingSlot.court_surface_id }));
+
+    return (court.surfaces ?? []).map((surface) => ({
+      surfaceId: surface.id,
+      surfaceName: surface.name,
+      code: surface.code,
+      status: surface.status,
+      slots: buildSlotGrid({
+        date,
+        openingTime: court.openingTime,
+        closingTime: court.closingTime,
+        bookings,
+        bookingSlots,
+        blocks,
+        prices: court.prices,
+        courtSurfaceId: surface.id
+      })
+    }));
+  },
+
+  async createCourtBlockBulk(
+    userId: string,
+    courtId: string,
+    input: { courtSurfaceId?: string | null; startDate: string; endDate: string; weekdays?: number[]; startTime: string; endTime: string; reason?: string }
+  ) {
+    const profile = await getProfile(userId);
+    const court = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!court) throw new NotFoundError("Khong tim thay san cua ban");
+    if (timeToMinutes(input.startTime) >= timeToMinutes(input.endTime)) throw new ValidationError("Gio ket thuc phai sau gio bat dau");
+    if (input.startDate > input.endDate) throw new ValidationError("Ngay bat dau phai truoc hoac bang ngay ket thuc");
+    if (input.courtSurfaceId && !court.surfaces.some((surface) => surface.id === input.courtSurfaceId)) {
+      throw new NotFoundError("San con khong thuoc cum san nay");
+    }
+
+    const weekdaySet = input.weekdays && input.weekdays.length ? new Set(input.weekdays) : null;
+    const dates: string[] = [];
+    const cursor = new Date(`${input.startDate}T00:00:00.000Z`);
+    const end = new Date(`${input.endDate}T00:00:00.000Z`);
+    while (cursor <= end) {
+      if (!weekdaySet || weekdaySet.has(cursor.getUTCDay())) dates.push(cursor.toISOString().slice(0, 10));
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+      if (dates.length > MAX_BULK_BLOCK_DAYS) throw new ValidationError(`Chi duoc chan toi da ${MAX_BULK_BLOCK_DAYS} ngay moi lan`);
+    }
+    if (!dates.length) throw new ValidationError("Khong co ngay nao phu hop trong khoang da chon");
+
+    const result = await partnerRepository.createCourtBlocks(
+      dates.map((blockDate) => ({
+        courtId,
+        courtSurfaceId: input.courtSurfaceId ?? null,
+        blockDate: toDbDate(blockDate),
+        startTime: timeToDate(input.startTime),
+        endTime: timeToDate(input.endTime),
+        reason: input.reason
+      }))
+    );
+    return { created: result.count };
   },
 
   async vouchers(userId: string) {

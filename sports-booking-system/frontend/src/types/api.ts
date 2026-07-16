@@ -52,6 +52,7 @@ export type Court = {
   sourceUrl?: string;
   verified?: boolean;
   courtCount?: number;
+  surfaceCount?: number;
   priceNote?: string;
   goldenPriceNote?: string;
   depositPercent?: number | null;

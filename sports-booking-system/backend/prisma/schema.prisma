@@ -597,21 +597,24 @@ model Booking {
   bookingStatus            BookingStatus @default(PENDING) @map("booking_status")
   cancelReason             String?       @map("cancel_reason")
   note                     String?
-  cancelledAt              DateTime?     @map("cancelled_at") @db.Timestamptz
-  adminNote                String?       @map("admin_note")
-  createdAt                DateTime      @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt                DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
-
-  user                   User                    @relation(fields: [userId], references: [id])
-  court                  Court                   @relation(fields: [courtId], references: [id])
-  courtSurface           CourtSurface?           @relation(fields: [courtSurfaceId], references: [id], onDelete: SetNull)
-  bookingServices        BookingService[]
-  bookingSlots           BookingSlot[]
-  payments               Payment[]
-  review                 Review?
-  commissionTransactions CommissionTransaction[]
-  bookingVoucher         BookingVoucher?
-  booking_admin_actions  booking_admin_actions[]
+  createdAt                DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  depositAmount            Decimal                 @default(0) @map("deposit_amount") @db.Decimal(12, 2)
+  refundAmount             Decimal                 @default(0) @map("refund_amount") @db.Decimal(12, 2)
+  platformRetainedAmount   Decimal                 @default(0) @map("platform_retained_amount") @db.Decimal(12, 2)
+  cancelledAt              DateTime?               @map("cancelled_at") @db.Timestamptz(6)
+  adminNote                String?                 @map("admin_note")
+  courtSurfaceId           String?                 @map("court_surface_id") @db.VarChar(20)
+  booking_admin_actions    booking_admin_actions[]
+  bookingServices          BookingService[]
+  bookingSlots             BookingSlot[]
+  bookingVoucher           BookingVoucher?
+  payments                 Payment[]
+  court                    Court                   @relation(fields: [courtId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  courtSurface             CourtSurface?           @relation(fields: [courtSurfaceId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user                     User                    @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  commissionTransactions   CommissionTransaction[]
+  review                   Review?
 
   @@index([userId], map: "idx_bookings_user_id")
   @@index([courtId], map: "idx_bookings_court_id")
@@ -679,8 +682,7 @@ model Payment {
   createdAt             DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   transactions          PaymentTransaction[]
-  booking               Booking              @relation(fields: [bookingId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  user                  User                 @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  booking               Booking              @relation(fields: [bookingId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([bookingId], map: "idx_payments_booking_id")
   @@index([userId], map: "idx_payments_user_id")

@@ -16,5 +16,8 @@ dist/
 # TypeScript cache
 *.tsbuildinfo
 
-
-**/.prisma/
+# ML training artifacts (generated locally, may contain real booking data)
+ml/.venv/
+ml/**/__pycache__/
+ml/models/*.csv
+ml/models/*.joblib

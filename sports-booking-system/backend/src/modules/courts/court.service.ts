@@ -1,6 +1,7 @@
 import { NotFoundError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
-import { ceilToFullHour, dayTypeFor, floorToFullHour, parseLimit, parsePage, timeToMinutes } from "../../shared/utils/time.js";
+import { parseLimit, parsePage } from "../../shared/utils/time.js";
+import { buildSlotGrid } from "../../shared/utils/slotGrid.js";
 import { calculateDistanceKm } from "../bookings/booking.calculations.js";
 import { reviewRepository } from "../reviews/review.repository.js";
 import { courtRepository } from "./court.repository.js";
@@ -42,47 +43,6 @@ function ratingBreakdown(reviews: { rating: number }[]) {
 
 function timeText(value: Date) {
   return value.toISOString().slice(11, 16);
-}
-
-function minutesToTime(totalMinutes: number) {
-  const hours = Math.floor(totalMinutes / 60).toString().padStart(2, "0");
-  const minutes = (totalMinutes % 60).toString().padStart(2, "0");
-  return `${hours}:${minutes}`;
-}
-
-function overlaps(slot: { startTime: string; endTime: string }, item: { startTime: Date; endTime: Date }) {
-  return timeToMinutes(slot.startTime) < timeToMinutes(timeText(item.endTime)) && timeToMinutes(slot.endTime) > timeToMinutes(timeText(item.startTime));
-}
-
-function slotPrice(
-  slot: { startTime: string; endTime: string },
-  date: string,
-  prices: Array<{ dayType: string; startTime: Date; endTime: Date; price: unknown }>
-) {
-  const dayType = dayTypeFor(date);
-  const matched = prices.find(
-    (price) =>
-      price.dayType === dayType &&
-      timeToMinutes(slot.startTime) >= timeToMinutes(timeText(price.startTime)) &&
-      timeToMinutes(slot.endTime) <= timeToMinutes(timeText(price.endTime))
-  );
-  if (matched) return Number(matched.price);
-  return prices.length ? Math.min(...prices.map((price) => Number(price.price))) : 0;
-}
-
-function isExpiredPaymentHold(item: { payments?: Array<{ expiresAt: Date; status: string }> }) {
-  if (!item.payments || item.payments.length === 0) return false;
-  const activePayment = item.payments.find((payment) => payment.status === "PENDING" || payment.status === "UNPAID");
-  if (!activePayment) return true;
-  return activePayment.expiresAt.getTime() <= Date.now();
-}
-
-function bookingSlotStatus(item: { bookingStatus: string; payments?: Array<{ expiresAt: Date; status: string }> }) {
-  if (item.bookingStatus === "PENDING" || item.bookingStatus === "PENDING_PAYMENT") {
-    return isExpiredPaymentHold(item) ? "AVAILABLE" : "PENDING_PAYMENT";
-  }
-  if (item.bookingStatus === "CONFIRMED" || item.bookingStatus === "COMPLETED") return "BOOKED";
-  return "AVAILABLE";
 }
 
 export const courtService = {
@@ -129,38 +89,15 @@ export const courtService = {
       courtRepository.bookingSlots(id, date, courtSurfaceId),
       courtRepository.availabilityBlocks(id, date)
     ]);
-    const slots = [];
-    const opening = ceilToFullHour(timeToMinutes(timeText(court.openingTime)));
-    const closing = floorToFullHour(timeToMinutes(timeText(court.closingTime)));
-
-    for (let cursor = opening; cursor < closing; cursor += 60) {
-      const slot = { startTime: minutesToTime(cursor), endTime: minutesToTime(cursor + 60) };
-      const matchedBookingSlots = bookingSlots.filter((bookingSlot) => overlaps(slot, bookingSlot));
-      const matchedBookings = bookings.filter((booking) => overlaps(slot, booking));
-      const isBlocked = blocks.some((block) => overlaps(slot, block));
-      const price = slotPrice(slot, date, court.prices);
-
-      let status = "AVAILABLE";
-      if (isBlocked) {
-        status = "BLOCKED";
-      } else {
-        const statuses = [
-          ...matchedBookingSlots.map(bs => bookingSlotStatus({ bookingStatus: bs.booking.bookingStatus, payments: bs.booking.payments })),
-          ...matchedBookings.map(b => bookingSlotStatus(b))
-        ];
-        if (statuses.includes("BOOKED")) {
-          status = "BOOKED";
-        } else if (statuses.includes("PENDING_PAYMENT")) {
-          status = "PENDING_PAYMENT";
-        }
-      }
-
-      const activeSlot = matchedBookingSlots.find(bs => bookingSlotStatus({ bookingStatus: bs.booking.bookingStatus, payments: bs.booking.payments }) !== "AVAILABLE") || matchedBookingSlots[0];
-      const activeBooking = matchedBookings.find(b => bookingSlotStatus(b) !== "AVAILABLE") || matchedBookings[0];
-      const bookingId = activeSlot?.bookingId ?? activeBooking?.id ?? null;
-
-      slots.push({ ...slot, status, price, bookingId });
-    }
+    const slots = buildSlotGrid({
+      date,
+      openingTime: court.openingTime,
+      closingTime: court.closingTime,
+      bookings,
+      bookingSlots,
+      blocks,
+      prices: court.prices
+    });
 
     return {
       courtId: id,

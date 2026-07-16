@@ -13,6 +13,77 @@ import type {
   PartnerVoucher
 } from "../../../types/api";
 
+export type PartnerCourtSurface = {
+  id: string;
+  courtId: string;
+  code: string;
+  name: string;
+  capacity?: string | null;
+  surface?: string | null;
+  size?: string | null;
+  imageUrl?: string | null;
+  status: "ACTIVE" | "INACTIVE";
+  sortOrder: number;
+};
+
+export type PartnerCourtBlock = {
+  id: string;
+  courtId: string;
+  courtSurfaceId: string | null;
+  courtSurface: { id: string; name: string; code: string } | null;
+  blockDate: string;
+  startTime: string;
+  endTime: string;
+  reason?: string | null;
+  status: "ACTIVE" | "INACTIVE";
+};
+
+export type PartnerSurfaceSlot = {
+  startTime: string;
+  endTime: string;
+  status: "AVAILABLE" | "PENDING_PAYMENT" | "BOOKED" | "BLOCKED";
+  price: number;
+  bookingId: string | null;
+  blockId: string | null;
+};
+
+export type PartnerSurfaceGrid = {
+  surfaceId: string;
+  surfaceName: string;
+  code: string;
+  status: "ACTIVE" | "INACTIVE";
+  slots: PartnerSurfaceSlot[];
+};
+
+export type PartnerCourtBlockBulkPayload = {
+  courtSurfaceId?: string | null;
+  startDate: string;
+  endDate: string;
+  weekdays?: number[];
+  startTime: string;
+  endTime: string;
+  reason?: string;
+};
+
+export type PartnerCalendarBooking = {
+  id: string;
+  bookingDate: string;
+  startTime: string;
+  endTime: string;
+  bookingStatus: string;
+  paymentStatus: string;
+  totalPrice: string;
+  courtSurfaceId: string | null;
+  courtSurface: { id: string; name: string; code: string } | null;
+  court: { id: string; name: string };
+  user: { fullName: string; phone?: string | null } | null;
+};
+
+export type PartnerCalendar = {
+  court: { openingTime: string; closingTime: string };
+  items: PartnerCalendarBooking[];
+};
+
 export type PartnerVoucherPayload = {
   courtId?: string | null;
   code: string;
@@ -129,34 +200,42 @@ export const partnerApi = {
     const { data } = await api.put<ApiResponse<Booking>>(`/partner/bookings/${id}/${action}`);
     return data.data;
   },
-  async extendBooking(id: string, minutes: number) {
-    const { data } = await api.post<ApiResponse<Booking>>(`/partner/bookings/${id}/extend`, { minutes });
-    return data.data;
-  },
-  async earlyCheckInBooking(id: string) {
-    const { data } = await api.post<ApiResponse<Booking>>(`/partner/bookings/${id}/early-check-in`);
-    return data.data;
-  },
-  async earlyCheckOutBooking(id: string) {
-    const { data } = await api.post<ApiResponse<Booking>>(`/partner/bookings/${id}/early-check-out`);
-    return data.data;
-  },
-  async continueBooking(id: string, targetCourtSurfaceId: string, minutes: number) {
-    const { data } = await api.post<ApiResponse<Booking>>(`/partner/bookings/${id}/continue`, { targetCourtSurfaceId, minutes });
-    return data.data;
-  },
-  async createWalkInBooking(payload: WalkInBookingPayload) {
-    const { data } = await api.post<ApiResponse<Booking>>("/partner/operations/walk-in-booking", payload);
-    return data.data;
-  },
   async revenue(month: string) {
     const { data } = await api.get<ApiResponse<PartnerRevenueReport>>("/partner/statistics/revenue", {
       params: { month }
     });
     return data.data;
   },
-  async calendar(params: { fromDate: string; toDate: string; courtId?: string }) {
-    const { data } = await api.get<ApiResponse<Booking[]>>("/partner/calendar", { params });
+  async calendar(params: { fromDate: string; toDate: string; courtId: string }) {
+    const { data } = await api.get<ApiResponse<PartnerCalendar>>("/partner/calendar", { params });
+    return data.data;
+  },
+  async courtSurfaces(courtId: string) {
+    const { data } = await api.get<ApiResponse<PartnerCourtSurface[]>>(`/partner/courts/${courtId}/surfaces`);
+    return data.data;
+  },
+  async updateCourtSurfaceStatus(courtId: string, surfaceId: string, status: "ACTIVE" | "INACTIVE") {
+    const { data } = await api.put<ApiResponse<PartnerCourtSurface>>(`/partner/courts/${courtId}/surfaces/${surfaceId}/status`, { status });
+    return data.data;
+  },
+  async courtBlocks(courtId: string) {
+    const { data } = await api.get<ApiResponse<PartnerCourtBlock[]>>(`/partner/courts/${courtId}/blocks`);
+    return data.data;
+  },
+  async createCourtBlock(courtId: string, payload: { courtSurfaceId?: string | null; blockDate: string; startTime: string; endTime: string; reason?: string }) {
+    const { data } = await api.post<ApiResponse<PartnerCourtBlock>>(`/partner/courts/${courtId}/blocks`, payload);
+    return data.data;
+  },
+  async cancelCourtBlock(courtId: string, blockId: string) {
+    const { data } = await api.delete<ApiResponse<PartnerCourtBlock>>(`/partner/courts/${courtId}/blocks/${blockId}`);
+    return data.data;
+  },
+  async courtAvailabilityGrid(courtId: string, date: string) {
+    const { data } = await api.get<ApiResponse<PartnerSurfaceGrid[]>>(`/partner/courts/${courtId}/availability-grid`, { params: { date } });
+    return data.data;
+  },
+  async createCourtBlockBulk(courtId: string, payload: PartnerCourtBlockBulkPayload) {
+    const { data } = await api.post<ApiResponse<{ created: number }>>(`/partner/courts/${courtId}/blocks/bulk`, payload);
     return data.data;
   },
   async vouchers() {

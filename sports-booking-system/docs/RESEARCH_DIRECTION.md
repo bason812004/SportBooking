@@ -48,11 +48,12 @@ If history is below 20 bookings, status is `INSUFFICIENT_DATA`. Otherwise the se
 
 ## Machine learning extension
 
-Future model candidates:
+Implemented: a `RandomForestRegressor` (scikit-learn) trained on exported booking data (`ml/scripts/export_training_data.py` -> `train_demand_model.py` -> `evaluate_model.py`) and served by a small FastAPI process (`ml/serve.py`). The backend calls this service only when a court has at least `ML_MIN_HISTORY` (default 50) historical bookings, and transparently falls back to the Phase 1 rule-based model on any error, timeout, or missing model artifact — the rule-based path is never removed, only superseded when enough data and a healthy model service are both available. Each stored prediction records `model_version` (`rule-based-v1` or `ml-random-forest-v1`) so the two stages are distinguishable in the data.
 
-- RandomForestRegressor for demand score or occupancy rate.
-- Gradient boosting / XGBoost if the dataset becomes large enough.
-- Classification model for demand level: `LOW`, `MEDIUM`, `HIGH`, `VERY_HIGH`.
+Still open, for when the dataset grows:
+
+- Gradient boosting / XGBoost if the dataset becomes large enough to benefit.
+- A dedicated classification model for demand level (currently derived from the regression score via the same thresholds as the rule-based model, for consistency).
 
 ## Evaluation metrics
 
@@ -90,6 +91,6 @@ The platform should support real partner decisions: price adjustment, voucher ca
 
 ## Current limitations
 
-- The current model is rule-based, not a trained ML model.
-- MAE/RMSE require a sufficient held-out historical dataset.
-- Prediction quality depends on booking history volume and data consistency.
+- Per-court booking history is still small (max ~22 bookings for the busiest court at time of writing), below the 50-booking ML threshold, so most live predictions still use the rule-based model until more real bookings accumulate.
+- The first trained model was evaluated on a 70-row export with a 14-row test split (MAE 0.10, RMSE 0.22, level accuracy 100%) — enough to prove the train/serve/fallback pipeline works, not enough to be a statistically meaningful accuracy claim. Re-run `ml/scripts/evaluate_model.py` as data grows and report fresh numbers.
+- The regression target is itself a deterministic function of the input features (see `demand_score()` in `train_demand_model.py`), not an independently observed outcome — the model currently learns to approximate the rule-based formula. A genuine ML upgrade path is to retarget training on an actual observed outcome (e.g., next-period occupancy) once enough historical periods exist.

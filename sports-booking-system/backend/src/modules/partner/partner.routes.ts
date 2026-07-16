@@ -6,6 +6,12 @@ import { requireRole } from "../../middlewares/role.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
 import {
   courtWriteSchema,
+  courtStatusSchema,
+  courtSurfaceStatusSchema,
+  courtBlockWriteSchema,
+  courtBlockParamsSchema,
+  courtBlockBulkWriteSchema,
+  courtAvailabilityGridQuerySchema,
   bookingQuerySchema,
   blogCommentsToggleSchema,
   blogWriteSchema,
@@ -38,6 +44,12 @@ partnerRoutes.post("/courts", validate(courtWriteSchema), partnerController.crea
 partnerRoutes.get("/courts/:id", partnerController.courtDetail);
 partnerRoutes.put("/courts/:id", validate(courtWriteSchema.partial()), partnerController.updateCourt);
 partnerRoutes.delete("/courts/:id", partnerController.deactivateCourt);
+partnerRoutes.put("/courts/:id/status", validate(courtStatusSchema), partnerController.updateCourtStatus);
+partnerRoutes.get("/courts/:id/availability-grid", validate(courtAvailabilityGridQuerySchema), partnerController.courtAvailabilityGrid);
+partnerRoutes.get("/courts/:id/blocks", partnerController.courtBlocks);
+partnerRoutes.post("/courts/:id/blocks", validate(courtBlockWriteSchema), partnerController.createCourtBlock);
+partnerRoutes.post("/courts/:id/blocks/bulk", validate(courtBlockBulkWriteSchema), partnerController.createCourtBlockBulk);
+partnerRoutes.delete("/courts/:id/blocks/:blockId", validate(courtBlockParamsSchema), partnerController.cancelCourtBlock);
 partnerRoutes.post("/courts/:id/images", upload.single("image"), validate(imageSchema), partnerController.addImage);
 partnerRoutes.delete("/images/:imageId", partnerController.deleteImage);
 partnerRoutes.put("/courts/:id/images/order", validate(imageOrderSchema), partnerController.reorderImages);
