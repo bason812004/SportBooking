@@ -72,6 +72,11 @@ export function PartnerBlogsPage() {
                     {allowComments ? "Bật bình luận" : "Tắt bình luận"}
                   </span>
                 </div>
+                {blog.status === "REJECTED" && blog.rejectionReason && (
+                  <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-800">
+                    Lý do từ chối: {blog.rejectionReason}
+                  </p>
+                )}
                 <h2 className="mt-2 font-bold">{blog.title}</h2>
                 <p className="text-sm text-slate-600">{new Date(blog.createdAt).toLocaleDateString("vi-VN")}</p>
               </div>

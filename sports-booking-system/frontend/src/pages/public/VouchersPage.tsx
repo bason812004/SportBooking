@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { CalendarDays, Check, Copy, Gift, Loader2, LockKeyhole, MapPin, TicketPercent } from "lucide-react";
+import { CalendarDays, Check, Clock3, Copy, Gift, Loader2, LockKeyhole, MapPin, Tag, TicketPercent } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -12,10 +12,69 @@ import { useAuth } from "../../features/auth/hooks/useAuth";
 import type { UserVoucherStatus, Voucher } from "../../types/api";
 
 const currency = new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 });
-const dateFormat = new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
+
+const DAY_LABELS_VI: Record<string, string> = {
+  MONDAY: "Thứ Hai", TUESDAY: "Thứ Ba", WEDNESDAY: "Thứ Tư", THURSDAY: "Thứ Năm",
+  FRIDAY: "Thứ Sáu", SATURDAY: "Thứ Bảy", SUNDAY: "Chủ Nhật"
+};
+const DAY_LABELS_EN: Record<string, string> = {
+  MONDAY: "Monday", TUESDAY: "Tuesday", WEDNESDAY: "Wednesday", THURSDAY: "Thursday",
+  FRIDAY: "Friday", SATURDAY: "Saturday", SUNDAY: "Sunday"
+};
 
 function formatDiscount(type: string, value: number) {
   return type === "PERCENTAGE" ? `Giảm ${value}%` : `Giảm ${currency.format(value)}`;
+}
+
+function formatDayLabels(raw?: string | null, lang: "vi" | "en" = "vi") {
+  if (!raw) return null;
+  const labels = lang === "en" ? DAY_LABELS_EN : DAY_LABELS_VI;
+  return raw
+    .split(",")
+    .map((day) => labels[day.trim().toUpperCase()] ?? day.trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function describeConditions(voucher: Voucher, lang: "vi" | "en" = "vi") {
+  const labels = {
+    anyDay: lang === "en" ? "Any day" : "Mọi ngày",
+    holidayOnly: lang === "en" ? "Holidays only" : "Chỉ áp dụng ngày lễ",
+    anyTime: lang === "en" ? "Any time" : "Mọi khung giờ",
+    minBooking: lang === "en" ? "Min order" : "Đơn tối thiểu",
+    scopeCourt: lang === "en" ? "Court" : "Sân",
+    scopePlatform: lang === "en" ? "System-wide" : "Toàn hệ thống"
+  };
+
+  const out: { icon: "day" | "time" | "min" | "scope" | "holiday"; text: string }[] = [];
+
+  if (voucher.holidayOnly) {
+    out.push({ icon: "holiday", text: labels.holidayOnly });
+  } else if (voucher.applicableDays) {
+    out.push({ icon: "day", text: formatDayLabels(voucher.applicableDays, lang) ?? labels.anyDay });
+  } else {
+    out.push({ icon: "day", text: labels.anyDay });
+  }
+
+  if (!voucher.holidayOnly && (voucher.startTime || voucher.endTime)) {
+    out.push({
+      icon: "time",
+      text: `${(voucher.startTime ?? "00:00").slice(0, 5)} - ${(voucher.endTime ?? "23:59").slice(0, 5)}`
+    });
+  } else if (!voucher.holidayOnly) {
+    out.push({ icon: "time", text: labels.anyTime });
+  }
+
+  out.push({ icon: "min", text: `${labels.minBooking}: ${currency.format(voucher.minBookingAmount)}` });
+
+  out.push({
+    icon: "scope",
+    text: voucher.court?.id
+      ? `${labels.scopeCourt}: ${voucher.court.district ? `${voucher.court.name}, ${voucher.court.district}` : voucher.court.name}`
+      : labels.scopePlatform
+  });
+
+  return out;
 }
 
 function claimLabel(status?: UserVoucherStatus) {
@@ -68,10 +127,13 @@ export function VouchersPage() {
     try {
       await voucherApi.claim(voucherId);
       setLocalClaimedIds((prev) => new Set([...prev, voucherId]));
-      await queryClient.invalidateQueries({ queryKey: ["my-vouchers"] });
+      // Realtime invalidation: claim updates usedCount and unlocks user-vouchers
+      void queryClient.invalidateQueries({ queryKey: ["my-vouchers"] });
+      void queryClient.invalidateQueries({ queryKey: ["active-vouchers"] });
+      void queryClient.invalidateQueries({ queryKey: ["public-vouchers"] });
       toast.success("Nhận voucher thành công. Voucher đã được lưu vào kho của bạn.");
     } catch (e) {
-      await queryClient.invalidateQueries({ queryKey: ["my-vouchers"] });
+      void queryClient.invalidateQueries({ queryKey: ["my-vouchers"] });
       toast.error(e instanceof Error ? e.message : "Không thể nhận voucher.");
     } finally {
       setClaimingId(null);
@@ -115,7 +177,7 @@ export function VouchersPage() {
               </div>
               <h1 className="mt-5 max-w-2xl text-4xl font-black tracking-tight md:text-5xl">Voucher đặt sân hôm nay</h1>
               <p className="mt-3 max-w-2xl text-slate-300">
-                Nhận voucher vào kho cá nhân, sau đó áp dụng khi đặt sân. 
+                Nhận voucher vào kho cá nhân, sau đó áp dụng khi đặt sân.
               </p>
             </div>
             <div className="rounded-3xl bg-white/10 px-6 py-4 text-center">
@@ -136,6 +198,8 @@ export function VouchersPage() {
               const status = claimedStatus.get(voucher.id);
               const claimedText = claimLabel(status);
               const isClaimed = Boolean(claimedText);
+              const conditions = describeConditions(voucher, "vi");
+              const isExhausted = remaining === 0;
               return (
                 <motion.article
                   key={voucher.id}
@@ -155,6 +219,11 @@ export function VouchersPage() {
                     <div className="absolute left-4 top-4 rounded-full bg-amber-300 px-3 py-1 text-xs font-black text-slate-950">
                       {formatDiscount(voucher.discountType, voucher.discountValue)}
                     </div>
+                    {voucher.fundedBy && voucher.fundedBy !== "PARTNER" && (
+                      <div className="absolute right-4 top-4 rounded-full bg-white/95 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-slate-700 shadow">
+                        {voucher.fundedBy === "PLATFORM" ? "Hệ thống" : "Chia sẻ"}
+                      </div>
+                    )}
                   </div>
                   <div className="space-y-4 p-5">
                     <div>
@@ -175,16 +244,21 @@ export function VouchersPage() {
                       </div>
                       <p className="mt-2 text-xs text-slate-500">Đơn tối thiểu {currency.format(voucher.minBookingAmount)}</p>
                     </div>
-                    <div className="space-y-2 text-sm text-slate-600">
-                      <p className="flex items-center gap-2">
-                        <CalendarDays className="h-4 w-4 text-teal-600" />
-                        Hết hạn {dateFormat.format(new Date(voucher.endDate))}
-                      </p>
-                      <p className="flex items-center gap-2">
-                        <MapPin className="h-4 w-4 text-teal-600" />
-                        {voucher.court ? `${voucher.court.name}, ${voucher.court.district}` : voucher.partner.businessName}
-                      </p>
+
+                    {/* Conditions summary */}
+                    <div className="space-y-1.5 rounded-xl bg-slate-50 px-3 py-2 text-[12px] text-slate-600">
+                      {conditions.map((c, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          {c.icon === "day" && <CalendarDays className="h-3.5 w-3.5 text-teal-600" />}
+                          {c.icon === "time" && <Clock3 className="h-3.5 w-3.5 text-teal-600" />}
+                          {c.icon === "holiday" && <CalendarDays className="h-3.5 w-3.5 text-amber-600" />}
+                          {c.icon === "min" && <Tag className="h-3.5 w-3.5 text-teal-600" />}
+                          {c.icon === "scope" && <MapPin className="h-3.5 w-3.5 text-teal-600" />}
+                          <span className="truncate">{c.text}</span>
+                        </div>
+                      ))}
                     </div>
+
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-semibold text-slate-500">
                         {remaining === null ? "Không giới hạn lượt" : `Còn ${remaining} lượt`}
@@ -199,11 +273,11 @@ export function VouchersPage() {
                           <button
                             type="button"
                             onClick={() => void handleClaim(voucher.id)}
-                            disabled={claimingId === voucher.id || remaining === 0}
+                            disabled={claimingId === voucher.id || isExhausted}
                             className="flex items-center gap-1 rounded-full bg-teal-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-teal-700 disabled:opacity-60"
                           >
                             {claimingId === voucher.id ? <Loader2 className="h-3 w-3 animate-spin" /> : isAuthenticated ? <Gift className="h-3 w-3" /> : <LockKeyhole className="h-3 w-3" />}
-                            {remaining === 0 ? "Hết lượt" : "Nhận voucher"}
+                            {isExhausted ? "Hết lượt" : "Nhận voucher"}
                           </button>
                         )}
                         {voucher.court?.id && (

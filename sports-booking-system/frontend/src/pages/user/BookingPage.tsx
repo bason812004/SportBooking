@@ -23,9 +23,10 @@ import { Button } from "../../components/ui/Button";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { useCourt, useCourtAvailability } from "../../features/courts/hooks/useCourts";
 import { bookingApi, type BookingCheckoutResult, type BookingQuotePayload, type BookingSlotPayload } from "../../features/bookings/api/bookingApi";
-import { useActiveVouchers, useValidateVoucher } from "../../features/bookings/hooks/useVouchers";
-import { formatCurrency, formatDate, timeText } from "../../lib/format";
-import type { Voucher, VoucherValidateResult } from "../../types/api";
+import { useActiveVouchers, useValidateVoucher, useVoucherEligibility } from "../../features/bookings/hooks/useVouchers";
+import { formatCurrency, formatDate, formatDateLong, timeText } from "../../lib/format";
+import { useLanguage } from "../../lib/i18n";
+import type { Voucher, VoucherEligibilityResult, VoucherValidateResult } from "../../types/api";
 
 const TIME_OPTIONS = Array.from({ length: 24 }).map((_, hour) => `${String(hour).padStart(2, "0")}:00`);
 
@@ -57,6 +58,35 @@ export function BookingPage() {
   const availability = useCourtAvailability(courtId, bookingDate);
   const activeVouchers = useActiveVouchers();
   const validateVoucher = useValidateVoucher();
+  const { language } = useLanguage();
+  const firstSlot = selectedSlots[0];
+  const lastSlot = selectedSlots[selectedSlots.length - 1];
+
+  const availableSlotPriceMap = useMemo(() => {
+    return new Map((availability.data?.slots ?? []).map((slot) => [`${slot.startTime}-${slot.endTime}`, Number(slot.price) || 0]));
+  }, [availability.data?.slots]);
+
+  const fallbackCourtSubtotal = useMemo(() => {
+    return selectedSlots.reduce((total, slot) => {
+      const slotHours = Math.max(0, (toMinutes(slot.endTime) - toMinutes(slot.startTime)) / 60);
+      const slotPrice = availableSlotPriceMap.get(`${slot.startTime}-${slot.endTime}`) ?? court.data?.minPrice ?? 0;
+      return total + slotPrice * slotHours;
+    }, 0);
+  }, [availableSlotPriceMap, court.data?.minPrice, selectedSlots]);
+
+  const subtotal = appliedVoucher?.subtotal ?? fallbackCourtSubtotal;
+  const discount = appliedVoucher?.discountAmount ?? 0;
+  const finalTotal = appliedVoucher?.finalTotal ?? subtotal;
+  const paymentAmount = paymentType === "DEPOSIT" ? 0 : paymentType === "PAY_AT_COURT" ? 0 : finalTotal;
+
+  const eligibility = useVoucherEligibility({
+    courtId,
+    bookingDate,
+    startTime: firstSlot?.startTime,
+    endTime: lastSlot?.endTime,
+    subtotal: subtotal,
+    enabled: Boolean(firstSlot && lastSlot && courtId)
+  });
 
   useEffect(() => setSelectedSlots(initialSlots), [initialSlots]);
 
@@ -76,32 +106,17 @@ export function BookingPage() {
     enabled: Boolean(quotePayload)
   });
 
+  const courtSubtotal = quote.data?.courtSubtotal ?? fallbackCourtSubtotal;
+  const minimumDeposit = quote.data?.minimumDepositAmount ?? 0;
+  const requiresDeposit = Boolean(quote.data?.requiresDeposit);
+  const depositPercent = quote.data?.depositPercent ?? 0;
+
   const durationHours = useMemo(() => {
     return selectedSlots.reduce((total, slot) => {
       const slotHours = Math.max(0, (toMinutes(slot.endTime) - toMinutes(slot.startTime)) / 60);
       return total + slotHours;
     }, 0);
   }, [selectedSlots]);
-
-  const availableSlotPriceMap = useMemo(() => {
-    return new Map((availability.data?.slots ?? []).map((slot) => [`${slot.startTime}-${slot.endTime}`, Number(slot.price) || 0]));
-  }, [availability.data?.slots]);
-
-  const fallbackCourtSubtotal = useMemo(() => {
-    return selectedSlots.reduce((total, slot) => {
-      const slotHours = Math.max(0, (toMinutes(slot.endTime) - toMinutes(slot.startTime)) / 60);
-      const slotPrice = availableSlotPriceMap.get(`${slot.startTime}-${slot.endTime}`) ?? court.data?.minPrice ?? 0;
-      return total + slotPrice * slotHours;
-    }, 0);
-  }, [availableSlotPriceMap, court.data?.minPrice, selectedSlots]);
-  const courtSubtotal = quote.data?.courtSubtotal ?? fallbackCourtSubtotal;
-  const subtotal = appliedVoucher?.subtotal ?? quote.data?.subtotal ?? courtSubtotal;
-  const discount = appliedVoucher?.discountAmount ?? quote.data?.voucherDiscountAmount ?? 0;
-  const finalTotal = appliedVoucher?.finalTotal ?? quote.data?.totalAmount ?? subtotal;
-  const minimumDeposit = quote.data?.minimumDepositAmount ?? 0;
-  const requiresDeposit = Boolean(quote.data?.requiresDeposit);
-  const depositPercent = quote.data?.depositPercent ?? 0;
-  const paymentAmount = paymentType === "DEPOSIT" ? minimumDeposit : paymentType === "PAY_AT_COURT" ? 0 : finalTotal;
 
   useEffect(() => {
     if (!quote.data) return;
@@ -239,6 +254,7 @@ export function BookingPage() {
                     onChange={(event) => setBookingDate(event.target.value)}
                     className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
                   />
+                  <span className="mt-1 block text-[11px] font-semibold text-slate-500">Định dạng: {formatDateLong(bookingDate, language)}</span>
                 </label>
                 <div className="rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
                   <span className="font-black">Giờ hoạt động:</span> {openingTime} - {closingTime}
@@ -293,20 +309,21 @@ export function BookingPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">Tóm tắt đơn</p>
-                  <h2 className="mt-1 text-xl font-black text-slate-950">{formatDate(bookingDate)}</h2>
+                  <h2 className="mt-1 text-xl font-black text-slate-950">{formatDateLong(bookingDate, language)}</h2>
                 </div>
                 <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-700">{selectedTimeText}</span>
               </div>
 
               <VoucherPanel
-                vouchers={activeVouchers.data ?? []}
-                loading={activeVouchers.isLoading}
+                vouchers={eligibility.data ?? []}
+                loading={eligibility.isLoading || activeVouchers.isLoading}
                 courtPartnerId={c.partner?.id}
                 courtId={c.id}
                 subtotal={quote.data?.subtotal ?? courtSubtotal}
                 voucherInput={voucherInput}
                 appliedVoucher={appliedVoucher}
                 validating={validateVoucher.isPending}
+                language={language}
                 onChangeVoucherInput={setVoucherInput}
                 onApply={() => applyVoucher({ code: voucherInput.trim() })}
                 onSelect={(voucher) => applyVoucher({ code: voucher.code, voucherId: voucher.id })}
@@ -486,8 +503,8 @@ function PaymentChoice({ active, title, description, onClick }: { active: boolea
   );
 }
 
-function VoucherPanel({ vouchers, loading, courtId, courtPartnerId, subtotal, voucherInput, appliedVoucher, validating, onChangeVoucherInput, onApply, onSelect, onRemove }: {
-  vouchers: Voucher[];
+function VoucherPanel({ vouchers, loading, courtId, courtPartnerId, subtotal, voucherInput, appliedVoucher, validating, language, onChangeVoucherInput, onApply, onSelect, onRemove }: {
+  vouchers: VoucherEligibilityResult[];
   loading: boolean;
   courtId: string;
   courtPartnerId?: string;
@@ -495,27 +512,35 @@ function VoucherPanel({ vouchers, loading, courtId, courtPartnerId, subtotal, vo
   voucherInput: string;
   appliedVoucher: VoucherValidateResult | null;
   validating: boolean;
+  language: "vi" | "en";
   onChangeVoucherInput: (value: string) => void;
   onApply: () => void;
   onSelect: (voucher: Voucher) => void;
   onRemove: () => void;
 }) {
+  const dayLabels = language === "en"
+    ? { MONDAY: "Mon", TUESDAY: "Tue", WEDNESDAY: "Wed", THURSDAY: "Thu", FRIDAY: "Fri", SATURDAY: "Sat", SUNDAY: "Sun" }
+    : { MONDAY: "T2", TUESDAY: "T3", WEDNESDAY: "T4", THURSDAY: "T5", FRIDAY: "T6", SATURDAY: "T7", SUNDAY: "CN" };
+
   const rankedVouchers = useMemo(() => {
     return vouchers
-      .map((voucher) => {
-        const reason = voucherReason(voucher, courtId, courtPartnerId, subtotal);
-        const estimatedDiscount = estimateVoucherDiscount(voucher, subtotal);
+      .map((entry) => {
+        const voucher = entry.voucher;
+        const reason = entry.eligible
+          ? null
+          : localizeReason(entry.reason?.code, language) ?? entry.reason?.message ?? null;
+        const estimatedDiscount = entry.discountAmount;
         const daysLeft = Math.ceil((new Date(voucher.endDate).getTime() - Date.now()) / 86400000);
-        return { voucher, reason, estimatedDiscount, daysLeft };
+        return { voucher, reason, estimatedDiscount, daysLeft, eligible: entry.eligible };
       })
       .sort((left, right) => {
-        const leftUsable = left.reason ? 0 : 1;
-        const rightUsable = right.reason ? 0 : 1;
+        const leftUsable = left.eligible ? 1 : 0;
+        const rightUsable = right.eligible ? 1 : 0;
         if (leftUsable !== rightUsable) return rightUsable - leftUsable;
         if (left.estimatedDiscount !== right.estimatedDiscount) return right.estimatedDiscount - left.estimatedDiscount;
         return left.daysLeft - right.daysLeft;
       });
-  }, [courtId, courtPartnerId, subtotal, vouchers]);
+  }, [vouchers, language]);
 
   return (
     <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-3">
@@ -554,36 +579,68 @@ function VoucherPanel({ vouchers, loading, courtId, courtPartnerId, subtotal, vo
 
           <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
             {loading ? (
-              Array.from({ length: 3 }).map((_, index) => <div key={index} className="h-28 min-w-64 animate-pulse rounded-xl bg-white" />)
+              Array.from({ length: 3 }).map((_, index) => <div key={index} className="h-40 min-w-64 animate-pulse rounded-xl bg-white" />)
             ) : rankedVouchers.length ? (
               rankedVouchers.slice(0, 8).map((item, index) => {
-                const { voucher, reason, estimatedDiscount, daysLeft } = item;
+                const { voucher, reason, estimatedDiscount, daysLeft, eligible } = item;
                 const remaining = voucher.usageLimit != null ? Math.max(0, voucher.usageLimit - voucher.usedCount) : null;
                 return (
                   <button
                     key={voucher.id}
                     type="button"
-                    disabled={Boolean(reason)}
+                    disabled={!eligible}
                     onClick={() => onSelect(voucher)}
-                    className={clsx("min-w-64 rounded-xl border bg-white p-3 text-left transition", reason ? "cursor-not-allowed border-slate-200 opacity-55" : "border-emerald-200 hover:-translate-y-0.5 hover:shadow-md")}
+                    className={clsx(
+                      "min-w-64 rounded-xl border bg-white p-3 text-left transition",
+                      !eligible ? "cursor-not-allowed border-slate-200 opacity-55" : "border-emerald-200 hover:-translate-y-0.5 hover:shadow-md"
+                    )}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <p className="text-sm font-black text-slate-950">{voucher.code}</p>
                         <p className="line-clamp-1 text-xs text-slate-500">{voucher.title}</p>
                       </div>
-                      <span className={clsx("rounded-full px-2 py-0.5 text-[10px] font-black", reason ? "bg-slate-100 text-slate-500" : index === 0 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-700")}>
-                        {reason ? "Chưa dùng được" : index === 0 ? "Tốt nhất" : "Dùng được"}
+                      <span
+                        className={clsx(
+                          "rounded-full px-2 py-0.5 text-[10px] font-black",
+                          !eligible
+                            ? "bg-slate-100 text-slate-500"
+                            : index === 0
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-emerald-100 text-emerald-700"
+                        )}
+                      >
+                        {!eligible ? (language === "en" ? "Not eligible" : "Chưa dùng được") : index === 0 ? (language === "en" ? "Best" : "Tốt nhất") : (language === "en" ? "Usable" : "Dùng được")}
                       </span>
                     </div>
                     <p className="mt-2 text-sm font-black text-emerald-700">
-                      {reason ? discountLabel(voucher) : `Giảm khoảng ${formatCurrency(estimatedDiscount)}`}
+                      {!eligible ? discountLabel(voucher) : `Giảm ${formatCurrency(estimatedDiscount)}`}
                     </p>
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {remaining != null && <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700">Còn {remaining} lượt</span>}
-                      {daysLeft <= 7 && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">Sắp hết hạn</span>}
+                    <div className="mt-2 space-y-1 text-[11px] text-slate-600">
+                      {voucher.holidayOnly ? (
+                        <p className="flex items-center gap-1"><span>•</span> {language === "en" ? "Holidays only" : "Chỉ áp dụng ngày lễ"}</p>
+                      ) : voucher.applicableDays ? (
+                        <p className="flex items-center gap-1">
+                          <span>•</span> {formatDaysLabel(voucher.applicableDays, dayLabels)}
+                        </p>
+                      ) : null}
+                      {(voucher.startTime || voucher.endTime) && !voucher.holidayOnly ? (
+                        <p className="flex items-center gap-1">
+                          <span>•</span> {voucher.startTime?.slice(0, 5) ?? "00:00"} - {voucher.endTime?.slice(0, 5) ?? "23:59"}
+                        </p>
+                      ) : null}
+                      <p className="flex items-center gap-1">
+                        <span>•</span> {language === "en" ? "Min order" : "Đơn tối thiểu"} {formatCurrency(voucher.minBookingAmount)}
+                      </p>
                     </div>
-                    <p className="mt-2 text-[11px] text-slate-500">{reason ?? `Đơn tối thiểu ${formatCurrency(voucher.minBookingAmount)}`}</p>
+                    {reason ? (
+                      <p className="mt-2 text-[11px] font-bold text-rose-600">{reason}</p>
+                    ) : (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {remaining != null && <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700">Còn {remaining} lượt</span>}
+                        {daysLeft <= 7 && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">Sắp hết hạn</span>}
+                      </div>
+                    )}
                   </button>
                 );
               })
@@ -595,6 +652,34 @@ function VoucherPanel({ vouchers, loading, courtId, courtPartnerId, subtotal, vo
       )}
     </div>
   );
+}
+
+function formatDaysLabel(raw: string, labels: Record<string, string>) {
+  return raw
+    .split(",")
+    .map((day) => labels[day.trim().toUpperCase()] ?? day.trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+const REASON_LABELS: Record<string, { vi: string; en: string }> = {
+  VOUCHER_NOT_FOUND: { vi: "Không tìm thấy voucher.", en: "Voucher not found." },
+  VOUCHER_INACTIVE: { vi: "Voucher không còn hoạt động.", en: "Voucher is no longer active." },
+  VOUCHER_NOT_STARTED: { vi: "Voucher chưa đến thời gian áp dụng.", en: "Voucher has not started yet." },
+  VOUCHER_EXPIRED: { vi: "Voucher đã hết hạn.", en: "Voucher has expired." },
+  VOUCHER_USAGE_LIMIT_REACHED: { vi: "Voucher đã hết lượt.", en: "Voucher usage limit reached." },
+  VOUCHER_MIN_BOOKING_AMOUNT: { vi: "Chưa đạt đơn tối thiểu.", en: "Booking below the minimum." },
+  VOUCHER_APPLICABLE_START_DATE: { vi: "Chưa đến ngày áp dụng.", en: "Outside applicable date range." },
+  VOUCHER_APPLICABLE_END_DATE: { vi: "Đã hết thời gian áp dụng.", en: "Outside applicable date range." },
+  VOUCHER_WRONG_DAY: { vi: "Không áp dụng cho ngày đã chọn.", en: "Not valid on this day." },
+  VOUCHER_WRONG_TIME: { vi: "Không áp dụng cho khung giờ đã chọn.", en: "Not valid for this time." },
+  VOUCHER_NOT_HOLIDAY: { vi: "Chỉ áp dụng cho ngày lễ.", en: "Only valid on holidays." },
+  VOUCHER_WRONG_COURT: { vi: "Không áp dụng cho sân này.", en: "Not valid for this court." }
+};
+
+function localizeReason(code: string | undefined, lang: "vi" | "en") {
+  if (!code) return null;
+  return REASON_LABELS[code]?.[lang] ?? null;
 }
 
 function discountLabel(voucher: Voucher) {

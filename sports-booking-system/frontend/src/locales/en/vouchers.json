@@ -10,5 +10,52 @@
   "claimNow": "Claim Now",
   "claimed": "Claimed",
   "expired": "Expired",
-  "myVouchers": "My Vouchers"
+  "myVouchers": "My Vouchers",
+  "eligibility": {
+    "VOUCHER_NOT_FOUND": "Voucher not found.",
+    "VOUCHER_INACTIVE": "Voucher is no longer active.",
+    "VOUCHER_NOT_STARTED": "Voucher has not started yet.",
+    "VOUCHER_EXPIRED": "Voucher has expired.",
+    "VOUCHER_USAGE_LIMIT_REACHED": "Voucher usage limit reached.",
+    "VOUCHER_MIN_BOOKING_AMOUNT": "Booking amount below the minimum required.",
+    "VOUCHER_APPLICABLE_START_DATE": "Voucher is not yet within its applicable date range.",
+    "VOUCHER_APPLICABLE_END_DATE": "Voucher is outside its applicable date range.",
+    "VOUCHER_WRONG_DAY": "Voucher is not valid on the selected day.",
+    "VOUCHER_WRONG_TIME": "Voucher is not valid for the selected time slot.",
+    "VOUCHER_NOT_HOLIDAY": "Voucher is only valid on holidays.",
+    "VOUCHER_WRONG_COURT": "Voucher is not valid for this court."
+  },
+  "conditions": {
+    "anyDay": "Valid every day",
+    "days": "Valid on: {{days}}",
+    "anyTime": "Any time",
+    "time": "Time: {{start}} - {{end}}",
+    "holidayOnly": "Holidays only",
+    "programDates": "Program: {{start}} - {{end}}",
+    "minBooking": "Minimum order: {{amount}}",
+    "applicable": "Applicable",
+    "notApplicable": "Not eligible"
+  },
+  "daysShort": {
+    "MONDAY": "Mon",
+    "TUESDAY": "Tue",
+    "WEDNESDAY": "Wed",
+    "THURSDAY": "Thu",
+    "FRIDAY": "Fri",
+    "SATURDAY": "Sat",
+    "SUNDAY": "Sun"
+  },
+  "daysFull": {
+    "MONDAY": "Monday",
+    "TUESDAY": "Tuesday",
+    "WEDNESDAY": "Wednesday",
+    "THURSDAY": "Thursday",
+    "FRIDAY": "Friday",
+    "SATURDAY": "Saturday",
+    "SUNDAY": "Sunday"
+  },
+  "scope": {
+    "platform": "Valid platform-wide",
+    "court": "Court: {{name}}"
+  }
 }

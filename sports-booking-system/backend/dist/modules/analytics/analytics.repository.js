@@ -5,21 +5,11 @@ function shortAnalyticsId() {
     return `ae${randomPart}${timePart}`.slice(0, 20);
 }
 export const analyticsRepository = {
-    trackEvent(data) {
-        const metadataJson = data.metadataJson == null ? null : JSON.stringify(data.metadataJson);
-        return prisma.$executeRaw `
-      insert into analytics_events (
-        id, user_id, partner_id, event_type, entity_type, entity_id, metadata_json
-      ) values (
-        ${shortAnalyticsId()},
-        ${data.userId ?? null},
-        ${data.partnerId ?? null},
-        ${data.eventType}::analytics_event_type,
-        ${data.entityType.slice(0, 80)},
-        ${data.entityId ?? null},
-        ${metadataJson}::jsonb
-      )
+    async trackEvent(data) {
+        const rows = await prisma.$queryRaw `
+      select 'ae' || lpad(nextval('seq_analytics_events')::text, 4, '0') as id
     `;
+        return prisma.analyticsEvent.create({ data: { id: rows[0].id, ...data } });
     },
     partnerOverview(partnerId) {
         return prisma.$transaction([

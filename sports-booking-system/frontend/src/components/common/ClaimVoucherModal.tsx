@@ -22,7 +22,7 @@ type VoucherData = {
   endDate: string;
   usageLimit?: number | null;
   usedCount: number;
-  partner?: { id: string; businessName: string };
+  partner?: { id: string; businessName: string } | null;
   court?: { id: string; name: string; city: string; district: string; imageUrl?: string | null } | null;
 };
 

@@ -1,4 +1,5 @@
 import { OAuth2Client } from "google-auth-library";
+import type { UserRole } from "@prisma/client";
 import { env } from "../../config/env.js";
 import { AppError, AuthError, ConflictError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { omitPassword } from "../../shared/utils/response.js";

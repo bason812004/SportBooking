@@ -219,7 +219,11 @@ function VoucherCard({ voucher, action, onCopy }: { voucher: Voucher | MyVoucher
           </p>
           <p className="flex items-center gap-2">
             <MapPin className="h-4 w-4 text-[#0f766e]" />
-            {voucher.court ? `${voucher.court.name}, ${voucher.court.district}` : voucher.partner.businessName}
+            {voucher.court
+              ? `${voucher.court.name}, ${voucher.court.district}`
+              : voucher.partner
+                ? voucher.partner.businessName
+                : "Áp dụng toàn hệ thống"}
           </p>
         </div>
 

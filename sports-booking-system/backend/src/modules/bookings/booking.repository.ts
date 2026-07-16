@@ -20,6 +20,38 @@ async function ensureCourtDepositColumn() {
   depositColumnReady = true;
 }
 
+/**
+ * Compute platform/partner split of a voucher discount.
+ * PLATFORM-funded voucher: partner=0, platform=full.
+ * PARTNER-funded voucher: partner=full, platform=0.
+ * SHARED voucher: uses partner_funding_percent / platform_funding_percent.
+ */
+async function voucherDiscountSplit(
+  tx: Prisma.TransactionClient,
+  voucherId: string,
+  discountAmount: number
+): Promise<{ partnerShare: number; platformShare: number }> {
+  const row = await tx.voucher.findUnique({
+    where: { id: voucherId },
+    select: {
+      fundedBy: true,
+      partnerFundingPercent: true,
+      platformFundingPercent: true
+    }
+  });
+  if (!row) return { partnerShare: discountAmount, platformShare: 0 };
+  const funded = (row.fundedBy ?? "PARTNER") as string;
+  if (funded === "PLATFORM") {
+    return { partnerShare: 0, platformShare: discountAmount };
+  }
+  if (funded === "SHARED") {
+    const pf = row.partnerFundingPercent != null ? Number(row.partnerFundingPercent) : 50;
+    const partnerShare = Math.round((discountAmount * pf) / 100);
+    return { partnerShare, platformShare: Math.max(0, discountAmount - partnerShare) };
+  }
+  return { partnerShare: discountAmount, platformShare: 0 };
+}
+
 export const bookingRepository = {
   findById(id: string) {
     return prisma.booking.findUnique({
@@ -168,12 +200,15 @@ export const bookingRepository = {
         if (voucherUpdate.count !== 1) {
           throw new ValidationError("Voucher da het luot su dung");
         }
+        const split = await voucherDiscountSplit(tx, input.voucherId, input.voucherDiscountAmount);
         await tx.bookingVoucher.create({
           data: {
             id: generateShortId("bv"),
             bookingId: booking.id,
             voucherId: input.voucherId,
-            discountAmount: input.voucherDiscountAmount
+            discountAmount: input.voucherDiscountAmount,
+            platformShare: split.platformShare,
+            partnerShare: split.partnerShare
           }
         });
         await tx.userVoucher.updateMany({
@@ -312,13 +347,20 @@ export const bookingRepository = {
           if (voucherUpdate.count !== 1) {
             throw new ValidationError("Voucher da het luot su dung");
           }
+          const split = await voucherDiscountSplit(tx, input.voucherId, input.voucherDiscountAmount);
           await tx.bookingVoucher.create({
             data: {
               id: generateShortId("bv"),
               bookingId: booking.id,
               voucherId: input.voucherId,
-              discountAmount: input.voucherDiscountAmount
+              discountAmount: input.voucherDiscountAmount,
+              platformShare: split.platformShare,
+              partnerShare: split.partnerShare
             }
+          });
+          await tx.userVoucher.updateMany({
+            where: { userId: input.userId, voucherId: input.voucherId, status: "CLAIMED" },
+            data: { status: "USED", usedAt: new Date() }
           });
         }
 
@@ -421,13 +463,20 @@ export const bookingRepository = {
           if (voucherUpdate.count !== 1) {
             throw new ValidationError("Voucher da het luot su dung");
           }
+          const split = await voucherDiscountSplit(tx, input.voucherId, input.voucherDiscountAmount);
           await tx.bookingVoucher.create({
             data: {
               id: generateShortId("bv"),
               bookingId: booking.id,
               voucherId: input.voucherId,
-              discountAmount: input.voucherDiscountAmount
+              discountAmount: input.voucherDiscountAmount,
+              platformShare: split.platformShare,
+              partnerShare: split.partnerShare
             }
+          });
+          await tx.userVoucher.updateMany({
+            where: { userId: input.userId, voucherId: input.voucherId, status: "CLAIMED" },
+            data: { status: "USED", usedAt: new Date() }
           });
         }
 

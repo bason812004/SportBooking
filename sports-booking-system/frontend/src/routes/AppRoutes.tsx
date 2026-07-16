@@ -33,6 +33,7 @@ import { UserBlogFormPage } from "../pages/user/UserBlogFormPage";
 import { RecipientDashboardPage } from "../pages/recipient/RecipientDashboardPage";
 import { RecipientBookingsPage } from "../pages/recipient/RecipientBookingsPage";
 import { RecipientCalendarPage } from "../pages/recipient/RecipientCalendarPage";
+import { RecipientCourtSurfacesPage } from "../pages/recipient/RecipientCourtSurfacesPage";
 import { PartnerStaffPage } from "../pages/partner/PartnerStaffPage";
 import { PartnerDashboardPage } from "../pages/partner/PartnerDashboardPage";
 import { PartnerCourtsPage } from "../pages/partner/PartnerCourtsPage";
@@ -48,9 +49,12 @@ import { PartnerBlogsPage } from "../pages/partner/PartnerBlogsPage";
 import { PartnerBlogFormPage } from "../pages/partner/PartnerBlogFormPage";
 import { PartnerTournamentsPage } from "../pages/partner/PartnerTournamentsPage";
 import { PartnerTournamentFormPage } from "../pages/partner/PartnerTournamentFormPage";
+import { PartnerWalletPage } from "../pages/partner/PartnerWalletPage";
 import { AdminDashboardPage } from "../pages/admin/AdminDashboardPage";
+import { AdminBookingsPage } from "../pages/admin/AdminBookingsPage";
 import { AdminUsersPage } from "../pages/admin/AdminUsersPage";
 import { AdminPartnersPage } from "../pages/admin/AdminPartnersPage";
+import { AdminCourtsPage } from "../pages/admin/AdminCourtsPage";
 import { AdminPendingCourtsPage } from "../pages/admin/AdminPendingCourtsPage";
 import { AdminCategoriesPage } from "../pages/admin/AdminCategoriesPage";
 import { AdminReviewsPage } from "../pages/admin/AdminReviewsPage";
@@ -59,10 +63,14 @@ import { AdminStatisticsPage } from "../pages/admin/AdminStatisticsPage";
 import { AdminAuditLogsPage } from "../pages/admin/AdminAuditLogsPage";
 import { AdminBlockchainLogsPage } from "../pages/admin/AdminBlockchainLogsPage";
 import { AdminCommissionSettingsPage } from "../pages/admin/AdminCommissionSettingsPage";
+import { AdminFinancePage } from "../pages/admin/AdminFinancePage";
+import { AdminNotificationsPage } from "../pages/admin/AdminNotificationsPage";
 import { AdminPartnerCommissionPage } from "../pages/admin/AdminPartnerCommissionPage";
 import { AdminVouchersPage } from "../pages/admin/AdminVouchersPage";
 import { AdminBlogModerationPage } from "../pages/admin/AdminBlogModerationPage";
 import { AdminTournamentModerationPage } from "../pages/admin/AdminTournamentModerationPage";
+import { AdminSettlementsPage } from "../pages/admin/AdminSettlementsPage";
+import { AdminWithdrawalsPage } from "../pages/admin/AdminWithdrawalsPage";
 
 export function AppRoutes() {
   return (
@@ -127,6 +135,7 @@ export function AppRoutes() {
           <Route path="partner/calendar" element={<PartnerCalendarPage />} />
           <Route path="partner/statistics" element={<PartnerStatisticsPage />} />
           <Route path="partner/settings" element={<PartnerSettingsPage />} />
+          <Route path="partner/wallet" element={<PartnerWalletPage />} />
           <Route path="partner/staff" element={<PartnerStaffPage />} />
         </Route>
       </Route>
@@ -136,26 +145,33 @@ export function AppRoutes() {
           <Route path="recipient/dashboard" element={<RecipientDashboardPage />} />
           <Route path="recipient/bookings" element={<RecipientBookingsPage />} />
           <Route path="recipient/calendar" element={<RecipientCalendarPage />} />
+          <Route path="recipient/court-surfaces" element={<RecipientCourtSurfacesPage />} />
         </Route>
       </Route>
 
       <Route element={<ProtectedRoute roles={["ADMIN"]} />}>
         <Route element={<DashboardLayout />}>
           <Route path="admin/dashboard" element={<AdminDashboardPage />} />
+          <Route path="admin/bookings" element={<AdminBookingsPage />} />
           <Route path="admin/users" element={<AdminUsersPage />} />
           <Route path="admin/partners" element={<AdminPartnersPage />} />
           <Route path="admin/partners/:id/commission" element={<AdminPartnerCommissionPage />} />
+          <Route path="admin/courts" element={<AdminCourtsPage />} />
           <Route path="admin/courts/pending" element={<AdminPendingCourtsPage />} />
           <Route path="admin/categories" element={<AdminCategoriesPage />} />
           <Route path="admin/reviews" element={<AdminReviewsPage />} />
           <Route path="admin/vouchers" element={<AdminVouchersPage />} />
+          <Route path="admin/notifications" element={<AdminNotificationsPage />} />
           <Route path="admin/blogs/pending" element={<AdminBlogModerationPage />} />
           <Route path="admin/tournaments/pending" element={<AdminTournamentModerationPage />} />
           <Route path="admin/reports" element={<AdminReportsPage />} />
+          <Route path="admin/finance" element={<AdminFinancePage />} />
           <Route path="admin/commission" element={<AdminCommissionSettingsPage />} />
           <Route path="admin/statistics" element={<AdminStatisticsPage />} />
           <Route path="admin/audit-logs" element={<AdminAuditLogsPage />} />
           <Route path="admin/blockchain-logs" element={<AdminBlockchainLogsPage />} />
+          <Route path="admin/settlements" element={<AdminSettlementsPage />} />
+          <Route path="admin/withdrawals" element={<AdminWithdrawalsPage />} />
         </Route>
       </Route>
 

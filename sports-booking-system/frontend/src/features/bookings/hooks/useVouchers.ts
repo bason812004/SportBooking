@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { voucherApi } from "../api/bookingApi";
-import type { VoucherValidatePayload } from "../../../types/api";
+import { contentApi } from "../../content/api/contentApi";
+import type { Voucher, VoucherEligibilityResult, VoucherValidatePayload } from "../../../types/api";
 
 export function useActiveVouchers() {
   return useQuery({ queryKey: ["active-vouchers"], queryFn: voucherApi.list, staleTime: 60_000 });
@@ -16,4 +17,37 @@ export function useMyVouchers() {
 
 export function useValidateVoucher() {
   return useMutation({ mutationFn: (payload: VoucherValidatePayload) => voucherApi.validate(payload) });
+}
+
+/**
+ * Live eligibility check against the currently selected court/date/time
+ * and the latest known subtotal. Returns null when no slot has been
+ * chosen yet.
+ */
+export function useVoucherEligibility(input: {
+  courtId?: string;
+  bookingDate?: string;
+  startTime?: string;
+  endTime?: string;
+  subtotal?: number;
+  enabled?: boolean;
+}) {
+  return useQuery<VoucherEligibilityResult[]>({
+    queryKey: ["voucher-eligibility", input],
+    queryFn: () =>
+      contentApi.checkVoucherEligibility({
+        courtId: input.courtId!,
+        bookingDate: input.bookingDate!,
+        startTime: input.startTime!,
+        endTime: input.endTime!,
+        subtotal: input.subtotal ?? 0
+      }),
+    enabled:
+      Boolean(input.enabled ?? true) &&
+      Boolean(input.courtId) &&
+      Boolean(input.bookingDate) &&
+      Boolean(input.startTime) &&
+      Boolean(input.endTime),
+    staleTime: 30_000
+  });
 }

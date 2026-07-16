@@ -5,6 +5,11 @@ import { adminService } from "./admin.service.js";
 export const adminController = {
   dashboard: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.dashboard())),
   users: asyncHandler(async (req, res) => sendSuccess(res, await adminService.users(req.query))),
+  bookings: asyncHandler(async (req, res) => sendSuccess(res, await adminService.bookings(req.query))),
+  bookingDetail: asyncHandler(async (req, res) => sendSuccess(res, await adminService.bookingDetail(req.params.id))),
+  updateBookingAdmin: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.updateBookingAdmin(req.user!.id, req.params.id, req.body))
+  ),
   lockUser: asyncHandler(async (req, res) => sendSuccess(res, await adminService.lockUser(req.user!.id, req.params.id))),
   unlockUser: asyncHandler(async (req, res) => sendSuccess(res, await adminService.unlockUser(req.user!.id, req.params.id))),
   partners: asyncHandler(async (req, res) => sendSuccess(res, await adminService.partners(req.query))),
@@ -23,6 +28,35 @@ export const adminController = {
   ),
   commissionReport: asyncHandler(async (req, res) =>
     sendSuccess(res, await adminService.commissionReport(req.query.month as string | undefined))
+  ),
+  financeTransactions: asyncHandler(async (req, res) => sendSuccess(res, await adminService.financeTransactions(req.query))),
+  financeRefunds: asyncHandler(async (req, res) => sendSuccess(res, await adminService.financeRefunds(req.query))),
+  financeReconciliation: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.financeReconciliation(req.query.month as string | undefined))
+  ),
+  updatePayout: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.updatePayout(req.user!.id, req.params.partnerId, req.query.month as string | undefined, req.body))
+  ),
+  financeExport: asyncHandler(async (req, res) => {
+    const file = await adminService.financeExport(req.query.month as string | undefined);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${file.filename}"`);
+    res.send(file.content);
+  }),
+  notificationCampaigns: asyncHandler(async (req, res) => sendSuccess(res, await adminService.notificationCampaigns(req.query))),
+  notificationCampaignDetail: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.notificationCampaignDetail(req.params.id))
+  ),
+  createNotificationCampaign: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.createNotificationCampaign(req.user!.id, req.body), 201)
+  ),
+  courts: asyncHandler(async (req, res) => sendSuccess(res, await adminService.courts(req.query))),
+  courtDetail: asyncHandler(async (req, res) => sendSuccess(res, await adminService.courtDetail(req.params.id))),
+  updateCourtAdmin: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.updateCourtAdmin(req.user!.id, req.params.id, req.body))
+  ),
+  requestCourtUpdate: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.requestCourtUpdate(req.user!.id, req.params.id, req.body.note))
   ),
   pendingCourts: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.pendingCourts())),
   approveCourt: asyncHandler(async (req, res) => sendSuccess(res, await adminService.approveCourt(req.user!.id, req.params.id))),

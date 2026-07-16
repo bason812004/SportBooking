@@ -1,6 +1,16 @@
 import { api } from "../../../lib/axios";
 import { repairObject } from "../../../lib/text";
-import type { ApiResponse, BlogComment, BlogPost, TeamPostMessage, TeamRecruitmentInput, TeamRecruitmentPost, Tournament, Voucher } from "../../../types/api";
+import type {
+  ApiResponse,
+  BlogComment,
+  BlogPost,
+  TeamPostMessage,
+  TeamRecruitmentInput,
+  TeamRecruitmentPost,
+  Tournament,
+  Voucher,
+  VoucherEligibilityResult
+} from "../../../types/api";
 
 export type BlogWriteInput = {
   title: string;
@@ -80,6 +90,18 @@ export const contentApi = {
   async trackVoucherClick(id: string) {
     const { data } = await api.post<ApiResponse<{ id: string; clickCount: number }>>(`/vouchers/${id}/click`);
     return data.data;
+  },
+
+  async checkVoucherEligibility(input: {
+    courtId: string;
+    bookingDate: string;
+    startTime: string;
+    endTime: string;
+    subtotal: number;
+    lang?: "vi" | "en";
+  }) {
+    const { data } = await api.post<ApiResponse<VoucherEligibilityResult[]>>("/vouchers/check-eligibility", input);
+    return repairObject(data.data);
   },
 
   async tournaments() {

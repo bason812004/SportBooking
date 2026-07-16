@@ -194,6 +194,7 @@ export type PartnerBlog = {
   createdAt: string;
   updatedAt: string;
   publishedAt?: string | null;
+  rejectionReason?: string | null;
 };
 
 export type PartnerTournament = {
@@ -232,6 +233,51 @@ export type AdminPartner = PartnerProfile & {
   commissionRate?: string | null;
   courts?: Array<{ id: string; name: string; approvalStatus: string; activeStatus: string }>;
   history?: Array<{ id: string; action: string; reason?: string; createdAt: string }>;
+};
+
+export type BookingAdminAction = {
+  id: string;
+  action: string;
+  note?: string | null;
+  previousStatus?: Record<string, unknown> | null;
+  newStatus?: Record<string, unknown> | null;
+  createdAt: string;
+  actor: { id: string; fullName: string; email: string };
+};
+
+export type AdminBooking = Omit<Booking, "court"> & {
+  createdAt: string;
+  updatedAt?: string;
+  cancelReason?: string | null;
+  adminNote?: string | null;
+  court: {
+    id: string;
+    name: string;
+    address?: string;
+    city?: string;
+    district?: string;
+    partner?: { id: string; businessName: string; address?: string; user?: { id: string; fullName: string; email: string; phone?: string } };
+  };
+  bookingServices?: Array<{ id: string; quantity: number; price: number; service: { id: string; name: string; price: number } }>;
+  adminActions?: BookingAdminAction[];
+};
+
+export type AdminCourt = Omit<Court, "category" | "images" | "prices" | "services" | "amenities"> & {
+  featured?: boolean;
+  adminNote?: string | null;
+  updateRequestNote?: string | null;
+  updateRequestedAt?: string | null;
+  imageUrl?: string | null;
+  category?: Category;
+  partner: {
+    id: string;
+    businessName: string;
+    address?: string | null;
+    user: { id?: string; fullName: string; email: string; phone?: string | null };
+  };
+  images?: Array<{ id: string; imageUrl: string; sortOrder: number }>;
+  prices?: Array<{ id: string; dayType: string; startTime: string; endTime: string; price: number | string; note?: string | null }>;
+  services?: Array<{ id: string; name: string; description?: string | null; price: number | string; status: string }>;
 };
 
 export type AdminVoucher = {
@@ -278,6 +324,88 @@ export type CommissionReport = {
   >;
 };
 
+export type AdminFinanceTransaction = {
+  id: string;
+  bookingId: string;
+  bookingCode: string;
+  bookingDate: string;
+  courtId: string;
+  courtName: string;
+  partnerId: string;
+  businessName: string;
+  transactionType: "EARNING" | "REVERSAL";
+  eventType: "COMPLETED" | "NO_SHOW" | "REFUND";
+  grossAmount: number;
+  commissionRate: number;
+  commissionAmount: number;
+  netAmount: number;
+  payoutStatus: string;
+  createdAt: string;
+};
+
+export type AdminRefund = {
+  id: string;
+  bookingCode: string;
+  bookingDate: string;
+  totalPrice: number;
+  depositAmount: number;
+  refundAmount: number;
+  platformRetainedAmount: number;
+  paymentStatus: string;
+  cancelReason?: string | null;
+  refundedAt: string;
+  user: { id: string; fullName: string; email: string };
+  court: { id: string; name: string; partner: { id: string; businessName: string } };
+};
+
+export type AdminFinancePartner = CommissionSummary & {
+  partnerId: string;
+  businessName: string;
+  refundAmount: number;
+  platformRetainedAmount: number;
+  refundCount: number;
+  payoutId?: string | null;
+  payoutStatus: "PENDING" | "PROCESSING" | "PAID" | "FAILED" | "CANCELLED";
+  payoutNote?: string | null;
+  paidAt?: string | null;
+  payoutUpdatedAt?: string | null;
+};
+
+export type AdminFinanceReport = {
+  month: string;
+  summary: CommissionSummary & {
+    refundAmount: number;
+    platformRetainedAmount: number;
+    refundCount: number;
+  };
+  partners: AdminFinancePartner[];
+};
+
+export type NotificationTargetType = "ALL" | "ROLE" | "USER" | "PARTNER";
+
+export type AdminNotificationCampaign = {
+  id: string;
+  title: string;
+  content: string;
+  type: string;
+  targetType: NotificationTargetType;
+  targetRole?: Role | null;
+  targetUserId?: string | null;
+  targetPartnerId?: string | null;
+  targetUserEmail?: string | null;
+  targetPartnerName?: string | null;
+  recipientCount: number;
+  metadata?: Record<string, unknown> | null;
+  createdAt: string;
+  sender?: { id: string; fullName: string; email: string } | null;
+  recipients?: Array<{
+    id: string;
+    isRead: boolean;
+    createdAt: string;
+    user: { id: string; fullName: string; email: string; role: Role };
+  }>;
+};
+
 export type PartnerRevenueReport = {
   month: string;
   summary: CommissionSummary;
@@ -317,8 +445,40 @@ export type Voucher = {
   startDate: string;
   endDate: string;
   status: string;
-  partner: { id: string; businessName: string };
+  partner: { id: string; businessName: string } | null;
   court?: { id: string; name: string; city: string; district: string; imageUrl?: string | null } | null;
+  fundedBy?: "PARTNER" | "PLATFORM" | "SHARED";
+  partnerFundingPercent?: number | null;
+  platformFundingPercent?: number | null;
+  applicableDays?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  holidayOnly?: boolean;
+  holidayDates?: string[] | null;
+  applicableStartDate?: string | null;
+  applicableEndDate?: string | null;
+};
+
+export type VoucherEligibilityReasonCode =
+  | "VOUCHER_NOT_FOUND"
+  | "VOUCHER_INACTIVE"
+  | "VOUCHER_NOT_STARTED"
+  | "VOUCHER_EXPIRED"
+  | "VOUCHER_USAGE_LIMIT_REACHED"
+  | "VOUCHER_MIN_BOOKING_AMOUNT"
+  | "VOUCHER_APPLICABLE_START_DATE"
+  | "VOUCHER_APPLICABLE_END_DATE"
+  | "VOUCHER_WRONG_DAY"
+  | "VOUCHER_WRONG_TIME"
+  | "VOUCHER_NOT_HOLIDAY"
+  | "VOUCHER_WRONG_COURT";
+
+export type VoucherEligibilityResult = {
+  voucher: Voucher;
+  eligible: boolean;
+  reason: { code: VoucherEligibilityReasonCode; message: string } | null;
+  discountAmount: number;
+  finalAmount: number;
 };
 
 export type PartnerVoucher = Omit<Voucher, "partner"> & {
@@ -403,6 +563,7 @@ export type BlogPost = {
   category?: { id: string; name: string; slug: string } | null;
   author: { id: string; fullName: string; avatarUrl?: string | null };
   viewCount?: number;
+  rejectionReason?: string | null;
 };
 
 export type BlogComment = {
@@ -482,4 +643,70 @@ export type TeamRecruitmentInput = {
   note?: string | null;
   zaloGroupLink?: string | null;
   zaloQrImage?: string | null;
+};
+
+// ── Settlement & Wallet ───────────────────────────────────────────────────
+
+export type SettlementStatus = "PENDING" | "PROCESSING" | "SETTLED" | "FAILED" | "CANCELLED";
+
+export type PartnerWalletInfo = {
+  id: string;
+  partnerId: string;
+  availableBalance: number;
+  pendingBalance: number;
+  totalEarned: number;
+  totalWithdrawn: number;
+  currency: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SettlementInfo = {
+  id: string;
+  bookingId: string;
+  partnerId: string;
+  paymentId: string | null;
+  grossAmount: number;
+  voucherDiscount: number;
+  platformDiscount: number;
+  partnerDiscount: number;
+  commissionAmount: number;
+  serviceFee: number;
+  netAmount: number;
+  status: SettlementStatus;
+  settledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  booking?: {
+    bookingCode: string;
+    bookingDate: string;
+    court: { name: string };
+  };
+};
+
+export type SettlementSummary = {
+  grossAmount: number;
+  platformDiscount: number;
+  partnerDiscount: number;
+  commissionAmount: number;
+  netAmount: number;
+  totalCount: number;
+  pendingCount: number;
+  pendingAmount: number;
+};
+
+export type WithdrawalStatus = "PENDING" | "APPROVED" | "REJECTED" | "PAID";
+
+export type WithdrawalInfo = {
+  id: string;
+  partnerId: string;
+  amount: number;
+  bankName: string;
+  bankAccountNumber: string;
+  bankAccountName: string;
+  status: WithdrawalStatus;
+  processedBy: string | null;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
 };

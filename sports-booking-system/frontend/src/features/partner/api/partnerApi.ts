@@ -9,7 +9,11 @@ import type {
   PartnerProfile,
   PartnerRevenueReport,
   PartnerTournament,
-  PartnerVoucher
+  PartnerVoucher,
+  PartnerWalletInfo,
+  SettlementInfo,
+  SettlementSummary,
+  WithdrawalInfo
 } from "../../../types/api";
 
 export type PartnerVoucherPayload = {
@@ -214,6 +218,28 @@ export const partnerApi = {
   },
   async deleteRecipient(id: string) {
     const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/recipients/${id}`);
+    return data.data;
+  },
+
+  // Wallet & Settlement
+  async wallet() {
+    const { data } = await api.get<ApiResponse<PartnerWalletInfo>>("/partner/wallet/me");
+    return data.data;
+  },
+  async settlements(params: { page?: number; limit?: number } = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<SettlementInfo>>>("/partner/settlements", { params });
+    return data.data;
+  },
+  async settlementSummary() {
+    const { data } = await api.get<ApiResponse<SettlementSummary>>("/partner/settlements/summary");
+    return data.data;
+  },
+  async withdrawals(params: { page?: number; limit?: number } = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<WithdrawalInfo>>>(`/partner/withdrawals`, { params });
+    return data.data;
+  },
+  async createWithdrawal(payload: { amount: number; bankName: string; bankAccountNumber: string; bankAccountName: string }) {
+    const { data } = await api.post<ApiResponse<WithdrawalInfo>>("/partner/withdrawals", payload);
     return data.data;
   }
 };

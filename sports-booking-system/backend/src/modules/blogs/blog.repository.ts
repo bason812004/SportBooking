@@ -15,6 +15,7 @@ export type BlogPostRow = {
   publishedAt: Date | null;
   viewCount: number;
   allowComments: boolean;
+  rejectionReason: string | null;
   category: { id: string; name: string; slug: string } | null;
   author: { id: string; fullName: string; avatarUrl: string | null };
 };
@@ -47,6 +48,7 @@ const blogRowSelect = (
     b.published_at as "publishedAt",
     ${viewCountSelect} as "viewCount",
     ${allowCommentsSelect} as "allowComments",
+    reject_reason.reason as "rejectionReason",
     case
       when bc.id is null then null
       else json_build_object('id', bc.id, 'name', bc.name, 'slug', bc.slug)
@@ -55,6 +57,12 @@ const blogRowSelect = (
   from blog_posts b
   join users u on u.id = b.author_id
   left join blog_categories bc on bc.id = b.category_id
+  left join lateral (
+    select mh.reason from moderation_history mh
+    where mh.entity_type = 'BLOG' and mh.entity_id = b.id and mh.action = 'REJECTED'
+    order by mh.created_at desc
+    limit 1
+  ) reject_reason on true
 `;
 
 const vietnameseAccentedChars =

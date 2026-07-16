@@ -1,6 +1,6 @@
 create table if not exists audit_logs (
-  id uuid primary key default gen_random_uuid(),
-  actor_id varchar(20) not null,
+  id uuid primary key default uuid_generate_v4(),
+  actor_id uuid not null references users(id),
   action varchar(100) not null,
   entity_type varchar(80) not null,
   entity_id varchar(100) not null,
@@ -45,7 +45,7 @@ create table if not exists moderation_history (
   entity_id varchar(100) not null,
   action varchar(50) not null,
   reason text,
-  actor_id varchar(20) not null,
+  actor_id uuid not null references users(id),
   created_at timestamptz not null default now()
 );
 

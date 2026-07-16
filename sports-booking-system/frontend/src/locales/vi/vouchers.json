@@ -10,5 +10,52 @@
   "claimNow": "Nhận ngay",
   "claimed": "Đã nhận",
   "expired": "Hết hạn",
-  "myVouchers": "Voucher của tôi"
+  "myVouchers": "Voucher của tôi",
+  "eligibility": {
+    "VOUCHER_NOT_FOUND": "Không tìm thấy voucher.",
+    "VOUCHER_INACTIVE": "Voucher không còn hoạt động.",
+    "VOUCHER_NOT_STARTED": "Voucher chưa đến thời gian áp dụng.",
+    "VOUCHER_EXPIRED": "Voucher đã hết thời gian sử dụng.",
+    "VOUCHER_USAGE_LIMIT_REACHED": "Voucher đã hết lượt sử dụng.",
+    "VOUCHER_MIN_BOOKING_AMOUNT": "Chưa đạt giá trị đơn hàng tối thiểu.",
+    "VOUCHER_APPLICABLE_START_DATE": "Voucher chưa đến ngày áp dụng.",
+    "VOUCHER_APPLICABLE_END_DATE": "Voucher đã hết thời gian áp dụng.",
+    "VOUCHER_WRONG_DAY": "Voucher không áp dụng cho ngày đã chọn.",
+    "VOUCHER_WRONG_TIME": "Voucher không áp dụng cho khung giờ đã chọn.",
+    "VOUCHER_NOT_HOLIDAY": "Voucher chỉ áp dụng vào các ngày lễ.",
+    "VOUCHER_WRONG_COURT": "Voucher không áp dụng cho sân này."
+  },
+  "conditions": {
+    "anyDay": "Áp dụng mọi ngày",
+    "days": "Áp dụng: {{days}}",
+    "anyTime": "Mọi khung giờ",
+    "time": "Khung giờ: {{start}} - {{end}}",
+    "holidayOnly": "Chỉ áp dụng vào các ngày lễ",
+    "programDates": "Chương trình: {{start}} - {{end}}",
+    "minBooking": "Đơn tối thiểu: {{amount}}",
+    "applicable": "Có thể sử dụng",
+    "notApplicable": "Không đủ điều kiện"
+  },
+  "daysShort": {
+    "MONDAY": "T2",
+    "TUESDAY": "T3",
+    "WEDNESDAY": "T4",
+    "THURSDAY": "T5",
+    "FRIDAY": "T6",
+    "SATURDAY": "T7",
+    "SUNDAY": "CN"
+  },
+  "daysFull": {
+    "MONDAY": "Thứ Hai",
+    "TUESDAY": "Thứ Ba",
+    "WEDNESDAY": "Thứ Tư",
+    "THURSDAY": "Thứ Năm",
+    "FRIDAY": "Thứ Sáu",
+    "SATURDAY": "Thứ Bảy",
+    "SUNDAY": "Chủ Nhật"
+  },
+  "scope": {
+    "platform": "Áp dụng toàn hệ thống",
+    "court": "Sân: {{name}}"
+  }
 }

@@ -146,29 +146,38 @@ export const bookingRepository = {
             return booking;
         });
     },
-    findConflictsInTransaction(tx, courtId, date, slots) {
-        const activeStatuses = ["PENDING", "CONFIRMED", "COMPLETED"];
-        return Promise.all(slots.map(async (slot) => {
+    async findConflictsInTransaction(tx, courtId, date, slots) {
+        const activeStatuses = ["PENDING", "PENDING_PAYMENT", "CONFIRMED", "COMPLETED"];
+        const bookingDate = toDbDate(date);
+        const conflicts = [];
+        for (const slot of slots) {
+            const startTime = timeToDate(slot.startTime.slice(0, 5));
+            const endTime = timeToDate(slot.endTime.slice(0, 5));
             const legacyBooking = await tx.booking.findFirst({
                 where: {
                     courtId,
-                    bookingDate: toDbDate(date),
+                    bookingDate,
                     bookingStatus: { in: activeStatuses },
-                    startTime: { lt: timeToDate(slot.endTime.slice(0, 5)) },
-                    endTime: { gt: timeToDate(slot.startTime.slice(0, 5)) }
+                    startTime: { lt: endTime },
+                    endTime: { gt: startTime }
                 }
             });
+            if (legacyBooking) {
+                conflicts.push(legacyBooking);
+                continue;
+            }
             const slotBooking = await tx.bookingSlot.findFirst({
                 where: {
                     courtId,
-                    bookingDate: toDbDate(date),
-                    startTime: { lt: timeToDate(slot.endTime.slice(0, 5)) },
-                    endTime: { gt: timeToDate(slot.startTime.slice(0, 5)) },
+                    bookingDate,
+                    startTime: { lt: endTime },
+                    endTime: { gt: startTime },
                     booking: { bookingStatus: { in: activeStatuses } }
                 }
             });
-            return legacyBooking ?? slotBooking;
-        }));
+            conflicts.push(slotBooking);
+        }
+        return conflicts;
     },
     createCheckout(input) {
         return prisma.$transaction(async (tx) => {
@@ -257,7 +266,7 @@ export const bookingRepository = {
                 }
             });
             return { conflict: false, booking, payment };
-        }, { isolationLevel: "Serializable" });
+        }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 });
     },
     createPayAtCourtCheckout(input) {
         return prisma.$transaction(async (tx) => {
@@ -329,7 +338,7 @@ export const bookingRepository = {
                 });
             }
             return { conflict: false, booking };
-        }, { isolationLevel: "Serializable" });
+        }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 });
     },
     toDbDate
 };
