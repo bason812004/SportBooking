@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+import { settlementService } from "../settlements/settlement.service.js";
 
 const columnExistsCache = new Map<string, boolean>();
 
@@ -423,7 +424,14 @@ export const adminRepository = {
         values ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
       `, id, actorId, action, input.actionNote ?? input.adminNote ?? input.cancelReason ?? null, JSON.stringify(before), JSON.stringify(updated));
 
-      return updated;
+      let settlement = null;
+      if (input.bookingStatus === "COMPLETED" || input.bookingStatus === "NO_SHOW") {
+        settlement = await settlementService.settleForBooking(id, tx);
+      } else if (input.bookingStatus === "CANCELLED") {
+        settlement = await settlementService.cancelForBooking(id, tx);
+      }
+
+      return { ...updated, settlement };
     });
   },
 
@@ -1078,7 +1086,74 @@ export const adminRepository = {
     return prisma.$executeRaw`update vouchers set status = ${status}::voucher_status, updated_at = now() where id = ${id}`;
   },
 
-  async pendingBlogs(page: number, limit: number, filters: { search?: string; status?: string }) {
+  async voucherDetail(id: string) {
+    const [row] = await prisma.$queryRaw<any[]>`
+      select v.id, v.code, v.title, v.description, v.discount_type::text as "discountType",
+        v.discount_value::float as "discountValue", v.max_discount_amount::float as "maxDiscountAmount",
+        v.min_booking_amount::float as "minBookingAmount", v.used_count as "usedCount",
+        v.usage_limit as "usageLimit", v.start_date as "startDate", v.end_date as "endDate",
+        v.status::text, v.partner_id as "partnerId", v.court_id as "courtId",
+        p.business_name as "businessName"
+      from vouchers v
+      left join partner_profiles p on p.id = v.partner_id
+      where v.id = ${id}
+    `;
+    return row ?? null;
+  },
+
+  async createVoucher(input: {
+    code: string; title: string; description?: string;
+    discountType: string; discountValue: number;
+    maxDiscountAmount?: number | null; minBookingAmount: number;
+    usageLimit?: number | null; startDate: string; endDate: string;
+  }) {
+    const [row] = await prisma.$queryRaw<Array<{ id: string }>>`
+      insert into vouchers (
+        code, title, description, discount_type,
+        discount_value, max_discount_amount, min_booking_amount,
+        usage_limit, start_date, end_date, status
+      ) values (
+        ${input.code},
+        ${input.title},
+        ${input.description ?? null},
+        ${input.discountType}::voucher_discount_type,
+        ${input.discountValue},
+        ${input.maxDiscountAmount ?? null},
+        ${input.minBookingAmount},
+        ${input.usageLimit ?? null},
+        ${new Date(input.startDate)},
+        ${new Date(input.endDate)},
+        'DRAFT'::voucher_status
+      )
+      returning id
+    `;
+    return row;
+  },
+
+  async updateVoucher(id: string, input: {
+    code: string; title: string; description?: string;
+    discountType: string; discountValue: number;
+    maxDiscountAmount?: number | null; minBookingAmount: number;
+    usageLimit?: number | null; startDate: string; endDate: string;
+  }) {
+    return prisma.$executeRaw`
+      update vouchers set
+        code = ${input.code},
+        title = ${input.title},
+        description = ${input.description ?? null},
+        discount_type = ${input.discountType}::voucher_discount_type,
+        discount_value = ${input.discountValue},
+        max_discount_amount = ${input.maxDiscountAmount ?? null},
+        min_booking_amount = ${input.minBookingAmount},
+        usage_limit = ${input.usageLimit ?? null},
+        start_date = ${new Date(input.startDate)},
+        end_date = ${new Date(input.endDate)},
+        updated_at = now()
+      where id = ${id}
+    `;
+  },
+
+  async pendingBlogs(page: number, limit: number, filters: { search?: string; status?: string; authorRole?: string }) {
     const pattern = filters.search ? `%${filters.search}%` : null;
     const allowCommentsSelect = await columnExists("blog_posts", "allow_comments")
       ? Prisma.sql`coalesce(b.allow_comments, true)`
@@ -1087,21 +1162,34 @@ export const adminRepository = {
     const statusClause = filters.status && validStatuses.includes(filters.status)
       ? Prisma.sql`b.status = ${filters.status}::blog_post_status`
       : Prisma.sql`b.status != 'DRAFT'::blog_post_status`;
+    const validRoles = ["USER", "PARTNER", "ADMIN"];
+    const roleClause = filters.authorRole && validRoles.includes(filters.authorRole)
+      ? Prisma.sql`u.role = ${filters.authorRole}::user_role`
+      : Prisma.sql`true`;
 
     return prisma.$transaction([
       prisma.$queryRaw<any[]>(Prisma.sql`
         select b.id, b.title, b.excerpt, b.content, b.cover_image_url as "coverImageUrl",
           b.status::text, b.visibility::text, ${allowCommentsSelect} as "allowComments",
           b.created_at as "createdAt", u.full_name as "authorName", u.email as "authorEmail",
-          u.role::text as "authorRole"
-        from blog_posts b join users u on u.id = b.author_id
+          u.role::text as "authorRole",
+          reject_reason.reason as "rejectionReason"
+        from blog_posts b
+        join users u on u.id = b.author_id
+        left join lateral (
+          select mh.reason from moderation_history mh
+          where mh.entity_type = 'BLOG' and mh.entity_id = b.id and mh.action = 'REJECTED'
+          order by mh.created_at desc limit 1
+        ) reject_reason on true
         where ${statusClause}
+          and ${roleClause}
           and (${pattern}::text is null or b.title ilike ${pattern} or u.full_name ilike ${pattern})
         order by b.created_at desc offset ${(page - 1) * limit} limit ${limit}
       `),
       prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
         select count(*)::bigint as count from blog_posts b join users u on u.id = b.author_id
         where ${statusClause}
+          and ${roleClause}
           and (${pattern}::text is null or b.title ilike ${pattern} or u.full_name ilike ${pattern})
       `)
     ]);
@@ -1112,6 +1200,13 @@ export const adminRepository = {
       update blog_posts set status = ${status}::blog_post_status,
         published_at = case when ${status} = 'PUBLISHED' then now() else published_at end, updated_at = now()
       where id = ${id} and status = 'PENDING'::blog_post_status
+    `;
+  },
+
+  hideBlog(id: string) {
+    return prisma.$executeRaw`
+      update blog_posts set status = 'HIDDEN'::blog_post_status, updated_at = now()
+      where id = ${id} and status = 'PUBLISHED'::blog_post_status
     `;
   },
 

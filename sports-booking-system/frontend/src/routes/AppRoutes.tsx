@@ -64,8 +64,12 @@ import { AdminFinancePage } from "../pages/admin/AdminFinancePage";
 import { AdminNotificationsPage } from "../pages/admin/AdminNotificationsPage";
 import { AdminPartnerCommissionPage } from "../pages/admin/AdminPartnerCommissionPage";
 import { AdminVouchersPage } from "../pages/admin/AdminVouchersPage";
+import { AdminVoucherFormPage } from "../pages/admin/AdminVoucherFormPage";
 import { AdminBlogModerationPage } from "../pages/admin/AdminBlogModerationPage";
 import { AdminTournamentModerationPage } from "../pages/admin/AdminTournamentModerationPage";
+import { PartnerWalletPage } from "../pages/partner/PartnerWalletPage";
+import { AdminSettlementsPage } from "../pages/admin/AdminSettlementsPage";
+import { AdminWithdrawalsPage } from "../pages/admin/AdminWithdrawalsPage";
 
 export function AppRoutes() {
   return (
@@ -130,6 +134,7 @@ export function AppRoutes() {
           <Route path="partner/blogs/:id/edit" element={<PartnerBlogFormPage />} />
           <Route path="partner/calendar" element={<Navigate to="/partner/bookings?view=calendar" replace />} />
           <Route path="partner/statistics" element={<PartnerStatisticsPage />} />
+          <Route path="partner/wallet" element={<PartnerWalletPage />} />
           <Route path="partner/settings" element={<PartnerSettingsPage />} />
           <Route path="partner/staff" element={<PartnerStaffPage />} />
         </Route>
@@ -156,11 +161,15 @@ export function AppRoutes() {
           <Route path="admin/categories" element={<AdminCategoriesPage />} />
           <Route path="admin/reviews" element={<AdminReviewsPage />} />
           <Route path="admin/vouchers" element={<AdminVouchersPage />} />
+          <Route path="admin/vouchers/create" element={<AdminVoucherFormPage />} />
+          <Route path="admin/vouchers/:id/edit" element={<AdminVoucherFormPage />} />
           <Route path="admin/notifications" element={<AdminNotificationsPage />} />
           <Route path="admin/blogs/pending" element={<AdminBlogModerationPage />} />
           <Route path="admin/tournaments/pending" element={<AdminTournamentModerationPage />} />
           <Route path="admin/reports" element={<AdminReportsPage />} />
           <Route path="admin/finance" element={<AdminFinancePage />} />
+          <Route path="admin/settlements" element={<AdminSettlementsPage />} />
+          <Route path="admin/withdrawals" element={<AdminWithdrawalsPage />} />
           <Route path="admin/commission" element={<AdminCommissionSettingsPage />} />
           <Route path="admin/statistics" element={<AdminStatisticsPage />} />
           <Route path="admin/audit-logs" element={<AdminAuditLogsPage />} />

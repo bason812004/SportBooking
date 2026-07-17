@@ -18,6 +18,9 @@ import {
 import { commissionService } from "../commission/commission.service.js";
 import { dynamicPricingService } from "../dynamic-pricing/dynamicPricing.service.js";
 import { paymentProvider } from "../payments/providers/index.js";
+import { realtimeEvents } from "../realtime/realtime.events.js";
+import { realtimeService } from "../realtime/realtime.service.js";
+import { settlementService } from "../settlements/settlement.service.js";
 
 function dbTime(value: Date) {
   return value.toISOString().slice(11, 16);
@@ -255,8 +258,8 @@ export const recipientService = {
       throw new ValidationError("Chỉ có thể kết thúc đơn sau giờ đặt sân");
     }
 
-    return prisma.$transaction(async (tx) => {
-      const updated = await tx.booking.update({
+    const { updated, settlement } = await prisma.$transaction(async (tx) => {
+      const updatedBooking = await tx.booking.update({
         where: { id: booking.id },
         data:
           status === BookingStatus.CANCELLED
@@ -274,11 +277,23 @@ export const recipientService = {
         include: { court: { include: { partner: true } } }
       });
 
+      let updatedSettlement = null;
       if (status === BookingStatus.COMPLETED || status === BookingStatus.NO_SHOW) {
-        await commissionService.createEarning(updated, status, tx);
+        await commissionService.createEarning(updatedBooking, status, tx);
+        updatedSettlement = await settlementService.settleForBooking(booking.id, tx);
+      } else if (status === BookingStatus.CANCELLED) {
+        updatedSettlement = await settlementService.cancelForBooking(booking.id, tx);
       }
-      return updated;
+      return { updated: updatedBooking, settlement: updatedSettlement };
     });
+
+    if (settlement) {
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toAdmin(realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+      realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+    }
+    return updated;
   },
 
   async calendar(userId: string, query: { fromDate: string; toDate: string }) {
@@ -772,8 +787,8 @@ export const recipientService = {
 
     const newEndTime = timeToDate(currentTime);
     const checkoutNote = `Khach check-out luc ${currentTime}`;
-    return prisma.$transaction(async (tx) => {
-      const updated = await tx.booking.update({
+    const { updated, settlement } = await prisma.$transaction(async (tx) => {
+      const updatedBooking = await tx.booking.update({
         where: { id: booking.id },
         data: {
           endTime: newEndTime,
@@ -788,8 +803,17 @@ export const recipientService = {
         data: { endTime: newEndTime }
       });
 
-      await commissionService.createEarning(updated, BookingStatus.COMPLETED, tx);
-      return updated;
+      await commissionService.createEarning(updatedBooking, BookingStatus.COMPLETED, tx);
+      const updatedSettlement = await settlementService.settleForBooking(booking.id, tx);
+      return { updated: updatedBooking, settlement: updatedSettlement };
     });
+
+    if (settlement) {
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toAdmin(realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+      realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+    }
+    return updated;
   }
 };

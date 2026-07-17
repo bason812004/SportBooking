@@ -288,6 +288,19 @@ export type AdminVoucher = {
   status: string; businessName: string; courtName?: string | null;
 };
 
+export type AdminVoucherInput = {
+  code: string;
+  title: string;
+  description?: string;
+  discountType: "PERCENTAGE" | "FIXED_AMOUNT";
+  discountValue: number;
+  maxDiscountAmount?: number | null;
+  minBookingAmount: number;
+  usageLimit?: number | null;
+  startDate: string;
+  endDate: string;
+};
+
 export type AuditLog = {
   id: string; action: string; entityType: string; entityId: string;
   previousHash?: string | null; currentHash: string; createdAt: string;
@@ -542,6 +555,7 @@ export type BlogComment = {
   content: string;
   createdAt: string;
   updatedAt: string;
+  isEdited?: boolean;
   user: { id: string; fullName: string; avatarUrl?: string | null };
 };
 
@@ -612,4 +626,95 @@ export type TeamRecruitmentInput = {
   note?: string | null;
   zaloGroupLink?: string | null;
   zaloQrImage?: string | null;
+};
+
+export type SettlementStatus = "PENDING" | "PROCESSING" | "SETTLED" | "FAILED" | "CANCELLED";
+export type WithdrawalStatus = "PENDING" | "APPROVED" | "REJECTED" | "PAID";
+
+export type PartnerWallet = {
+  id: string;
+  partnerId: string;
+  availableBalance: number;
+  pendingBalance: number;
+  totalEarned: number;
+  totalWithdrawn: number;
+  currency: string;
+  updatedAt: string;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankAccountHolder?: string | null;
+  partner?: {
+    id: string;
+    businessName: string;
+    bankName?: string | null;
+    bankAccountNumber?: string | null;
+    bankAccountHolder?: string | null;
+    user?: { id: string; fullName: string; email: string };
+  };
+};
+
+export type Settlement = {
+  id: string;
+  bookingId: string;
+  partnerId: string;
+  paymentId?: string | null;
+  grossAmount: number;
+  voucherDiscount: number;
+  platformDiscount: number;
+  partnerDiscount: number;
+  commissionRate: number;
+  commissionAmount: number;
+  serviceFee: number;
+  netAmount: number;
+  status: SettlementStatus;
+  settledAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  booking?: {
+    id: string;
+    bookingCode: string;
+    bookingDate: string;
+    bookingStatus: string;
+    court?: { id: string; name: string };
+  };
+  partner?: { id: string; businessName: string };
+};
+
+export type WithdrawalRequest = {
+  id: string;
+  partnerId: string;
+  amount: number;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankAccountName?: string | null;
+  status: WithdrawalStatus;
+  processedBy?: string | null;
+  processedAt?: string | null;
+  note?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  partner?: {
+    id: string;
+    businessName: string;
+    user?: { id: string; fullName: string; email: string };
+  };
+  processor?: { id: string; fullName: string } | null;
+};
+
+export type SettlementSummary = {
+  total: { count: number; grossAmount: number; commissionAmount: number; netAmount: number };
+  byStatus: Record<string, { count: number; grossAmount: number; commissionAmount: number; netAmount: number }>;
+};
+
+export type WithdrawalSummary = {
+  total: { count: number; amount: number };
+  byStatus: Record<string, { count: number; amount: number }>;
+};
+
+export type WalletAdminSummary = {
+  walletCount: number;
+  totalAvailable: number;
+  totalPending: number;
+  totalEarned: number;
+  totalWithdrawn: number;
 };

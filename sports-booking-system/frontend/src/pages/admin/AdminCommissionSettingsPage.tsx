@@ -39,7 +39,7 @@ export function AdminCommissionSettingsPage() {
   return (
     <div className="space-y-8">
       <section className="rounded-2xl border border-line bg-white p-6">
-        <h1 className="text-3xl font-bold">Cài đặt hoa hồng</h1>
+        <h1 className="text-3xl font-bold">Tỷ lệ</h1>
         <p className="mt-2 text-slate-600">
           Tỷ lệ này áp dụng cho các đối tác chưa được cấu hình tỷ lệ riêng.
         </p>
@@ -65,7 +65,7 @@ export function AdminCommissionSettingsPage() {
       <section className="rounded-2xl border border-line bg-white p-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h2 className="text-2xl font-bold">Báo cáo hoa hồng</h2>
+            <h2 className="text-2xl font-bold">Thống kê</h2>
             <p className="mt-1 text-slate-600">Breakdown theo từng đối tác trong tháng.</p>
           </div>
           <Input label="Tháng" type="month" value={month} onChange={(event) => setMonth(event.target.value)} />

@@ -1,4 +1,5 @@
 import { BookingStatus } from "@prisma/client";
+import { prisma } from "../../config/db.js";
 import { env } from "../../config/env.js";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
@@ -13,6 +14,7 @@ import { notificationService } from "../notifications/notification.service.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { paymentProvider } from "../payments/providers/index.js";
+import { settlementService } from "../settlements/settlement.service.js";
 import { bookingRepository } from "./booking.repository.js";
 import { calculateBookingQuote, canCreateBookingCheckout, checkBookingOverlap, validateSelectedSlots } from "./booking.calculations.js";
 function bookingCode() {
@@ -401,12 +403,22 @@ export const bookingService = {
             : refundAmount === paidAmount
                 ? "REFUNDED"
                 : "PARTIALLY_REFUNDED";
-        const cancelled = await bookingRepository.cancel(bookingId, {
-            cancelReason,
-            refundAmount,
-            platformRetainedAmount,
-            paymentStatus
+        const { cancelled, settlement } = await prisma.$transaction(async (tx) => {
+            const cancelledBooking = await bookingRepository.cancel(bookingId, {
+                cancelReason,
+                refundAmount,
+                platformRetainedAmount,
+                paymentStatus
+            }, tx);
+            const cancelledSettlement = await settlementService.cancelForBooking(bookingId, tx);
+            return { cancelled: cancelledBooking, settlement: cancelledSettlement };
         });
+        if (settlement) {
+            realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
+            realtimeService.toAdmin(realtimeEvents.settlementUpdated, settlement);
+            realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+            realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+        }
         await notificationService.create({
             userId,
             title: "Don dat san da huy",

@@ -28,6 +28,9 @@ import { sportTypeRoutes } from "./modules/sport-types/sportType.routes.js";
 import { userRoutes } from "./modules/users/user.routes.js";
 import { adminVoucherRoutes, bookingVoucherRoutes, partnerVoucherRoutes, userVoucherRoutes } from "./modules/vouchers/voucherPrivate.routes.js";
 import { voucherRoutes } from "./modules/vouchers/voucher.routes.js";
+import { adminWalletRoutes, partnerWalletRoutes } from "./modules/wallets/wallet.routes.js";
+import { adminSettlementRoutes, partnerSettlementRoutes } from "./modules/settlements/settlement.routes.js";
+import { adminWithdrawalRoutes, partnerWithdrawalRoutes } from "./modules/withdrawals/withdrawal.routes.js";
 
 export const app = express();
 
@@ -78,11 +81,17 @@ app.use("/api/partner/demand-prediction", partnerDemandPredictionRoutes);
 app.use("/api/partner/vouchers", partnerVoucherRoutes);
 app.use("/api/partner/tournaments", partnerTournamentRoutes);
 app.use("/api/partner/analytics", partnerAnalyticsRoutes);
+app.use("/api/partner/wallet", partnerWalletRoutes);
+app.use("/api/partner/settlements", partnerSettlementRoutes);
+app.use("/api/partner/withdrawals", partnerWithdrawalRoutes);
 app.use("/api/partner", partnerRoutes);
 app.use("/api/recipient", recipientRoutes);
 app.use("/api/admin/vouchers", adminVoucherRoutes);
 app.use("/api/admin/tournaments", adminTournamentRoutes);
 app.use("/api/admin/analytics", adminAnalyticsRoutes);
+app.use("/api/admin/wallets", adminWalletRoutes);
+app.use("/api/admin/settlements", adminSettlementRoutes);
+app.use("/api/admin/withdrawals", adminWithdrawalRoutes);
 app.use("/api/admin", adminRoutes);
 
 app.use(errorMiddleware);

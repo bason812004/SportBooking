@@ -1,9 +1,11 @@
 import { z } from "zod";
+// IDs in this app are custom prefixed varchar (e.g. "c0001"), not real UUIDs.
+const id = z.string().trim().min(1).max(40);
 export const tournamentIdParamsSchema = z.object({
-    params: z.object({ id: z.string().uuid() })
+    params: z.object({ id })
 });
 export const tournamentRegistrationSchema = z.object({
-    params: z.object({ id: z.string().uuid() }),
+    params: z.object({ id }),
     body: z.object({
         teamName: z.string().max(160).optional(),
         contactPhone: z.string().min(6).max(30),
@@ -11,7 +13,7 @@ export const tournamentRegistrationSchema = z.object({
     })
 });
 const tournamentBodySchema = z.object({
-    courtId: z.string().uuid(),
+    courtId: id,
     title: z.string().min(2).max(220),
     description: z.string().optional(),
     sportType: z.string().min(2).max(80),

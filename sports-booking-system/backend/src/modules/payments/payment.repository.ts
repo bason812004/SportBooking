@@ -1,5 +1,16 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+import { settlementService } from "../settlements/settlement.service.js";
+
+const webhookBookingInclude = {
+  booking: {
+    include: {
+      court: {
+        include: { partner: { select: { id: true, commissionRate: true } } }
+      }
+    }
+  }
+} as const;
 
 export const paymentRepository = {
   findForUser(paymentId: string, userId: string) {
@@ -17,7 +28,7 @@ export const paymentRepository = {
   },
 
   findByExternalOrderId(externalOrderId: string, tx: Prisma.TransactionClient = prisma) {
-    return tx.payment.findUnique({ where: { externalOrderId }, include: { booking: { include: { court: true } } } });
+    return tx.payment.findUnique({ where: { externalOrderId }, include: webhookBookingInclude });
   },
 
   findTransaction(provider: string, providerTransactionId: string, tx: Prisma.TransactionClient = prisma) {
@@ -43,7 +54,7 @@ export const paymentRepository = {
       if (!payment && input.paymentReference) {
         payment = await tx.payment.findFirst({
           where: { paymentReference: input.paymentReference },
-          include: { booking: { include: { court: true } } }
+          include: webhookBookingInclude
         });
       }
       if (!payment && input.externalOrderId) {
@@ -54,7 +65,7 @@ export const paymentRepository = {
               { externalOrderId: { startsWith: input.externalOrderId } }
             ]
           },
-          include: { booking: { include: { court: true } } }
+          include: webhookBookingInclude
         });
       }
       if (!payment) {
@@ -89,7 +100,7 @@ export const paymentRepository = {
           externalTransactionId: input.externalTransactionId,
           paidAt: paid ? new Date() : undefined
         },
-        include: { booking: { include: { court: true } } }
+        include: webhookBookingInclude
       });
 
       await tx.booking.update({
@@ -100,7 +111,11 @@ export const paymentRepository = {
         }
       });
 
-      return { payment: updatedPayment, idempotent: false };
+      const settlement = paid
+        ? await settlementService.createFromPaidBooking(updatedPayment.booking, updatedPayment.id, tx)
+        : await settlementService.cancelForBooking(payment.bookingId, tx);
+
+      return { payment: updatedPayment, idempotent: false, settlement };
     });
   },
 

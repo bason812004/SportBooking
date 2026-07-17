@@ -1,8 +1,51 @@
+import { env } from "../../config/env.js";
 import { ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { calculateDemandScore } from "../../shared/utils/businessRules.js";
 import { dayTypeFor, timeToMinutes } from "../../shared/utils/time.js";
 import { trackEvent } from "../analytics/analytics.service.js";
 import { demandPredictionRepository } from "./demandPrediction.repository.js";
+const RULE_BASED_MODEL_VERSION = "rule-based-v1";
+const ML_MODEL_VERSION = "ml-random-forest-v1";
+async function predictWithMlModel(input) {
+    if (!env.ML_SERVICE_URL)
+        return null;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), env.ML_SERVICE_TIMEOUT_MS);
+    try {
+        const response = await fetch(`${env.ML_SERVICE_URL}/predict`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: controller.signal,
+            body: JSON.stringify({
+                hour_of_day: input.hourOfDay,
+                day_of_week: input.dayOfWeek,
+                is_weekend: input.isWeekend,
+                sport_type: input.sportType,
+                booking_count: input.bookingCount,
+                cancellation_count: input.cancellationCount,
+                voucher_usage_count: input.voucherUsageCount,
+                average_price: input.averagePrice
+            })
+        });
+        if (!response.ok)
+            return null;
+        const body = (await response.json());
+        return {
+            status: "GENERATED",
+            predictedDemandScore: body.predicted_demand_score,
+            predictedOccupancyRate: body.predicted_occupancy_rate,
+            predictionLevel: body.prediction_level,
+            confidenceScore: body.confidence_score
+        };
+    }
+    catch {
+        // ML service unavailable or timed out: caller falls back to rule-based prediction.
+        return null;
+    }
+    finally {
+        clearTimeout(timeout);
+    }
+}
 const messages = {
     INSUFFICIENT_DATA: {
         vi: "Chua du du lieu de du doan nhu cau.",
@@ -42,20 +85,42 @@ export const demandPredictionService = {
         const court = await demandPredictionRepository.court(courtId);
         if (!court)
             throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
-        const [totalHistoricalBookings, matchingSlotBookings, cancellationCount, averageRows] = await Promise.all([
+        const [totalHistoricalBookings, matchingSlotBookings, cancellationCount, averageRows, slotStatsRows] = await Promise.all([
             demandPredictionRepository.totalHistoricalBookings(courtId),
             demandPredictionRepository.matchingSlotBookings(courtId, input.startTime, input.endTime),
             demandPredictionRepository.cancellationCount(courtId),
-            demandPredictionRepository.averageComparableSlotBookings(courtId)
+            demandPredictionRepository.averageComparableSlotBookings(courtId),
+            demandPredictionRepository.slotPriceAndVoucherStats(courtId, input.startTime, input.endTime)
         ]);
-        const result = calculateDemandScore({
-            totalHistoricalBookings,
-            matchingSlotBookings,
-            averageBookingsPerComparableSlot: averageRows[0]?.average ?? 0,
-            isWeekend: dayTypeFor(input.date) === "WEEKEND",
-            isPeakHour: isPeakHour(input.startTime),
-            cancellationCount
-        });
+        const isWeekend = dayTypeFor(input.date) === "WEEKEND";
+        let modelVersion = RULE_BASED_MODEL_VERSION;
+        let result = null;
+        if (totalHistoricalBookings >= env.ML_MIN_HISTORY) {
+            const mlResult = await predictWithMlModel({
+                hourOfDay: Math.floor(timeToMinutes(input.startTime) / 60),
+                dayOfWeek: new Date(`${input.date}T00:00:00.000Z`).getUTCDay(),
+                isWeekend,
+                sportType: court.category.slug,
+                bookingCount: matchingSlotBookings,
+                cancellationCount,
+                voucherUsageCount: Number(slotStatsRows[0]?.voucherUsageCount ?? 0),
+                averagePrice: slotStatsRows[0]?.averagePrice ?? 0
+            });
+            if (mlResult) {
+                result = mlResult;
+                modelVersion = ML_MODEL_VERSION;
+            }
+        }
+        if (!result) {
+            result = calculateDemandScore({
+                totalHistoricalBookings,
+                matchingSlotBookings,
+                averageBookingsPerComparableSlot: averageRows[0]?.average ?? 0,
+                isWeekend,
+                isPeakHour: isPeakHour(input.startTime),
+                cancellationCount
+            });
+        }
         await demandPredictionRepository.savePrediction({
             courtId,
             predictionDate: input.date,
@@ -65,7 +130,8 @@ export const demandPredictionService = {
             predictedOccupancyRate: result.predictedOccupancyRate,
             confidenceScore: result.confidenceScore,
             predictionLevel: result.predictionLevel,
-            status: result.status
+            status: result.status,
+            modelVersion
         });
         await trackEvent({
             partnerId: court.partnerId,
@@ -81,6 +147,7 @@ export const demandPredictionService = {
             predictionLevel: result.predictionLevel,
             confidenceScore: result.confidenceScore,
             status: result.status,
+            modelVersion,
             message: result.status === "INSUFFICIENT_DATA" ? messages.INSUFFICIENT_DATA : messages[result.predictionLevel]
         };
     },

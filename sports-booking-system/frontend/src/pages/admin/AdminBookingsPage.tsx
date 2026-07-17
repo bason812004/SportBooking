@@ -262,7 +262,7 @@ function BookingDetail({ booking, onUpdated }: { booking: AdminBooking; onUpdate
                 <Td>{item.service.name}</Td>
                 <Td>{item.quantity}</Td>
                 <Td>{formatMoney(item.price)}</Td>
-                <Td>{formatMoney(item.price * item.quantity)}</Td>
+                <Td>{formatMoney(Number(item.price) * item.quantity)}</Td>
               </Tr>
             )) : <Tr><Td className="text-slate-500" colSpan={4}>Không có dịch vụ kèm theo</Td></Tr>}
           </TBody>

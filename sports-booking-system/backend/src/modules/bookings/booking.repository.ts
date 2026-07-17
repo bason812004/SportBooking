@@ -67,9 +67,10 @@ export const bookingRepository = {
       refundAmount: number;
       platformRetainedAmount: number;
       paymentStatus: PaymentStatus;
-    }
+    },
+    db: Prisma.TransactionClient | typeof prisma = prisma
   ) {
-    return prisma.booking.update({
+    return db.booking.update({
       where: { id },
       data: {
         bookingStatus: "CANCELLED",

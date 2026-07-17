@@ -1,5 +1,7 @@
 import { z } from "zod";
 const fullHourTime = z.string().regex(/^(?:[01]\d|2[0-3]):00$/, "Gio dat san phai la gio chan, vi du 06:00");
+// IDs in this app are custom prefixed varchar (e.g. "c0001"), not real UUIDs.
+const id = z.string().trim().min(1).max(40);
 export const voucherIdParamsSchema = z.object({
     params: z.object({ id: z.string().min(1) })
 });
@@ -7,7 +9,7 @@ export const applyVoucherSchema = z.object({
     body: z.object({
         voucherId: z.string().optional(),
         code: z.string().min(2).max(40).optional(),
-        courtId: z.string().uuid(),
+        courtId: id,
         subtotal: z.number().nonnegative()
     }).refine((value) => value.voucherId || value.code, { message: "voucherId or code is required" })
 });
@@ -26,7 +28,7 @@ export const validateVoucherSchema = z.object({
     }).refine((value) => value.voucherId || value.code, { message: "voucherId hoặc code là bắt buộc" })
 });
 const partnerVoucherBodySchema = z.object({
-    courtId: z.string().uuid().optional(),
+    courtId: id.optional(),
     code: z.string().min(2).max(40),
     title: z.string().min(2).max(160),
     description: z.string().optional(),

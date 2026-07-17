@@ -131,6 +131,13 @@ export const adminService = {
       refundAmount: input.refundAmount,
       platformRetainedAmount: input.platformRetainedAmount
     });
+    if (result.settlement) {
+      const settlement = result.settlement;
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toAdmin(realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+      realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+    }
     return result;
   },
 
@@ -451,11 +458,28 @@ export const adminService = {
     return { id, status };
   },
 
+  async voucherDetail(id: string) {
+    const voucher = await adminRepository.voucherDetail(id);
+    if (!voucher) throw new NotFoundError("Voucher not found");
+    return voucher;
+  },
+  async createVoucher(actorId: string, input: any) {
+    const result = await adminRepository.createVoucher(input);
+    await recordAdminAction(actorId, "VOUCHER_CREATED", "VOUCHER", result.id, { code: input.code });
+    return result;
+  },
+  async updateVoucher(actorId: string, id: string, input: any) {
+    await adminRepository.updateVoucher(id, input);
+    await recordAdminAction(actorId, "VOUCHER_UPDATED", "VOUCHER", id, { code: input.code });
+    return { id };
+  },
+
   async pendingBlogs(query: any) {
     const page = parsePage(query.page), limit = parseLimit(query.limit);
     const [items, count] = await adminRepository.pendingBlogs(page, limit, {
       search: query.search || undefined,
-      status: query.status || "PENDING"
+      status: query.status || "PENDING",
+      authorRole: query.authorRole || undefined
     });
     return paginatedRaw(items, count, page, limit);
   },
@@ -464,6 +488,12 @@ export const adminService = {
     await adminRepository.addModerationHistory({ entityType: "BLOG", entityId: id, action: status, reason, actorId });
     await recordAdminAction(actorId, `BLOG_${status}`, "BLOG", id, { reason });
     return { id, status };
+  },
+  async hideBlog(actorId: string, id: string, reason?: string) {
+    if (!(await adminRepository.hideBlog(id))) throw new ValidationError("Bai viet khong the an (chi an bai da xuat ban)");
+    await adminRepository.addModerationHistory({ entityType: "BLOG", entityId: id, action: "HIDDEN", reason, actorId });
+    await recordAdminAction(actorId, "BLOG_HIDDEN", "BLOG", id, { reason });
+    return { id, status: "HIDDEN" };
   },
 
   async pendingTournaments(query: any) {

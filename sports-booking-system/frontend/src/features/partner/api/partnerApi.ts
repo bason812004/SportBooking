@@ -9,7 +9,11 @@ import type {
   PartnerProfile,
   PartnerRevenueReport,
   PartnerTournament,
-  PartnerVoucher
+  PartnerVoucher,
+  PartnerWallet,
+  Settlement,
+  SettlementSummary,
+  WithdrawalRequest
 } from "../../../types/api";
 
 export type PartnerCourtSurface = {
@@ -317,6 +321,41 @@ export const partnerApi = {
   },
   async deleteRecipient(id: string) {
     const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/recipients/${id}`);
+    return data.data;
+  },
+  async myWallet() {
+    const { data } = await api.get<ApiResponse<PartnerWallet>>("/partner/wallet/me");
+    return data.data;
+  },
+  async mySettlements(params: Record<string, string | number | undefined> = {}) {
+    const cleaned = Object.fromEntries(
+      Object.entries(params).filter(([, value]) => value !== undefined && value !== "")
+    );
+    const { data } = await api.get<ApiResponse<Paginated<Settlement>>>("/partner/settlements", { params: cleaned });
+    return data.data;
+  },
+  async settlementSummary() {
+    const { data } = await api.get<ApiResponse<SettlementSummary>>("/partner/settlements/summary");
+    return data.data;
+  },
+  async settlementDetail(id: string) {
+    const { data } = await api.get<ApiResponse<Settlement>>(`/partner/settlements/${id}`);
+    return data.data;
+  },
+  async myWithdrawals(params: Record<string, string | number | undefined> = {}) {
+    const cleaned = Object.fromEntries(
+      Object.entries(params).filter(([, value]) => value !== undefined && value !== "")
+    );
+    const { data } = await api.get<ApiResponse<Paginated<WithdrawalRequest>>>("/partner/withdrawals", { params: cleaned });
+    return data.data;
+  },
+  async createWithdrawal(payload: {
+    amount: number;
+    bankName?: string;
+    bankAccountNumber?: string;
+    bankAccountName?: string;
+  }) {
+    const { data } = await api.post<ApiResponse<WithdrawalRequest>>("/partner/withdrawals", payload);
     return data.data;
   }
 };

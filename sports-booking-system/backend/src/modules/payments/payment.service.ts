@@ -43,6 +43,13 @@ export const paymentService = {
     realtimeService.toUser(payment.userId, payment.status === "PAID" ? realtimeEvents.paymentPaid : realtimeEvents.paymentFailed, payment);
     realtimeService.toBooking(payment.bookingId, payment.status === "PAID" ? realtimeEvents.paymentPaid : realtimeEvents.paymentFailed, payment);
     realtimeService.toCourt(payment.booking.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: payment.booking.courtId });
+    if ("settlement" in result && result.settlement) {
+      const settlement = result.settlement;
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toAdmin(realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+      realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+    }
     return { ok: true, idempotent: result.idempotent };
   }
 };

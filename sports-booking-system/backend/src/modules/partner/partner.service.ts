@@ -7,6 +7,9 @@ import { bookingStartsAt, parseLimit, parsePage, timeToDate, timeToMinutes, toDb
 import { buildSlotGrid } from "../../shared/utils/slotGrid.js";
 import { uniqueSlug } from "../../shared/utils/slug.js";
 import { commissionService } from "../commission/commission.service.js";
+import { realtimeEvents } from "../realtime/realtime.events.js";
+import { realtimeService } from "../realtime/realtime.service.js";
+import { settlementService } from "../settlements/settlement.service.js";
 import { voucherService } from "../vouchers/voucher.service.js";
 import { userRepository } from "../users/user.repository.js";
 import { partnerRepository } from "./partner.repository.js";
@@ -290,8 +293,8 @@ export const partnerService = {
       throw new ValidationError("Chi co the ket thuc don sau gio dat san");
     }
 
-    return prisma.$transaction(async (tx) => {
-      const updated = await tx.booking.update({
+    const { updated, settlement } = await prisma.$transaction(async (tx) => {
+      const updatedBooking = await tx.booking.update({
         where: { id: booking.id },
         data:
           status === BookingStatus.CANCELLED
@@ -309,11 +312,23 @@ export const partnerService = {
         include: { court: { include: { partner: true } } }
       });
 
+      let updatedSettlement = null;
       if (status === BookingStatus.COMPLETED || status === BookingStatus.NO_SHOW) {
-        await commissionService.createEarning(updated, status, tx);
+        await commissionService.createEarning(updatedBooking, status, tx);
+        updatedSettlement = await settlementService.settleForBooking(booking.id, tx);
+      } else if (status === BookingStatus.CANCELLED) {
+        updatedSettlement = await settlementService.cancelForBooking(booking.id, tx);
       }
-      return updated;
+      return { updated: updatedBooking, settlement: updatedSettlement };
     });
+
+    if (settlement) {
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toAdmin(realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+      realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+    }
+    return updated;
   },
 
   async revenue(userId: string, month?: string) {

@@ -32,7 +32,7 @@ export const demandPredictionRepository = {
       from (
         select booking_date, start_time, count(*) as slot_count
         from bookings
-        where court_id = ${courtId}::uuid
+        where court_id = ${courtId}
           and booking_status not in ('CANCELLED'::booking_status, 'NO_SHOW'::booking_status)
         group by booking_date, start_time
       ) grouped_slots
@@ -49,16 +49,30 @@ export const demandPredictionRepository = {
                 predictedOccupancyRate: data.predictedOccupancyRate,
                 confidenceScore: data.confidenceScore,
                 predictionLevel: data.predictionLevel,
-                status: data.status
+                status: data.status,
+                modelVersion: data.modelVersion
             }
         });
+    },
+    slotPriceAndVoucherStats(courtId, startTime, endTime) {
+        return prisma.$queryRaw `
+      select
+        coalesce(avg(b.total_price), 0)::float as "averagePrice",
+        count(bv.id)::bigint as "voucherUsageCount"
+      from bookings b
+      left join booking_vouchers bv on bv.booking_id = b.id
+      where b.court_id = ${courtId}
+        and b.booking_status not in ('CANCELLED'::booking_status, 'NO_SHOW'::booking_status)
+        and b.start_time < ${timeToDate(endTime)}::time
+        and b.end_time > ${timeToDate(startTime)}::time
+    `;
     },
     partnerPeakHours(partnerId) {
         return prisma.$queryRaw `
       select c.id as "courtId", c.name as "courtName", extract(hour from b.start_time)::int as hour, count(*)::bigint as "bookingCount"
       from bookings b
       join courts c on c.id = b.court_id
-      where c.partner_id = ${partnerId}::uuid
+      where c.partner_id = ${partnerId}
         and b.booking_status not in ('CANCELLED'::booking_status, 'NO_SHOW'::booking_status)
       group by c.id, c.name, extract(hour from b.start_time)
       order by "bookingCount" desc

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Eye, MessageCircle, MessageCircleOff, XCircle } from "lucide-react";
+import { CheckCircle2, Eye, EyeOff, MessageCircle, MessageCircleOff, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
 import { Button } from "../../components/ui/Button";
@@ -22,6 +22,7 @@ type PendingBlog = {
   authorName: string;
   authorEmail: string;
   authorRole: string;
+  rejectionReason?: string | null;
 };
 
 const fallbackCoverImage = "https://images.unsplash.com/photo-1517649763962-0c623066013b?auto=format&fit=crop&w=640&q=80";
@@ -50,24 +51,37 @@ const statusFilterOptions = [
   { value: "PENDING", label: "Chờ duyệt" },
   { value: "PUBLISHED", label: "Đã xuất bản" },
   { value: "REJECTED", label: "Bị từ chối" },
+  { value: "HIDDEN", label: "Đã ẩn" },
   { value: "ALL", label: "Tất cả" }
+];
+
+const roleFilterOptions = [
+  { value: "", label: "Tất cả vai trò" },
+  { value: "USER", label: "Khách hàng" },
+  { value: "PARTNER", label: "Đối tác" },
+  { value: "ADMIN", label: "Quản trị viên" }
 ];
 
 export function AdminBlogModerationPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("PENDING");
+  const [authorRole, setAuthorRole] = useState("");
   const [page, setPage] = useState(1);
-  const [pending, setPending] = useState<{ id: string; action: "approve" | "reject" } | null>(null);
+  const [pending, setPending] = useState<{ id: string; action: "approve" | "reject" | "hide" } | null>(null);
   const [detail, setDetail] = useState<PendingBlog | null>(null);
 
   const blogs = useQuery({
-    queryKey: ["admin-blogs", search, status, page],
-    queryFn: () => adminApi.pendingBlogs({ search, status, page, limit: 10 }),
+    queryKey: ["admin-blogs", search, status, authorRole, page],
+    queryFn: () => adminApi.pendingBlogs({ search, status, authorRole: authorRole || undefined, page, limit: 10 }),
     placeholderData: keepPreviousData
   });
+
   const action = useMutation({
-    mutationFn: ({ id, action, reason }: { id: string; action: "approve" | "reject"; reason: string }) => adminApi.moderateBlog(id, action, reason),
+    mutationFn: ({ id, action, reason }: { id: string; action: "approve" | "reject" | "hide"; reason: string }) => {
+      if (action === "hide") return adminApi.hideBlog(id, reason);
+      return adminApi.moderateBlog(id, action, reason);
+    },
     onSuccess: async () => {
       toast.success("Đã kiểm duyệt bài viết");
       setPending(null);
@@ -84,6 +98,12 @@ export function AdminBlogModerationPage() {
 
   const items = (blogs.data?.items ?? []) as PendingBlog[];
 
+  const modalTitleMap: Record<string, string> = {
+    approve: "Xuất bản bài viết",
+    reject: "Từ chối bài viết",
+    hide: "Ẩn bài viết"
+  };
+
   return (
     <div className="space-y-5">
       <div>
@@ -97,6 +117,12 @@ export function AdminBlogModerationPage() {
           value={status}
           onChange={(event) => { setPage(1); setStatus(event.target.value); }}
           options={statusFilterOptions}
+        />
+        <Select
+          label="Vai trò tác giả"
+          value={authorRole}
+          onChange={(event) => { setPage(1); setAuthorRole(event.target.value); }}
+          options={roleFilterOptions}
         />
       </div>
       {!items.length ? (
@@ -130,6 +156,12 @@ export function AdminBlogModerationPage() {
                       <h2 className="mt-3 text-xl font-bold">{blog.title}</h2>
                       <p className="text-sm text-slate-500">{blog.authorName} · {blog.authorEmail}</p>
                       <p className="mt-1 text-xs font-semibold text-slate-400">Gửi lúc {new Date(blog.createdAt).toLocaleString("vi-VN")}</p>
+                      {blog.status === "REJECTED" && blog.rejectionReason && (
+                        <div className="mt-2 flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2">
+                          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+                          <p className="text-sm font-semibold text-red-700">Lý do từ chối: {blog.rejectionReason}</p>
+                        </div>
+                      )}
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Button variant="secondary" onClick={() => setDetail(blog)}>
@@ -148,6 +180,12 @@ export function AdminBlogModerationPage() {
                           </Button>
                         </>
                       )}
+                      {blog.status === "PUBLISHED" && (
+                        <Button disabled={action.isPending} variant="danger" onClick={() => setPending({ id: blog.id, action: "hide" })}>
+                          <EyeOff className="h-4 w-4" />
+                          Ẩn bài
+                        </Button>
+                      )}
                     </div>
                   </div>
                   <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-slate-700">{blog.excerpt || blog.content.slice(0, 360)}</p>
@@ -162,7 +200,7 @@ export function AdminBlogModerationPage() {
 
       <AdminReasonModal
         open={Boolean(pending)}
-        title={pending?.action === "approve" ? "Xuất bản bài viết" : "Từ chối bài viết"}
+        title={pending ? modalTitleMap[pending.action] : ""}
         required={pending?.action === "reject"}
         onClose={() => setPending(null)}
         onConfirm={(reason) => pending && action.mutate({ ...pending, reason })}
@@ -204,7 +242,15 @@ function BlogDetailModal({ blog, onClose }: { blog: PendingBlog | null; onClose:
           <h2 className="mt-4 text-2xl font-bold">{blog.title}</h2>
           <p className="text-sm text-slate-500">{blog.authorName} · {blog.authorEmail}</p>
           <p className="mt-1 text-xs font-semibold text-slate-400">Gửi lúc {new Date(blog.createdAt).toLocaleString("vi-VN")}</p>
-          <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-slate-700">{blog.content}</p>
+          {blog.status === "REJECTED" && blog.rejectionReason && (
+            <div className="mt-3 flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2">
+              <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+              <p className="text-sm font-semibold text-red-700">Lý do từ chối: {blog.rejectionReason}</p>
+            </div>
+          )}
+          <div className="mt-6 space-y-4 text-base leading-8 text-slate-700">
+            {blog.content.split("\n").filter(Boolean).map((paragraph, index) => <p key={index}>{paragraph}</p>)}
+          </div>
         </div>
       </div>
     </div>

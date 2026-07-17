@@ -53,8 +53,8 @@ export const bookingRepository = {
             include: { court: true, bookingServices: { include: { service: true } } }
         });
     },
-    cancel(id, data) {
-        return prisma.booking.update({
+    cancel(id, data, db = prisma) {
+        return db.booking.update({
             where: { id },
             data: {
                 bookingStatus: "CANCELLED",
