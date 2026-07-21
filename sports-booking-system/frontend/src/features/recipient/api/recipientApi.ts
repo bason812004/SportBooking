@@ -140,6 +140,47 @@ export type RecipientWalkInBookingResult = {
   payment: RecipientWalkInPayment | null;
 };
 
+export type RecipientRecurringBookingPayload = {
+  courtSurfaceId: string;
+  customerName: string;
+  customerPhone: string;
+  startDate: string;
+  startTime: string;
+  minutes: number;
+  occurrences: number;
+  note?: string;
+};
+
+export type RecipientRecurringBookingResult = {
+  series: { id: string };
+  created: Booking[];
+  skipped: { date: string; reason: string }[];
+};
+
+export type RecipientCustomerMatch = {
+  id: string;
+  fullName: string;
+  phone: string | null;
+  bookingsCount: number;
+  lastBookingDate: string | null;
+};
+
+export type RecipientCustomerHistoryBooking = {
+  id: string;
+  bookingCode: string;
+  bookingDate: string;
+  startTime: string;
+  endTime: string;
+  bookingStatus: string;
+  totalPrice: number;
+  courtSurface: { name: string; code: string } | null;
+};
+
+export type RecipientCustomerHistory = {
+  customer: { id: string; fullName: string; phone: string | null };
+  bookings: RecipientCustomerHistoryBooking[];
+};
+
 export type RecipientPaymentStatus = {
   id: string;
   bookingId: string;
@@ -221,6 +262,21 @@ export const recipientApi = {
 
   async createWalkInBooking(payload: RecipientWalkInBookingPayload) {
     const { data } = await api.post<ApiResponse<RecipientWalkInBookingResult>>("/recipient/operations/walk-in-booking", payload);
+    return data.data;
+  },
+
+  async createRecurringWalkInBooking(payload: RecipientRecurringBookingPayload) {
+    const { data } = await api.post<ApiResponse<RecipientRecurringBookingResult>>("/recipient/operations/recurring-walk-in-booking", payload);
+    return data.data;
+  },
+
+  async lookupCustomers(phone: string) {
+    const { data } = await api.get<ApiResponse<{ matches: RecipientCustomerMatch[] }>>("/recipient/customers/lookup", { params: { phone } });
+    return data.data;
+  },
+
+  async customerHistory(customerId: string) {
+    const { data } = await api.get<ApiResponse<RecipientCustomerHistory>>(`/recipient/customers/${customerId}/history`);
     return data.data;
   },
 

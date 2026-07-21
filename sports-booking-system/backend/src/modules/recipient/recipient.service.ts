@@ -36,6 +36,12 @@ function minutesToTime(total: number) {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
+function addWeeks(date: string, weeks: number) {
+  const base = new Date(`${date}T00:00:00.000Z`);
+  base.setUTCDate(base.getUTCDate() + weeks * 7);
+  return base.toISOString().slice(0, 10);
+}
+
 function bookingCode() {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
   return `WI${stamp}${Math.floor(Math.random() * 900 + 100)}`;
@@ -232,6 +238,54 @@ export const recipientService = {
     ]);
 
     return { items, meta: paginationMeta(page, limit, total) };
+  },
+
+  async lookupCustomersByPhone(userId: string, phone: string) {
+    const courtId = await getManagedCourtId(userId);
+    const users = await prisma.user.findMany({
+      where: { phone: { contains: phone } },
+      select: { id: true, fullName: true, phone: true },
+      take: 5
+    });
+
+    const matches = await Promise.all(
+      users.map(async (user) => {
+        const [bookingsCount, lastBooking] = await Promise.all([
+          prisma.booking.count({ where: { userId: user.id, courtId } }),
+          prisma.booking.findFirst({
+            where: { userId: user.id, courtId },
+            orderBy: { bookingDate: "desc" },
+            select: { bookingDate: true }
+          })
+        ]);
+        return {
+          id: user.id,
+          fullName: user.fullName,
+          phone: user.phone,
+          bookingsCount,
+          lastBookingDate: lastBooking?.bookingDate ?? null
+        };
+      })
+    );
+
+    return { matches: matches.filter((match) => match.bookingsCount > 0) };
+  },
+
+  async customerBookingHistory(userId: string, customerId: string) {
+    const courtId = await getManagedCourtId(userId);
+    const customer = await prisma.user.findUnique({ where: { id: customerId }, select: { id: true, fullName: true, phone: true } });
+    if (!customer) throw new NotFoundError("Không tìm thấy khách hàng");
+
+    const bookings = await prisma.booking.findMany({
+      where: { userId: customerId, courtId },
+      orderBy: { bookingDate: "desc" },
+      take: 20,
+      include: {
+        courtSurface: { select: { name: true, code: true } }
+      }
+    });
+
+    return { customer, bookings };
   },
 
   async updateBookingStatus(userId: string, bookingId: string, status: BookingStatus) {
@@ -690,6 +744,142 @@ export const recipientService = {
 
       return { booking, payment };
     });
+  },
+
+  async createRecurringWalkInBooking(
+    userId: string,
+    input: {
+      courtSurfaceId: string;
+      customerName: string;
+      customerPhone: string;
+      startDate: string;
+      startTime: string;
+      minutes: number;
+      occurrences: number;
+      note?: string;
+    }
+  ) {
+    const courtId = await getManagedCourtId(userId);
+    const surface = await prisma.courtSurface.findFirst({ where: { id: input.courtSurfaceId, courtId, status: CourtActiveStatus.ACTIVE } });
+    if (!surface) throw new NotFoundError("San con khong ton tai hoac dang tam ngung");
+
+    const existingUser = await prisma.user.findFirst({ where: { phone: input.customerPhone } });
+    const customer =
+      existingUser ??
+      (await prisma.user.create({
+        data: {
+          id: await nextPrefixedId("u", "seq_users"),
+          fullName: input.customerName,
+          email: `walkin-${input.customerPhone.replace(/\D/g, "") || Date.now()}-${Date.now()}@walkin.sportsbooking.local`,
+          phone: input.customerPhone,
+          emailVerified: false
+        }
+      }));
+
+    const startTime = timeToDate(input.startTime);
+    const endTime = timeToDate(minutesToTime(timeToMinutes(input.startTime) + input.minutes));
+
+    const seriesId = await nextPrefixedId("bs", "seq_booking_series");
+    const series = await prisma.bookingSeries.create({
+      data: {
+        id: seriesId,
+        courtId,
+        courtSurfaceId: input.courtSurfaceId,
+        createdByUserId: userId,
+        customerName: input.customerName,
+        customerPhone: input.customerPhone,
+        startTime,
+        durationMinutes: input.minutes,
+        firstBookingDate: toDbDate(input.startDate),
+        occurrencesRequested: input.occurrences,
+        note: input.note
+      }
+    });
+
+    const created: Awaited<ReturnType<typeof prisma.booking.create>>[] = [];
+    const skipped: { date: string; reason: string }[] = [];
+
+    for (let i = 0; i < input.occurrences; i++) {
+      const occurrenceDate = addWeeks(input.startDate, i);
+
+      const conflict = await prisma.booking.findFirst({
+        where: {
+          courtId,
+          OR: [{ courtSurfaceId: input.courtSurfaceId }, { courtSurfaceId: null }],
+          bookingDate: toDbDate(occurrenceDate),
+          bookingStatus: { in: activeOperationStatuses },
+          ...overlapWhere(startTime, endTime)
+        }
+      });
+      if (conflict) {
+        skipped.push({ date: occurrenceDate, reason: "Khung gio nay da co khach khac" });
+        continue;
+      }
+
+      const activeBlock = await prisma.courtAvailabilityBlock.findFirst({
+        where: {
+          courtId,
+          status: "ACTIVE",
+          blockDate: toDbDate(occurrenceDate),
+          OR: [{ courtSurfaceId: null }, { courtSurfaceId: input.courtSurfaceId }],
+          ...overlapWhere(startTime, endTime)
+        }
+      });
+      if (activeBlock) {
+        skipped.push({ date: occurrenceDate, reason: "San dang trong lich nghi/bao tri" });
+        continue;
+      }
+
+      const dynamicPrice = await dynamicPricingService.calculate(courtId, {
+        date: occurrenceDate,
+        startTime: input.startTime,
+        endTime: dbTime(endTime)
+      });
+      const hours = durationHours(input.startTime, dbTime(endTime));
+      const subtotal = dynamicPrice.finalPrice * hours;
+      const bookingId = await nextPrefixedId("b", "seq_bookings");
+
+      const booking = await prisma.$transaction(async (tx) => {
+        const createdBooking = await tx.booking.create({
+          data: {
+            id: bookingId,
+            bookingCode: bookingCode(),
+            userId: customer.id,
+            courtId,
+            courtSurfaceId: input.courtSurfaceId,
+            bookingSeriesId: series.id,
+            bookingDate: toDbDate(occurrenceDate),
+            startTime,
+            endTime,
+            basePrice: dynamicPrice.basePrice * hours,
+            dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
+            subtotal,
+            totalPrice: subtotal,
+            paymentMethod: PaymentMethod.CASH,
+            paymentStatus: "PAID",
+            bookingStatus: BookingStatus.CONFIRMED,
+            note: input.note
+          }
+        });
+
+        await tx.bookingSlot.create({
+          data: {
+            bookingId: createdBooking.id,
+            courtId,
+            bookingDate: toDbDate(occurrenceDate),
+            startTime,
+            endTime,
+            slotPrice: subtotal
+          }
+        });
+
+        return createdBooking;
+      });
+
+      created.push(booking);
+    }
+
+    return { series, created, skipped };
   },
 
   async paymentStatus(userId: string, paymentId: string) {

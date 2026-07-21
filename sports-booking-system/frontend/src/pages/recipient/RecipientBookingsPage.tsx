@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CalendarDays, ChevronLeft, ChevronRight, Table2, X } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Table2 } from "lucide-react";
 import { recipientApi, type RecipientCalendarBooking } from "../../features/recipient/api/recipientApi";
 import { LoadingState, ErrorState, EmptyState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
@@ -11,6 +11,7 @@ import { Select } from "../../components/ui/Select";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { SortableTh } from "../../components/common/SortableTh";
 import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
+import { Overlay } from "../../components/common/Overlay";
 import { useUrlSort } from "../../hooks/useUrlSort";
 import { BookingCalendarGrid } from "../../components/booking/BookingCalendarGrid";
 import { WalkInBookingForm } from "../../features/recipient/components/WalkInBookingForm";
@@ -43,19 +44,6 @@ function shiftDate(date: string, days: number) {
 }
 
 const defaultFilters = { status: "PENDING", ...currentYearRange() };
-
-function Overlay({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6" onMouseDown={onClose}>
-      <div className="relative w-full max-w-md rounded-2xl bg-white p-5 shadow-xl" onMouseDown={(event) => event.stopPropagation()}>
-        <button type="button" onClick={onClose} className="absolute right-4 top-4 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
-          <X className="h-5 w-5" />
-        </button>
-        {children}
-      </div>
-    </div>
-  );
-}
 
 export function RecipientBookingsPage() {
   const queryClient = useQueryClient();

@@ -7,8 +7,11 @@ import { bookingQuerySchema, calendarQuerySchema } from "../partner/partner.vali
 import {
   bookingExtendSchema,
   courtSurfaceStatusSchema,
+  customerIdParamSchema,
+  customerLookupQuerySchema,
   operationsQuerySchema,
   paymentIdParamSchema,
+  recurringWalkInBookingSchema,
   surfaceAvailabilityQuerySchema,
   walkInBookingSchema
 } from "./recipient.validation.js";
@@ -29,7 +32,14 @@ recipientRoutes.put("/court-surfaces/:id/status", validate(courtSurfaceStatusSch
 recipientRoutes.get("/court-surfaces/:id/availability", validate(surfaceAvailabilityQuerySchema), recipientController.surfaceAvailability);
 recipientRoutes.get("/operations", validate(operationsQuerySchema), recipientController.operations);
 recipientRoutes.post("/bookings/:id/extend", validate(bookingExtendSchema), recipientController.extendBooking);
+recipientRoutes.get("/customers/lookup", validate(customerLookupQuerySchema), recipientController.lookupCustomers);
+recipientRoutes.get("/customers/:id/history", validate(customerIdParamSchema), recipientController.customerHistory);
 recipientRoutes.post("/operations/walk-in-booking", validate(walkInBookingSchema), recipientController.createWalkInBooking);
+recipientRoutes.post(
+  "/operations/recurring-walk-in-booking",
+  validate(recurringWalkInBookingSchema),
+  recipientController.createRecurringWalkInBooking
+);
 recipientRoutes.post("/bookings/:id/early-check-in", recipientController.earlyCheckInBooking);
 recipientRoutes.post("/bookings/:id/early-check-out", recipientController.earlyCheckOutBooking);
 recipientRoutes.get("/payments/:id/status", validate(paymentIdParamSchema), recipientController.paymentStatus);

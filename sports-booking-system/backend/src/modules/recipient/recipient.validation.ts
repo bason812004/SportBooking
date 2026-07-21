@@ -43,3 +43,28 @@ export const walkInBookingSchema = z.object({
     note: z.string().trim().max(500).optional()
   })
 });
+
+export const customerLookupQuerySchema = z.object({
+  query: z.object({
+    phone: z.string().trim().min(4).max(30)
+  })
+});
+
+export const customerIdParamSchema = z.object({
+  params: z.object({
+    id: z.string().trim().min(1).max(40)
+  })
+});
+
+export const recurringWalkInBookingSchema = z.object({
+  body: z.object({
+    courtSurfaceId: z.string().trim().min(1).max(40),
+    customerName: z.string().trim().min(2).max(120),
+    customerPhone: z.string().trim().min(6).max(30),
+    startDate: z.string().date(),
+    startTime: z.string().regex(/^\d{2}:\d{2}$/),
+    minutes: z.number().int().positive().max(240),
+    occurrences: z.number().int().min(2).max(26),
+    note: z.string().trim().max(500).optional()
+  })
+});

@@ -31,6 +31,7 @@ model User {
   blog_posts                                                          blog_posts[]
   booking_admin_actions                                               booking_admin_actions[]
   bookings                                                            Booking[]
+  bookingSeries                                                       BookingSeries[]
   favorites                                                           Favorite[]
   moderation_history                                                  ModerationHistory[]
   notification_campaigns_notification_campaigns_sent_byTousers        NotificationCampaign[]   @relation("notification_campaigns_sent_byTousers")
@@ -183,6 +184,7 @@ model Court {
   deposit_percent        Decimal?                 @db.Decimal(5, 2)
   bookingSlots           BookingSlot[]
   bookings               Booking[]
+  bookingSeries          BookingSeries[]
   amenities              CourtAmenity[]
   availabilityBlocks     CourtAvailabilityBlock[]
   basePrices             CourtBasePrice[]
@@ -251,6 +253,7 @@ model CourtSurface {
   createdAt          DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
   booking_slots      BookingSlot[]
   bookings           Booking[]
+  bookingSeries      BookingSeries[]
   availabilityBlocks CourtAvailabilityBlock[]
   court              Court                    @relation(fields: [courtId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
@@ -379,6 +382,7 @@ model Booking {
   cancelledAt              DateTime?               @map("cancelled_at") @db.Timestamptz(6)
   adminNote                String?                 @map("admin_note")
   courtSurfaceId           String?                 @map("court_surface_id") @db.VarChar(20)
+  bookingSeriesId          String?                 @map("booking_series_id") @db.VarChar(20)
   booking_admin_actions    booking_admin_actions[]
   bookingServices          BookingService[]
   bookingSlots             BookingSlot[]
@@ -386,6 +390,7 @@ model Booking {
   payments                 Payment[]
   court                    Court                   @relation(fields: [courtId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   courtSurface             CourtSurface?           @relation(fields: [courtSurfaceId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  bookingSeries            BookingSeries?          @relation(fields: [bookingSeriesId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   user                     User                    @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   commissionTransactions   CommissionTransaction[]
   review                   Review?
@@ -394,12 +399,35 @@ model Booking {
   @@index([userId], map: "idx_bookings_user_id")
   @@index([courtId], map: "idx_bookings_court_id")
   @@index([courtSurfaceId], map: "idx_bookings_court_surface_id")
+  @@index([bookingSeriesId], map: "idx_bookings_booking_series_id")
   @@index([bookingDate], map: "idx_bookings_booking_date")
   @@index([bookingStatus], map: "idx_bookings_booking_status")
   @@index([paymentStatus], map: "idx_bookings_payment_status")
   @@index([courtId, bookingDate, startTime, endTime, bookingStatus], map: "idx_bookings_schedule_conflict")
   @@index([courtSurfaceId, bookingDate, startTime, endTime, bookingStatus], map: "idx_bookings_surface_schedule_conflict")
   @@map("bookings")
+}
+
+model BookingSeries {
+  id                  String        @id @default(dbgenerated("('bs'::text || lpad((nextval('seq_booking_series'::regclass))::text, 4, '0'::text))")) @db.VarChar(20)
+  courtId             String        @map("court_id") @db.VarChar(20)
+  courtSurfaceId      String?       @map("court_surface_id") @db.VarChar(20)
+  createdByUserId     String        @map("created_by_user_id") @db.VarChar(20)
+  customerName        String        @map("customer_name") @db.VarChar(120)
+  customerPhone       String        @map("customer_phone") @db.VarChar(30)
+  startTime           DateTime      @map("start_time") @db.Time(6)
+  durationMinutes     Int           @map("duration_minutes")
+  firstBookingDate    DateTime      @map("first_booking_date") @db.Date
+  occurrencesRequested Int          @map("occurrences_requested")
+  note                String?
+  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  bookings            Booking[]
+  court               Court         @relation(fields: [courtId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  courtSurface        CourtSurface? @relation(fields: [courtSurfaceId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdByUser       User          @relation(fields: [createdByUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([courtId], map: "idx_booking_series_court_id")
+  @@map("booking_series")
 }
 
 model Favorite {

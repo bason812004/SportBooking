@@ -27,7 +27,12 @@ export const recipientController = {
   ),
   operations: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.operations(req.user!.id, req.query as any))),
   extendBooking: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.extendBooking(req.user!.id, req.params.id, req.body.minutes))),
+  lookupCustomers: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.lookupCustomersByPhone(req.user!.id, req.query.phone as string))),
+  customerHistory: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.customerBookingHistory(req.user!.id, req.params.id))),
   createWalkInBooking: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.createWalkInBooking(req.user!.id, req.body), 201)),
+  createRecurringWalkInBooking: asyncHandler(async (req, res) =>
+    sendSuccess(res, await recipientService.createRecurringWalkInBooking(req.user!.id, req.body), 201)
+  ),
   earlyCheckInBooking: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.earlyCheckInBooking(req.user!.id, req.params.id))),
   earlyCheckOutBooking: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.earlyCheckOutBooking(req.user!.id, req.params.id))),
   paymentStatus: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.paymentStatus(req.user!.id, req.params.id))),

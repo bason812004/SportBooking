@@ -86,35 +86,36 @@ export function DashboardLayout() {
 
   return (
     <div className="min-h-screen bg-[#f7f8f8] text-[#111811]">
-      <aside className="fixed inset-y-0 left-0 hidden w-80 border-r border-[#c8d8c3] bg-[#eaf3e7] md:flex md:flex-col">
+      <aside className="group fixed inset-y-0 left-0 z-20 hidden w-20 flex-col overflow-hidden border-r border-[#c8d8c3] bg-[#eaf3e7] transition-[width] duration-200 ease-in-out md:flex hover:w-80">
         <div className="shrink-0 px-6 pb-4 pt-6">
-          <p className="text-3xl font-extrabold leading-tight text-[#02712a]">{portalTitle}</p>
-          <p className="mt-2 font-semibold tracking-widest">{portalSubtitle}</p>
+          <p className="hidden truncate text-3xl font-extrabold leading-tight text-[#02712a] group-hover:block">{portalTitle}</p>
+          <p className="mt-2 hidden truncate font-semibold tracking-widest group-hover:block">{portalSubtitle}</p>
           <div className="mt-8 flex items-center gap-4 rounded-lg bg-white/45 p-4">
-            <img className="h-14 w-14 rounded-full object-cover" src="https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=200&q=80" alt="Profile" />
-            <div className="min-w-0">
+            <img className="h-14 w-14 shrink-0 rounded-full object-cover" src="https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=200&q=80" alt="Profile" />
+            <div className="hidden min-w-0 group-hover:block">
               <p className="truncate font-bold">{profileName}</p>
               <p className="truncate text-sm text-slate-600">{profileRole}</p>
             </div>
           </div>
         </div>
 
-        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-4 py-3">
+        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden px-4 py-3">
           {items.map((item, index) => (
             <div key={item.to}>
               {item.group && (!items[index - 1] || items[index - 1].group !== item.group) && (
-                <p className="px-3 pb-2 pt-5 text-xs font-bold uppercase tracking-wider text-slate-600 first:pt-0">{item.group}</p>
+                <p className="hidden truncate px-3 pb-2 pt-5 text-xs font-bold uppercase tracking-wider text-slate-600 first:pt-0 group-hover:block">{item.group}</p>
               )}
               <NavLink
                 to={item.to}
                 end={item.to === "/admin/courts"}
+                title={t(item.label)}
                 className={({ isActive }) =>
                   `flex h-12 items-center gap-3 rounded-lg px-4 text-base font-bold tracking-wide transition ${isActive ? "bg-blue-600 text-white shadow-lg" : "text-[#26352b] hover:bg-white/70"
                   }`
                 }
               >
                 <item.icon className="h-5 w-5 shrink-0" />
-                <span className="truncate">{t(item.label)}</span>
+                <span className="hidden truncate group-hover:inline">{t(item.label)}</span>
               </NavLink>
             </div>
           ))}
@@ -122,18 +123,18 @@ export function DashboardLayout() {
 
         <div className="shrink-0 border-t border-[#c8d8c3] bg-[#eaf3e7] p-4">
           {!isAdmin && !isRecipient && (
-            <Button className="mb-3 h-12 w-full rounded-lg bg-[#24c866] text-base text-[#05270e] hover:bg-[#16a34a]" onClick={() => window.location.assign("/partner/courts/create")}>
-              <Plus className="h-5 w-5" />
-              {t("Thêm sân mới")}
+            <Button className="mb-3 h-12 w-full rounded-lg bg-[#24c866] text-base text-[#05270e] hover:bg-[#16a34a]" title={t("Thêm sân mới")} onClick={() => window.location.assign("/partner/courts/create")}>
+              <Plus className="h-5 w-5 shrink-0" />
+              <span className="hidden truncate group-hover:inline">{t("Thêm sân mới")}</span>
             </Button>
           )}
-          <Button className="h-11 w-full rounded-lg" variant="secondary" onClick={logout}>
-            <LogOut className="h-4 w-4" />
-            {t("Đăng xuất")}
+          <Button className="h-11 w-full rounded-lg" variant="secondary" title={t("Đăng xuất")} onClick={logout}>
+            <LogOut className="h-4 w-4 shrink-0" />
+            <span className="hidden truncate group-hover:inline">{t("Đăng xuất")}</span>
           </Button>
         </div>
       </aside>
-      <main className="md:pl-80">
+      <main className="md:pl-20">
         <div className="px-5 py-3 md:px-16" />
         <div className="px-5 pb-12 md:px-16">
           <Outlet />
