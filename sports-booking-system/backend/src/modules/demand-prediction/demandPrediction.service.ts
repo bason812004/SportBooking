@@ -91,6 +91,39 @@ export const demandPredictionService = {
     };
   },
 
+  /**
+   * Bulk demand-resolution for a whole week. Fetches every aggregate we
+   * need with three queries (court + per-court historical counts + a per-
+   * start_time breakdown of matching bookings across the court), then
+   * computes the prediction level for every slot in memory. This replaces
+   * the previous per-slot path which executed ~6 queries + 1 insert per
+   * slot (≈ 700+ DB hits per request) and choked the Supabase pooler.
+   */
+  async predictForWeek(input: { courtId: string; weekStart: string; weekEnd: string }) {
+    const court = await demandPredictionRepository.court(input.courtId);
+    if (!court) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
+
+    const [totalHistoricalBookings, cancellationCount, matchingCounts, averageRows] = await Promise.all([
+      demandPredictionRepository.totalHistoricalBookings(input.courtId),
+      demandPredictionRepository.cancellationCount(input.courtId),
+      demandPredictionRepository.bookingCountsByStartTime(input.courtId),
+      demandPredictionRepository.averageComparableSlotBookings(input.courtId)
+    ]);
+
+    return {
+      courtId: input.courtId,
+      partnerId: court.partnerId,
+      totalHistoricalBookings,
+      cancellationCount,
+      averageBookingsPerComparableSlot: Number(averageRows[0]?.average ?? 0),
+      // Map keyed by `${startTime}-${endTime}` for O(1) lookup per slot.
+      matchingCountsByWindow: matchingCounts.reduce<Record<string, number>>((acc, row) => {
+        acc[`${row.startTime}-${row.endTime}`] = row.count;
+        return acc;
+      }, {})
+    };
+  },
+
   async overview(userId: string) {
     const profile = await partnerProfile(userId);
     const peakHours = await demandPredictionRepository.partnerPeakHours(profile.id);

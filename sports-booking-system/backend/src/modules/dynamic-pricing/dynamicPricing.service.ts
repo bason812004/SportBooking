@@ -83,6 +83,65 @@ export const dynamicPricingService = {
     return dynamicPricingRepository.listPartnerRules(profile.id);
   },
 
+  /**
+   * Bulk pricing resolution for one court across a whole week. Fetches the
+   * court, its base price table, and all active rules exactly once, then
+   * computes the per-slot price entirely in memory. Replaces the previous
+   * N+1 implementation that called `calculate()` for every slot (which
+   * hammered the Supabase pooler and triggered P2024 timeouts).
+   */
+  async calculateForWeek(input: {
+    courtId: string;
+    weekStart: string;
+    weekEnd: string;
+    openMinutes: number;
+    closeMinutes: number;
+  }) {
+    const court = await dynamicPricingRepository.courtWithBasePrices(input.courtId);
+    if (!court) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
+
+    const [activeRules, basePriceRows, fallbackPriceRows] = await Promise.all([
+      dynamicPricingRepository.activeRules(input.courtId),
+      Promise.resolve(court.basePrices ?? []),
+      Promise.resolve(court.prices ?? [])
+    ]);
+
+    return {
+      courtId: input.courtId,
+      partnerId: court.partnerId,
+      fallbackBasePrice:
+        fallbackPriceRows.length > 0
+          ? Math.min(...fallbackPriceRows.map((row) => Number(row.price)))
+          : 0,
+      rules: activeRules.map((rule) => ({
+        id: rule.id,
+        name: rule.name,
+        ruleType: rule.ruleType,
+        dayType: rule.dayType,
+        startTime: rule.startTime ? dbTime(rule.startTime) : null,
+        endTime: rule.endTime ? dbTime(rule.endTime) : null,
+        priceAdjustmentType: rule.priceAdjustmentType,
+        priceAdjustmentValue: Number(rule.priceAdjustmentValue),
+        minPrice: rule.minPrice == null ? null : Number(rule.minPrice),
+        maxPrice: rule.maxPrice == null ? null : Number(rule.maxPrice),
+        priority: rule.priority,
+        status: rule.status
+      })),
+      basePrices: basePriceRows.map((row) => ({
+        dayType: row.dayType,
+        startTime: dbTime(row.startTime)!,
+        endTime: dbTime(row.endTime)!,
+        basePrice: Number(row.basePrice)
+      })),
+      legacyPrices: fallbackPriceRows.map((row) => ({
+        dayType: row.dayType,
+        startTime: dbTime(row.startTime)!,
+        endTime: dbTime(row.endTime)!,
+        price: Number(row.price)
+      }))
+    };
+  },
+
   async getRule(userId: string, id: string) {
     const profile = await partnerProfile(userId);
     const rule = await dynamicPricingRepository.findPartnerRule(id, profile.id);

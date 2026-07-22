@@ -258,11 +258,12 @@ enum SettlementStatus {
 
 enum WithdrawalStatus {
   PENDING
-  APPROVED
+  PROCESSING
+  COMPLETED
   REJECTED
+  FAILED
+  APPROVED
   PAID
-
-  @@map("withdrawal_status")
 }
 
 model User {

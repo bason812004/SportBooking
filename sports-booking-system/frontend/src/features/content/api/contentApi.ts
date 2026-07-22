@@ -160,9 +160,59 @@ export const contentApi = {
     return repairObject(data.data);
   },
 
-  async createTeamPostMessage(id: string, content: string) {
-    const { data } = await api.post<ApiResponse<TeamPostMessage>>(`/team-posts/${id}/messages`, { content });
+  async teamPostMembers(id: string) {
+    const { data } = await api.get<ApiResponse<Array<{
+      userId: string;
+      fullName: string;
+      avatarUrl: string | null;
+      role: string;
+      status: string;
+      joinedAt: string;
+    }>>>(`/team-posts/${id}/members`);
+    return data.data;
+  },
+
+  async createTeamPostMessage(
+    id: string,
+    payload: {
+      content?: string;
+      messageType?: "TEXT" | "IMAGE" | "VIDEO" | "SYSTEM";
+      attachmentUrl?: string;
+      attachmentName?: string;
+      attachmentSize?: number;
+      thumbnailUrl?: string;
+      mimeType?: string;
+    }
+  ) {
+    const { data } = await api.post<ApiResponse<TeamPostMessage>>(`/team-posts/${id}/messages`, payload);
     return repairObject(data.data);
+  },
+
+  async reactToMessage(postId: string, payload: { messageId: string; reaction: string }) {
+    const { data } = await api.post<ApiResponse<{ reaction: string; createdAt: string }>>(
+      `/team-posts/${postId}/reactions`,
+      payload
+    );
+    return data.data;
+  },
+
+  async removeReaction(postId: string, messageId: string) {
+    const { data } = await api.delete<ApiResponse<{ removed: boolean }>>(
+      `/team-posts/${postId}/reactions/${messageId}`
+    );
+    return data.data;
+  },
+
+  async leaveGroup(postId: string) {
+    const { data } = await api.post<ApiResponse<{ left: boolean }>>(`/team-posts/${postId}/leave`);
+    return data.data;
+  },
+
+  async removeMember(postId: string, memberId: string) {
+    const { data } = await api.delete<ApiResponse<{ removed: boolean }>>(
+      `/team-posts/${postId}/members/${memberId}`
+    );
+    return data.data;
   }
 };
 

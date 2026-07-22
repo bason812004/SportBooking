@@ -629,10 +629,17 @@ export type TeamRecruitmentPost = {
 export type TeamPostMessage = {
   id: string;
   postId: string;
-  content: string;
+  content: string | null;
+  messageType?: "TEXT" | "IMAGE" | "VIDEO" | "SYSTEM";
+  attachmentUrl?: string | null;
+  attachmentName?: string | null;
+  attachmentSize?: number | null;
+  thumbnailUrl?: string | null;
+  mimeType?: string | null;
   createdAt: string;
   updatedAt: string;
   sender: { id: string; fullName: string; avatarUrl?: string | null };
+  reactions?: Array<{ reaction: string; userId: string; createdAt?: string }>;
 };
 
 export type TeamRecruitmentInput = {
@@ -651,6 +658,126 @@ export type TeamRecruitmentInput = {
   note?: string | null;
   zaloGroupLink?: string | null;
   zaloQrImage?: string | null;
+};
+
+// ── Weekly Booking Schedule ────────────────────────────────────────────────
+
+export type WeeklySlotStatus =
+  | "AVAILABLE"
+  | "BOOKED"
+  | "BLOCKED"
+  | "MAINTENANCE"
+  | "OUTSIDE_HOURS"
+  | "HELD";
+
+export type DynamicPricingAdjustment = {
+  ruleName: string;
+  type: "PERCENTAGE" | "FIXED_AMOUNT";
+  value: number;
+  amount: number;
+};
+
+export type WeeklyScheduleSlot = {
+  date: string;
+  startTime: string;
+  endTime: string;
+  status: WeeklySlotStatus;
+  basePrice: number;
+  finalPrice: number;
+  dynamicAdjustmentAmount: number;
+  adjustments: DynamicPricingAdjustment[];
+  ruleNames: string[];
+  predictionLevel: "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH" | null;
+  predictionStatus: "INSUFFICIENT_DATA" | "GENERATED" | "FAILED";
+  predictedOccupancyRate: number | null;
+  blockReason: string | null;
+  bookingCode: string | null;
+};
+
+export type WeeklyScheduleDay = {
+  date: string;
+  weekday: number;
+  slots: WeeklyScheduleSlot[];
+};
+
+export type WeeklyScheduleDynamicPrice = {
+  date: string;
+  startTime: string;
+  endTime: string;
+  basePrice: number;
+  finalPrice: number;
+  dynamicAdjustmentAmount: number;
+  adjustments: DynamicPricingAdjustment[];
+  ruleNames: string[];
+};
+
+export type WeeklyScheduleBooking = {
+  id: string;
+  bookingCode: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  bookingStatus: string;
+  userFullName?: string | null;
+};
+
+export type WeeklyScheduleMaintenance = {
+  id: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  reason: string | null;
+  isMaintenance: boolean;
+};
+
+export type WeeklyScheduleVoucher = {
+  id: string;
+  code: string;
+  title: string;
+  description?: string | null;
+  discountType: "PERCENTAGE" | "FIXED_AMOUNT";
+  discountValue: number;
+  maxDiscountAmount?: number | null;
+  minBookingAmount: number;
+  endDate: string;
+  usedCount: number;
+  usageLimit?: number | null;
+  startDate: string;
+  applicableDays: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  holidayOnly: boolean;
+  holidayDates: string[] | null;
+  applicableStartDate: string | null;
+  applicableEndDate: string | null;
+  partnerName: string | null;
+};
+
+export type WeeklyScheduleCourt = {
+  id: string;
+  name: string;
+  address: string | null;
+  district: string | null;
+  city: string | null;
+  openingTime: string;
+  closingTime: string;
+  minPrice: number;
+  imageUrl: string | null;
+  category: string | null;
+};
+
+export type WeeklyScheduleResponse = {
+  court: WeeklyScheduleCourt;
+  weekStart: string;
+  weekEnd: string;
+  slotMinutes: number;
+  openingTime: string;
+  closingTime: string;
+  days: WeeklyScheduleDay[];
+  dynamicPricing: WeeklyScheduleDynamicPrice[];
+  bookings: WeeklyScheduleBooking[];
+  maintenance: WeeklyScheduleMaintenance[];
+  availableVouchers: WeeklyScheduleVoucher[];
 };
 
 // ── Settlement & Wallet ───────────────────────────────────────────────────

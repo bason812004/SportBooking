@@ -2,7 +2,7 @@ import { Router } from "express";
 import { authMiddleware } from "../../middlewares/auth.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
 import { teamPostController } from "./teamPost.controller.js";
-import { teamPostIdSchema, teamPostMessageSchema, teamPostSchema } from "./teamPost.validation.js";
+import { teamPostIdSchema, teamPostMessageSchema, reactionSchema, transferAdminSchema, messageIdParamsSchema, teamPostSchema } from "./teamPost.validation.js";
 
 export const teamPostRoutes = Router();
 
@@ -10,9 +10,15 @@ teamPostRoutes.get("/", teamPostController.list);
 teamPostRoutes.get("/me", authMiddleware, teamPostController.listMine);
 teamPostRoutes.get("/joined", authMiddleware, teamPostController.listJoined);
 teamPostRoutes.get("/:id/messages", authMiddleware, validate(teamPostIdSchema), teamPostController.messages);
+teamPostRoutes.get("/:id/members", authMiddleware, validate(teamPostIdSchema), teamPostController.members);
 teamPostRoutes.get("/:id", validate(teamPostIdSchema), teamPostController.detail);
 teamPostRoutes.post("/", authMiddleware, validate(teamPostSchema), teamPostController.create);
 teamPostRoutes.post("/:id/messages", authMiddleware, validate(teamPostMessageSchema), teamPostController.createMessage);
+teamPostRoutes.post("/:id/reactions", authMiddleware, validate(reactionSchema), teamPostController.reactMessage);
+teamPostRoutes.delete("/:id/reactions/:messageId", authMiddleware, validate(messageIdParamsSchema), teamPostController.removeReaction);
+teamPostRoutes.post("/:id/leave", authMiddleware, validate(teamPostIdSchema), teamPostController.leaveGroup);
+teamPostRoutes.delete("/:id/members/:memberId", authMiddleware, validate(teamPostIdSchema), teamPostController.removeMember);
+teamPostRoutes.post("/:id/transfer-admin", authMiddleware, validate(transferAdminSchema), teamPostController.transferAdmin);
 teamPostRoutes.put("/:id", authMiddleware, validate(teamPostIdSchema.merge(teamPostSchema)), teamPostController.update);
 teamPostRoutes.delete("/:id", authMiddleware, validate(teamPostIdSchema), teamPostController.delete);
 teamPostRoutes.post("/:id/join", authMiddleware, validate(teamPostIdSchema), teamPostController.join);

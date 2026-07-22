@@ -1,6 +1,6 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, Camera, KeyRound, Mail, Phone, Save, ShieldCheck, UserRound } from "lucide-react";
+import { CalendarDays, Camera, KeyRound, Loader2, Mail, Phone, Save, ShieldCheck, UserRound } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { ErrorState, LoadingState } from "../../components/common/States";
@@ -9,9 +9,13 @@ import { Input } from "../../components/ui/Input";
 import { authApi } from "../../features/auth/api/authApi";
 import { useAuth } from "../../features/auth/hooks/useAuth";
 import { userApi } from "../../features/user/api/userApi";
+import { uploadApi } from "../../features/uploads/api/uploadApi";
 
 type ProfileValues = { fullName: string; phone: string; avatarUrl: string };
 type PasswordValues = { currentPassword: string; newPassword: string; confirmPassword: string };
+
+const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
 
 export function UserProfilePage() {
   const auth = useAuth();
@@ -20,6 +24,9 @@ export function UserProfilePage() {
   const user = profile.data ?? auth.user;
   const profileForm = useForm<ProfileValues>({ defaultValues: { fullName: "", phone: "", avatarUrl: "" } });
   const passwordForm = useForm<PasswordValues>();
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!profile.data || !auth.token) return;
@@ -29,7 +36,37 @@ export function UserProfilePage() {
   useEffect(() => {
     if (!user) return;
     profileForm.reset({ fullName: user.fullName, phone: user.phone ?? "", avatarUrl: user.avatarUrl ?? "" });
+    setAvatarPreview(user.avatarUrl ?? null);
   }, [profileForm, user]);
+
+  async function handleAvatarChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+      toast.error("Chi chap nhan anh JPEG, PNG hoac WebP");
+      return;
+    }
+    if (file.size > MAX_AVATAR_SIZE) {
+      toast.error("Anh toi da 5MB");
+      return;
+    }
+    setAvatarPreview(URL.createObjectURL(file));
+    setUploadingAvatar(true);
+    try {
+      const result = await uploadApi.uploadAvatar(file);
+      profileForm.setValue("avatarUrl", result.url);
+      if (user) {
+        auth.setSession({ ...user, avatarUrl: result.url }, auth.token!, auth.refreshToken ?? undefined);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["user-profile"] });
+      toast.success("Đã cập nhật ảnh đại diện.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Khong the tai anh len.");
+    } finally {
+      setUploadingAvatar(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
 
   const saveProfile = useMutation({
     mutationFn: (values: ProfileValues) => userApi.updateMe({ ...values, avatarUrl: values.avatarUrl || undefined }),
@@ -83,12 +120,45 @@ export function UserProfilePage() {
               <p className="text-sm text-slate-500">Thông tin dùng cho đặt sân và liên hệ</p>
             </div>
           </div>
+
+          <div className="mb-6 flex items-center gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200">
+              {avatarPreview ? (
+                <img src={avatarPreview} alt={user.fullName} className="h-full w-full object-cover" />
+              ) : (
+                <span className="text-2xl font-black text-slate-500">{user.fullName.charAt(0).toUpperCase()}</span>
+              )}
+              {uploadingAvatar && (
+                <div className="absolute inset-0 grid place-items-center bg-black/40">
+                  <Loader2 className="h-5 w-5 animate-spin text-white" />
+                </div>
+              )}
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-black text-slate-800">Ảnh đại diện</p>
+              <p className="text-xs text-slate-500">Cho phép JPEG, PNG, WebP. Tối đa 5MB.</p>
+              <div className="mt-2 flex gap-2">
+                <Button type="button" variant="secondary" onClick={() => fileInputRef.current?.click()} disabled={uploadingAvatar}>
+                  <Camera className="h-4 w-4" />
+                  {uploadingAvatar ? "Đang tải lên..." : "Chọn ảnh từ máy tính"}
+                </Button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  onChange={handleAvatarChange}
+                />
+              </div>
+            </div>
+          </div>
+
           <div className="grid gap-5 sm:grid-cols-2">
             <Input label="Họ và tên" {...profileForm.register("fullName", { required: "Vui lòng nhập họ tên", minLength: 2 })} error={profileForm.formState.errors.fullName?.message} />
             <Input label="Số điện thoại" type="tel" {...profileForm.register("phone")} />
             <Input label="Email" value={user.email} disabled className="bg-slate-50" />
-            <Input label="Ảnh đại diện (URL)" type="url" {...profileForm.register("avatarUrl")} />
           </div>
+          <input type="hidden" {...profileForm.register("avatarUrl")} />
           <Button className="mt-6" disabled={saveProfile.isPending}>
             <Save className="h-4 w-4" />
             {saveProfile.isPending ? "Đang lưu..." : "Lưu thay đổi"}
