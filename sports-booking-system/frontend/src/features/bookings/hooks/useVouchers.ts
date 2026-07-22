@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { voucherApi } from "../api/bookingApi";
 import { contentApi } from "../../content/api/contentApi";
-import type { Voucher, VoucherEligibilityResult, VoucherValidatePayload } from "../../../types/api";
+import type { Voucher, VoucherEligibilityResult, VoucherEligibilityResponse, VoucherValidatePayload } from "../../../types/api";
 
 export function useActiveVouchers() {
   return useQuery({ queryKey: ["active-vouchers"], queryFn: voucherApi.list, staleTime: 60_000 });
@@ -23,6 +23,8 @@ export function useValidateVoucher() {
  * Live eligibility check against the currently selected court/date/time
  * and the latest known subtotal. Returns null when no slot has been
  * chosen yet.
+ *
+ * Returns a grouped response: { bestVoucher, availableVouchers, unavailableVouchers }
  */
 export function useVoucherEligibility(input: {
   courtId?: string;
@@ -32,7 +34,7 @@ export function useVoucherEligibility(input: {
   subtotal?: number;
   enabled?: boolean;
 }) {
-  return useQuery<VoucherEligibilityResult[]>({
+  return useQuery<VoucherEligibilityResponse | null>({
     queryKey: ["voucher-eligibility", input],
     queryFn: () =>
       contentApi.checkVoucherEligibility({

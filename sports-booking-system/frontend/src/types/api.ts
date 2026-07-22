@@ -447,6 +447,7 @@ export type Voucher = {
   status: string;
   partner: { id: string; businessName: string } | null;
   court?: { id: string; name: string; city: string; district: string; imageUrl?: string | null } | null;
+  courtId?: string | null;
   fundedBy?: "PARTNER" | "PLATFORM" | "SHARED";
   partnerFundingPercent?: number | null;
   platformFundingPercent?: number | null;
@@ -479,6 +480,13 @@ export type VoucherEligibilityResult = {
   reason: { code: VoucherEligibilityReasonCode; message: string } | null;
   discountAmount: number;
   finalAmount: number;
+  priorityScore: number;
+};
+
+export type VoucherEligibilityResponse = {
+  bestVoucher: VoucherEligibilityResult | null;
+  availableVouchers: VoucherEligibilityResult[];
+  unavailableVouchers: VoucherEligibilityResult[];
 };
 
 export type PartnerVoucher = Omit<Voucher, "partner"> & {

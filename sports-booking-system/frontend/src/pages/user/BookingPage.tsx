@@ -10,6 +10,7 @@ import {
   Loader2,
   MapPin,
   ShieldCheck,
+  Sparkles,
   Star,
   Tag,
   Ticket,
@@ -26,7 +27,7 @@ import { bookingApi, type BookingCheckoutResult, type BookingQuotePayload, type 
 import { useActiveVouchers, useValidateVoucher, useVoucherEligibility } from "../../features/bookings/hooks/useVouchers";
 import { formatCurrency, formatDate, formatDateLong, timeText } from "../../lib/format";
 import { useLanguage } from "../../lib/i18n";
-import type { Voucher, VoucherEligibilityResult, VoucherValidateResult } from "../../types/api";
+import type { Voucher, VoucherEligibilityResponse, VoucherValidateResult } from "../../types/api";
 
 const TIME_OPTIONS = Array.from({ length: 24 }).map((_, hour) => `${String(hour).padStart(2, "0")}:00`);
 
@@ -315,7 +316,7 @@ export function BookingPage() {
               </div>
 
               <VoucherPanel
-                vouchers={eligibility.data ?? []}
+                eligibilityResponse={eligibility.data ?? null}
                 loading={eligibility.isLoading || activeVouchers.isLoading}
                 courtPartnerId={c.partner?.id}
                 courtId={c.id}
@@ -503,8 +504,8 @@ function PaymentChoice({ active, title, description, onClick }: { active: boolea
   );
 }
 
-function VoucherPanel({ vouchers, loading, courtId, courtPartnerId, subtotal, voucherInput, appliedVoucher, validating, language, onChangeVoucherInput, onApply, onSelect, onRemove }: {
-  vouchers: VoucherEligibilityResult[];
+function VoucherPanel({ eligibilityResponse, loading, courtId, courtPartnerId, subtotal, voucherInput, appliedVoucher, validating, language, onChangeVoucherInput, onApply, onSelect, onRemove }: {
+  eligibilityResponse: import("../../types/api").VoucherEligibilityResponse | null;
   loading: boolean;
   courtId: string;
   courtPartnerId?: string;
@@ -522,25 +523,7 @@ function VoucherPanel({ vouchers, loading, courtId, courtPartnerId, subtotal, vo
     ? { MONDAY: "Mon", TUESDAY: "Tue", WEDNESDAY: "Wed", THURSDAY: "Thu", FRIDAY: "Fri", SATURDAY: "Sat", SUNDAY: "Sun" }
     : { MONDAY: "T2", TUESDAY: "T3", WEDNESDAY: "T4", THURSDAY: "T5", FRIDAY: "T6", SATURDAY: "T7", SUNDAY: "CN" };
 
-  const rankedVouchers = useMemo(() => {
-    return vouchers
-      .map((entry) => {
-        const voucher = entry.voucher;
-        const reason = entry.eligible
-          ? null
-          : localizeReason(entry.reason?.code, language) ?? entry.reason?.message ?? null;
-        const estimatedDiscount = entry.discountAmount;
-        const daysLeft = Math.ceil((new Date(voucher.endDate).getTime() - Date.now()) / 86400000);
-        return { voucher, reason, estimatedDiscount, daysLeft, eligible: entry.eligible };
-      })
-      .sort((left, right) => {
-        const leftUsable = left.eligible ? 1 : 0;
-        const rightUsable = right.eligible ? 1 : 0;
-        if (leftUsable !== rightUsable) return rightUsable - leftUsable;
-        if (left.estimatedDiscount !== right.estimatedDiscount) return right.estimatedDiscount - left.estimatedDiscount;
-        return left.daysLeft - right.daysLeft;
-      });
-  }, [vouchers, language]);
+  const { availableVouchers, unavailableVouchers, bestVoucher } = eligibilityResponse ?? { availableVouchers: [], unavailableVouchers: [], bestVoucher: null };
 
   return (
     <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-3">
@@ -580,72 +563,122 @@ function VoucherPanel({ vouchers, loading, courtId, courtPartnerId, subtotal, vo
           <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
             {loading ? (
               Array.from({ length: 3 }).map((_, index) => <div key={index} className="h-40 min-w-64 animate-pulse rounded-xl bg-white" />)
-            ) : rankedVouchers.length ? (
-              rankedVouchers.slice(0, 8).map((item, index) => {
-                const { voucher, reason, estimatedDiscount, daysLeft, eligible } = item;
-                const remaining = voucher.usageLimit != null ? Math.max(0, voucher.usageLimit - voucher.usedCount) : null;
-                return (
+            ) : (
+              <>
+                {/* Best voucher recommendation banner */}
+                {bestVoucher && (
                   <button
-                    key={voucher.id}
                     type="button"
-                    disabled={!eligible}
-                    onClick={() => onSelect(voucher)}
-                    className={clsx(
-                      "min-w-64 rounded-xl border bg-white p-3 text-left transition",
-                      !eligible ? "cursor-not-allowed border-slate-200 opacity-55" : "border-emerald-200 hover:-translate-y-0.5 hover:shadow-md"
-                    )}
+                    onClick={() => onSelect(bestVoucher.voucher)}
+                    className="min-w-72 flex-shrink-0 rounded-2xl border-2 border-amber-300 bg-gradient-to-br from-amber-50 to-orange-50 p-4 text-left shadow-md transition hover:-translate-y-0.5 hover:shadow-lg"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div>
-                        <p className="text-sm font-black text-slate-950">{voucher.code}</p>
-                        <p className="line-clamp-1 text-xs text-slate-500">{voucher.title}</p>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-black text-amber-900">
+                          <Sparkles className="h-3 w-3" />
+                          {language === "en" ? "Best Pick" : "Đề xuất"}
+                        </span>
+                        <p className="mt-2 text-sm font-black text-slate-950">{bestVoucher.voucher.code}</p>
+                        <p className="line-clamp-1 text-xs text-slate-500">{bestVoucher.voucher.title}</p>
                       </div>
-                      <span
-                        className={clsx(
-                          "rounded-full px-2 py-0.5 text-[10px] font-black",
-                          !eligible
-                            ? "bg-slate-100 text-slate-500"
-                            : index === 0
-                              ? "bg-amber-100 text-amber-800"
-                              : "bg-emerald-100 text-emerald-700"
-                        )}
-                      >
-                        {!eligible ? (language === "en" ? "Not eligible" : "Chưa dùng được") : index === 0 ? (language === "en" ? "Best" : "Tốt nhất") : (language === "en" ? "Usable" : "Dùng được")}
+                      <span className="rounded-full bg-emerald-500 px-2.5 py-1 text-xs font-black text-white">
+                        {language === "en" ? "Apply" : "Áp dụng"}
                       </span>
                     </div>
-                    <p className="mt-2 text-sm font-black text-emerald-700">
-                      {!eligible ? discountLabel(voucher) : `Giảm ${formatCurrency(estimatedDiscount)}`}
+                    <p className="mt-3 text-xl font-black text-emerald-700">
+                      -{formatCurrency(bestVoucher.discountAmount)}
                     </p>
-                    <div className="mt-2 space-y-1 text-[11px] text-slate-600">
-                      {voucher.holidayOnly ? (
-                        <p className="flex items-center gap-1"><span>•</span> {language === "en" ? "Holidays only" : "Chỉ áp dụng ngày lễ"}</p>
-                      ) : voucher.applicableDays ? (
-                        <p className="flex items-center gap-1">
-                          <span>•</span> {formatDaysLabel(voucher.applicableDays, dayLabels)}
-                        </p>
-                      ) : null}
-                      {(voucher.startTime || voucher.endTime) && !voucher.holidayOnly ? (
-                        <p className="flex items-center gap-1">
-                          <span>•</span> {voucher.startTime?.slice(0, 5) ?? "00:00"} - {voucher.endTime?.slice(0, 5) ?? "23:59"}
-                        </p>
-                      ) : null}
-                      <p className="flex items-center gap-1">
-                        <span>•</span> {language === "en" ? "Min order" : "Đơn tối thiểu"} {formatCurrency(voucher.minBookingAmount)}
+                    <p className="mt-1 text-xs text-slate-500">
+                      {language === "en" ? "You save" : "Tiết kiệm"} {formatCurrency(bestVoucher.discountAmount)}
+                    </p>
+                  </button>
+                )}
+
+                {/* Available vouchers */}
+                {availableVouchers.filter(v => v !== bestVoucher).map((item) => {
+                  const { voucher, discountAmount: estimatedDiscount, eligible } = item;
+                  const daysLeft = Math.ceil((new Date(voucher.endDate).getTime() - Date.now()) / 86400000);
+                  const remaining = voucher.usageLimit != null ? Math.max(0, voucher.usageLimit - voucher.usedCount) : null;
+                  return (
+                    <button
+                      key={voucher.id}
+                      type="button"
+                      disabled={!eligible}
+                      onClick={() => onSelect(voucher)}
+                      className={clsx(
+                        "min-w-64 flex-shrink-0 rounded-xl border bg-white p-3 text-left transition",
+                        !eligible ? "cursor-not-allowed border-slate-200 opacity-55" : "border-emerald-200 hover:-translate-y-0.5 hover:shadow-md"
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-black text-slate-950">{voucher.code}</p>
+                          <p className="line-clamp-1 text-xs text-slate-500">{voucher.title}</p>
+                        </div>
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-black text-emerald-700">
+                          {language === "en" ? "Usable" : "Dùng được"}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm font-black text-emerald-700">
+                        Giảm {formatCurrency(estimatedDiscount)}
                       </p>
-                    </div>
-                    {reason ? (
-                      <p className="mt-2 text-[11px] font-bold text-rose-600">{reason}</p>
-                    ) : (
+                      <div className="mt-2 space-y-1 text-[11px] text-slate-600">
+                        {voucher.holidayOnly ? (
+                          <p className="flex items-center gap-1"><span>•</span> {language === "en" ? "Holidays only" : "Chỉ áp dụng ngày lễ"}</p>
+                        ) : voucher.applicableDays ? (
+                          <p className="flex items-center gap-1"><span>•</span> {formatDaysLabel(voucher.applicableDays, dayLabels)}</p>
+                        ) : null}
+                        {(voucher.startTime || voucher.endTime) && !voucher.holidayOnly ? (
+                          <p className="flex items-center gap-1"><span>•</span> {voucher.startTime?.slice(0, 5) ?? "00:00"} - {voucher.endTime?.slice(0, 5) ?? "23:59"}</p>
+                        ) : null}
+                        <p className="flex items-center gap-1"><span>•</span> {language === "en" ? "Min order" : "Đơn tối thiểu"} {formatCurrency(voucher.minBookingAmount)}</p>
+                      </div>
                       <div className="mt-2 flex flex-wrap gap-1">
-                        {remaining != null && <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700">Còn {remaining} lượt</span>}
+                        {remaining != null && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">Còn {remaining} lượt</span>}
                         {daysLeft <= 7 && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">Sắp hết hạn</span>}
                       </div>
-                    )}
-                  </button>
-                );
-              })
-            ) : (
-              <div className="rounded-xl border border-dashed border-slate-200 bg-white p-3 text-sm text-slate-500">Chưa có voucher đang hoạt động.</div>
+                    </button>
+                  );
+                })}
+
+                {/* Unavailable vouchers */}
+                {unavailableVouchers.length > 0 && (
+                  <>
+                    <div className="flex w-full items-center gap-2 py-1">
+                      <div className="h-px flex-1 bg-slate-200" />
+                      <span className="text-[10px] font-black uppercase tracking-wide text-slate-400">
+                        {language === "en" ? "Not available" : "Chưa dùng được"}
+                      </span>
+                      <div className="h-px flex-1 bg-slate-200" />
+                    </div>
+                    {unavailableVouchers.slice(0, 4).map((item) => {
+                      const { voucher, reason, eligible } = item;
+                      const reasonText = localizeReason(reason?.code, language) ?? reason?.message ?? null;
+                      return (
+                        <button
+                          key={voucher.id}
+                          type="button"
+                          disabled
+                          className="min-w-64 flex-shrink-0 cursor-not-allowed rounded-xl border border-slate-200 bg-slate-50 p-3 text-left opacity-50"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-black text-slate-400">{voucher.code}</p>
+                              <p className="line-clamp-1 text-xs text-slate-400">{voucher.title}</p>
+                            </div>
+                            <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-black text-slate-500">
+                              {language === "en" ? "Unavailable" : "Không áp dụng"}
+                            </span>
+                          </div>
+                          {reasonText && (
+                            <p className="mt-2 text-[11px] font-bold text-rose-500">{reasonText}</p>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </>
+                )}
+              </>
             )}
           </div>
         </>

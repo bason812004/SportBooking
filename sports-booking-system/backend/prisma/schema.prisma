@@ -913,8 +913,9 @@ model Voucher {
   maxDiscountAmount Decimal?           @map("max_discount_amount") @db.Decimal(12, 2)
   minBookingAmount  Decimal            @default(0) @map("min_booking_amount") @db.Decimal(12, 2)
   usageLimit        Int?               @map("usage_limit")
-  usedCount        Int                @default(0) @map("used_count")
-  startDate        DateTime           @map("start_date") @db.Timestamptz
+  usedCount         Int                @default(0) @map("used_count")
+  clickCount        Int                @default(0) @map("click_count")
+  startDate         DateTime           @map("start_date") @db.Timestamptz
   endDate          DateTime           @map("end_date") @db.Timestamptz
   status           VoucherStatus      @default(DRAFT)
   fundedBy         VoucherFundedBy    @default(PARTNER) @map("funded_by")

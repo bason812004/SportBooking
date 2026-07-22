@@ -31,6 +31,7 @@ export type VoucherRow = {
   applicableEndDate: Date | null;
   partner: { id: string; businessName: string } | null;
   court: { id: string; name: string; city: string; district: string; imageUrl: string | null } | null;
+  courtId: string | null;
 };
 
 export type PartnerVoucherRow = Omit<VoucherRow, "partner"> & {
@@ -454,15 +455,21 @@ export const voucherRepository = {
   },
 
   /**
-   * Returns true if `date` (YYYY-MM-DD) is a system holiday.
-   * Checks both specific year entries and recurring ones (matched by month-day).
+   * Returns holiday names for `date` (YYYY-MM-DD).
+   * Gracefully returns [] if the system_holidays table does not exist.
    */
-  isHoliday(date: string): Promise<Array<{ name: string; recurring: boolean }>> {
-    return prisma.$queryRaw<Array<{ name: string; recurring: boolean }>>`
-      select name, recurring from system_holidays
-      where holiday_date = ${date}::date
-         or (recurring = true and to_char(holiday_date, 'MM-DD') = to_char(${date}::date, 'MM-DD'))
-    `;
+  async isHoliday(date: string): Promise<Array<{ name: string; recurring: boolean }>> {
+    try {
+      return await prisma.$queryRaw<Array<{ name: string; recurring: boolean }>>`
+        select name, recurring from system_holidays
+        where holiday_date = ${date}::date
+           or (recurring = true and to_char(holiday_date, 'MM-DD') = to_char(${date}::date, 'MM-DD'))
+      `;
+    } catch (e) {
+      // Table may not exist yet — treat as no holidays rather than crashing
+      if ((e as { code?: string }).code === "42P01") return [];
+      throw e;
+    }
   },
 
   async listForUser(userId: string): Promise<UserVoucherRow[]> {

@@ -166,10 +166,70 @@ export const voucherService = {
         eligible: eligibility.eligible,
         reason: eligibility.eligible ? null : { code: eligibility.code, message: eligibility.message },
         discountAmount: eligibility.eligible ? eligibility.discountAmount : 0,
-        finalAmount: eligibility.eligible ? eligibility.finalAmount : input.subtotal
+        finalAmount: eligibility.eligible ? eligibility.finalAmount : input.subtotal,
+        priorityScore: this.computePriorityScore(
+          this.serializeForEligibility(v),
+          eligibility.eligible ? eligibility.discountAmount : 0,
+          input.userId
+        )
       });
     }
-    return result;
+
+    // Separate into available / unavailable
+    const available = result.filter(r => r.eligible);
+    const unavailable = result.filter(r => !r.eligible);
+
+    // Sort available: highest discount first, then soonest expiry, then platform before partner
+    available.sort((a, b) => {
+      if (b.discountAmount !== a.discountAmount) return b.discountAmount - a.discountAmount;
+      const aExpiry = new Date(a.voucher.endDate).getTime();
+      const bExpiry = new Date(b.voucher.endDate).getTime();
+      if (aExpiry !== bExpiry) return aExpiry - bExpiry;
+      return (b.voucher.fundedBy === "PLATFORM" ? 1 : 0) - (a.voucher.fundedBy === "PLATFORM" ? 1 : 0);
+    });
+
+    // Sort unavailable: most impactful reason first
+    unavailable.sort((a, b) => {
+      const aCode = a.reason?.code ?? "";
+      const bCode = b.reason?.code ?? "";
+      const reasonOrder = [
+        "VOUCHER_EXPIRED", "VOUCHER_USAGE_LIMIT_REACHED",
+        "VOUCHER_MIN_BOOKING_AMOUNT", "VOUCHER_WRONG_DAY",
+        "VOUCHER_WRONG_TIME", "VOUCHER_WRONG_COURT",
+        "VOUCHER_NOT_HOLIDAY", "VOUCHER_NOT_STARTED", "VOUCHER_APPLICABLE_END_DATE",
+        "VOUCHER_APPLICABLE_START_DATE", "VOUCHER_INACTIVE", "VOUCHER_NOT_FOUND"
+      ];
+      const aIdx = reasonOrder.indexOf(aCode);
+      const bIdx = reasonOrder.indexOf(bCode);
+      return aIdx - bIdx;
+    });
+
+    return {
+      bestVoucher: available[0] ?? null,
+      availableVouchers: available,
+      unavailableVouchers: unavailable
+    };
+  },
+
+  /**
+   * Priority score for sorting vouchers — higher = more valuable.
+   * Factors: discount amount, funding source, court specificity, expiry urgency.
+   */
+  computePriorityScore(
+    voucher: ReturnType<typeof this.serializeForEligibility>,
+    estimatedDiscount: number,
+    _userId?: string
+  ): number {
+    // Normalise discount to a 0-40 point scale (max 400k VND = 40 pts)
+    const discountPoints = Math.min(40, Math.round((estimatedDiscount / 400_000) * 40));
+    // Platform vouchers are best for users (no partner cost)
+    const fundingPoints = voucher.fundedBy === "PLATFORM" ? 8 : voucher.fundedBy === "SHARED" ? 5 : 0;
+    // Court-specific vouchers are more relevant to the current booking
+    const scopePoints = voucher.courtId ? 3 : 0;
+    // Deprioritise vouchers expiring within 3 days
+    const daysLeft = Math.ceil((new Date(voucher.endDate).getTime() - Date.now()) / 86_400_000);
+    const expiryPoints = daysLeft <= 3 ? -5 : 0;
+    return 50 + discountPoints + fundingPoints + scopePoints + expiryPoints;
   },
 
   serializeForEligibility(v: VoucherRow) {
@@ -199,7 +259,8 @@ export const voucherService = {
       applicableStartDate: v.applicableStartDate,
       applicableEndDate: v.applicableEndDate,
       partner: v.partner,
-      court: v.court
+      court: v.court,
+      courtId: v.court?.id ?? null
     };
   },
 

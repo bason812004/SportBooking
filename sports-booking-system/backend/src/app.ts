@@ -31,6 +31,7 @@ import { voucherRoutes } from "./modules/vouchers/voucher.routes.js";
 import { partnerWalletRoutes, adminWalletRoutes } from "./modules/wallets/wallet.routes.js";
 import { partnerSettlementRoutes, adminSettlementRoutes } from "./modules/settlements/settlement.routes.js";
 import { partnerWithdrawalRoutes, adminWithdrawalRoutes } from "./modules/withdrawals/withdrawal.routes.js";
+import { uploadRoutes } from "./modules/uploads/upload.routes.js";
 
 export const app = express();
 
@@ -93,5 +94,6 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/partner/wallet", partnerWalletRoutes);
 app.use("/api/partner/settlements", partnerSettlementRoutes);
 app.use("/api/partner/withdrawals", partnerWithdrawalRoutes);
+app.use("/api/uploads", uploadRoutes);
 
 app.use(errorMiddleware);

@@ -9,7 +9,8 @@ import type {
   TeamRecruitmentPost,
   Tournament,
   Voucher,
-  VoucherEligibilityResult
+  VoucherEligibilityResult,
+  VoucherEligibilityResponse
 } from "../../../types/api";
 
 export type BlogWriteInput = {
@@ -100,7 +101,7 @@ export const contentApi = {
     subtotal: number;
     lang?: "vi" | "en";
   }) {
-    const { data } = await api.post<ApiResponse<VoucherEligibilityResult[]>>("/vouchers/check-eligibility", input);
+    const { data } = await api.post<ApiResponse<VoucherEligibilityResponse>>("/vouchers/check-eligibility", input);
     return repairObject(data.data);
   },
 
