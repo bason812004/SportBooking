@@ -16,6 +16,34 @@ async function ensureCourtDepositColumn() {
   `;
     depositColumnReady = true;
 }
+/**
+ * Compute platform/partner split of a voucher discount.
+ * PLATFORM-funded voucher: partner=0, platform=full.
+ * PARTNER-funded voucher: partner=full, platform=0.
+ * SHARED voucher: uses partner_funding_percent / platform_funding_percent.
+ */
+async function voucherDiscountSplit(tx, voucherId, discountAmount) {
+    const row = await tx.voucher.findUnique({
+        where: { id: voucherId },
+        select: {
+            fundedBy: true,
+            partnerFundingPercent: true,
+            platformFundingPercent: true
+        }
+    });
+    if (!row)
+        return { partnerShare: discountAmount, platformShare: 0 };
+    const funded = (row.fundedBy ?? "PARTNER");
+    if (funded === "PLATFORM") {
+        return { partnerShare: 0, platformShare: discountAmount };
+    }
+    if (funded === "SHARED") {
+        const pf = row.partnerFundingPercent != null ? Number(row.partnerFundingPercent) : 50;
+        const partnerShare = Math.round((discountAmount * pf) / 100);
+        return { partnerShare, platformShare: Math.max(0, discountAmount - partnerShare) };
+    }
+    return { partnerShare: discountAmount, platformShare: 0 };
+}
 export const bookingRepository = {
     findById(id) {
         return prisma.booking.findUnique({
@@ -130,12 +158,15 @@ export const bookingRepository = {
                 if (voucherUpdate.count !== 1) {
                     throw new ValidationError("Voucher da het luot su dung");
                 }
+                const split = await voucherDiscountSplit(tx, input.voucherId, input.voucherDiscountAmount);
                 await tx.bookingVoucher.create({
                     data: {
                         id: generateShortId("bv"),
                         bookingId: booking.id,
                         voucherId: input.voucherId,
-                        discountAmount: input.voucherDiscountAmount
+                        discountAmount: input.voucherDiscountAmount,
+                        platformShare: split.platformShare,
+                        partnerShare: split.partnerShare
                     }
                 });
                 await tx.userVoucher.updateMany({
@@ -146,29 +177,38 @@ export const bookingRepository = {
             return booking;
         });
     },
-    findConflictsInTransaction(tx, courtId, date, slots) {
-        const activeStatuses = ["PENDING", "CONFIRMED", "COMPLETED"];
-        return Promise.all(slots.map(async (slot) => {
+    async findConflictsInTransaction(tx, courtId, date, slots) {
+        const activeStatuses = ["PENDING", "PENDING_PAYMENT", "CONFIRMED", "COMPLETED"];
+        const bookingDate = toDbDate(date);
+        const conflicts = [];
+        for (const slot of slots) {
+            const startTime = timeToDate(slot.startTime.slice(0, 5));
+            const endTime = timeToDate(slot.endTime.slice(0, 5));
             const legacyBooking = await tx.booking.findFirst({
                 where: {
                     courtId,
-                    bookingDate: toDbDate(date),
+                    bookingDate,
                     bookingStatus: { in: activeStatuses },
-                    startTime: { lt: timeToDate(slot.endTime.slice(0, 5)) },
-                    endTime: { gt: timeToDate(slot.startTime.slice(0, 5)) }
+                    startTime: { lt: endTime },
+                    endTime: { gt: startTime }
                 }
             });
+            if (legacyBooking) {
+                conflicts.push(legacyBooking);
+                continue;
+            }
             const slotBooking = await tx.bookingSlot.findFirst({
                 where: {
                     courtId,
-                    bookingDate: toDbDate(date),
-                    startTime: { lt: timeToDate(slot.endTime.slice(0, 5)) },
-                    endTime: { gt: timeToDate(slot.startTime.slice(0, 5)) },
+                    bookingDate,
+                    startTime: { lt: endTime },
+                    endTime: { gt: startTime },
                     booking: { bookingStatus: { in: activeStatuses } }
                 }
             });
-            return legacyBooking ?? slotBooking;
-        }));
+            conflicts.push(slotBooking);
+        }
+        return conflicts;
     },
     createCheckout(input) {
         return prisma.$transaction(async (tx) => {
@@ -230,13 +270,20 @@ export const bookingRepository = {
                 if (voucherUpdate.count !== 1) {
                     throw new ValidationError("Voucher da het luot su dung");
                 }
+                const split = await voucherDiscountSplit(tx, input.voucherId, input.voucherDiscountAmount);
                 await tx.bookingVoucher.create({
                     data: {
                         id: generateShortId("bv"),
                         bookingId: booking.id,
                         voucherId: input.voucherId,
-                        discountAmount: input.voucherDiscountAmount
+                        discountAmount: input.voucherDiscountAmount,
+                        platformShare: split.platformShare,
+                        partnerShare: split.partnerShare
                     }
+                });
+                await tx.userVoucher.updateMany({
+                    where: { userId: input.userId, voucherId: input.voucherId, status: "CLAIMED" },
+                    data: { status: "USED", usedAt: new Date() }
                 });
             }
             const payment = await tx.payment.create({
@@ -257,7 +304,7 @@ export const bookingRepository = {
                 }
             });
             return { conflict: false, booking, payment };
-        }, { isolationLevel: "Serializable" });
+        }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 });
     },
     createPayAtCourtCheckout(input) {
         return prisma.$transaction(async (tx) => {
@@ -319,17 +366,24 @@ export const bookingRepository = {
                 if (voucherUpdate.count !== 1) {
                     throw new ValidationError("Voucher da het luot su dung");
                 }
+                const split = await voucherDiscountSplit(tx, input.voucherId, input.voucherDiscountAmount);
                 await tx.bookingVoucher.create({
                     data: {
                         id: generateShortId("bv"),
                         bookingId: booking.id,
                         voucherId: input.voucherId,
-                        discountAmount: input.voucherDiscountAmount
+                        discountAmount: input.voucherDiscountAmount,
+                        platformShare: split.platformShare,
+                        partnerShare: split.partnerShare
                     }
+                });
+                await tx.userVoucher.updateMany({
+                    where: { userId: input.userId, voucherId: input.voucherId, status: "CLAIMED" },
+                    data: { status: "USED", usedAt: new Date() }
                 });
             }
             return { conflict: false, booking };
-        }, { isolationLevel: "Serializable" });
+        }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 });
     },
     toDbDate
 };

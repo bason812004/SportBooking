@@ -1,14 +1,22 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { LoadingState, ErrorState, EmptyState } from "../../components/common/States";
-import type { AvailabilitySlot } from "../../features/courts/api/courtApi";
-import { useCourt, useCourtAvailability } from "../../features/courts/hooks/useCourts";
+import { useCourt } from "../../features/courts/hooks/useCourts";
 import { useUserLocation } from "../../features/courts/hooks/useUserLocation";
+import { useLanguage } from "../../lib/i18n";
+import { useAuth } from "../../features/auth/hooks/useAuth";
+import { formatYmd, startOfWeek, WeeklyCalendarSection } from "../../features/bookings/components/BookingCalendar";
+import {
+  usePrefetchAdjacentWeeks,
+  useWeeklySchedule
+} from "../../features/bookings/hooks/useBookingSchedule";
+import type { WeeklyScheduleSlot } from "../../types/api";
+import { getSocket } from "../../lib/socket";
 import { HeroGallery } from "./detail/HeroGallery";
 import { StickyBookingBar } from "./detail/StickyBookingBar";
 import { CourtInfo } from "./detail/CourtInfo";
 import { QuickStats } from "./detail/QuickStats";
-import { AvailabilityCalendar } from "./detail/AvailabilityCalendar";
 import { PricingSection } from "./detail/PricingSection";
 import { AmenitiesSection } from "./detail/AmenitiesSection";
 import { PartnerSection } from "./detail/PartnerSection";
@@ -16,9 +24,10 @@ import { PolicySection } from "./detail/PolicySection";
 import { ReviewSection } from "./detail/ReviewSection";
 import { ReviewAnalytics } from "./detail/ReviewAnalytics";
 import { NearbyCourts } from "./detail/SimilarCourts";
-import { StickyBookingPanel } from "./detail/StickyBookingPanel";
 import { InteractiveMap } from "./detail/InteractiveMap";
 import { CourtSectionNav } from "./detail/CourtSectionNav";
+import { DetailSection } from "./detail/detailUtils";
+import { CourtDetailBookingSidePanel } from "./detail/CourtDetailBookingSidePanel";
 import { detailImages } from "./detail/detailData";
 
 function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -38,18 +47,42 @@ function timeText(value?: string) {
   return value.includes("T") ? value.slice(11, 16) : value.slice(0, 5);
 }
 
-function SectionAnchor({ id, children }: { id: string; children: ReactNode }) {
-  return <section id={id} className="scroll-mt-28">{children}</section>;
-}
-
 export function CourtDetailPage() {
   const { id } = useParams();
   const court = useCourt(id);
-  const today = new Date().toISOString().slice(0, 10);
-  const [selectedDate, setSelectedDate] = useState(today);
-  const [selectedSlots, setSelectedSlots] = useState<AvailabilitySlot[]>([]);
-  const availability = useCourtAvailability(id, selectedDate);
+  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const [weekStartDate, setWeekStartDate] = useState<Date>(() => startOfWeek(today));
+  const [focusedDate, setFocusedDate] = useState<Date>(() => new Date(`${today}T00:00:00`));
+  const [selected, setSelected] = useState<WeeklyScheduleSlot[]>([]);
+  const { language } = useLanguage();
+  const { token } = useAuth();
+  const queryClient = useQueryClient();
   const { location: userLoc } = useUserLocation({ autoRequest: true });
+
+  const weekStart = formatYmd(weekStartDate);
+  const schedule = useWeeklySchedule(id, weekStart);
+
+  usePrefetchAdjacentWeeks(id, weekStart);
+
+  // Realtime: invalidate weekly-schedule cache when bookings change.
+  useEffect(() => {
+    if (!id || !token) return;
+    const socket = getSocket(token);
+    socket.emit("court:subscribe", id);
+    const refresh = () =>
+      queryClient.invalidateQueries({ queryKey: ["weekly-schedule", id] });
+    socket.on("court:availability:updated", refresh);
+    socket.on("booking:created", refresh);
+    socket.on("booking:cancelled", refresh);
+    socket.on("booking:confirmed", refresh);
+    return () => {
+      socket.emit("court:unsubscribe", id);
+      socket.off("court:availability:updated", refresh);
+      socket.off("booking:created", refresh);
+      socket.off("booking:cancelled", refresh);
+      socket.off("booking:confirmed", refresh);
+    };
+  }, [id, queryClient, token]);
 
   const distanceText = useMemo(() => {
     const data = court.data;
@@ -67,19 +100,6 @@ export function CourtDetailPage() {
     }
     return null;
   }, [userLoc, court.data]);
-
-  function toggleSlot(slot: AvailabilitySlot) {
-    setSelectedSlots((current) => {
-      const exists = current.some((item) => item.startTime === slot.startTime && item.endTime === slot.endTime);
-      if (exists) return current.filter((item) => item.startTime !== slot.startTime || item.endTime !== slot.endTime);
-      return [...current, slot].sort((left, right) => left.startTime.localeCompare(right.startTime));
-    });
-  }
-
-  function handleDateChange(date: string) {
-    setSelectedDate(date);
-    setSelectedSlots([]);
-  }
 
   const view = useMemo(() => {
     const data = court.data;
@@ -100,13 +120,21 @@ export function CourtDetailPage() {
     };
   }, [court.data, id]);
 
+  const selectedDate = formatYmd(focusedDate);
+
   if (court.isLoading) return <div className="px-5 py-16"><LoadingState /></div>;
   if (court.isError) return <div className="px-5 py-16"><ErrorState message={court.error.message} /></div>;
   if (!court.data && !id) return <div className="px-5 py-16"><EmptyState /></div>;
 
   return (
     <div className="bg-[#f5f7fb] pb-16 text-[#0b1220]">
-      <StickyBookingBar courtId={view.id} price={view.price} rating={view.rating} selectedDate={selectedDate} selectedSlots={selectedSlots} />
+      <StickyBookingBar
+        courtId={view.id}
+        price={view.price}
+        rating={view.rating}
+        selectedDate={selectedDate}
+        selectedSlots={selected}
+      />
       <div className="mx-auto max-w-[1600px] space-y-6 px-4 py-6">
         <HeroGallery images={view.images} />
         <CourtInfo
@@ -124,7 +152,7 @@ export function CourtDetailPage() {
           <CourtSectionNav />
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-[1fr_360px] xl:grid-cols-[210px_1fr_360px]">
+        <div className="grid gap-6 xl:grid-cols-[210px_1fr]">
           <aside className="hidden xl:block">
             <div className="sticky top-24">
               <CourtSectionNav />
@@ -132,51 +160,72 @@ export function CourtDetailPage() {
           </aside>
 
           <main className="space-y-6">
-            <SectionAnchor id="tong-quan">
-              <QuickStats price={view.price ? `${view.price.toLocaleString("vi-VN")}đ/giờ` : "Chưa cập nhật"} rating={view.rating} />
-            </SectionAnchor>
-            <SectionAnchor id="ban-do">
-              <InteractiveMap address={view.address} latitude={view.latitude} longitude={view.longitude} />
-            </SectionAnchor>
-            <SectionAnchor id="lich-san">
-              <AvailabilityCalendar
-                date={selectedDate}
-                onDateChange={handleDateChange}
-                slots={availability.data?.slots ?? []}
-                selectedSlots={selectedSlots}
-                loading={availability.isLoading}
-                onToggleSlot={toggleSlot}
+            <section id="tong-quan" className="scroll-mt-28">
+              <QuickStats
+                price={view.price ? `${view.price.toLocaleString("vi-VN")}đ/giờ` : "Chưa cập nhật"}
+                rating={view.rating}
               />
-            </SectionAnchor>
-            <SectionAnchor id="bang-gia">
+            </section>
+            <section id="ban-do" className="scroll-mt-28">
+              <InteractiveMap address={view.address} latitude={view.latitude} longitude={view.longitude} />
+            </section>
+            <section id="lich-san" className="scroll-mt-28">
+              <DetailSection
+                title="Lịch đặt sân trong tuần"
+                description="Chọn một hoặc nhiều khung giờ còn trống. Giá, dynamic pricing và demand prediction được lấy trực tiếp từ backend."
+              >
+                <WeeklyCalendarSection
+                  response={schedule.data}
+                  isLoading={schedule.isLoading}
+                  isError={schedule.isError}
+                  error={schedule.error as Error | null}
+                  onRetry={() => schedule.refetch()}
+                  weekStart={weekStartDate}
+                  onWeekStartChange={(next) => {
+                    setWeekStartDate(next);
+                    setSelected([]);
+                  }}
+                  focusedDate={focusedDate}
+                  onFocusedDateChange={setFocusedDate}
+                  selected={selected}
+                  onSelectedChange={setSelected}
+                  language={language}
+                  forceDayOnCompact
+                  rightSlot={
+                    <CourtDetailBookingSidePanel
+                      courtId={view.id}
+                      selectedDate={selectedDate}
+                      selectedSlots={selected}
+                    />
+                  }
+                />
+              </DetailSection>
+            </section>
+            <section id="bang-gia" className="scroll-mt-28">
               <PricingSection prices={court.data?.prices ?? []} />
-            </SectionAnchor>
-            <SectionAnchor id="tien-ich">
+            </section>
+            <section id="tien-ich" className="scroll-mt-28">
               <AmenitiesSection amenities={court.data?.amenities ?? []} />
-            </SectionAnchor>
-            <SectionAnchor id="doi-tac">
+            </section>
+            <section id="doi-tac" className="scroll-mt-28">
               <PartnerSection partner={court.data?.partner} />
-            </SectionAnchor>
-            <SectionAnchor id="chinh-sach">
+            </section>
+            <section id="chinh-sach" className="scroll-mt-28">
               <PolicySection />
-            </SectionAnchor>
-            <SectionAnchor id="danh-gia">
+            </section>
+            <section id="danh-gia" className="scroll-mt-28">
               <div className="space-y-6">
                 <ReviewAnalytics breakdown={court.data?.ratingBreakdown ?? []} />
                 <ReviewSection courtId={view.id} reviews={court.data?.reviews ?? []} />
               </div>
-            </SectionAnchor>
-            <SectionAnchor id="san-gan-day">
+            </section>
+            <section id="san-gan-day" className="scroll-mt-28">
               <NearbyCourts
                 courts={court.data?.nearbyCourts ?? []}
                 description="Danh sách lấy từ API chi tiết sân, ưu tiên các sân công khai cùng quận và cùng thành phố."
               />
-            </SectionAnchor>
+            </section>
           </main>
-
-          <div className="hidden lg:block">
-            <StickyBookingPanel courtId={view.id} price={view.price} selectedDate={selectedDate} selectedSlots={selectedSlots} />
-          </div>
         </div>
       </div>
     </div>

@@ -37,6 +37,7 @@ Mat khau goc cho tat ca tai khoan mau: `123456`. Trong database chi luu bcrypt h
 - Partner 1: `partner1@sportsbooking.com`
 - Partner 2: `partner2@sportsbooking.com`
 - User 1: `user1@sportsbooking.com`
+- Recipient demo: `partner1+recipient@sportsbooking.com` (quan ly san `c0001` cua Partner 1)
 
 ## Auth, Google OAuth va realtime
 
@@ -46,7 +47,7 @@ Backend env can co:
 JWT_SECRET=replace-with-legacy-or-shared-secret-at-least-24-chars
 JWT_ACCESS_SECRET=replace-with-access-secret-at-least-24-chars
 JWT_REFRESH_SECRET=replace-with-refresh-secret-at-least-24-chars
-ACCESS_TOKEN_EXPIRES_IN=15m
+ACCESS_TOKEN_EXPIRES_IN=7d
 REFRESH_TOKEN_EXPIRES_IN=7d
 GOOGLE_CLIENT_ID=your-google-oauth-client-id.apps.googleusercontent.com
 FRONTEND_URL=http://localhost:5173

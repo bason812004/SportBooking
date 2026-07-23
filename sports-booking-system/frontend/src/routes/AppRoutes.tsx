@@ -47,6 +47,7 @@ import { PartnerBlogsPage } from "../pages/partner/PartnerBlogsPage";
 import { PartnerBlogFormPage } from "../pages/partner/PartnerBlogFormPage";
 import { PartnerTournamentsPage } from "../pages/partner/PartnerTournamentsPage";
 import { PartnerTournamentFormPage } from "../pages/partner/PartnerTournamentFormPage";
+import { PartnerWalletPage } from "../pages/partner/PartnerWalletPage";
 import { AdminDashboardPage } from "../pages/admin/AdminDashboardPage";
 import { AdminBookingsPage } from "../pages/admin/AdminBookingsPage";
 import { AdminUsersPage } from "../pages/admin/AdminUsersPage";
@@ -67,7 +68,6 @@ import { AdminVouchersPage } from "../pages/admin/AdminVouchersPage";
 import { AdminVoucherFormPage } from "../pages/admin/AdminVoucherFormPage";
 import { AdminBlogModerationPage } from "../pages/admin/AdminBlogModerationPage";
 import { AdminTournamentModerationPage } from "../pages/admin/AdminTournamentModerationPage";
-import { PartnerWalletPage } from "../pages/partner/PartnerWalletPage";
 import { AdminSettlementsPage } from "../pages/admin/AdminSettlementsPage";
 import { AdminWithdrawalsPage } from "../pages/admin/AdminWithdrawalsPage";
 
@@ -77,8 +77,12 @@ export function AppRoutes() {
       <Route element={<PublicLayout />}>
         <Route index element={<HomePage />} />
         <Route path="login" element={<LoginPage />} />
+        <Route path="login/customer" element={<LoginPage mode="user" />} />
+        <Route path="login/partner" element={<LoginPage mode="partner" />} />
         <Route path="partner/login" element={<LoginPage mode="partner" />} />
         <Route path="register" element={<RegisterPage />} />
+        <Route path="register/customer" element={<RegisterPage />} />
+        <Route path="register/partner" element={<RegisterPartnerPage />} />
         <Route path="register-partner" element={<RegisterPartnerPage />} />
         <Route path="partner" element={<PartnersLandingPage />} />
         <Route path="partners" element={<PartnersLandingPage />} />

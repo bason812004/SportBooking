@@ -5,6 +5,18 @@ const currencyFormatter = new Intl.NumberFormat("vi-VN", {
 });
 const numberFormatter = new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 });
 const dateFormatter = new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
+const dateLongFormatter = new Intl.DateTimeFormat("vi-VN", {
+  weekday: "long",
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric"
+});
+const dateLongEnFormatter = new Intl.DateTimeFormat("en-US", {
+  weekday: "long",
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric"
+});
 const dateTimeFormatter = new Intl.DateTimeFormat("vi-VN", {
   day: "2-digit",
   month: "2-digit",
@@ -32,6 +44,18 @@ export function formatDate(value: string | Date | null | undefined) {
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return "-";
   return dateFormatter.format(d);
+}
+
+/**
+ * Long-form date "Thứ Hai, 20/07/2026" (vi) or "Monday, 20/07/2026" (en).
+ * Always day-before-month; never ambiguous.
+ */
+export function formatDateLong(value: string | Date | null | undefined, lang: "vi" | "en" = "vi") {
+  if (!value) return "-";
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return "-";
+  const formatter = lang === "en" ? dateLongEnFormatter : dateLongFormatter;
+  return formatter.format(d);
 }
 
 export function formatDateTime(value: string | Date | null | undefined) {

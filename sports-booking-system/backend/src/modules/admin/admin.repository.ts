@@ -4,6 +4,36 @@ import { settlementService } from "../settlements/settlement.service.js";
 
 const columnExistsCache = new Map<string, boolean>();
 
+function toNum(v: unknown): number {
+  return Number(v ?? 0);
+}
+
+async function settlePendingSettlement(tx: Prisma.TransactionClient, bookingId: string) {
+  const settlement = await tx.settlement.findUnique({ where: { bookingId } });
+  if (!settlement || settlement.status !== "PENDING") return null;
+  const updated = await tx.settlement.update({
+    where: { id: settlement.id },
+    data: { status: "SETTLED", settledAt: new Date() }
+  });
+  await tx.partnerWallet.update({
+    where: { partnerId: settlement.partnerId },
+    data: {
+      pendingBalance: { decrement: settlement.netAmount },
+      availableBalance: { increment: settlement.netAmount }
+    }
+  });
+  return updated;
+}
+
+async function cancelSettlementForBooking(tx: Prisma.TransactionClient, bookingId: string, settlementNetAmount: number, settlementPartnerId: string, settlementStatus: string) {
+  if (settlementStatus === "PENDING") {
+    await tx.partnerWallet.update({
+      where: { partnerId: settlementPartnerId },
+      data: { pendingBalance: { decrement: settlementNetAmount } }
+    });
+  }
+}
+
 async function columnExists(tableName: string, columnName: string) {
   const cacheKey = `${tableName}.${columnName}`;
   const cached = columnExistsCache.get(cacheKey);
@@ -423,6 +453,40 @@ export const adminRepository = {
         insert into booking_admin_actions (booking_id, actor_id, action, note, previous_status, new_status)
         values ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
       `, id, actorId, action, input.actionNote ?? input.adminNote ?? input.cancelReason ?? null, JSON.stringify(before), JSON.stringify(updated));
+
+      if (input.bookingStatus === "COMPLETED" && before.bookingStatus !== "COMPLETED") {
+        await settlePendingSettlement(tx, id);
+      }
+      if (input.bookingStatus === "CANCELLED" && before.bookingStatus !== "CANCELLED") {
+        const settlement = await tx.settlement.findUnique({ where: { bookingId: id } });
+        if (settlement && settlement.status === "PENDING") {
+          await tx.partnerWallet.update({
+            where: { partnerId: settlement.partnerId },
+            data: { pendingBalance: { decrement: settlement.netAmount } }
+          });
+          await tx.settlement.update({
+            where: { id: settlement.id },
+            data: { status: "CANCELLED" }
+          });
+        }
+      }
+
+      if (input.bookingStatus === "COMPLETED" && before.bookingStatus !== "COMPLETED") {
+        await settlePendingSettlement(tx, id);
+      }
+      if (input.bookingStatus === "CANCELLED" && before.bookingStatus !== "CANCELLED") {
+        const settlement = await tx.settlement.findUnique({ where: { bookingId: id } });
+        if (settlement && settlement.status === "PENDING") {
+          await tx.partnerWallet.update({
+            where: { partnerId: settlement.partnerId },
+            data: { pendingBalance: { decrement: settlement.netAmount } }
+          });
+          await tx.settlement.update({
+            where: { id: settlement.id },
+            data: { status: "CANCELLED" }
+          });
+        }
+      }
 
       let settlement = null;
       if (input.bookingStatus === "COMPLETED" || input.bookingStatus === "NO_SHOW") {

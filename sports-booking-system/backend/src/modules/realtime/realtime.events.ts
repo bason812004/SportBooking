@@ -18,7 +18,13 @@ export const realtimeEvents = {
   teamPostMemberJoined: "team-post:member-joined",
   teamPostMessageNew: "team-post:message:new",
   settlementUpdated: "settlement:updated",
-  walletUpdated: "wallet:updated",
   withdrawalCreated: "withdrawal:created",
-  withdrawalUpdated: "withdrawal:updated"
+  withdrawalUpdated: "withdrawal:updated",
+  walletUpdated: "wallet:updated",
+  userAvatarUpdated: "user:avatar-updated",
+  teamPostReactionNew: "team-post:reaction:new",
+  teamPostReactionRemoved: "team-post:reaction:removed",
+  teamPostMemberLeft: "team-post:member-left",
+  teamPostMemberRemoved: "team-post:member-removed",
+  teamPostAdminTransferred: "team-post:admin-transferred"
 } as const;

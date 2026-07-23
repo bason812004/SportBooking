@@ -30,6 +30,23 @@ export const demandPredictionRepository = {
     });
   },
 
+  /**
+   * Returns the matching booking count per (start_time, end_time) pair for a
+   * court. Used by the bulk weekly-schedule path so we can score every slot
+   * without firing one query per slot.
+   */
+  bookingCountsByStartTime(courtId: string) {
+    return prisma.$queryRaw<Array<{ startTime: string; endTime: string; count: number }>>`
+      select to_char(start_time, 'HH24:MI') as "startTime",
+             to_char(end_time, 'HH24:MI') as "endTime",
+             count(*)::int as count
+      from bookings
+      where court_id = ${courtId}::uuid
+        and booking_status not in ('CANCELLED'::booking_status, 'NO_SHOW'::booking_status)
+      group by start_time, end_time
+    `;
+  },
+
   cancellationCount(courtId: string) {
     return prisma.booking.count({ where: { courtId, bookingStatus: "CANCELLED" } });
   },

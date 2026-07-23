@@ -72,7 +72,7 @@ export type Court = {
     user?: { fullName: string; email: string; phone?: string | null };
   };
   images: Array<{ id: string; imageUrl: string; publicId?: string; sortOrder: number }>;
-  surfaces?: Array<{ id: string; code: string; name: string; capacity?: string; surface?: string; size?: string; imageUrl?: string; sortOrder: number; status?: "ACTIVE" | "INACTIVE" }>;
+  surfaces?: Array<{ id: string; code: string; name: string; capacity?: string; surface?: string; size?: string; imageUrl?: string; sortOrder: number }>;
   amenities: Array<{ id: string; name: string }>;
   prices: Array<{ id: string; dayType: string; startTime: string; endTime: string; price: string; note?: string }>;
   services: Array<{ id: string; name: string; description?: string; price: string; status: string }>;
@@ -460,8 +460,48 @@ export type Voucher = {
   startDate: string;
   endDate: string;
   status: string;
-  partner: { id: string; businessName: string };
+  partner: { id: string; businessName: string } | null;
   court?: { id: string; name: string; city: string; district: string; imageUrl?: string | null } | null;
+  courtId?: string | null;
+  fundedBy?: "PARTNER" | "PLATFORM" | "SHARED";
+  partnerFundingPercent?: number | null;
+  platformFundingPercent?: number | null;
+  applicableDays?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  holidayOnly?: boolean;
+  holidayDates?: string[] | null;
+  applicableStartDate?: string | null;
+  applicableEndDate?: string | null;
+};
+
+export type VoucherEligibilityReasonCode =
+  | "VOUCHER_NOT_FOUND"
+  | "VOUCHER_INACTIVE"
+  | "VOUCHER_NOT_STARTED"
+  | "VOUCHER_EXPIRED"
+  | "VOUCHER_USAGE_LIMIT_REACHED"
+  | "VOUCHER_MIN_BOOKING_AMOUNT"
+  | "VOUCHER_APPLICABLE_START_DATE"
+  | "VOUCHER_APPLICABLE_END_DATE"
+  | "VOUCHER_WRONG_DAY"
+  | "VOUCHER_WRONG_TIME"
+  | "VOUCHER_NOT_HOLIDAY"
+  | "VOUCHER_WRONG_COURT";
+
+export type VoucherEligibilityResult = {
+  voucher: Voucher;
+  eligible: boolean;
+  reason: { code: VoucherEligibilityReasonCode; message: string } | null;
+  discountAmount: number;
+  finalAmount: number;
+  priorityScore: number;
+};
+
+export type VoucherEligibilityResponse = {
+  bestVoucher: VoucherEligibilityResult | null;
+  availableVouchers: VoucherEligibilityResult[];
+  unavailableVouchers: VoucherEligibilityResult[];
 };
 
 export type PartnerVoucher = Omit<Voucher, "partner"> & {
@@ -553,9 +593,9 @@ export type BlogComment = {
   id: string;
   postId: string;
   content: string;
+  isEdited?: boolean;
   createdAt: string;
   updatedAt: string;
-  isEdited?: boolean;
   user: { id: string; fullName: string; avatarUrl?: string | null };
 };
 
@@ -604,10 +644,17 @@ export type TeamRecruitmentPost = {
 export type TeamPostMessage = {
   id: string;
   postId: string;
-  content: string;
+  content: string | null;
+  messageType?: "TEXT" | "IMAGE" | "VIDEO" | "SYSTEM";
+  attachmentUrl?: string | null;
+  attachmentName?: string | null;
+  attachmentSize?: number | null;
+  thumbnailUrl?: string | null;
+  mimeType?: string | null;
   createdAt: string;
   updatedAt: string;
   sender: { id: string; fullName: string; avatarUrl?: string | null };
+  reactions?: Array<{ reaction: string; userId: string; createdAt?: string }>;
 };
 
 export type TeamRecruitmentInput = {
@@ -626,6 +673,126 @@ export type TeamRecruitmentInput = {
   note?: string | null;
   zaloGroupLink?: string | null;
   zaloQrImage?: string | null;
+};
+
+// ── Weekly Booking Schedule ────────────────────────────────────────────────
+
+export type WeeklySlotStatus =
+  | "AVAILABLE"
+  | "BOOKED"
+  | "BLOCKED"
+  | "MAINTENANCE"
+  | "OUTSIDE_HOURS"
+  | "HELD";
+
+export type DynamicPricingAdjustment = {
+  ruleName: string;
+  type: "PERCENTAGE" | "FIXED_AMOUNT";
+  value: number;
+  amount: number;
+};
+
+export type WeeklyScheduleSlot = {
+  date: string;
+  startTime: string;
+  endTime: string;
+  status: WeeklySlotStatus;
+  basePrice: number;
+  finalPrice: number;
+  dynamicAdjustmentAmount: number;
+  adjustments: DynamicPricingAdjustment[];
+  ruleNames: string[];
+  predictionLevel: "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH" | null;
+  predictionStatus: "INSUFFICIENT_DATA" | "GENERATED" | "FAILED";
+  predictedOccupancyRate: number | null;
+  blockReason: string | null;
+  bookingCode: string | null;
+};
+
+export type WeeklyScheduleDay = {
+  date: string;
+  weekday: number;
+  slots: WeeklyScheduleSlot[];
+};
+
+export type WeeklyScheduleDynamicPrice = {
+  date: string;
+  startTime: string;
+  endTime: string;
+  basePrice: number;
+  finalPrice: number;
+  dynamicAdjustmentAmount: number;
+  adjustments: DynamicPricingAdjustment[];
+  ruleNames: string[];
+};
+
+export type WeeklyScheduleBooking = {
+  id: string;
+  bookingCode: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  bookingStatus: string;
+  userFullName?: string | null;
+};
+
+export type WeeklyScheduleMaintenance = {
+  id: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  reason: string | null;
+  isMaintenance: boolean;
+};
+
+export type WeeklyScheduleVoucher = {
+  id: string;
+  code: string;
+  title: string;
+  description?: string | null;
+  discountType: "PERCENTAGE" | "FIXED_AMOUNT";
+  discountValue: number;
+  maxDiscountAmount?: number | null;
+  minBookingAmount: number;
+  endDate: string;
+  usedCount: number;
+  usageLimit?: number | null;
+  startDate: string;
+  applicableDays: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  holidayOnly: boolean;
+  holidayDates: string[] | null;
+  applicableStartDate: string | null;
+  applicableEndDate: string | null;
+  partnerName: string | null;
+};
+
+export type WeeklyScheduleCourt = {
+  id: string;
+  name: string;
+  address: string | null;
+  district: string | null;
+  city: string | null;
+  openingTime: string;
+  closingTime: string;
+  minPrice: number;
+  imageUrl: string | null;
+  category: string | null;
+};
+
+export type WeeklyScheduleResponse = {
+  court: WeeklyScheduleCourt;
+  weekStart: string;
+  weekEnd: string;
+  slotMinutes: number;
+  openingTime: string;
+  closingTime: string;
+  days: WeeklyScheduleDay[];
+  dynamicPricing: WeeklyScheduleDynamicPrice[];
+  bookings: WeeklyScheduleBooking[];
+  maintenance: WeeklyScheduleMaintenance[];
+  availableVouchers: WeeklyScheduleVoucher[];
 };
 
 export type SettlementStatus = "PENDING" | "PROCESSING" | "SETTLED" | "FAILED" | "CANCELLED";

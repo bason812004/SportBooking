@@ -3,7 +3,8 @@ import { Server } from "socket.io";
 import { env } from "../../config/env.js";
 import { prisma } from "../../config/db.js";
 import { verifyAccessToken } from "../auth/auth.security.js";
-import { registerRealtimeServer } from "./realtime.service.js";
+import { invalidateWeeklyScheduleCache } from "../weekly-schedule/weeklySchedule.service.js";
+import { registerRealtimeServer, registerWeeklyScheduleCacheInvalidator } from "./realtime.service.js";
 
 export function initRealtime(httpServer: HttpServer) {
   const io = new Server(httpServer, {
@@ -55,12 +56,24 @@ export function initRealtime(httpServer: HttpServer) {
           select exists (
             select 1
             from team_recruitment_posts p
-            left join team_post_members m on m.post_id = p.id and m.user_id = ${user.id}
             where p.id = ${postId}
-              and (p.user_id = ${user.id} or m.id is not null)
+              and (
+                p.user_id = ${user.id}
+                or exists (
+                  select 1 from team_post_members m
+                  where m.post_id = p.id
+                    and m.user_id = ${user.id}
+                    and m.status = 'ACTIVE'
+                )
+              )
           ) as "exists"
         `;
-        if (member?.exists) socket.join(`team-post:${postId}`);
+        if (member?.exists) {
+          socket.join(`team-post:${postId}`);
+          socket.emit("team-post:subscribe-ok", { postId });
+        } else {
+          socket.emit("team-post:subscribe-error", { postId, reason: "NOT_MEMBER" });
+        }
       } catch {
         socket.emit("team-post:subscribe-error", { postId });
       }
@@ -68,8 +81,16 @@ export function initRealtime(httpServer: HttpServer) {
     socket.on("team-post:unsubscribe", (postId: string) => {
       if (postId) socket.leave(`team-post:${postId}`);
     });
+    socket.on("team-post:leave", async (postId: string) => {
+      if (!postId) return;
+      socket.leave(`team-post:${postId}`);
+      socket.emit("team-post:unsubscribed", { postId });
+    });
   });
 
   registerRealtimeServer(io);
+  registerWeeklyScheduleCacheInvalidator((courtId, weekStart) => {
+    invalidateWeeklyScheduleCache(courtId, weekStart);
+  });
   return io;
 }

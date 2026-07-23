@@ -208,6 +208,6 @@ export const recipientUpdateSchema = z.object({
     fullName: z.string().trim().min(2).max(120).optional(),
     password: z.string().trim().min(6).optional(),
     phone: z.string().trim().max(30).optional(),
-    managedCourtId: id.optional()
+    managedCourtId: z.string().uuid().optional()
   })
 });

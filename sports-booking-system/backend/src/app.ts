@@ -6,6 +6,7 @@ import swaggerUi from "swagger-ui-express";
 import { env } from "./config/env.js";
 import { swaggerSpec } from "./config/swagger.js";
 import { errorMiddleware } from "./middlewares/error.middleware.js";
+import { performanceLogger } from "./middlewares/performance.middleware.js";
 import { adminRoutes } from "./modules/admin/admin.routes.js";
 import { adminAnalyticsRoutes, partnerAnalyticsRoutes } from "./modules/analytics/analytics.routes.js";
 import { authRoutes } from "./modules/auth/auth.routes.js";
@@ -28,9 +29,11 @@ import { sportTypeRoutes } from "./modules/sport-types/sportType.routes.js";
 import { userRoutes } from "./modules/users/user.routes.js";
 import { adminVoucherRoutes, bookingVoucherRoutes, partnerVoucherRoutes, userVoucherRoutes } from "./modules/vouchers/voucherPrivate.routes.js";
 import { voucherRoutes } from "./modules/vouchers/voucher.routes.js";
-import { adminWalletRoutes, partnerWalletRoutes } from "./modules/wallets/wallet.routes.js";
-import { adminSettlementRoutes, partnerSettlementRoutes } from "./modules/settlements/settlement.routes.js";
-import { adminWithdrawalRoutes, partnerWithdrawalRoutes } from "./modules/withdrawals/withdrawal.routes.js";
+import { weeklyScheduleRoutes } from "./modules/weekly-schedule/weeklySchedule.routes.js";
+import { partnerWalletRoutes, adminWalletRoutes } from "./modules/wallets/wallet.routes.js";
+import { partnerSettlementRoutes, adminSettlementRoutes } from "./modules/settlements/settlement.routes.js";
+import { partnerWithdrawalRoutes, adminWithdrawalRoutes } from "./modules/withdrawals/withdrawal.routes.js";
+import { uploadRoutes } from "./modules/uploads/upload.routes.js";
 
 export const app = express();
 
@@ -52,6 +55,7 @@ app.use(
 );
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
+app.use(performanceLogger);
 
 app.get("/health", (_req, res) => res.json({ success: true, data: { status: "ok" } }));
 app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
@@ -61,6 +65,7 @@ app.use("/api/auth", authRateLimit);
 app.use("/api/auth", authRoutes);
 app.use("/api/courts/:courtId/dynamic-price", publicDynamicPricingRoutes);
 app.use("/api/courts/:courtId/demand-prediction", publicDemandPredictionRoutes);
+app.use("/api/courts/:courtId/weekly-schedule", weeklyScheduleRoutes);
 app.use("/api/sport-types", sportTypeRoutes);
 app.use("/api/courts", courtRoutes);
 app.use("/api/payments", paymentRoutes);
@@ -93,5 +98,6 @@ app.use("/api/admin/wallets", adminWalletRoutes);
 app.use("/api/admin/settlements", adminSettlementRoutes);
 app.use("/api/admin/withdrawals", adminWithdrawalRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/uploads", uploadRoutes);
 
 app.use(errorMiddleware);

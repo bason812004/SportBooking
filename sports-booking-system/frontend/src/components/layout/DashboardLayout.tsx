@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import {
+  Banknote,
   BarChart3,
   Bell,
   CalendarCheck,
@@ -15,6 +16,7 @@ import {
   Trophy,
   UserRoundCheck,
   Users,
+  Wallet,
   WalletCards,
   type LucideIcon
 } from "lucide-react";
@@ -39,8 +41,8 @@ const menus = {
     { to: "/partner/vouchers", label: "Voucher", icon: Gift, group: "Nội dung" },
     { to: "/partner/blogs", label: "Bài viết", icon: FileText, group: "Nội dung" },
     { to: "/partner/tournaments", label: "Giải đấu", icon: Trophy, group: "Nội dung" },
-    { to: "/partner/statistics", label: "Doanh thu", icon: BarChart3, group: "Tài chính" },
-    { to: "/partner/wallet", label: "Ví & Quyết toán", icon: WalletCards, group: "Tài chính" },
+    { to: "/partner/statistics", label: "Doanh thu", icon: WalletCards, group: "Tài chính" },
+    { to: "/partner/wallet", label: "Ví & Quyết toán", icon: Wallet, group: "Tài chính" },
     { to: "/partner/settings", label: "Cài đặt", icon: Settings, group: "Bảo mật" }
   ],
   ADMIN: [
@@ -55,9 +57,7 @@ const menus = {
     { to: "/admin/blogs/pending", label: "Duyệt bài viết", icon: FileText, group: "Nội dung" },
     { to: "/admin/tournaments/pending", label: "Duyệt giải đấu", icon: Trophy, group: "Nội dung" },
     { to: "/admin/finance", label: "Tài chính", icon: WalletCards, group: "Tài chính" },
-    { to: "/admin/commission", label: "Quản lý hoa hồng", icon: WalletCards, group: "Tài chính" },
-    { to: "/admin/settlements", label: "Quyết toán", icon: FolderCheck, group: "Tài chính" },
-    { to: "/admin/withdrawals", label: "Rút tiền", icon: WalletCards, group: "Tài chính" },
+    { to: "/admin/commission", label: "Hoa hồng", icon: WalletCards, group: "Tài chính" },
     { to: "/admin/reports", label: "Báo cáo", icon: BarChart3, group: "Bảo mật" },
     { to: "/admin/audit-logs", label: "Nhật ký kiểm toán", icon: CalendarDays, group: "Bảo mật" },
     { to: "/admin/blockchain-logs", label: "Nhật ký blockchain", icon: Link2, group: "Bảo mật" }

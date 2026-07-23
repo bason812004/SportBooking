@@ -8,6 +8,264 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+enum UserRole {
+  USER
+  PARTNER
+  ADMIN
+  RECIPIENT
+
+  @@map("user_role")
+}
+
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+
+  @@map("auth_provider")
+}
+
+enum AccountStatus {
+  ACTIVE
+  LOCKED
+  INACTIVE
+  BLOCKED
+
+  @@map("account_status")
+}
+
+enum VerificationPurpose {
+  REGISTER
+  FORGOT_PASSWORD
+  CHANGE_EMAIL
+
+  @@map("verification_purpose")
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+
+  @@map("approval_status")
+}
+
+enum CourtActiveStatus {
+  ACTIVE
+  INACTIVE
+
+  @@map("court_active_status")
+}
+
+enum BookingStatus {
+  PENDING
+  PENDING_PAYMENT
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  REJECTED
+  EXPIRED
+  NO_SHOW
+
+  @@map("booking_status")
+}
+
+enum PaymentStatus {
+  UNPAID
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  EXPIRED
+  CANCELLED
+  PARTIALLY_REFUNDED
+  REFUNDED
+
+  @@map("payment_status")
+}
+
+enum PaymentMethod {
+  CASH
+  QR_TRANSFER
+  BANK_TRANSFER
+  E_WALLET
+  ONLINE_GATEWAY
+
+  @@map("payment_method")
+}
+
+enum PaymentType {
+  DEPOSIT
+  FULL_PAYMENT
+  REMAINING_PAYMENT
+
+  @@map("payment_type")
+}
+
+enum AvailabilityBlockStatus {
+  ACTIVE
+  INACTIVE
+
+  @@map("availability_block_status")
+}
+
+enum DayType {
+  WEEKDAY
+  WEEKEND
+  HOLIDAY
+
+  @@map("day_type")
+}
+
+enum ReviewDisplayStatus {
+  VISIBLE
+  HIDDEN
+
+  @@map("review_display_status")
+}
+
+enum ReportStatus {
+  PENDING
+  RESOLVED
+  REJECTED
+
+  @@map("report_status")
+}
+
+enum DynamicPricingRuleType {
+  PEAK_HOUR
+  OFF_PEAK_HOUR
+  WEEKEND
+  HOLIDAY
+  HIGH_DEMAND
+  LOW_DEMAND
+  CUSTOM
+
+  @@map("dynamic_pricing_rule_type")
+}
+
+enum PriceAdjustmentType {
+  PERCENTAGE
+  FIXED_AMOUNT
+
+  @@map("price_adjustment_type")
+}
+
+enum DynamicPricingRuleStatus {
+  ACTIVE
+  INACTIVE
+
+  @@map("dynamic_pricing_rule_status")
+}
+
+enum DemandPredictionLevel {
+  LOW
+  MEDIUM
+  HIGH
+  VERY_HIGH
+
+  @@map("demand_prediction_level")
+}
+
+enum DemandPredictionStatus {
+  GENERATED
+  INSUFFICIENT_DATA
+  FAILED
+
+  @@map("demand_prediction_status")
+}
+
+enum VoucherDiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+
+  @@map("voucher_discount_type")
+}
+
+enum VoucherStatus {
+  DRAFT
+  ACTIVE
+  EXPIRED
+  DISABLED
+
+  @@map("voucher_status")
+}
+
+enum VoucherFundedBy {
+  PARTNER
+  PLATFORM
+  SHARED
+
+  @@map("voucher_funded_by")
+}
+
+enum UserVoucherStatus {
+  CLAIMED
+  USED
+  EXPIRED
+
+  @@map("user_voucher_status")
+}
+
+enum TournamentStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  OPEN
+  CLOSED
+  COMPLETED
+  CANCELLED
+
+  @@map("tournament_status")
+}
+
+enum TournamentRegistrationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+
+  @@map("tournament_registration_status")
+}
+
+enum AnalyticsEventType {
+  COURT_VIEWED
+  COURT_SEARCHED
+  BOOKING_CREATED
+  BOOKING_CANCELLED
+  VOUCHER_CLAIMED
+  VOUCHER_APPLIED
+  TOURNAMENT_VIEWED
+  TOURNAMENT_REGISTERED
+  DYNAMIC_PRICE_VIEWED
+  DYNAMIC_PRICE_CALCULATED
+  PREDICTION_VIEWED
+  DEMAND_PREDICTION_GENERATED
+  TOURNAMENT_CREATED
+
+  @@map("analytics_event_type")
+}
+
+enum SettlementStatus {
+  PENDING
+  PROCESSING
+  SETTLED
+  FAILED
+  CANCELLED
+
+  @@map("settlement_status")
+}
+
+enum WithdrawalStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  REJECTED
+  FAILED
+  APPROVED
+  PAID
+}
+
 model User {
   id                                                                  String                   @id @default(dbgenerated("('u'::text || lpad((nextval('seq_users'::regclass))::text, 4, '0'::text))")) @db.VarChar(20)
   fullName                                                            String                   @map("full_name") @db.VarChar(120)
@@ -683,27 +941,37 @@ model BookingService {
 
 model Voucher {
   id                String              @id @default(dbgenerated("('v'::text || lpad((nextval('seq_vouchers'::regclass))::text, 4, '0'::text))")) @db.VarChar(20)
-  partnerId         String              @map("partner_id") @db.VarChar(20)
-  courtId           String?             @map("court_id") @db.VarChar(20)
-  code              String              @unique @db.VarChar(40)
-  title             String              @db.VarChar(160)
+  partnerId         String?            @map("partner_id") @db.VarChar(20)
+  courtId           String?            @map("court_id") @db.VarChar(20)
+  code              String             @unique @db.VarChar(40)
+  title             String             @db.VarChar(160)
   description       String?
   discountType      VoucherDiscountType @map("discount_type")
-  discountValue     Decimal             @map("discount_value") @db.Decimal(12, 2)
-  maxDiscountAmount Decimal?            @map("max_discount_amount") @db.Decimal(12, 2)
-  minBookingAmount  Decimal             @default(0) @map("min_booking_amount") @db.Decimal(12, 2)
-  usageLimit        Int?                @map("usage_limit")
-  usedCount         Int                 @default(0) @map("used_count")
-  startDate         DateTime            @map("start_date") @db.Timestamptz(6)
-  endDate           DateTime            @map("end_date") @db.Timestamptz(6)
-  status            VoucherStatus       @default(DRAFT)
-  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt         DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  click_count       Int                 @default(0)
+  discountValue     Decimal            @map("discount_value") @db.Decimal(12, 2)
+  maxDiscountAmount Decimal?           @map("max_discount_amount") @db.Decimal(12, 2)
+  minBookingAmount  Decimal            @default(0) @map("min_booking_amount") @db.Decimal(12, 2)
+  usageLimit        Int?               @map("usage_limit")
+  usedCount         Int                @default(0) @map("used_count")
+  clickCount        Int                @default(0) @map("click_count")
+  startDate         DateTime           @map("start_date") @db.Timestamptz(6)
+  endDate          DateTime           @map("end_date") @db.Timestamptz(6)
+  status           VoucherStatus      @default(DRAFT)
+  fundedBy         VoucherFundedBy    @default(PARTNER) @map("funded_by")
+  partnerFundingPercent Decimal         @default(100) @map("partner_funding_percent") @db.Decimal(5, 2)
+  platformFundingPercent Decimal         @default(0) @map("platform_funding_percent") @db.Decimal(5, 2)
+  applicableDays   String?            @map("applicable_days") @db.VarChar(120)
+  startTime        DateTime?          @map("start_time") @db.Time
+  endTime          DateTime?          @map("end_time") @db.Time
+  holidayOnly      Boolean            @default(false) @map("holiday_only")
+  holidayDates     DateTime[]         @map("holiday_dates")
+  applicableStartDate DateTime?       @map("applicable_start_date") @db.Timestamptz
+  applicableEndDate   DateTime?       @map("applicable_end_date") @db.Timestamptz
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   bookingVoucher    BookingVoucher[]
   userVouchers      UserVoucher[]
   court             Court?              @relation(fields: [courtId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  partner           PartnerProfile      @relation(fields: [partnerId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  partner           PartnerProfile?     @relation(fields: [partnerId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([partnerId], map: "idx_vouchers_partner_id")
   @@index([courtId], map: "idx_vouchers_court_id")
@@ -711,7 +979,22 @@ model Voucher {
   @@index([status], map: "idx_vouchers_status")
   @@index([startDate, endDate], map: "idx_vouchers_date_range")
   @@index([partnerId, courtId, status], map: "idx_vouchers_partner_court_status")
+  @@index([fundedBy], map: "idx_vouchers_funded_by")
+  @@index([holidayOnly], map: "idx_vouchers_holiday_only")
   @@map("vouchers")
+}
+
+model SystemHoliday {
+  id          String   @id @db.VarChar(20)
+  holidayDate DateTime @map("holiday_date") @db.Date
+  name        String   @db.VarChar(120)
+  recurring   Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([holidayDate], map: "uq_system_holidays_date")
+  @@index([recurring, holidayDate], map: "idx_system_holidays_recurring_date")
+  @@map("system_holidays")
 }
 
 model UserVoucher {
@@ -735,6 +1018,8 @@ model BookingVoucher {
   bookingId      String   @unique @map("booking_id") @db.VarChar(20)
   voucherId      String   @map("voucher_id") @db.VarChar(20)
   discountAmount Decimal  @map("discount_amount") @db.Decimal(12, 2)
+  platformShare  Decimal  @default(0) @map("platform_share") @db.Decimal(12, 2)
+  partnerShare   Decimal  @default(0) @map("partner_share") @db.Decimal(12, 2)
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   booking        Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   voucher        Voucher  @relation(fields: [voucherId], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1091,235 +1376,6 @@ model team_recruitment_posts {
   @@index([sport_type], map: "idx_team_posts_sport_type")
   @@index([status], map: "idx_team_posts_status")
   @@index([user_id], map: "idx_team_posts_user_id")
-}
-
-enum UserRole {
-  USER
-  PARTNER
-  ADMIN
-  RECIPIENT
-
-  @@map("user_role")
-}
-
-enum AuthProvider {
-  LOCAL
-  GOOGLE
-
-  @@map("auth_provider")
-}
-
-enum AccountStatus {
-  ACTIVE
-  LOCKED
-  INACTIVE
-  BLOCKED
-
-  @@map("account_status")
-}
-
-enum VerificationPurpose {
-  REGISTER
-  FORGOT_PASSWORD
-  CHANGE_EMAIL
-
-  @@map("verification_purpose")
-}
-
-enum ApprovalStatus {
-  PENDING
-  APPROVED
-  REJECTED
-
-  @@map("approval_status")
-}
-
-enum CourtActiveStatus {
-  ACTIVE
-  INACTIVE
-
-  @@map("court_active_status")
-}
-
-enum BookingStatus {
-  PENDING
-  PENDING_PAYMENT
-  CONFIRMED
-  COMPLETED
-  CANCELLED
-  REJECTED
-  EXPIRED
-  NO_SHOW
-
-  @@map("booking_status")
-}
-
-enum PaymentStatus {
-  UNPAID
-  PENDING
-  PAID
-  FAILED
-  EXPIRED
-  CANCELLED
-  PARTIALLY_REFUNDED
-  REFUNDED
-
-  @@map("payment_status")
-}
-
-enum PaymentMethod {
-  CASH
-  QR_TRANSFER
-  BANK_TRANSFER
-  E_WALLET
-  ONLINE_GATEWAY
-
-  @@map("payment_method")
-}
-
-enum PaymentType {
-  DEPOSIT
-  FULL_PAYMENT
-  REMAINING_PAYMENT
-
-  @@map("payment_type")
-}
-
-enum AvailabilityBlockStatus {
-  ACTIVE
-  INACTIVE
-
-  @@map("availability_block_status")
-}
-
-enum DayType {
-  WEEKDAY
-  WEEKEND
-  HOLIDAY
-
-  @@map("day_type")
-}
-
-enum ReviewDisplayStatus {
-  VISIBLE
-  HIDDEN
-
-  @@map("review_display_status")
-}
-
-enum ReportStatus {
-  PENDING
-  RESOLVED
-  REJECTED
-
-  @@map("report_status")
-}
-
-enum DynamicPricingRuleType {
-  PEAK_HOUR
-  OFF_PEAK_HOUR
-  WEEKEND
-  HOLIDAY
-  HIGH_DEMAND
-  LOW_DEMAND
-  CUSTOM
-
-  @@map("dynamic_pricing_rule_type")
-}
-
-enum PriceAdjustmentType {
-  PERCENTAGE
-  FIXED_AMOUNT
-
-  @@map("price_adjustment_type")
-}
-
-enum DynamicPricingRuleStatus {
-  ACTIVE
-  INACTIVE
-
-  @@map("dynamic_pricing_rule_status")
-}
-
-enum DemandPredictionLevel {
-  LOW
-  MEDIUM
-  HIGH
-  VERY_HIGH
-
-  @@map("demand_prediction_level")
-}
-
-enum DemandPredictionStatus {
-  GENERATED
-  INSUFFICIENT_DATA
-  FAILED
-
-  @@map("demand_prediction_status")
-}
-
-enum VoucherDiscountType {
-  PERCENTAGE
-  FIXED_AMOUNT
-
-  @@map("voucher_discount_type")
-}
-
-enum VoucherStatus {
-  DRAFT
-  ACTIVE
-  EXPIRED
-  DISABLED
-
-  @@map("voucher_status")
-}
-
-enum UserVoucherStatus {
-  CLAIMED
-  USED
-  EXPIRED
-
-  @@map("user_voucher_status")
-}
-
-enum TournamentStatus {
-  DRAFT
-  PENDING
-  APPROVED
-  REJECTED
-  OPEN
-  CLOSED
-  COMPLETED
-  CANCELLED
-
-  @@map("tournament_status")
-}
-
-enum TournamentRegistrationStatus {
-  PENDING
-  APPROVED
-  REJECTED
-  CANCELLED
-
-  @@map("tournament_registration_status")
-}
-
-enum AnalyticsEventType {
-  COURT_VIEWED
-  COURT_SEARCHED
-  BOOKING_CREATED
-  BOOKING_CANCELLED
-  VOUCHER_CLAIMED
-  VOUCHER_APPLIED
-  TOURNAMENT_VIEWED
-  TOURNAMENT_REGISTERED
-  DYNAMIC_PRICE_VIEWED
-  DYNAMIC_PRICE_CALCULATED
-  PREDICTION_VIEWED
-  DEMAND_PREDICTION_GENERATED
-  TOURNAMENT_CREATED
-
-  @@map("analytics_event_type")
 }
 
 enum blog_post_status {

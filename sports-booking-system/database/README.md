@@ -23,6 +23,7 @@ Run in this order:
 6. `07_blog_moderation_comments_search.sql` if your current DB is missing blog comment toggles/search indexes
 7. `08_team_post_group_chat.sql` if your current DB is missing team chat member/message tables
 8. `09_court_deposit_percent.sql` if your current DB is missing court-level deposit percent settings
+9. `10_recipient_role_seed.sql` if your current DB is missing the Recipient role/columns or you want the demo Recipient account
 
 `01_existing_db_migrations.sql` already includes the user voucher wallet fix. The standalone `06_user_voucher_wallet.sql` is useful when you only want to patch voucher claiming on an existing database.
 

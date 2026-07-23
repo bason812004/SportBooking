@@ -65,7 +65,7 @@ export const blogService = {
     await this.detailMine(id, userId);
     const [post] = await blogRepository.updateMine(id, userId, {
       ...body,
-      slug: slugFor(body.title, id),
+      slug: slugFor(body.title),
       excerpt: body.excerpt || null,
       coverImageUrl: body.coverImageUrl || null,
       allowComments: body.allowComments ?? true

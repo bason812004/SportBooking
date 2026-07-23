@@ -155,7 +155,7 @@ drop sequence if exists seq_team_post_members cascade;
 drop sequence if exists seq_team_post_messages cascade;
 
 -- ── ENUM types ────────────────────────────────────────────────────────
-create type user_role as enum ('USER', 'PARTNER', 'ADMIN');
+create type user_role as enum ('USER', 'PARTNER', 'ADMIN', 'RECIPIENT');
 create type auth_provider as enum ('LOCAL', 'GOOGLE');
 create type verification_purpose as enum ('REGISTER', 'FORGOT_PASSWORD', 'CHANGE_EMAIL');
 create type account_status as enum ('ACTIVE', 'LOCKED', 'INACTIVE', 'BLOCKED');
@@ -254,6 +254,8 @@ create table users (
   phone varchar(30),
   password_hash text,
   role user_role not null default 'USER',
+  partner_id varchar(20),
+  managed_court_id varchar(20),
   provider auth_provider not null default 'LOCAL',
   provider_id varchar(160),
   email_verified boolean not null default false,
@@ -524,6 +526,12 @@ create table court_services (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table users
+  add constraint users_partner_id_fkey foreign key (partner_id) references partner_profiles(id) on delete cascade;
+
+alter table users
+  add constraint users_managed_court_id_fkey foreign key (managed_court_id) references courts(id) on delete set null;
 
 create table court_availability_blocks (
   id uuid primary key default gen_random_uuid(),
@@ -994,6 +1002,8 @@ create index if not exists idx_users_email on users(email);
 create index if not exists idx_users_provider_provider_id on users(provider, provider_id);
 create index if not exists idx_users_role on users(role);
 create index if not exists idx_users_status on users(status);
+create index if not exists idx_users_partner_id on users(partner_id);
+create index if not exists idx_users_managed_court_id on users(managed_court_id);
 create index if not exists idx_refresh_tokens_user_id on refresh_tokens(user_id);
 create index if not exists idx_refresh_tokens_token_hash on refresh_tokens(token_hash);
 create index if not exists idx_audit_logs_created_at on audit_logs(created_at desc);

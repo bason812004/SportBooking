@@ -254,19 +254,21 @@ function BookingDetail({ booking, onUpdated }: { booking: AdminBooking; onUpdate
           <Metric label="Nền tảng giữ lại" value={formatMoney(booking.platformRetainedAmount ?? 0)} />
         </div>
 
-        <Table>
-          <THead><tr><Th>Dịch vụ</Th><Th>Số lượng</Th><Th>Đơn giá</Th><Th>Thành tiền</Th></tr></THead>
-          <TBody>
-            {booking.bookingServices?.length ? booking.bookingServices.map((item) => (
-              <Tr key={item.id}>
-                <Td>{item.service.name}</Td>
-                <Td>{item.quantity}</Td>
-                <Td>{formatMoney(item.price)}</Td>
-                <Td>{formatMoney(Number(item.price) * item.quantity)}</Td>
-              </Tr>
-            )) : <Tr><Td className="text-slate-500" colSpan={4}>Không có dịch vụ kèm theo</Td></Tr>}
-          </TBody>
-        </Table>
+        <div className="overflow-auto rounded-lg border">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-slate-50 text-left"><th className="p-3">Dịch vụ</th><th>Số lượng</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
+            <tbody>
+              {booking.bookingServices?.length ? booking.bookingServices.map((item) => (
+                <tr key={item.id} className="border-t">
+                  <td className="p-3">{item.service.name}</td>
+                  <td>{item.quantity}</td>
+                  <td>{formatMoney(item.price)}</td>
+                  <td>{formatMoney(Number(item.price) * item.quantity)}</td>
+                </tr>
+              )) : <tr className="border-t"><td className="p-3 text-slate-500" colSpan={4}>Không có dịch vụ kèm theo</td></tr>}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="space-y-4 xl:sticky xl:top-0 xl:self-start">

@@ -65,5 +65,32 @@ export const userRepository = {
         updated_at as "updatedAt"
     `;
     return rows[0] ?? null;
+  },
+
+  async updateAvatar(id: string, avatarUrl: string) {
+    await prisma.$executeRaw`
+      update users set avatar_url = ${avatarUrl}, updated_at = now() where id = ${id}
+    `;
+  },
+
+  async findByIdForAvatar(id: string) {
+    const rows = await prisma.$queryRaw<Array<{
+      id: string;
+      fullName: string;
+      email: string;
+      role: string;
+      avatarUrl: string | null;
+    }>>`
+      select
+        id,
+        full_name as "fullName",
+        email,
+        role::text as "role",
+        avatar_url as "avatarUrl"
+      from users
+      where id = ${id}
+      limit 1
+    `;
+    return rows[0] ?? null;
   }
 };
