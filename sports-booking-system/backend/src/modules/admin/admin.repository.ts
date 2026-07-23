@@ -984,7 +984,7 @@ export const adminRepository = {
         targetType: input.targetType
       }));
 
-      return campaign;
+      return { campaign, recipientIds: recipientRows.map((item) => item.id) };
     });
   },
 
@@ -1263,7 +1263,11 @@ export const adminRepository = {
     return prisma.$executeRaw`
       update blog_posts set status = ${status}::blog_post_status,
         published_at = case when ${status} = 'PUBLISHED' then now() else published_at end, updated_at = now()
-      where id = ${id} and status = 'PENDING'::blog_post_status
+      where id = ${id}
+        and (
+          (${status} = 'PUBLISHED' and status in ('PENDING'::blog_post_status, 'REJECTED'::blog_post_status))
+          or (${status} = 'REJECTED' and status = 'PENDING'::blog_post_status)
+        )
     `;
   },
 

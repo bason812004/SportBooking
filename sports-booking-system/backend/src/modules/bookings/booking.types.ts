@@ -17,10 +17,14 @@ export type BookingSlotInput = {
   endTime: string;
 };
 
-export type BookingQuoteInput = {
-  courtId: string;
+export type BookingDayInput = {
   bookingDate: string;
   slots: BookingSlotInput[];
+};
+
+export type BookingQuoteInput = {
+  courtId: string;
+  days: BookingDayInput[];
   services?: Array<{ serviceId: string; quantity: number }>;
   voucherId?: string;
   voucherCode?: string;

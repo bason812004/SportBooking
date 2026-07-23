@@ -5,6 +5,7 @@ import { ErrorState, LoadingState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { adminApi } from "../../features/admin/api/adminApi";
+import { PageHero } from "../../components/common/PageHero";
 import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 
 const currentMonth = new Date().toISOString().slice(0, 7);
@@ -38,12 +39,13 @@ export function AdminCommissionSettingsPage() {
 
   return (
     <div className="space-y-8">
+      <PageHero
+        eyebrow="Tài chính"
+        title="Hoa hồng"
+        subtitle="Tỷ lệ này áp dụng cho các đối tác chưa được cấu hình tỷ lệ riêng."
+      />
       <section className="rounded-2xl border border-line bg-white p-6">
-        <h1 className="text-3xl font-bold">Tỷ lệ</h1>
-        <p className="mt-2 text-slate-600">
-          Tỷ lệ này áp dụng cho các đối tác chưa được cấu hình tỷ lệ riêng.
-        </p>
-        <div className="mt-6 flex max-w-md items-end gap-3">
+        <div className="flex max-w-md items-end gap-3">
           <Input
             label="Tỷ lệ mặc định (%)"
             type="number"

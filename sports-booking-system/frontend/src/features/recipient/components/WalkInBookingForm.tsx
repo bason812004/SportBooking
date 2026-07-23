@@ -29,6 +29,10 @@ const defaultWalkInForm = (): WalkInForm => ({
   note: ""
 });
 
+function shortDate(date: string) {
+  return new Date(`${date}T00:00:00`).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" });
+}
+
 function minutesBetween(startTime: string, endTime: string) {
   const [startHours, startMinutes] = startTime.split(":").map(Number);
   const [endHours, endMinutes] = endTime.split(":").map(Number);
@@ -52,14 +56,31 @@ function toggleSlotSelection(current: SlotGridSelection[], slot: SlotGridSelecti
   return [...current, slot];
 }
 
-/** Merges the (possibly non-contiguous) selected slots into contiguous time-range clusters, sorted by start time. */
-function clusterSlots(slots: SlotGridSelection[]): SlotGridSelection[] {
-  const sorted = [...slots].sort((a, b) => a.startTime.localeCompare(b.startTime));
+/**
+ * Merges the (possibly non-contiguous, possibly multi-date, possibly
+ * multi-surface) selected slots into contiguous time-range clusters per
+ * (courtSurfaceId, date) pair, sorted by surface then date then start time.
+ * Slots without an explicit `date`/`courtSurfaceId` are assumed to belong to
+ * `effectiveDate`/`defaultSurfaceId` (the plain single-day `SlotGrid` flow
+ * never sets either). Every returned cluster has both populated.
+ */
+function clusterSlots(slots: SlotGridSelection[], effectiveDate: string, defaultSurfaceId: string): SlotGridSelection[] {
+  const sorted = [...slots].sort((a, b) => {
+    const surfaceA = a.courtSurfaceId ?? defaultSurfaceId;
+    const surfaceB = b.courtSurfaceId ?? defaultSurfaceId;
+    if (surfaceA !== surfaceB) return surfaceA.localeCompare(surfaceB);
+    const dateA = a.date ?? effectiveDate;
+    const dateB = b.date ?? effectiveDate;
+    if (dateA !== dateB) return dateA.localeCompare(dateB);
+    return a.startTime.localeCompare(b.startTime);
+  });
   const clusters: SlotGridSelection[] = [];
   for (const slot of sorted) {
+    const date = slot.date ?? effectiveDate;
+    const courtSurfaceId = slot.courtSurfaceId ?? defaultSurfaceId;
     const last = clusters[clusters.length - 1];
-    if (last && last.endTime === slot.startTime) last.endTime = slot.endTime;
-    else clusters.push({ ...slot });
+    if (last && last.date === date && last.courtSurfaceId === courtSurfaceId && last.endTime === slot.startTime) last.endTime = slot.endTime;
+    else clusters.push({ ...slot, date, courtSurfaceId });
   }
   return clusters;
 }
@@ -75,9 +96,11 @@ type UseWalkInBookingArgs = {
   onSettled?: () => void;
   /** Enables phone-number lookup + autofill + booking-history for returning customers. Off by default. */
   enableCustomerLookup?: boolean;
+  /** courtSurfaceId -> display name, used only to label chips when a selection spans several surfaces. */
+  surfaceNames?: Record<string, string>;
 };
 
-function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingCreated, onSettled, enableCustomerLookup }: UseWalkInBookingArgs) {
+function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingCreated, onSettled, enableCustomerLookup, surfaceNames }: UseWalkInBookingArgs) {
   const effectiveDate = bookingDate ?? todayValue();
   const isToday = effectiveDate === todayValue();
   const [walkInForm, setWalkInForm] = useState<WalkInForm>(defaultWalkInForm());
@@ -91,18 +114,6 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
   const [selectedHistoryCustomerId, setSelectedHistoryCustomerId] = useState<string | null>(null);
 
   useEffect(() => {
-    setWalkInSlots(initialSlot ? [initialSlot] : []);
-    setActiveWalkInPayment(null);
-    setMode("grid");
-    setCustomStart(nowValue());
-    setCustomMinutes(60);
-    setRepeatWeekly(false);
-    setOccurrences(4);
-    setSelectedHistoryCustomerId(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [courtSurfaceId, effectiveDate]);
-
-  useEffect(() => {
     if ((!isToday || repeatWeekly) && mode === "now") setMode("grid");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isToday, repeatWeekly]);
@@ -114,7 +125,7 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
   });
 
   const bookedRanges = useMemo(() => mergeBookedRanges(surfaceAvailability.data?.slots ?? []), [surfaceAvailability.data?.slots]);
-  const slotClusters = useMemo(() => clusterSlots(walkInSlots), [walkInSlots]);
+  const slotClusters = useMemo(() => clusterSlots(walkInSlots, effectiveDate, courtSurfaceId), [walkInSlots, effectiveDate, courtSurfaceId]);
 
   const debouncedPhone = useDebounce(walkInForm.customerPhone.trim(), 350);
   const customerMatches = useQuery({
@@ -165,10 +176,10 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
       if (slotClusters.length === 1) {
         const cluster = slotClusters[0];
         const result = await recipientApi.createWalkInBooking({
-          courtSurfaceId,
+          courtSurfaceId: cluster.courtSurfaceId ?? courtSurfaceId,
           customerName: walkInForm.customerName,
           customerPhone: walkInForm.customerPhone,
-          bookingDate: effectiveDate,
+          bookingDate: cluster.date ?? effectiveDate,
           startTime: cluster.startTime,
           minutes: minutesBetween(cluster.startTime, cluster.endTime),
           paymentMethod: walkInForm.paymentMethod,
@@ -177,19 +188,18 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
         return { bookingsCount: 1, payment: result.payment };
       }
 
-      // Multiple non-contiguous time ranges become multiple bookings (one per range); only cash is supported here.
-      for (const cluster of slotClusters) {
-        await recipientApi.createWalkInBooking({
-          courtSurfaceId,
-          customerName: walkInForm.customerName,
-          customerPhone: walkInForm.customerPhone,
-          bookingDate: effectiveDate,
+      // Multiple non-contiguous time ranges (possibly across different dates/surfaces) are grouped into a single BookingOrder; only cash is supported here.
+      await recipientApi.createWalkInBookingOrder({
+        customerName: walkInForm.customerName,
+        customerPhone: walkInForm.customerPhone,
+        slots: slotClusters.map((cluster) => ({
+          courtSurfaceId: cluster.courtSurfaceId ?? courtSurfaceId,
+          bookingDate: cluster.date ?? effectiveDate,
           startTime: cluster.startTime,
-          minutes: minutesBetween(cluster.startTime, cluster.endTime),
-          paymentMethod: "CASH",
-          note: walkInForm.note || undefined
-        });
-      }
+          minutes: minutesBetween(cluster.startTime, cluster.endTime)
+        })),
+        note: walkInForm.note || undefined
+      });
       return { bookingsCount: slotClusters.length, payment: null };
     },
     onSuccess: (result) => {
@@ -198,7 +208,7 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
       if (result.payment) {
         setActiveWalkInPayment(result.payment);
       } else {
-        toast.success(result.bookingsCount > 1 ? `Đã tạo ${result.bookingsCount} booking cho khách` : "Đã tạo booking tại quầy cho khách");
+        toast.success(result.bookingsCount > 1 ? `Đã tạo 1 lần đặt gồm ${result.bookingsCount} khung giờ cho khách` : "Đã tạo booking tại quầy cho khách");
         setWalkInForm(defaultWalkInForm());
         onSettled?.();
       }
@@ -215,7 +225,7 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
         courtSurfaceId,
         customerName: walkInForm.customerName,
         customerPhone: walkInForm.customerPhone,
-        startDate: effectiveDate,
+        startDate: cluster.date ?? effectiveDate,
         startTime: cluster.startTime,
         minutes: minutesBetween(cluster.startTime, cluster.endTime),
         occurrences,
@@ -262,6 +272,9 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
 
   return {
     isToday,
+    effectiveDate,
+    courtSurfaceId,
+    surfaceNames,
     walkInForm,
     setWalkInForm,
     walkInSlots,
@@ -331,6 +344,9 @@ function WalkInPaymentPanel({ walkIn }: { walkIn: WalkInBooking }) {
 export function WalkInScheduleField({ walkIn, columnsClassName }: { walkIn: WalkInBooking; columnsClassName?: string }) {
   const {
     isToday,
+    effectiveDate,
+    courtSurfaceId,
+    surfaceNames,
     repeatWeekly,
     mode,
     setMode,
@@ -346,6 +362,8 @@ export function WalkInScheduleField({ walkIn, columnsClassName }: { walkIn: Walk
     activeWalkInPayment
   } = walkIn;
   if (activeWalkInPayment) return null;
+  const hasMultipleDates = new Set(slotClusters.map((cluster) => cluster.date ?? effectiveDate)).size > 1;
+  const hasMultipleSurfaces = new Set(slotClusters.map((cluster) => cluster.courtSurfaceId ?? courtSurfaceId)).size > 1;
 
   return (
     <div>
@@ -396,25 +414,42 @@ export function WalkInScheduleField({ walkIn, columnsClassName }: { walkIn: Walk
           {slotClusters.length > 0 ? (
             <div className="mt-2 space-y-1.5">
               <div className="flex flex-wrap gap-1.5">
-                {slotClusters.map((cluster) => (
-                  <span key={`${cluster.startTime}-${cluster.endTime}`} className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700">
-                    {cluster.startTime} - {cluster.endTime}
-                    <button
-                      type="button"
-                      className="text-rose-500 hover:text-rose-700"
-                      onClick={() => setWalkInSlots((current) => current.filter((slot) => slot.startTime < cluster.startTime || slot.startTime >= cluster.endTime))}
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
-                ))}
+                {slotClusters.map((cluster) => {
+                  const clusterDate = cluster.date ?? effectiveDate;
+                  const clusterSurfaceId = cluster.courtSurfaceId ?? courtSurfaceId;
+                  const clusterSurfaceName = surfaceNames?.[clusterSurfaceId];
+                  return (
+                    <span key={`${clusterSurfaceId}-${clusterDate}-${cluster.startTime}-${cluster.endTime}`} className="flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700">
+                      {hasMultipleSurfaces && clusterSurfaceName ? `${clusterSurfaceName} · ` : ""}
+                      {hasMultipleDates ? `${shortDate(clusterDate)} · ` : ""}
+                      {cluster.startTime} - {cluster.endTime}
+                      <button
+                        type="button"
+                        className="text-rose-500 hover:text-rose-700"
+                        onClick={() =>
+                          setWalkInSlots((current) =>
+                            current.filter(
+                              (slot) =>
+                                (slot.courtSurfaceId ?? courtSurfaceId) !== clusterSurfaceId ||
+                                (slot.date ?? effectiveDate) !== clusterDate ||
+                                slot.startTime < cluster.startTime ||
+                                slot.startTime >= cluster.endTime
+                            )
+                          )
+                        }
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  );
+                })}
                 <button type="button" onClick={() => setWalkInSlots([])} className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50">
                   Bỏ chọn tất cả
                 </button>
               </div>
               {slotClusters.length > 1 ? (
                 <p className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-bold text-amber-700">
-                  {slotClusters.length} khung giờ không liền nhau → sẽ tạo {slotClusters.length} booking riêng, thanh toán bằng tiền mặt.
+                  {slotClusters.length} khung giờ → gộp thành 1 lần đặt, thanh toán bằng tiền mặt.
                 </p>
               ) : null}
             </div>
@@ -520,6 +555,9 @@ function CustomerHistoryOverlay({ walkIn }: { walkIn: WalkInBooking }) {
 export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
   const {
     activeWalkInPayment,
+    effectiveDate,
+    courtSurfaceId,
+    surfaceNames,
     walkInForm,
     setWalkInForm,
     createWalkIn,
@@ -527,6 +565,7 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
     mode,
     customStart,
     slotClusters,
+    setWalkInSlots,
     repeatWeekly,
     setRepeatWeekly,
     occurrences,
@@ -539,11 +578,13 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
   if (activeWalkInPayment) return <WalkInPaymentPanel walkIn={walkIn} />;
 
   const matches = customerMatches.data?.matches ?? [];
+  const hasMultipleDates = new Set(slotClusters.map((cluster) => cluster.date ?? effectiveDate)).size > 1;
+  const hasMultipleSurfaces = new Set(slotClusters.map((cluster) => cluster.courtSurfaceId ?? courtSurfaceId)).size > 1;
 
   return (
     <>
     <form
-      className="space-y-2.5 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3"
+      className="space-y-2 rounded-xl border border-emerald-100 bg-emerald-50/60 p-2"
       onSubmit={(event) => {
         event.preventDefault();
         if (repeatWeekly) createRecurringWalkIn.mutate();
@@ -554,8 +595,58 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
         <PlusCircle className="h-3.5 w-3.5" />
         Đặt sân tại quầy
       </p>
-      <Input label="Số điện thoại" value={walkInForm.customerPhone} onChange={(event) => setWalkInForm({ ...walkInForm, customerPhone: event.target.value })} required />
-      <Input label="Tên khách" value={walkInForm.customerName} onChange={(event) => setWalkInForm({ ...walkInForm, customerName: event.target.value })} required />
+
+      <div className="rounded-lg border border-emerald-100 bg-white p-2">
+        <p className="mb-1 text-[11px] font-black uppercase tracking-wide text-slate-500">Khung giờ đã chọn</p>
+        {slotClusters.length === 0 ? (
+          <p className="text-xs font-semibold text-slate-400">Chưa chọn khung giờ nào</p>
+        ) : (
+          <div className="space-y-1">
+            <div className="flex flex-wrap gap-1">
+              {slotClusters.map((cluster) => {
+                const clusterDate = cluster.date ?? effectiveDate;
+                const clusterSurfaceId = cluster.courtSurfaceId ?? courtSurfaceId;
+                const clusterSurfaceName = surfaceNames?.[clusterSurfaceId];
+                return (
+                  <span key={`${clusterSurfaceId}-${clusterDate}-${cluster.startTime}-${cluster.endTime}`} className="flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-1 text-[11px] font-bold text-slate-700">
+                    {hasMultipleSurfaces && clusterSurfaceName ? `${clusterSurfaceName} · ` : ""}
+                    {hasMultipleDates ? `${shortDate(clusterDate)} · ` : ""}
+                    {cluster.startTime} - {cluster.endTime}
+                    <button
+                      type="button"
+                      className="text-rose-500 hover:text-rose-700"
+                      onClick={() =>
+                        setWalkInSlots((current) =>
+                          current.filter(
+                            (slot) =>
+                              (slot.courtSurfaceId ?? courtSurfaceId) !== clusterSurfaceId ||
+                              (slot.date ?? effectiveDate) !== clusterDate ||
+                              slot.startTime < cluster.startTime ||
+                              slot.startTime >= cluster.endTime
+                          )
+                        )
+                      }
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
+                  </span>
+                );
+              })}
+              <button type="button" onClick={() => setWalkInSlots([])} className="rounded-md px-1.5 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-50">
+                Bỏ chọn tất cả
+              </button>
+            </div>
+            {slotClusters.length > 1 ? (
+              <p className="rounded-md bg-amber-50 px-1.5 py-1 text-[11px] font-bold text-amber-700">
+                {slotClusters.length} khung giờ → gộp thành 1 lần đặt, thanh toán bằng tiền mặt.
+              </p>
+            ) : null}
+          </div>
+        )}
+      </div>
+
+      <Input dense label="Số điện thoại" value={walkInForm.customerPhone} onChange={(event) => setWalkInForm({ ...walkInForm, customerPhone: event.target.value })} required />
+      <Input dense label="Tên khách" value={walkInForm.customerName} onChange={(event) => setWalkInForm({ ...walkInForm, customerName: event.target.value })} required />
 
       {matches.length > 0 ? (
         <div className="space-y-1.5 rounded-lg border border-emerald-200 bg-white p-2">
@@ -594,6 +685,7 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
       {repeatWeekly ? (
         <>
           <Input
+            dense
             label="Số buổi lặp (tuần)"
             type="number"
             min={2}
@@ -602,12 +694,13 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
             onChange={(event) => setOccurrences(Number(event.target.value))}
             required
           />
-          <p className="rounded-lg bg-white px-2.5 py-1.5 text-xs font-bold text-slate-600">Thanh toán: Tiền mặt tại quầy</p>
+          <p className="rounded-lg bg-white px-2 py-1 text-[11px] font-bold text-slate-600">Thanh toán: Tiền mặt tại quầy</p>
         </>
       ) : mode === "grid" && slotClusters.length > 1 ? (
-        <p className="rounded-lg bg-white px-2.5 py-1.5 text-xs font-bold text-slate-600">Thanh toán: Tiền mặt tại quầy (nhiều khung giờ rời rạc)</p>
+        <p className="rounded-lg bg-white px-2 py-1 text-[11px] font-bold text-slate-600">Thanh toán: Tiền mặt tại quầy (nhiều khung giờ rời rạc)</p>
       ) : (
         <Select
+          dense
           label="Thanh toán"
           value={walkInForm.paymentMethod}
           onChange={(event) => setWalkInForm({ ...walkInForm, paymentMethod: event.target.value as WalkInForm["paymentMethod"] })}
@@ -619,7 +712,7 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
         />
       )}
 
-      <Input label="Ghi chú" value={walkInForm.note} onChange={(event) => setWalkInForm({ ...walkInForm, note: event.target.value })} />
+      <Input dense label="Ghi chú" value={walkInForm.note} onChange={(event) => setWalkInForm({ ...walkInForm, note: event.target.value })} />
       <Button
         className="w-full"
         disabled={

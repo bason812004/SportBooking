@@ -30,6 +30,7 @@ export const recipientController = {
   lookupCustomers: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.lookupCustomersByPhone(req.user!.id, req.query.phone as string))),
   customerHistory: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.customerBookingHistory(req.user!.id, req.params.id))),
   createWalkInBooking: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.createWalkInBooking(req.user!.id, req.body), 201)),
+  createWalkInBookingOrder: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.createWalkInBookingOrder(req.user!.id, req.body), 201)),
   createRecurringWalkInBooking: asyncHandler(async (req, res) =>
     sendSuccess(res, await recipientService.createRecurringWalkInBooking(req.user!.id, req.body), 201)
   ),

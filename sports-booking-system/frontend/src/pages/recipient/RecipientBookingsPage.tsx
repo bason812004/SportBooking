@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CalendarDays, ChevronLeft, ChevronRight, Table2 } from "lucide-react";
-import { recipientApi, type RecipientCalendarBooking } from "../../features/recipient/api/recipientApi";
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Table2 } from "lucide-react";
+import { recipientApi, type RecipientBookingGroup, type RecipientCalendarBooking } from "../../features/recipient/api/recipientApi";
+import type { Booking } from "../../types/api";
 import { LoadingState, ErrorState, EmptyState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
@@ -55,6 +56,14 @@ export function RecipientBookingsPage() {
   const [confirm, setConfirm] = useState<{ id: string; action: Action } | null>(null);
   const [calendarDetail, setCalendarDetail] = useState<RecipientCalendarBooking | null>(null);
   const [walkInCell, setWalkInCell] = useState<{ courtSurfaceId: string; startTime: string } | null>(null);
+  const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
+  const toggleOrderExpanded = (orderId: string) =>
+    setExpandedOrders((current) => {
+      const next = new Set(current);
+      if (next.has(orderId)) next.delete(orderId);
+      else next.add(orderId);
+      return next;
+    });
 
   const setViewMode = (mode: "table" | "calendar") => {
     setSearchParams((previous) => {
@@ -134,6 +143,87 @@ export function RecipientBookingsPage() {
     } else {
       statusMutation.mutate({ id, action });
     }
+  };
+
+  const statusBadgeClass = (status: string) =>
+    status === "CONFIRMED"
+      ? "bg-blue-100 text-blue-800"
+      : status === "PENDING"
+      ? "bg-yellow-100 text-yellow-800"
+      : status === "COMPLETED"
+      ? "bg-green-100 text-green-800"
+      : "bg-red-100 text-red-800";
+
+  const renderBookingRow = (booking: Booking, options?: { dim?: boolean }) => (
+    <Tr key={booking.id} className={options?.dim ? "bg-slate-50/70" : undefined}>
+      <Td className="font-medium text-slate-800">{booking.user?.fullName}</Td>
+      <Td className="text-slate-600">{booking.user?.phone || "Chưa cung cấp"}</Td>
+      <Td className="text-slate-600">{booking.courtSurface ? `${booking.courtSurface.name} (${booking.courtSurface.code})` : "Chưa gán sân con"}</Td>
+      <Td className="text-slate-600">{new Date(booking.bookingDate).toLocaleDateString("vi-VN")}</Td>
+      <Td className="text-slate-600">{`${booking.startTime.slice(11, 16)} - ${booking.endTime.slice(11, 16)}`}</Td>
+      <Td className="text-slate-600">{booking.paymentStatus}</Td>
+      <Td>
+        <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(booking.bookingStatus)}`}>{booking.bookingStatus}</span>
+      </Td>
+      <Td className="text-right font-semibold text-slate-800">{Number(booking.totalPrice).toLocaleString("vi-VN")} đ</Td>
+      <Td>
+        <div className="flex gap-2">
+          {actionsForStatus(booking.bookingStatus).map((action) => (
+            <Button
+              key={action}
+              variant={action === "reject" || action === "no-show" ? "danger" : "secondary"}
+              disabled={statusMutation.isPending}
+              onClick={() => run(booking.id, action)}
+            >
+              {actionLabel[action]}
+            </Button>
+          ))}
+        </div>
+      </Td>
+    </Tr>
+  );
+
+  const renderBookingGroup = (group: RecipientBookingGroup) => {
+    const primary = group.bookings[0];
+    if (!primary) return null;
+    if (group.bookings.length === 1) return renderBookingRow(primary);
+
+    const orderId = group.orderId!;
+    const isExpanded = expandedOrders.has(orderId);
+    const totalPrice = group.bookings.reduce((sum, booking) => sum + Number(booking.totalPrice), 0);
+    const allSamePayment = group.bookings.every((booking) => booking.paymentStatus === primary.paymentStatus);
+    const allSameStatus = group.bookings.every((booking) => booking.bookingStatus === primary.bookingStatus);
+
+    return (
+      <Fragment key={orderId}>
+        <Tr className="bg-emerald-50/40">
+          <Td className="font-medium text-slate-800">{primary.user?.fullName}</Td>
+          <Td className="text-slate-600">{primary.user?.phone || "Chưa cung cấp"}</Td>
+          <Td className="text-slate-600">{primary.courtSurface ? `${primary.courtSurface.name} (${primary.courtSurface.code})` : "Chưa gán sân con"}</Td>
+          <Td colSpan={2} className="text-slate-600">
+            <button
+              type="button"
+              onClick={() => toggleOrderExpanded(orderId)}
+              className="flex items-center gap-1 font-semibold text-emerald-700 hover:underline"
+            >
+              {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              {group.bookings.length} khung giờ
+            </button>
+          </Td>
+          <Td className="text-slate-600">{allSamePayment ? primary.paymentStatus : "Nhiều trạng thái"}</Td>
+          <Td>
+            {allSameStatus ? (
+              <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(primary.bookingStatus)}`}>{primary.bookingStatus}</span>
+            ) : (
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">Nhiều trạng thái</span>
+            )}
+          </Td>
+          <Td className="text-right font-semibold text-slate-800">{totalPrice.toLocaleString("vi-VN")} đ</Td>
+          <Td />
+        </Tr>
+        {isExpanded ? group.bookings.map((booking) => renderBookingRow(booking, { dim: true })) : null}
+      </Fragment>
+    );
   };
 
   return (
@@ -234,48 +324,7 @@ export function RecipientBookingsPage() {
                   <Th></Th>
                 </tr>
               </THead>
-              <TBody>
-                {bookings.data?.items.map((booking) => (
-                  <Tr key={booking.id}>
-                    <Td className="font-medium text-slate-800">{booking.user?.fullName}</Td>
-                    <Td className="text-slate-600">{booking.user?.phone || "Chưa cung cấp"}</Td>
-                    <Td className="text-slate-600">{booking.courtSurface ? `${booking.courtSurface.name} (${booking.courtSurface.code})` : "Chưa gán sân con"}</Td>
-                    <Td className="text-slate-600">{new Date(booking.bookingDate).toLocaleDateString("vi-VN")}</Td>
-                    <Td className="text-slate-600">{`${booking.startTime.slice(11, 16)} - ${booking.endTime.slice(11, 16)}`}</Td>
-                    <Td className="text-slate-600">{booking.paymentStatus}</Td>
-                    <Td>
-                      <span
-                        className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                          booking.bookingStatus === "CONFIRMED"
-                            ? "bg-blue-100 text-blue-800"
-                            : booking.bookingStatus === "PENDING"
-                            ? "bg-yellow-100 text-yellow-800"
-                            : booking.bookingStatus === "COMPLETED"
-                            ? "bg-green-100 text-green-800"
-                            : "bg-red-100 text-red-800"
-                        }`}
-                      >
-                        {booking.bookingStatus}
-                      </span>
-                    </Td>
-                    <Td className="text-right font-semibold text-slate-800">{Number(booking.totalPrice).toLocaleString("vi-VN")} đ</Td>
-                    <Td>
-                      <div className="flex gap-2">
-                        {actionsForStatus(booking.bookingStatus).map((action) => (
-                          <Button
-                            key={action}
-                            variant={action === "reject" || action === "no-show" ? "danger" : "secondary"}
-                            disabled={statusMutation.isPending}
-                            onClick={() => run(booking.id, action)}
-                          >
-                            {actionLabel[action]}
-                          </Button>
-                        ))}
-                      </div>
-                    </Td>
-                  </Tr>
-                ))}
-              </TBody>
+              <TBody>{bookings.data?.items.map((group) => renderBookingGroup(group))}</TBody>
             </Table>
 
             {bookings.data && bookings.data.meta.totalPages > 1 && (

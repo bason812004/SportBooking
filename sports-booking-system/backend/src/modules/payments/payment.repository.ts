@@ -9,6 +9,17 @@ const webhookBookingInclude = {
         include: { partner: { select: { id: true, commissionRate: true } } }
       }
     }
+  },
+  bookingOrder: {
+    include: {
+      bookings: {
+        include: {
+          court: {
+            include: { partner: { select: { id: true, commissionRate: true } } }
+          }
+        }
+      }
+    }
   }
 } as const;
 
@@ -103,28 +114,41 @@ export const paymentRepository = {
         include: webhookBookingInclude
       });
 
-      await tx.booking.update({
-        where: { id: payment.bookingId },
+      const orderBookings = updatedPayment.bookingOrder?.bookings;
+      const bookingsToSettle = orderBookings && orderBookings.length > 0 ? orderBookings : [updatedPayment.booking];
+
+      await tx.booking.updateMany({
+        where: { id: { in: bookingsToSettle.map((b) => b.id) } },
         data: {
           bookingStatus: paid ? "CONFIRMED" : "CANCELLED",
           paymentStatus: paid ? "PAID" : "FAILED"
         }
       });
 
-      const settlement = paid
-        ? await settlementService.createFromPaidBooking(updatedPayment.booking, updatedPayment.id, tx)
-        : await settlementService.cancelForBooking(payment.bookingId, tx);
+      const settlements = [];
+      for (const booking of bookingsToSettle) {
+        const settlement = paid
+          ? await settlementService.createFromPaidBooking(booking, updatedPayment.id, tx)
+          : await settlementService.cancelForBooking(booking.id, tx);
+        if (settlement) settlements.push(settlement);
+      }
 
-      return { payment: updatedPayment, idempotent: false, settlement };
+      return { payment: updatedPayment, idempotent: false, settlement: settlements[0] ?? null, settlements, bookings: bookingsToSettle };
     });
   },
 
   expirePendingPayment(paymentId: string) {
     return prisma.$transaction(async (tx) => {
-      const payment = await tx.payment.findUnique({ where: { id: paymentId } });
+      const payment = await tx.payment.findUnique({
+        where: { id: paymentId },
+        include: { bookingOrder: { include: { bookings: true } } }
+      });
       if (!payment || (payment.status !== "PENDING" && payment.status !== "UNPAID") || payment.expiresAt.getTime() > Date.now()) return payment;
-      await tx.booking.update({
-        where: { id: payment.bookingId },
+      const bookingIds = payment.bookingOrder?.bookings.length
+        ? payment.bookingOrder.bookings.map((b) => b.id)
+        : [payment.bookingId];
+      await tx.booking.updateMany({
+        where: { id: { in: bookingIds } },
         data: { bookingStatus: "CANCELLED", paymentStatus: "EXPIRED" }
       });
       return tx.payment.update({ where: { id: paymentId }, data: { status: "EXPIRED" } });

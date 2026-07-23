@@ -18,10 +18,14 @@ export type BookingSlotPayload = {
   endTime: string;
 };
 
-export type BookingQuotePayload = {
-  courtId: string;
+export type BookingDayPayload = {
   bookingDate: string;
   slots: BookingSlotPayload[];
+};
+
+export type BookingQuotePayload = {
+  courtId: string;
+  days: BookingDayPayload[];
   services?: Array<{ serviceId: string; quantity: number }>;
   voucherId?: string;
   voucherCode?: string;
@@ -29,8 +33,14 @@ export type BookingQuotePayload = {
 
 export type BookingQuote = {
   court: { id: string; name: string; address: string; imageUrl?: string | null };
-  bookingDate: string;
-  slots: Array<BookingSlotPayload & { price: number }>;
+  days: Array<{
+    bookingDate: string;
+    slots: Array<BookingSlotPayload & { price: number }>;
+    courtSubtotal: number;
+    subtotal: number;
+    voucherDiscountAmount: number;
+    totalAmount: number;
+  }>;
   services: Array<{ serviceId: string; name: string; quantity: number; price: number; total: number }>;
   courtSubtotal: number;
   servicesSubtotal: number;
@@ -52,7 +62,9 @@ export type BookingCheckoutPayload = BookingQuotePayload & {
 };
 
 export type BookingCheckoutResult = {
+  orderId?: string;
   bookingId: string;
+  bookings?: Array<{ bookingId: string; bookingDate: string; totalAmount: number }>;
   paymentId?: string | null;
   bookingStatus: string;
   paymentStatus: string;

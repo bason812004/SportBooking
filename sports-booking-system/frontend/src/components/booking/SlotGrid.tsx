@@ -3,7 +3,7 @@ import clsx from "clsx";
 import { formatCurrency } from "../../lib/format";
 
 export type SlotGridSlot = { startTime: string; endTime: string; status: string; price: number };
-export type SlotGridSelection = { startTime: string; endTime: string };
+export type SlotGridSelection = { startTime: string; endTime: string; date?: string; courtSurfaceId?: string };
 
 const TIME_OPTIONS = Array.from({ length: 24 }).map((_, hour) => `${String(hour).padStart(2, "0")}:00`);
 

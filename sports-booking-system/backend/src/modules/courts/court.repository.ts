@@ -170,7 +170,15 @@ export const courtRepository = {
         bookingDate: toDbDate(date),
         bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] }
       },
-      select: { id: true, bookingCode: true, startTime: true, endTime: true, bookingStatus: true, payments: { select: { expiresAt: true, status: true } } },
+      select: {
+        id: true,
+        bookingCode: true,
+        startTime: true,
+        endTime: true,
+        bookingStatus: true,
+        payments: { select: { expiresAt: true, status: true } },
+        bookingOrder: { select: { payment: { select: { expiresAt: true, status: true } } } }
+      },
       orderBy: { startTime: "asc" }
     });
   },
@@ -190,7 +198,13 @@ export const courtRepository = {
         startTime: true,
         endTime: true,
         slotPrice: true,
-        booking: { select: { bookingStatus: true, payments: { select: { expiresAt: true, status: true } } } }
+        booking: {
+          select: {
+            bookingStatus: true,
+            payments: { select: { expiresAt: true, status: true } },
+            bookingOrder: { select: { payment: { select: { expiresAt: true, status: true } } } }
+          }
+        }
       },
       orderBy: { startTime: "asc" }
     });

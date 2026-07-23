@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -69,11 +69,17 @@ export function BookingPage() {
 
   usePrefetchAdjacentWeeks(courtId, weekStart);
 
-  // Honour deep-link ?date= and ?slot=HH:MM-HH:MM
+  // Honour deep-link ?date= and ?slot=HH:MM-HH:MM — apply only once, otherwise
+  // every background refetch of `response` (15s poll, week switch back to the
+  // linked date, realtime invalidation...) would stomp any slots the user
+  // picked afterwards back down to just this original URL selection.
+  const deepLinkAppliedRef = useRef(false);
   useEffect(() => {
+    if (deepLinkAppliedRef.current) return;
     const dateParam = searchParams.get("date");
     const slotsParam = searchParams.getAll("slot");
     if (!dateParam || slotsParam.length === 0 || !response) return;
+    deepLinkAppliedRef.current = true;
     setFocusedDate(new Date(`${dateParam}T00:00:00`));
     const parsed: WeeklyScheduleSlot[] = [];
     for (const value of slotsParam) {
@@ -84,9 +90,7 @@ export function BookingPage() {
       if (slot) parsed.push(slot);
     }
     if (parsed.length > 0) {
-      setSelected(parsed);
-      // sort by time so summary lists in order
-      setSelected((current) => [...current].sort((a, b) => compareTime(a.startTime, b.startTime)));
+      setSelected(parsed.sort((a, b) => compareTime(a.startTime, b.startTime)));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [response]);
@@ -121,17 +125,13 @@ export function BookingPage() {
         list.push(slot);
         byDay.set(slot.date, list);
       }
-      const payloadDays: Array<{ date: string; slots: BookingCheckoutPayload["slots"] }> = [];
-      for (const [date, list] of byDay) {
-        const sorted = [...list].sort((a, b) => compareTime(a.startTime, b.startTime));
-        payloadDays.push({ date, slots: sorted.map((s) => ({ startTime: s.startTime, endTime: s.endTime })) });
-      }
-      const [first] = payloadDays;
-      if (!first) throw new Error("Vui lòng chọn khung giờ hợp lệ.");
+      const days = Array.from(byDay.entries()).map(([bookingDate, slots]) => ({
+        bookingDate,
+        slots: [...slots].sort((a, b) => compareTime(a.startTime, b.startTime)).map((s) => ({ startTime: s.startTime, endTime: s.endTime }))
+      }));
       const payload: BookingCheckoutPayload = {
         courtId,
-        bookingDate: first.date,
-        slots: first.slots,
+        days,
         paymentType,
         voucherCode: appliedVoucher?.code,
         note: note || undefined
@@ -139,7 +139,12 @@ export function BookingPage() {
       return bookingApi.checkout(payload);
     },
     onSuccess: (result) => {
-      toast.success(`Đặt sân thành công. Tổng: ${formatCurrency(result.totalAmount)}.`);
+      const dayCount = result.bookings?.length ?? 1;
+      toast.success(
+        dayCount > 1
+          ? `Đặt sân thành công cho ${dayCount} ngày. Tổng: ${formatCurrency(result.totalAmount)}.`
+          : `Đặt sân thành công. Tổng: ${formatCurrency(result.totalAmount)}.`
+      );
       setSelected([]);
       setAppliedVoucher(null);
       setVoucherInput("");
@@ -318,10 +323,7 @@ export function BookingPage() {
             error={schedule.error as Error | null}
             onRetry={() => schedule.refetch()}
             weekStart={weekStartDate}
-            onWeekStartChange={(next) => {
-              setWeekStartDate(next);
-              setSelected([]);
-            }}
+            onWeekStartChange={setWeekStartDate}
             focusedDate={focusedDate}
             onFocusedDateChange={setFocusedDate}
             selected={selected}

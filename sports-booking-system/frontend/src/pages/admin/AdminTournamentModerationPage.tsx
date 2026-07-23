@@ -6,6 +6,7 @@ import { adminApi } from "../../features/admin/api/adminApi";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { ErrorState, LoadingState } from "../../components/common/States";
+import { PageHero } from "../../components/common/PageHero";
 import { AdminReasonModal } from "./AdminReasonModal";
 
 type PendingTournament = {
@@ -61,10 +62,7 @@ export function AdminTournamentModerationPage() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-3xl font-bold">Duyệt giải đấu</h1>
-        <p className="mt-1 text-sm font-semibold text-slate-600">Chỉ giải đấu được duyệt mới hiển thị công khai.</p>
-      </div>
+      <PageHero eyebrow="Nội dung" title="Duyệt giải đấu" subtitle="Chỉ giải đấu được duyệt mới hiển thị công khai." />
 
       <div className="rounded-2xl border bg-white p-4">
         <Input

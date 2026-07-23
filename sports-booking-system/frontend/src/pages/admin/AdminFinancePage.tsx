@@ -3,6 +3,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { Download, ReceiptText, RefreshCcw, WalletCards } from "lucide-react";
 import { toast } from "sonner";
 import { ErrorState, LoadingState } from "../../components/common/States";
+import { PageHero } from "../../components/common/PageHero";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
@@ -118,19 +119,20 @@ export function AdminFinancePage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold">Tài chính</h1>
-          <p className="text-sm text-slate-600">Theo dõi giao dịch, hoàn tiền, đối soát doanh thu partner và trạng thái payout.</p>
-        </div>
-        <div className="flex flex-wrap items-end gap-2">
-          <Input label="Tháng" type="month" value={month} onChange={(event) => { setTxPage(1); setRefundPage(1); setMonth(event.target.value); }} />
-          <Button variant="secondary" disabled={exportReport.isPending} onClick={() => exportReport.mutate()}>
-            <Download className="h-4 w-4" />
-            Export CSV
-          </Button>
-        </div>
-      </div>
+      <PageHero
+        eyebrow="Tài chính"
+        title="Tài chính"
+        subtitle="Theo dõi giao dịch, hoàn tiền, đối soát doanh thu partner và trạng thái payout."
+        actions={
+          <div className="flex flex-wrap items-end gap-2 rounded-xl bg-white/95 p-2">
+            <Input label="Tháng" type="month" value={month} onChange={(event) => { setTxPage(1); setRefundPage(1); setMonth(event.target.value); }} />
+            <Button variant="secondary" disabled={exportReport.isPending} onClick={() => exportReport.mutate()}>
+              <Download className="h-4 w-4" />
+              Export CSV
+            </Button>
+          </div>
+        }
+      />
 
       {reconciliation.data && (
         <div className="grid gap-3 md:grid-cols-4">

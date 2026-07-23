@@ -214,31 +214,75 @@ export const recipientService = {
       };
     }
 
-    const [items, total] = await Promise.all([
-      prisma.booking.findMany({
-        where: whereClause,
-        orderBy: bookingOrderBy(query.sortBy, query.sortOrder),
-        skip: (page - 1) * limit,
-        take: limit,
-        include: {
-          user: {
-            select: {
-              fullName: true,
-              email: true,
-              phone: true
-            }
-          },
-          courtSurface: {
-            select: {
-              id: true,
-              name: true,
-              code: true
-            }
-          }
+    const bookingInclude = {
+      user: {
+        select: {
+          fullName: true,
+          email: true,
+          phone: true
         }
+      },
+      courtSurface: {
+        select: {
+          id: true,
+          name: true,
+          code: true
+        }
+      }
+    };
+
+    // Bookings created together as one walk-in order (see createWalkInBookingOrder)
+    // share a bookingOrderId and should page/display as a single group, not as N
+    // separate rows. Since a group can't be split across pages, paginate over
+    // deduped group keys first, then fetch the full rows for the selected page.
+    const matchingRows = await prisma.booking.findMany({
+      where: whereClause,
+      orderBy: bookingOrderBy(query.sortBy, query.sortOrder),
+      select: { id: true, bookingOrderId: true }
+    });
+
+    const groupKeys: string[] = [];
+    const isOrderKey = new Map<string, boolean>();
+    const seen = new Set<string>();
+    for (const row of matchingRows) {
+      const key = row.bookingOrderId ?? row.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      groupKeys.push(key);
+      isOrderKey.set(key, Boolean(row.bookingOrderId));
+    }
+
+    const total = groupKeys.length;
+    const pageKeys = groupKeys.slice((page - 1) * limit, (page - 1) * limit + limit);
+    const orderIds = pageKeys.filter((key) => isOrderKey.get(key));
+    const standaloneIds = pageKeys.filter((key) => !isOrderKey.get(key));
+
+    const [orderBookings, standaloneBookings] = await Promise.all([
+      prisma.booking.findMany({
+        where: { courtId, bookingOrderId: { in: orderIds } },
+        orderBy: [{ bookingDate: "asc" }, { startTime: "asc" }],
+        include: bookingInclude
       }),
-      prisma.booking.count({ where: whereClause })
+      prisma.booking.findMany({
+        where: { courtId, id: { in: standaloneIds } },
+        include: bookingInclude
+      })
     ]);
+
+    const bookingsByOrderId = new Map<string, typeof orderBookings>();
+    for (const booking of orderBookings) {
+      const key = booking.bookingOrderId!;
+      const list = bookingsByOrderId.get(key);
+      if (list) list.push(booking);
+      else bookingsByOrderId.set(key, [booking]);
+    }
+    const standaloneById = new Map(standaloneBookings.map((booking) => [booking.id, booking]));
+
+    const items = pageKeys.map((key) =>
+      isOrderKey.get(key)
+        ? { orderId: key, bookings: bookingsByOrderId.get(key) ?? [] }
+        : { orderId: null, bookings: [standaloneById.get(key)!] }
+    );
 
     return { items, meta: paginationMeta(page, limit, total) };
   },
@@ -747,6 +791,162 @@ export const recipientService = {
 
       return { booking, payment };
     });
+  },
+
+  /**
+   * Same idea as `createWalkInBooking` but for several (possibly different-date)
+   * time ranges at once, grouped under a single `BookingOrder` so the staff UI
+   * and customer history show it as one booking instead of N separate ones.
+   * Cash-only (money is collected at the counter immediately), so every booking
+   * is created already CONFIRMED/PAID — no Payment row.
+   */
+  async createWalkInBookingOrder(
+    userId: string,
+    input: {
+      customerName: string;
+      customerPhone: string;
+      slots: Array<{ courtSurfaceId: string; bookingDate: string; startTime: string; minutes: number }>;
+      note?: string;
+    }
+  ) {
+    const courtId = await getManagedCourtId(userId);
+    const surfaceIds = [...new Set(input.slots.map((slot) => slot.courtSurfaceId))];
+    const surfaces = await prisma.courtSurface.findMany({
+      where: { id: { in: surfaceIds }, courtId, status: CourtActiveStatus.ACTIVE }
+    });
+    if (surfaces.length !== surfaceIds.length) throw new NotFoundError("Mot hoac nhieu san con khong ton tai hoac dang tam ngung");
+
+    const entries: Array<{
+      courtSurfaceId: string;
+      bookingDate: string;
+      startTime: Date;
+      endTime: Date;
+      basePrice: number;
+      dynamicAdjustmentAmount: number;
+      subtotal: number;
+    }> = [];
+    for (const slot of input.slots) {
+      const startTime = timeToDate(slot.startTime);
+      const endTime = timeToDate(minutesToTime(timeToMinutes(slot.startTime) + slot.minutes));
+      const dynamicPrice = await dynamicPricingService.calculate(courtId, {
+        date: slot.bookingDate,
+        startTime: slot.startTime,
+        endTime: dbTime(endTime)
+      });
+      const hours = durationHours(slot.startTime, dbTime(endTime));
+      const subtotal = dynamicPrice.finalPrice * hours;
+      entries.push({
+        courtSurfaceId: slot.courtSurfaceId,
+        bookingDate: slot.bookingDate,
+        startTime,
+        endTime,
+        basePrice: dynamicPrice.basePrice * hours,
+        dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
+        subtotal
+      });
+    }
+
+    const existingUser = await prisma.user.findFirst({ where: { phone: input.customerPhone } });
+    const customer =
+      existingUser ??
+      (await prisma.user.create({
+        data: {
+          id: await nextPrefixedId("u", "seq_users"),
+          fullName: input.customerName,
+          email: `walkin-${input.customerPhone.replace(/\D/g, "") || Date.now()}-${Date.now()}@walkin.sportsbooking.local`,
+          phone: input.customerPhone,
+          emailVerified: false
+        }
+      }));
+
+    const orderId = await nextPrefixedId("bo", "seq_booking_orders");
+    const bookingIds = await Promise.all(entries.map(() => nextPrefixedId("b", "seq_bookings")));
+    const totalAmount = entries.reduce((sum, entry) => sum + entry.subtotal, 0);
+
+    const bookings = await prisma.$transaction(
+      async (tx) => {
+        for (const entry of entries) {
+          const conflict = await tx.booking.findFirst({
+            where: {
+              courtId,
+              OR: [{ courtSurfaceId: entry.courtSurfaceId }, { courtSurfaceId: null }],
+              bookingDate: toDbDate(entry.bookingDate),
+              bookingStatus: { in: activeOperationStatuses },
+              ...overlapWhere(entry.startTime, entry.endTime)
+            }
+          });
+          if (conflict) throw new ConflictError(`Khung gio ngay ${entry.bookingDate} da co khach khac`, "WALK_IN_BOOKING_CONFLICT");
+
+          const activeBlock = await tx.courtAvailabilityBlock.findFirst({
+            where: {
+              courtId,
+              status: "ACTIVE",
+              blockDate: toDbDate(entry.bookingDate),
+              OR: [{ courtSurfaceId: null }, { courtSurfaceId: entry.courtSurfaceId }],
+              ...overlapWhere(entry.startTime, entry.endTime)
+            }
+          });
+          if (activeBlock) throw new ConflictError(`San dang trong lich nghi/bao tri ngay ${entry.bookingDate}`, "WALK_IN_BOOKING_BLOCKED");
+        }
+
+        await tx.bookingOrder.create({
+          data: {
+            id: orderId,
+            userId: customer.id,
+            courtId,
+            subtotal: totalAmount,
+            totalAmount,
+            paymentType: "CASH",
+            status: "CONFIRMED",
+            note: input.note
+          }
+        });
+
+        const created = [];
+        for (let i = 0; i < entries.length; i++) {
+          const entry = entries[i];
+          const booking = await tx.booking.create({
+            data: {
+              id: bookingIds[i],
+              bookingCode: bookingCode(),
+              userId: customer.id,
+              courtId,
+              courtSurfaceId: entry.courtSurfaceId,
+              bookingOrderId: orderId,
+              bookingDate: toDbDate(entry.bookingDate),
+              startTime: entry.startTime,
+              endTime: entry.endTime,
+              basePrice: entry.basePrice,
+              dynamicAdjustmentAmount: entry.dynamicAdjustmentAmount,
+              subtotal: entry.subtotal,
+              totalPrice: entry.subtotal,
+              paymentMethod: PaymentMethod.CASH,
+              paymentStatus: "PAID",
+              bookingStatus: BookingStatus.CONFIRMED,
+              note: input.note
+            }
+          });
+
+          await tx.bookingSlot.create({
+            data: {
+              bookingId: booking.id,
+              courtId,
+              bookingDate: toDbDate(entry.bookingDate),
+              startTime: entry.startTime,
+              endTime: entry.endTime,
+              slotPrice: entry.subtotal
+            }
+          });
+
+          created.push(booking);
+        }
+
+        return created;
+      },
+      { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 }
+    );
+
+    return { orderId, bookings };
   },
 
   async createRecurringWalkInBooking(

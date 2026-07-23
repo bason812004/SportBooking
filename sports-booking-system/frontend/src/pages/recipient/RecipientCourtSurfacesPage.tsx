@@ -17,8 +17,8 @@ import { recipientApi, type RecipientOperationItem } from "../../features/recipi
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { PageHero } from "../../components/common/PageHero";
 import { Button } from "../../components/ui/Button";
-import { Input } from "../../components/ui/Input";
-import { useWalkInBooking, WalkInDetailsFields, WalkInScheduleField } from "../../features/recipient/components/WalkInBookingForm";
+import { useWalkInBooking, WalkInDetailsFields } from "../../features/recipient/components/WalkInBookingForm";
+import { StaffScheduleGrid } from "../../features/recipient/components/StaffScheduleGrid";
 
 const statusMeta: Record<RecipientOperationItem["status"], { label: string; className: string; dotClassName: string }> = {
   AVAILABLE: { label: "Sân trống", className: "border-emerald-200 bg-emerald-50 text-emerald-700", dotClassName: "bg-emerald-500" },
@@ -170,11 +170,13 @@ export function RecipientCourtSurfacesPage() {
   }, [selected?.surface.id]);
 
   const canBookAdvance = Boolean(selected && selected.surface.status === "ACTIVE");
+  const surfaceNames = useMemo(() => Object.fromEntries(items.map((item) => [item.surface.id, item.surface.name])), [items]);
   const walkIn = useWalkInBooking({
     courtSurfaceId: canBookAdvance ? selected!.surface.id : "",
     bookingDate: walkInDate,
     onBookingCreated: refresh,
-    enableCustomerLookup: true
+    enableCustomerLookup: true,
+    surfaceNames
   });
 
   const toggleStatus = useMutation({
@@ -266,27 +268,23 @@ export function RecipientCourtSurfacesPage() {
 
           <section className="rounded-2xl border border-slate-200 bg-white p-4">
             {selected ? (
-              <div className="grid gap-6 lg:grid-cols-5">
-                <div className="lg:col-span-3">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-sm font-black text-slate-700">
-                      Khung giờ ngày {new Date(walkInDate).toLocaleDateString("vi-VN")} - {selected.surface.name}
-                    </p>
-                    {canBookAdvance ? (
-                      <Input
-                        label="Ngày đặt cho khách"
-                        type="date"
-                        value={walkInDate}
-                        min={todayValue()}
-                        onChange={(event) => setWalkInDate(event.target.value)}
-                        className="w-40"
-                      />
-                    ) : null}
-                  </div>
+              <div className="grid gap-6 lg:grid-cols-7">
+                <div className="lg:col-span-5">
                   {canBookAdvance ? (
-                    <WalkInScheduleField walkIn={walkIn} columnsClassName="grid-cols-3 sm:grid-cols-4" />
+                    <StaffScheduleGrid
+                      courtSurfaceId={selected.surface.id}
+                      surfaceName={selected.surface.name}
+                      bookingDate={walkInDate}
+                      onDateChange={setWalkInDate}
+                      walkIn={walkIn}
+                    />
                   ) : (
-                    <SurfaceSchedule courtSurfaceId={selected.surface.id} surfaceStatus={selected.surface.status} />
+                    <>
+                      <p className="mb-3 text-sm font-black text-slate-700">
+                        Khung giờ ngày {new Date(walkInDate).toLocaleDateString("vi-VN")} - {selected.surface.name}
+                      </p>
+                      <SurfaceSchedule courtSurfaceId={selected.surface.id} surfaceStatus={selected.surface.status} />
+                    </>
                   )}
                 </div>
 

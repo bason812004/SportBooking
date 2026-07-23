@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { CalendarLegend } from "./CalendarLegend";
 import { CalendarHeader } from "./CalendarHeader";
 import { BookingCalendar } from "./BookingCalendar";
 import { DayView } from "./DayView";
 import {
-  compareTime,
   findDay,
   formatYmd,
   isSlotSelectable,
@@ -36,6 +36,14 @@ export type WeeklyCalendarSectionProps = {
    */
   forceDayOnCompact?: boolean;
   rightSlot?: React.ReactNode;
+  /**
+   * "multi-day" (default) lets the customer booking cart span several different
+   * dates (used for multi-day orders). "single-day" is for callers where a
+   * selection can only ever belong to one date (e.g. staff walk-in booking) —
+   * picking a slot on a different day replaces the whole selection instead of
+   * adding to it.
+   */
+  selectionMode?: "multi-day" | "single-day";
 };
 
 export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
@@ -53,7 +61,8 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
     onSelectedChange,
     language,
     forceDayOnCompact = true,
-    rightSlot
+    rightSlot,
+    selectionMode = "multi-day"
   } = props;
 
   const { isCompact } = useResponsiveLayout();
@@ -72,31 +81,52 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
     [response, focusedDate]
   );
 
+  const MAX_ORDER_DAYS = 14;
+
   const toggleSlot = useCallback(
     (slot: WeeklyScheduleSlot) => {
       if (!isSlotSelectable(slot)) return;
-      onSelectedChange(
-        toggleSelection(selected, slot)
-      );
+
+      const exists = selected.some((s) => slotKey(s) === slotKey(slot));
+      if (exists) {
+        onSelectedChange(selected.filter((s) => slotKey(s) !== slotKey(slot)));
+        return;
+      }
+
+      if (selectionMode === "single-day") {
+        const sameDay = selected.filter((s) => s.date === slot.date);
+        onSelectedChange([...sameDay, slot].sort((a, b) => `${a.date}${a.startTime}`.localeCompare(`${b.date}${b.startTime}`)));
+        return;
+      }
+
+      const selectedDays = new Set(selected.map((s) => s.date));
+      if (!selectedDays.has(slot.date) && selectedDays.size >= MAX_ORDER_DAYS) {
+        toast.error(
+          language === "en"
+            ? `You can select up to ${MAX_ORDER_DAYS} different days per order.`
+            : `Chỉ có thể chọn tối đa ${MAX_ORDER_DAYS} ngày khác nhau trong 1 lần đặt.`
+        );
+        return;
+      }
+
+      onSelectedChange([...selected, slot].sort((a, b) => `${a.date}${a.startTime}`.localeCompare(`${b.date}${b.startTime}`)));
     },
-    [selected, onSelectedChange]
+    [selected, onSelectedChange, language, selectionMode]
   );
 
   const jumpToToday = useCallback(() => {
     const today = startOfWeek(new Date());
     onWeekStartChange(today);
     onFocusedDateChange(new Date());
-    onSelectedChange([]);
-  }, [onWeekStartChange, onFocusedDateChange, onSelectedChange]);
+  }, [onWeekStartChange, onFocusedDateChange]);
 
   const shiftWeek = useCallback(
     (offset: number) => {
       const next = new Date(weekStart);
       next.setDate(weekStart.getDate() + offset);
       onWeekStartChange(next);
-      onSelectedChange([]);
     },
-    [weekStart, onWeekStartChange, onSelectedChange]
+    [weekStart, onWeekStartChange]
   );
 
   const jumpToDate = useCallback(
@@ -135,7 +165,6 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
         }}
         focusedDate={focusedDate}
         onSelectDay={enterDayView}
-        showWeekHeader={activeView === "WEEK"}
       />
       <CalendarLegend language={language} />
 
@@ -181,20 +210,6 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
       </div>
     </div>
   );
-}
-
-function toggleSelection(current: WeeklyScheduleSlot[], slot: WeeklyScheduleSlot): WeeklyScheduleSlot[] {
-  const exists = current.some((s) => slotKey(s) === slotKey(slot));
-  if (exists) return current.filter((s) => slotKey(s) !== slotKey(slot));
-  const sameDay = current.filter((s) => s.date === slot.date);
-  if (sameDay.length === 0) return [...current, slot].sort((a, b) => compareTime(a.startTime, b.startTime));
-  const last = sameDay[sameDay.length - 1];
-  const lastHour = Number(last.startTime.slice(0, 2));
-  const slotHour = Number(slot.startTime.slice(0, 2));
-  if (slotHour === lastHour + 1 || slotHour === lastHour - 1) {
-    return [...current, slot].sort((a, b) => compareTime(a.startTime, b.startTime));
-  }
-  return [...current, slot].sort((a, b) => compareTime(a.startTime, b.startTime));
 }
 
 function useResponsiveLayout() {

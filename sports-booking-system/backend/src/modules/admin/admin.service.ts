@@ -337,14 +337,21 @@ export const adminService = {
       input.targetRole = undefined;
       input.targetUserId = undefined;
     }
-    const campaign = await adminRepository.createNotificationCampaign(actorId, input);
-    if (!campaign) throw new ValidationError("Khong tim thay nguoi nhan phu hop");
+    const result = await adminRepository.createNotificationCampaign(actorId, input);
+    if (!result) throw new ValidationError("Khong tim thay nguoi nhan phu hop");
+    const { campaign, recipientIds } = result;
     await recordAdminAction(actorId, "NOTIFICATION_CAMPAIGN_SENT", "NOTIFICATION_CAMPAIGN", campaign.id, {
       targetType: input.targetType,
       targetRole: input.targetRole,
       targetUserId: input.targetUserId,
       targetPartnerId: input.targetPartnerId,
       recipientCount: campaign.recipientCount
+    });
+    realtimeService.toUsers(recipientIds, realtimeEvents.notificationNew, {
+      campaignId: campaign.id,
+      title: campaign.title,
+      content: campaign.content,
+      type: campaign.type
     });
     return campaign;
   },

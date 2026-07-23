@@ -113,6 +113,7 @@ export type BookingVoucherInfo = {
 export type Booking = {
   id: string;
   bookingCode: string;
+  bookingOrderId?: string | null;
   bookingDate: string;
   startTime: string;
   endTime: string;

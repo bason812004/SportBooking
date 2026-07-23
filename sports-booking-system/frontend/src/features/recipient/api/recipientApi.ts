@@ -140,6 +140,18 @@ export type RecipientWalkInBookingResult = {
   payment: RecipientWalkInPayment | null;
 };
 
+export type RecipientWalkInBookingOrderPayload = {
+  customerName: string;
+  customerPhone: string;
+  slots: Array<{ courtSurfaceId: string; bookingDate: string; startTime: string; minutes: number }>;
+  note?: string;
+};
+
+export type RecipientWalkInBookingOrderResult = {
+  orderId: string;
+  bookings: Booking[];
+};
+
 export type RecipientRecurringBookingPayload = {
   courtSurfaceId: string;
   customerName: string;
@@ -191,6 +203,11 @@ export type RecipientPaymentStatus = {
   paidAt?: string | null;
 };
 
+export type RecipientBookingGroup = {
+  orderId: string | null;
+  bookings: Booking[];
+};
+
 export const recipientApi = {
   async dashboard() {
     const { data } = await api.get<ApiResponse<RecipientDashboard>>("/recipient/dashboard");
@@ -206,7 +223,7 @@ export const recipientApi = {
     sortBy?: string;
     sortOrder?: "asc" | "desc";
   }) {
-    const { data } = await api.get<ApiResponse<Paginated<Booking>>>("/recipient/bookings", { params });
+    const { data } = await api.get<ApiResponse<Paginated<RecipientBookingGroup>>>("/recipient/bookings", { params });
     return data.data;
   },
 
@@ -262,6 +279,11 @@ export const recipientApi = {
 
   async createWalkInBooking(payload: RecipientWalkInBookingPayload) {
     const { data } = await api.post<ApiResponse<RecipientWalkInBookingResult>>("/recipient/operations/walk-in-booking", payload);
+    return data.data;
+  },
+
+  async createWalkInBookingOrder(payload: RecipientWalkInBookingOrderPayload) {
+    const { data } = await api.post<ApiResponse<RecipientWalkInBookingOrderResult>>("/recipient/operations/walk-in-booking-order", payload);
     return data.data;
   },
 

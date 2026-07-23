@@ -8,6 +8,7 @@ import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { ErrorState, LoadingState } from "../../components/common/States";
+import { PageHero } from "../../components/common/PageHero";
 import { SortableTh } from "../../components/common/SortableTh";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { Table as SharedTable, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
@@ -82,15 +83,16 @@ export function AdminCourtsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold">Tất cả sân</h1>
-          <p className="text-sm text-slate-600">Quản lý sân đã duyệt, khóa/mở hoạt động, verified, featured và yêu cầu đối tác cập nhật.</p>
-        </div>
-        <Button variant="secondary" onClick={() => { setPage(1); setFilters(emptyFilters); }}>
-          Xóa lọc
-        </Button>
-      </div>
+      <PageHero
+        eyebrow="Vận hành"
+        title="Tất cả sân"
+        subtitle="Quản lý sân đã duyệt, khóa/mở hoạt động, verified, featured và yêu cầu đối tác cập nhật."
+        actions={
+          <Button className="bg-white/20 text-white ring-1 ring-white/30 hover:bg-white/30" onClick={() => { setPage(1); setFilters(emptyFilters); }}>
+            Xóa lọc
+          </Button>
+        }
+      />
 
       <div className="grid gap-3 rounded-lg border bg-white p-4 md:grid-cols-2 xl:grid-cols-4">
         <Input label="Tìm kiếm" value={filters.search} onChange={(event) => updateFilter(setPage, setFilters, "search", event.target.value)} placeholder="Tên sân, địa chỉ, đối tác" />

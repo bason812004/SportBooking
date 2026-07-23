@@ -13,6 +13,7 @@ import {
   paymentIdParamSchema,
   recurringWalkInBookingSchema,
   surfaceAvailabilityQuerySchema,
+  walkInBookingOrderSchema,
   walkInBookingSchema
 } from "./recipient.validation.js";
 
@@ -35,6 +36,11 @@ recipientRoutes.post("/bookings/:id/extend", validate(bookingExtendSchema), reci
 recipientRoutes.get("/customers/lookup", validate(customerLookupQuerySchema), recipientController.lookupCustomers);
 recipientRoutes.get("/customers/:id/history", validate(customerIdParamSchema), recipientController.customerHistory);
 recipientRoutes.post("/operations/walk-in-booking", validate(walkInBookingSchema), recipientController.createWalkInBooking);
+recipientRoutes.post(
+  "/operations/walk-in-booking-order",
+  validate(walkInBookingOrderSchema),
+  recipientController.createWalkInBookingOrder
+);
 recipientRoutes.post(
   "/operations/recurring-walk-in-booking",
   validate(recurringWalkInBookingSchema),

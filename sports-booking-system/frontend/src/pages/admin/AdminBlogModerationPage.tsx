@@ -7,6 +7,7 @@ import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { ErrorState, LoadingState } from "../../components/common/States";
+import { PageHero } from "../../components/common/PageHero";
 import { AdminReasonModal } from "./AdminReasonModal";
 
 type PendingBlog = {
@@ -106,10 +107,7 @@ export function AdminBlogModerationPage() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-3xl font-bold">Duyệt bài viết</h1>
-        <p className="mt-1 text-sm font-semibold text-slate-600">Chỉ bài được duyệt mới xuất hiện ở trang blog công khai.</p>
-      </div>
+      <PageHero eyebrow="Nội dung" title="Duyệt bài viết" subtitle="Chỉ bài được duyệt mới xuất hiện ở trang blog công khai." />
       <div className="grid gap-3 rounded-2xl border bg-white p-4 md:grid-cols-3">
         <Input label="Tìm bài viết hoặc tác giả" value={search} onChange={(event) => { setPage(1); setSearch(event.target.value); }} />
         <Select
@@ -184,6 +182,12 @@ export function AdminBlogModerationPage() {
                         <Button disabled={action.isPending} variant="danger" onClick={() => setPending({ id: blog.id, action: "hide" })}>
                           <EyeOff className="h-4 w-4" />
                           Ẩn bài
+                        </Button>
+                      )}
+                      {blog.status === "REJECTED" && (
+                        <Button disabled={action.isPending} onClick={() => setPending({ id: blog.id, action: "approve" })}>
+                          <CheckCircle2 className="h-4 w-4" />
+                          Duyệt lại
                         </Button>
                       )}
                     </div>

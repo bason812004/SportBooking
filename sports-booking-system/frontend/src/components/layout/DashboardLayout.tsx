@@ -24,6 +24,7 @@ import { useAuth } from "../../features/auth/hooks/useAuth";
 import { useLanguage } from "../../lib/i18n";
 import { ScrollToTopButton } from "../common/ScrollToTopButton";
 import { Button } from "../ui/Button";
+import { NotificationBell } from "./NotificationBell";
 
 type MenuItem = {
   to: string;
@@ -135,7 +136,9 @@ export function DashboardLayout() {
         </div>
       </aside>
       <main className="md:pl-20">
-        <div className="px-5 py-3 md:px-16" />
+        <div className="flex items-center justify-end px-5 py-3 md:px-16">
+          <NotificationBell />
+        </div>
         <div className="px-5 pb-12 md:px-16">
           <Outlet />
         </div>

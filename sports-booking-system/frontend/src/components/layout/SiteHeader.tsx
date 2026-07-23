@@ -4,6 +4,7 @@ import { CalendarCheck, FileText, Gift, LogOut, Menu, MessageCircle, Search, Shi
 import { useTranslation } from "react-i18next";
 import { APP_NAME } from "../../lib/constants";
 import { useAuth } from "../../features/auth/hooks/useAuth";
+import { NotificationBell } from "./NotificationBell";
 
 export function SiteHeader() {
   const { t } = useTranslation("header");
@@ -48,7 +49,10 @@ export function SiteHeader() {
         <div className="hidden items-center justify-end gap-2 lg:flex">
           <PartnerLink isPartner={user?.role === "PARTNER"} />
           {isAuthenticated ? (
-            <UserMenu role={user?.role} onLogout={logout} />
+            <>
+              <NotificationBell />
+              <UserMenu role={user?.role} onLogout={logout} />
+            </>
           ) : (
             <>
               <Link to="/login" className="rounded-full px-4 py-2 text-sm font-black hover:text-teal-700">{t("actions.login")}</Link>

@@ -44,6 +44,25 @@ export const walkInBookingSchema = z.object({
   })
 });
 
+export const walkInBookingOrderSchema = z.object({
+  body: z.object({
+    customerName: z.string().trim().min(2).max(120),
+    customerPhone: z.string().trim().min(6).max(30),
+    slots: z
+      .array(
+        z.object({
+          courtSurfaceId: z.string().trim().min(1).max(40),
+          bookingDate: z.string().date(),
+          startTime: z.string().regex(/^\d{2}:\d{2}$/),
+          minutes: z.number().int().positive().max(240)
+        })
+      )
+      .min(2)
+      .max(14),
+    note: z.string().trim().max(500).optional()
+  })
+});
+
 export const customerLookupQuerySchema = z.object({
   query: z.object({
     phone: z.string().trim().min(4).max(30)
