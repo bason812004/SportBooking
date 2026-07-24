@@ -1,10 +1,16 @@
-import { Fragment, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Table2 } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Clock, Filter, LayoutGrid, PhoneCall, Table2, User, Wallet } from "lucide-react";
 import { recipientApi, type RecipientBookingGroup, type RecipientCalendarBooking } from "../../features/recipient/api/recipientApi";
-import type { Booking } from "../../types/api";
+import {
+  addDays,
+  formatLongDayLabel,
+  formatWeekRangeLabel,
+  formatYmd,
+  startOfWeek
+} from "../../features/bookings/components/BookingCalendar/utils";
 import { LoadingState, ErrorState, EmptyState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
@@ -13,6 +19,7 @@ import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { SortableTh } from "../../components/common/SortableTh";
 import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { Overlay } from "../../components/common/Overlay";
+import { PageHero } from "../../components/common/PageHero";
 import { useUrlSort } from "../../hooks/useUrlSort";
 import { BookingCalendarGrid } from "../../components/booking/BookingCalendarGrid";
 import { WalkInBookingForm } from "../../features/recipient/components/WalkInBookingForm";
@@ -44,7 +51,42 @@ function shiftDate(date: string, days: number) {
   return next.toISOString().slice(0, 10);
 }
 
-const defaultFilters = { status: "PENDING", ...currentYearRange() };
+type RangeMode = "day" | "week" | "month" | "custom";
+
+const rangeModeLabel: Record<RangeMode, string> = {
+  day: "Ngày",
+  week: "Tuần",
+  month: "Tháng",
+  custom: "Tuỳ chỉnh"
+};
+
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function endOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0);
+}
+
+const bookingStatusMeta: Record<string, { label: string; className: string }> = {
+  PENDING: { label: "Chờ xác nhận", className: "bg-amber-100 text-amber-700" },
+  CONFIRMED: { label: "Đã xác nhận", className: "bg-blue-100 text-blue-700" },
+  COMPLETED: { label: "Hoàn thành", className: "bg-emerald-100 text-emerald-700" },
+  CANCELLED: { label: "Đã huỷ", className: "bg-rose-100 text-rose-700" },
+  NO_SHOW: { label: "Không đến", className: "bg-rose-100 text-rose-700" }
+};
+
+const paymentStatusMeta: Record<string, { label: string; className: string }> = {
+  UNPAID: { label: "Chưa thanh toán", className: "bg-slate-100 text-slate-600" },
+  PENDING: { label: "Chờ thanh toán", className: "bg-amber-100 text-amber-700" },
+  PROCESSING: { label: "Đang xử lý", className: "bg-amber-100 text-amber-700" },
+  PAID: { label: "Đã thanh toán", className: "bg-emerald-100 text-emerald-700" },
+  FAILED: { label: "Thất bại", className: "bg-rose-100 text-rose-700" },
+  EXPIRED: { label: "Hết hạn", className: "bg-rose-100 text-rose-700" },
+  CANCELLED: { label: "Đã huỷ", className: "bg-rose-100 text-rose-700" },
+  PARTIALLY_REFUNDED: { label: "Hoàn 1 phần", className: "bg-amber-100 text-amber-700" },
+  REFUNDED: { label: "Đã hoàn tiền", className: "bg-slate-100 text-slate-600" }
+};
 
 export function RecipientBookingsPage() {
   const queryClient = useQueryClient();
@@ -52,18 +94,30 @@ export function RecipientBookingsPage() {
   const viewMode = searchParams.get("view") === "calendar" ? "calendar" : "table";
 
   const [page, setPage] = useState(1);
-  const [filters, setFilters] = useState(() => ({ ...defaultFilters, status: searchParams.get("status") ?? defaultFilters.status }));
+  const [status, setStatus] = useState(() => searchParams.get("status") ?? "");
+  const [rangeMode, setRangeMode] = useState<RangeMode>("day");
+  const [periodAnchor, setPeriodAnchor] = useState(() => new Date());
+  const [customFrom, setCustomFrom] = useState(() => currentYearRange().fromDate);
+  const [customTo, setCustomTo] = useState(() => currentYearRange().toDate);
   const [confirm, setConfirm] = useState<{ id: string; action: Action } | null>(null);
   const [calendarDetail, setCalendarDetail] = useState<RecipientCalendarBooking | null>(null);
   const [walkInCell, setWalkInCell] = useState<{ courtSurfaceId: string; startTime: string } | null>(null);
-  const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
-  const toggleOrderExpanded = (orderId: string) =>
-    setExpandedOrders((current) => {
-      const next = new Set(current);
-      if (next.has(orderId)) next.delete(orderId);
-      else next.add(orderId);
-      return next;
-    });
+  const [orderDetail, setOrderDetail] = useState<RecipientBookingGroup | null>(null);
+  const [calendarDate, setCalendarDate] = useState(() => todayValue());
+  const periodDateInputRef = useRef<HTMLInputElement>(null);
+  const [monthPickerOpen, setMonthPickerOpen] = useState(false);
+  const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
+
+  const openPicker = (input: HTMLInputElement | null) => {
+    if (!input) return;
+    if (typeof input.showPicker === "function") input.showPicker();
+    else input.focus();
+  };
+
+  const openMonthPicker = () => {
+    setPickerYear(periodAnchor.getFullYear());
+    setMonthPickerOpen(true);
+  };
 
   const setViewMode = (mode: "table" | "calendar") => {
     setSearchParams((previous) => {
@@ -73,9 +127,52 @@ export function RecipientBookingsPage() {
     });
   };
 
-  const isSingleDayRange = Boolean(filters.fromDate) && filters.fromDate === filters.toDate;
-  const calendarDate = isSingleDayRange ? filters.fromDate : todayValue();
-  const setCalendarDate = (date: string) => setFilters((current) => ({ ...current, fromDate: date, toDate: date }));
+  const range = useMemo(() => {
+    if (rangeMode === "day") {
+      const d = formatYmd(periodAnchor);
+      return { fromDate: d, toDate: d };
+    }
+    if (rangeMode === "week") {
+      const start = startOfWeek(periodAnchor);
+      return { fromDate: formatYmd(start), toDate: formatYmd(addDays(start, 6)) };
+    }
+    if (rangeMode === "month") {
+      return { fromDate: formatYmd(startOfMonth(periodAnchor)), toDate: formatYmd(endOfMonth(periodAnchor)) };
+    }
+    return { fromDate: customFrom, toDate: customTo };
+  }, [rangeMode, periodAnchor, customFrom, customTo]);
+
+  const periodLabel = useMemo(() => {
+    if (rangeMode === "day") return formatLongDayLabel(periodAnchor, "vi");
+    if (rangeMode === "week") return formatWeekRangeLabel(startOfWeek(periodAnchor), addDays(startOfWeek(periodAnchor), 6), "vi");
+    if (rangeMode === "month") return `Tháng ${periodAnchor.getMonth() + 1}/${periodAnchor.getFullYear()}`;
+    return "";
+  }, [rangeMode, periodAnchor]);
+
+  const switchRangeMode = (mode: RangeMode) => {
+    setRangeMode(mode);
+    setPage(1);
+    if (mode === "day" || mode === "week") setPeriodAnchor(new Date());
+    else if (mode === "month") setPeriodAnchor(startOfMonth(new Date()));
+  };
+
+  const shiftPeriod = (direction: 1 | -1) => {
+    setPeriodAnchor((current) => {
+      const next = new Date(current);
+      if (rangeMode === "week") next.setDate(next.getDate() + direction * 7);
+      else if (rangeMode === "month") {
+        next.setDate(1);
+        next.setMonth(next.getMonth() + direction);
+      } else next.setDate(next.getDate() + direction);
+      return next;
+    });
+    setPage(1);
+  };
+
+  const jumpToTodayPeriod = () => {
+    setPeriodAnchor(rangeMode === "month" ? startOfMonth(new Date()) : new Date());
+    setPage(1);
+  };
 
   const { sortField, sortOrder, handleSort: sortBy } = useUrlSort<SortField>({
     fields: SORT_FIELDS,
@@ -87,8 +184,9 @@ export function RecipientBookingsPage() {
   };
 
   const bookings = useQuery({
-    queryKey: ["recipient-bookings", page, filters, sortField, sortOrder],
-    queryFn: () => recipientApi.bookings({ page, limit: 10, ...filters, sortBy: sortField ?? undefined, sortOrder }),
+    queryKey: ["recipient-bookings", page, status, range, sortField, sortOrder],
+    queryFn: () =>
+      recipientApi.bookings({ page, limit: 10, status, fromDate: range.fromDate, toDate: range.toDate, sortBy: sortField ?? undefined, sortOrder }),
     placeholderData: keepPreviousData,
     enabled: viewMode === "table"
   });
@@ -145,159 +243,222 @@ export function RecipientBookingsPage() {
     }
   };
 
-  const statusBadgeClass = (status: string) =>
-    status === "CONFIRMED"
-      ? "bg-blue-100 text-blue-800"
-      : status === "PENDING"
-      ? "bg-yellow-100 text-yellow-800"
-      : status === "COMPLETED"
-      ? "bg-green-100 text-green-800"
-      : "bg-red-100 text-red-800";
-
-  const renderBookingRow = (booking: Booking, options?: { dim?: boolean }) => (
-    <Tr key={booking.id} className={options?.dim ? "bg-slate-50/70" : undefined}>
-      <Td className="font-medium text-slate-800">{booking.user?.fullName}</Td>
-      <Td className="text-slate-600">{booking.user?.phone || "Chưa cung cấp"}</Td>
-      <Td className="text-slate-600">{booking.courtSurface ? `${booking.courtSurface.name} (${booking.courtSurface.code})` : "Chưa gán sân con"}</Td>
-      <Td className="text-slate-600">{new Date(booking.bookingDate).toLocaleDateString("vi-VN")}</Td>
-      <Td className="text-slate-600">{`${booking.startTime.slice(11, 16)} - ${booking.endTime.slice(11, 16)}`}</Td>
-      <Td className="text-slate-600">{booking.paymentStatus}</Td>
-      <Td>
-        <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(booking.bookingStatus)}`}>{booking.bookingStatus}</span>
-      </Td>
-      <Td className="text-right font-semibold text-slate-800">{Number(booking.totalPrice).toLocaleString("vi-VN")} đ</Td>
-      <Td>
-        <div className="flex gap-2">
-          {actionsForStatus(booking.bookingStatus).map((action) => (
-            <Button
-              key={action}
-              variant={action === "reject" || action === "no-show" ? "danger" : "secondary"}
-              disabled={statusMutation.isPending}
-              onClick={() => run(booking.id, action)}
-            >
-              {actionLabel[action]}
-            </Button>
-          ))}
-        </div>
-      </Td>
-    </Tr>
-  );
-
-  const renderBookingGroup = (group: RecipientBookingGroup) => {
+  const renderBookingRow = (group: RecipientBookingGroup) => {
     const primary = group.bookings[0];
     if (!primary) return null;
-    if (group.bookings.length === 1) return renderBookingRow(primary);
 
-    const orderId = group.orderId!;
-    const isExpanded = expandedOrders.has(orderId);
+    const rowKey = group.orderId ?? primary.id;
+    const isGroup = group.bookings.length > 1;
     const totalPrice = group.bookings.reduce((sum, booking) => sum + Number(booking.totalPrice), 0);
     const allSamePayment = group.bookings.every((booking) => booking.paymentStatus === primary.paymentStatus);
     const allSameStatus = group.bookings.every((booking) => booking.bookingStatus === primary.bookingStatus);
+    const distinctSurfaceIds = new Set(group.bookings.map((booking) => booking.courtSurface?.id ?? "none"));
+    const surfaceLabel =
+      distinctSurfaceIds.size === 1
+        ? primary.courtSurface
+          ? `${primary.courtSurface.name} (${primary.courtSurface.code})`
+          : "Chưa gán sân"
+        : `${distinctSurfaceIds.size} sân`;
 
     return (
-      <Fragment key={orderId}>
-        <Tr className="bg-emerald-50/40">
-          <Td className="font-medium text-slate-800">{primary.user?.fullName}</Td>
-          <Td className="text-slate-600">{primary.user?.phone || "Chưa cung cấp"}</Td>
-          <Td className="text-slate-600">{primary.courtSurface ? `${primary.courtSurface.name} (${primary.courtSurface.code})` : "Chưa gán sân con"}</Td>
-          <Td colSpan={2} className="text-slate-600">
-            <button
-              type="button"
-              onClick={() => toggleOrderExpanded(orderId)}
-              className="flex items-center gap-1 font-semibold text-emerald-700 hover:underline"
+      <Tr key={rowKey} className={isGroup ? "bg-emerald-50/40" : undefined}>
+        <Td className="font-medium text-slate-800">{primary.user?.fullName}</Td>
+        <Td className="text-slate-600">{primary.user?.phone || "Chưa cung cấp"}</Td>
+        <Td className="text-slate-600">{surfaceLabel}</Td>
+        <Td className="text-slate-600">{group.bookings.length} khung giờ</Td>
+        <Td>
+          {allSamePayment ? (
+            <span
+              className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                paymentStatusMeta[primary.paymentStatus]?.className ?? "bg-slate-100 text-slate-600"
+              }`}
             >
-              {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              {group.bookings.length} khung giờ
-            </button>
-          </Td>
-          <Td className="text-slate-600">{allSamePayment ? primary.paymentStatus : "Nhiều trạng thái"}</Td>
-          <Td>
-            {allSameStatus ? (
-              <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(primary.bookingStatus)}`}>{primary.bookingStatus}</span>
-            ) : (
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">Nhiều trạng thái</span>
-            )}
-          </Td>
-          <Td className="text-right font-semibold text-slate-800">{totalPrice.toLocaleString("vi-VN")} đ</Td>
-          <Td />
-        </Tr>
-        {isExpanded ? group.bookings.map((booking) => renderBookingRow(booking, { dim: true })) : null}
-      </Fragment>
+              {paymentStatusMeta[primary.paymentStatus]?.label ?? primary.paymentStatus}
+            </span>
+          ) : (
+            <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-bold text-slate-600">Nhiều trạng thái</span>
+          )}
+        </Td>
+        <Td>
+          {allSameStatus ? (
+            <span
+              className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                bookingStatusMeta[primary.bookingStatus]?.className ?? "bg-slate-100 text-slate-600"
+              }`}
+            >
+              {bookingStatusMeta[primary.bookingStatus]?.label ?? primary.bookingStatus}
+            </span>
+          ) : (
+            <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-bold text-slate-600">Nhiều trạng thái</span>
+          )}
+        </Td>
+        <Td className="text-right font-semibold text-slate-800">{totalPrice.toLocaleString("vi-VN")} đ</Td>
+        <Td>
+          <div className="flex gap-2">
+            {!isGroup &&
+              actionsForStatus(primary.bookingStatus).map((action) => (
+                <Button
+                  key={action}
+                  variant={action === "reject" || action === "no-show" ? "danger" : "secondary"}
+                  disabled={statusMutation.isPending}
+                  onClick={() => run(primary.id, action)}
+                >
+                  {actionLabel[action]}
+                </Button>
+              ))}
+            <Button variant="secondary" onClick={() => setOrderDetail(group)}>
+              Chi tiết
+            </Button>
+          </div>
+        </Td>
+      </Tr>
     );
   };
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-800">Quản lý Đơn đặt sân</h1>
-          <p className="text-slate-600">Theo dõi, lọc và xử lý các booking cho sân của bạn.</p>
-        </div>
-        <div className="flex overflow-hidden rounded-xl border border-slate-200 bg-white">
-          <button
-            type="button"
-            onClick={() => setViewMode("table")}
-            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-bold transition ${viewMode === "table" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
-          >
-            <Table2 className="h-4 w-4" />
-            Bảng
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode("calendar")}
-            className={`flex items-center gap-1.5 px-3 py-2 text-sm font-bold transition ${viewMode === "calendar" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
-          >
-            <CalendarDays className="h-4 w-4" />
-            Lịch
-          </button>
-        </div>
-      </div>
+      <PageHero
+        eyebrow="Vận hành"
+        title="Quản lý Đơn đặt sân"
+        subtitle="Theo dõi, lọc và xử lý các booking cho sân của bạn."
+        actions={
+          <div className="flex overflow-hidden rounded-xl border border-white/20 bg-white/10 backdrop-blur">
+            <button
+              type="button"
+              onClick={() => setViewMode("table")}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-bold transition ${viewMode === "table" ? "bg-white text-emerald-800" : "text-white/80 hover:bg-white/10"}`}
+            >
+              <Table2 className="h-4 w-4" />
+              Bảng
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("calendar")}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-bold transition ${viewMode === "calendar" ? "bg-white text-emerald-800" : "text-white/80 hover:bg-white/10"}`}
+            >
+              <CalendarDays className="h-4 w-4" />
+              Lịch
+            </button>
+          </div>
+        }
+      />
 
       {viewMode === "table" ? (
-        <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 md:grid-cols-3">
-          <Select
-            label="Trạng thái"
-            value={filters.status}
-            onChange={(e) => {
-              setPage(1);
-              setFilters({ ...filters, status: e.target.value });
-            }}
-            options={[
-              { value: "", label: "Tất cả trạng thái" },
-              ...["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"].map((val) => ({ value: val, label: val }))
-            ]}
-          />
-          <Input
-            label="Từ ngày"
-            type="date"
-            value={filters.fromDate}
-            onChange={(e) => {
-              setPage(1);
-              setFilters({ ...filters, fromDate: e.target.value });
-            }}
-          />
-          <Input
-            label="Đến ngày"
-            type="date"
-            value={filters.toDate}
-            onChange={(e) => {
-              setPage(1);
-              setFilters({ ...filters, toDate: e.target.value });
-            }}
-          />
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <p className="mb-3 flex items-center gap-1.5 text-xs font-black uppercase tracking-wide text-slate-500">
+            <Filter className="h-3.5 w-3.5" />
+            Bộ lọc
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <Select
+              label="Trạng thái"
+              value={status}
+              onChange={(e) => {
+                setPage(1);
+                setStatus(e.target.value);
+              }}
+              options={[
+                { value: "", label: "Tất cả trạng thái" },
+                ...["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"].map((val) => ({
+                  value: val,
+                  label: bookingStatusMeta[val]?.label ?? val
+                }))
+              ]}
+            />
+            <div className="flex overflow-hidden rounded-lg border border-emerald-200 text-xs font-bold">
+              {(["day", "week", "month", "custom"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => switchRangeMode(mode)}
+                  className={`px-3 py-2 transition ${rangeMode === mode ? "bg-emerald-600 text-white" : "bg-white text-emerald-700 hover:bg-emerald-50"}`}
+                >
+                  {rangeModeLabel[mode]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {rangeMode === "custom" ? (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <Input
+                label="Từ ngày"
+                type="date"
+                value={customFrom}
+                onChange={(e) => {
+                  setPage(1);
+                  setCustomFrom(e.target.value);
+                }}
+              />
+              <Input
+                label="Đến ngày"
+                type="date"
+                value={customTo}
+                onChange={(e) => {
+                  setPage(1);
+                  setCustomTo(e.target.value);
+                }}
+              />
+            </div>
+          ) : (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button variant="secondary" onClick={() => shiftPeriod(-1)}>
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="rounded-xl bg-slate-50 px-4 py-1.5 text-sm font-black text-slate-800 ring-1 ring-slate-200">{periodLabel}</span>
+              <Button variant="secondary" onClick={() => shiftPeriod(1)}>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button variant="secondary" onClick={jumpToTodayPeriod}>
+                Hôm nay
+              </Button>
+              {rangeMode === "day" || rangeMode === "week" ? (
+                <span className="relative inline-flex">
+                  <Button variant="secondary" onClick={() => openPicker(periodDateInputRef.current)} title="Chọn ngày">
+                    <CalendarDays className="h-4 w-4" />
+                    Chọn ngày
+                  </Button>
+                  <input
+                    ref={periodDateInputRef}
+                    type="date"
+                    value={formatYmd(periodAnchor)}
+                    onChange={(e) => {
+                      if (!e.target.value) return;
+                      setPeriodAnchor(new Date(`${e.target.value}T00:00:00`));
+                      setPage(1);
+                    }}
+                    className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
+                    tabIndex={-1}
+                    aria-hidden="true"
+                  />
+                </span>
+              ) : (
+                <Button variant="secondary" onClick={openMonthPicker} title="Chọn tháng">
+                  <CalendarDays className="h-4 w-4" />
+                  Chọn tháng
+                </Button>
+              )}
+            </div>
+          )}
         </div>
       ) : (
-        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4">
-          <Button variant="secondary" onClick={() => setCalendarDate(shiftDate(calendarDate, -1))}>
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <Input label="Ngày xem lịch" type="date" value={calendarDate} onChange={(e) => setCalendarDate(e.target.value)} />
-          <Button variant="secondary" onClick={() => setCalendarDate(shiftDate(calendarDate, 1))}>
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-          <Button variant="secondary" onClick={() => setCalendarDate(todayValue())}>
-            Hôm nay
-          </Button>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4">
+          <p className="mb-3 flex items-center gap-1.5 text-xs font-black uppercase tracking-wide text-slate-500">
+            <CalendarDays className="h-3.5 w-3.5" />
+            Ngày xem lịch
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" onClick={() => setCalendarDate(shiftDate(calendarDate, -1))}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Input type="date" value={calendarDate} onChange={(e) => setCalendarDate(e.target.value)} />
+            <Button variant="secondary" onClick={() => setCalendarDate(shiftDate(calendarDate, 1))}>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+            <Button variant="secondary" onClick={() => setCalendarDate(todayValue())}>
+              Hôm nay
+            </Button>
+          </div>
         </div>
       )}
 
@@ -315,16 +476,15 @@ export function RecipientBookingsPage() {
                 <tr>
                   <SortableTh label="Khách hàng" field="customerName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
                   <Th>Số điện thoại</Th>
-                  <Th>Sân con</Th>
-                  <SortableTh label="Ngày chơi" field="bookingDate" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-                  <Th>Thời gian</Th>
+                  <Th>Sân</Th>
+                  <Th>Khung giờ</Th>
                   <SortableTh label="Thanh toán" field="paymentStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
                   <SortableTh label="Trạng thái" field="bookingStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
                   <SortableTh className="text-right" label="Tổng cộng" field="totalPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
                   <Th></Th>
                 </tr>
               </THead>
-              <TBody>{bookings.data?.items.map((group) => renderBookingGroup(group))}</TBody>
+              <TBody>{bookings.data?.items.map((group) => renderBookingRow(group))}</TBody>
             </Table>
 
             {bookings.data && bookings.data.meta.totalPages > 1 && (
@@ -372,15 +532,52 @@ export function RecipientBookingsPage() {
 
       {calendarDetail ? (
         <Overlay onClose={() => setCalendarDetail(null)}>
-          <h2 className="text-lg font-bold text-slate-800">{calendarDetail.user?.fullName ?? "Khách vãng lai"}</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            {calendarDetail.startTime.slice(11, 16)} - {calendarDetail.endTime.slice(11, 16)} · {calendarDetail.courtSurface ? `${calendarDetail.courtSurface.name} (${calendarDetail.courtSurface.code})` : "Chưa gán sân con"}
-          </p>
-          <div className="mt-3 space-y-1.5 text-sm text-slate-600">
-            <p>SĐT: {calendarDetail.user?.phone || "Chưa cung cấp"}</p>
-            <p>Thanh toán: {calendarDetail.paymentStatus}</p>
-            <p>Tổng tiền: {Number(calendarDetail.totalPrice).toLocaleString("vi-VN")} đ</p>
+          <div className="mb-4 flex items-center gap-3 border-b border-slate-100 pb-4">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+              <User className="h-5 w-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 className="truncate text-base font-black text-slate-800">{calendarDetail.user?.fullName ?? "Khách vãng lai"}</h2>
+              {calendarDetail.user?.phone ? (
+                <p className="flex items-center gap-1 text-sm text-slate-500">
+                  <PhoneCall className="h-3.5 w-3.5 shrink-0" />
+                  {calendarDetail.user.phone}
+                </p>
+              ) : null}
+            </div>
+            <span
+              className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                bookingStatusMeta[calendarDetail.bookingStatus]?.className ?? "bg-slate-100 text-slate-600"
+              }`}
+            >
+              {bookingStatusMeta[calendarDetail.bookingStatus]?.label ?? calendarDetail.bookingStatus}
+            </span>
           </div>
+
+          <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+            <p className="flex items-center gap-1.5">
+              <LayoutGrid className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+              {calendarDetail.courtSurface ? `${calendarDetail.courtSurface.name} (${calendarDetail.courtSurface.code})` : "Chưa gán sân"}
+            </p>
+            <p className="flex items-center gap-1.5">
+              <Clock className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+              {calendarDetail.startTime.slice(11, 16)} - {calendarDetail.endTime.slice(11, 16)}
+            </p>
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <span
+                className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+                  paymentStatusMeta[calendarDetail.paymentStatus]?.className ?? "bg-slate-100 text-slate-600"
+                }`}
+              >
+                {paymentStatusMeta[calendarDetail.paymentStatus]?.label ?? calendarDetail.paymentStatus}
+              </span>
+              <span className="flex items-center gap-1 font-bold text-slate-800">
+                <Wallet className="h-3.5 w-3.5 shrink-0" />
+                {Number(calendarDetail.totalPrice).toLocaleString("vi-VN")} đ
+              </span>
+            </div>
+          </div>
+
           <div className="mt-4 flex flex-wrap gap-2">
             {actionsForStatus(calendarDetail.bookingStatus).map((action) => (
               <Button
@@ -393,6 +590,113 @@ export function RecipientBookingsPage() {
               </Button>
             ))}
             {actionsForStatus(calendarDetail.bookingStatus).length === 0 ? <p className="text-sm text-slate-500">Đơn này không còn thao tác nào khả dụng.</p> : null}
+          </div>
+        </Overlay>
+      ) : null}
+
+      {orderDetail ? (
+        <Overlay onClose={() => setOrderDetail(null)} widthClassName="max-w-xl">
+          <div className="mb-4 flex items-center gap-3 border-b border-slate-100 pb-4">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+              <User className="h-5 w-5" />
+            </span>
+            <h2 className="truncate text-base font-black text-slate-800">{orderDetail.bookings[0]?.user?.fullName ?? "Khách vãng lai"}</h2>
+          </div>
+
+          <div className="mb-3 flex gap-2">
+            <div className="flex-1 rounded-xl bg-slate-50 px-3 py-2.5">
+              <p className="text-xs font-semibold text-slate-500">Số khung giờ</p>
+              <p className="text-lg font-black text-slate-800">{orderDetail.bookings.length}</p>
+            </div>
+            <div className="flex-1 rounded-xl bg-slate-50 px-3 py-2.5">
+              <p className="text-xs font-semibold text-slate-500">Tổng tiền</p>
+              <p className="text-lg font-black text-emerald-700">
+                {orderDetail.bookings.reduce((sum, booking) => sum + Number(booking.totalPrice), 0).toLocaleString("vi-VN")}đ
+              </p>
+            </div>
+          </div>
+
+          <div className="max-h-[60vh] space-y-2 overflow-y-auto pr-1">
+            {orderDetail.bookings.map((booking) => {
+              const statusMeta = bookingStatusMeta[booking.bookingStatus] ?? { label: booking.bookingStatus, className: "bg-slate-100 text-slate-600" };
+              const paymentMeta = paymentStatusMeta[booking.paymentStatus] ?? { label: booking.paymentStatus, className: "bg-slate-100 text-slate-600" };
+              return (
+                <div key={booking.id} className="rounded-xl border border-slate-200 p-3 transition hover:border-emerald-200 hover:bg-emerald-50/30">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-sm font-bold text-slate-800">
+                      <LayoutGrid className="h-4 w-4 shrink-0 text-slate-400" />
+                      {booking.courtSurface ? `${booking.courtSurface.name} (${booking.courtSurface.code})` : "Chưa gán sân"}
+                    </div>
+                    <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-bold ${statusMeta.className}`}>{statusMeta.label}</span>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
+                    <span className="flex items-center gap-1">
+                      <CalendarDays className="h-3.5 w-3.5 shrink-0" />
+                      {new Date(booking.bookingDate).toLocaleDateString("vi-VN")}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Clock className="h-3.5 w-3.5 shrink-0" />
+                      {booking.startTime.slice(11, 16)} - {booking.endTime.slice(11, 16)}
+                    </span>
+                    <span className={`rounded-full px-2 py-0.5 font-bold ${paymentMeta.className}`}>{paymentMeta.label}</span>
+                    <span className="ml-auto flex items-center gap-1 font-bold text-slate-700">
+                      <Wallet className="h-3.5 w-3.5 shrink-0" />
+                      {Number(booking.totalPrice).toLocaleString("vi-VN")}đ
+                    </span>
+                  </div>
+                  {actionsForStatus(booking.bookingStatus).length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-2 border-t border-slate-100 pt-2">
+                      {actionsForStatus(booking.bookingStatus).map((action) => (
+                        <Button
+                          key={action}
+                          variant={action === "reject" || action === "no-show" ? "danger" : "secondary"}
+                          disabled={statusMutation.isPending}
+                          onClick={() => run(booking.id, action)}
+                        >
+                          {actionLabel[action]}
+                        </Button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </Overlay>
+      ) : null}
+
+      {monthPickerOpen ? (
+        <Overlay onClose={() => setMonthPickerOpen(false)} widthClassName="max-w-sm">
+          <h2 className="mb-3 text-base font-black text-slate-800">Chọn tháng</h2>
+          <div className="mb-4 flex items-center justify-center gap-4">
+            <Button variant="secondary" onClick={() => setPickerYear((y) => y - 1)}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <span className="min-w-[4rem] text-center text-lg font-black text-slate-800">{pickerYear}</span>
+            <Button variant="secondary" onClick={() => setPickerYear((y) => y + 1)}>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            {Array.from({ length: 12 }).map((_, m) => {
+              const isSelected = pickerYear === periodAnchor.getFullYear() && m === periodAnchor.getMonth();
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => {
+                    setPeriodAnchor(new Date(pickerYear, m, 1));
+                    setPage(1);
+                    setMonthPickerOpen(false);
+                  }}
+                  className={`rounded-lg px-2 py-2 text-sm font-bold transition ${
+                    isSelected ? "bg-emerald-600 text-white" : "bg-slate-50 text-slate-700 hover:bg-emerald-50"
+                  }`}
+                >
+                  {new Date(2000, m, 1).toLocaleDateString("vi-VN", { month: "short" })}
+                </button>
+              );
+            })}
           </div>
         </Overlay>
       ) : null}

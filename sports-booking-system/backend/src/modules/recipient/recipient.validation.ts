@@ -63,6 +63,24 @@ export const walkInBookingOrderSchema = z.object({
   })
 });
 
+export const lockSlotSchema = z.object({
+  params: z.object({
+    id: z.string().trim().min(1).max(40)
+  }),
+  body: z.object({
+    bookingDate: z.string().date(),
+    startTime: z.string().regex(/^\d{2}:\d{2}$/),
+    minutes: z.number().int().positive().max(240),
+    reason: z.string().trim().max(200).optional()
+  })
+});
+
+export const blockIdParamSchema = z.object({
+  params: z.object({
+    id: z.string().uuid()
+  })
+});
+
 export const customerLookupQuerySchema = z.object({
   query: z.object({
     phone: z.string().trim().min(4).max(30)

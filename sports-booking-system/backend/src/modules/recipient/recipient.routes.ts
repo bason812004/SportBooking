@@ -5,10 +5,12 @@ import { validate } from "../../middlewares/validate.middleware.js";
 import { recipientController } from "./recipient.controller.js";
 import { bookingQuerySchema, calendarQuerySchema } from "../partner/partner.validation.js";
 import {
+  blockIdParamSchema,
   bookingExtendSchema,
   courtSurfaceStatusSchema,
   customerIdParamSchema,
   customerLookupQuerySchema,
+  lockSlotSchema,
   operationsQuerySchema,
   paymentIdParamSchema,
   recurringWalkInBookingSchema,
@@ -31,6 +33,8 @@ recipientRoutes.get("/calendar", validate(calendarQuerySchema), recipientControl
 recipientRoutes.get("/court-surfaces", recipientController.courtSurfaces);
 recipientRoutes.put("/court-surfaces/:id/status", validate(courtSurfaceStatusSchema), recipientController.updateCourtSurfaceStatus);
 recipientRoutes.get("/court-surfaces/:id/availability", validate(surfaceAvailabilityQuerySchema), recipientController.surfaceAvailability);
+recipientRoutes.post("/court-surfaces/:id/lock", validate(lockSlotSchema), recipientController.lockSurfaceSlot);
+recipientRoutes.post("/availability-blocks/:id/unlock", validate(blockIdParamSchema), recipientController.unlockSurfaceSlot);
 recipientRoutes.get("/operations", validate(operationsQuerySchema), recipientController.operations);
 recipientRoutes.post("/bookings/:id/extend", validate(bookingExtendSchema), recipientController.extendBooking);
 recipientRoutes.get("/customers/lookup", validate(customerLookupQuerySchema), recipientController.lookupCustomers);

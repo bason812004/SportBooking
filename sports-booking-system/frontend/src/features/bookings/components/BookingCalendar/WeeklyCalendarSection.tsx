@@ -44,6 +44,9 @@ export type WeeklyCalendarSectionProps = {
    * adding to it.
    */
   selectionMode?: "multi-day" | "single-day";
+  /** Staff-only: lets clicking a BOOKED/BLOCKED slot open a management action. Off by default. */
+  manageable?: boolean;
+  onManage?: (slot: WeeklyScheduleSlot) => void;
 };
 
 export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
@@ -62,7 +65,9 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
     language,
     forceDayOnCompact = true,
     rightSlot,
-    selectionMode = "multi-day"
+    selectionMode = "multi-day",
+    manageable,
+    onManage
   } = props;
 
   const { isCompact } = useResponsiveLayout();
@@ -187,6 +192,8 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
                 onToggle={toggleSlot}
                 onSelectDay={enterDayView}
                 language={language}
+                manageable={manageable}
+                onManage={onManage}
               />
             ) : (
               <DayView
@@ -200,6 +207,8 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
                   setView("WEEK");
                 }}
                 language={language}
+                manageable={manageable}
+                onManage={onManage}
               />
             )
           ) : (

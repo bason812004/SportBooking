@@ -21,6 +21,8 @@ export type BookingCalendarProps = {
   onToggle: (slot: WeeklyScheduleSlot) => void;
   onSelectDay: (date: Date) => void;
   language: Language;
+  manageable?: boolean;
+  onManage?: (slot: WeeklyScheduleSlot) => void;
 };
 
 export function BookingCalendar({
@@ -29,7 +31,9 @@ export function BookingCalendar({
   selected,
   onToggle,
   onSelectDay,
-  language
+  language,
+  manageable,
+  onManage
 }: BookingCalendarProps) {
   const hours = useMemo(
     () => buildHours(response.openingTime, response.closingTime),
@@ -100,6 +104,8 @@ export function BookingCalendar({
                 selectedKeys={selectedKeys}
                 onToggle={onToggle}
                 language={language}
+                manageable={manageable}
+                onManage={onManage}
               />
             );
           })}

@@ -83,8 +83,15 @@ export type RecipientOperations = {
 export type RecipientSurfaceAvailabilitySlot = {
   startTime: string;
   endTime: string;
-  status: "AVAILABLE" | "BOOKED";
+  status: "AVAILABLE" | "BOOKED" | "BLOCKED";
   price: number;
+  bookingId?: string | null;
+  bookingCode?: string | null;
+  bookingStatus?: string | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  blockId?: string | null;
+  reason?: string | null;
 };
 
 export type RecipientSurfaceAvailability = {
@@ -264,6 +271,16 @@ export const recipientApi = {
 
   async surfaceAvailability(courtSurfaceId: string, date: string) {
     const { data } = await api.get<ApiResponse<RecipientSurfaceAvailability>>(`/recipient/court-surfaces/${courtSurfaceId}/availability`, { params: { date } });
+    return data.data;
+  },
+
+  async lockSlot(courtSurfaceId: string, payload: { bookingDate: string; startTime: string; minutes: number; reason?: string }) {
+    const { data } = await api.post<ApiResponse<{ id: string }>>(`/recipient/court-surfaces/${courtSurfaceId}/lock`, payload);
+    return data.data;
+  },
+
+  async unlockSlot(blockId: string) {
+    const { data } = await api.post<ApiResponse<{ id: string }>>(`/recipient/availability-blocks/${blockId}/unlock`);
     return data.data;
   },
 

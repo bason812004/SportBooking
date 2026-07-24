@@ -708,6 +708,12 @@ export type WeeklyScheduleSlot = {
   predictedOccupancyRate: number | null;
   blockReason: string | null;
   bookingCode: string | null;
+  /** Staff-only fields (StaffScheduleGrid) — undefined on the customer-facing calendar. */
+  bookingId?: string | null;
+  bookingStatus?: string | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  blockId?: string | null;
 };
 
 export type WeeklyScheduleDay = {

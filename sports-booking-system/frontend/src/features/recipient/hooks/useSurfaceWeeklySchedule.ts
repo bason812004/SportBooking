@@ -29,13 +29,19 @@ export function useSurfaceWeeklySchedule(courtSurfaceId: string, weekStart: Date
   let response: WeeklyScheduleResponse | undefined;
   if (loaded) {
     const first = queries[0].data!;
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const nowTime = new Date().toTimeString().slice(0, 5);
     const days = queries.map((q, index) => {
       const day = q.data!;
+      const date = dates[index];
       const slots: WeeklyScheduleSlot[] = day.slots.map((slot) => ({
         date: dates[index],
         startTime: slot.startTime,
         endTime: slot.endTime,
-        status: slot.status,
+        status:
+          slot.status === "AVAILABLE" && (date < todayStr || (date === todayStr && slot.startTime <= nowTime))
+            ? "OUTSIDE_HOURS"
+            : slot.status,
         basePrice: slot.price,
         finalPrice: slot.price,
         dynamicAdjustmentAmount: 0,
@@ -44,8 +50,13 @@ export function useSurfaceWeeklySchedule(courtSurfaceId: string, weekStart: Date
         predictionLevel: null,
         predictionStatus: "INSUFFICIENT_DATA",
         predictedOccupancyRate: null,
-        blockReason: null,
-        bookingCode: null
+        blockReason: slot.reason ?? null,
+        bookingCode: slot.bookingCode ?? null,
+        bookingId: slot.bookingId ?? null,
+        bookingStatus: slot.bookingStatus ?? null,
+        customerName: slot.customerName ?? null,
+        customerPhone: slot.customerPhone ?? null,
+        blockId: slot.blockId ?? null
       }));
       return {
         date: dates[index],

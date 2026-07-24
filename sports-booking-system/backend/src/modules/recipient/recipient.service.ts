@@ -470,15 +470,33 @@ export const recipientService = {
     });
     if (!court) throw new NotFoundError("Khong tim thay co so duoc giao quan ly");
 
-    const bookings = await prisma.booking.findMany({
-      where: {
-        courtId,
-        OR: [{ courtSurfaceId }, { courtSurfaceId: null }],
-        bookingDate: toDbDate(date),
-        bookingStatus: { in: activeOperationStatuses }
-      },
-      select: { startTime: true, endTime: true }
-    });
+    const [bookings, blocks] = await Promise.all([
+      prisma.booking.findMany({
+        where: {
+          courtId,
+          OR: [{ courtSurfaceId }, { courtSurfaceId: null }],
+          bookingDate: toDbDate(date),
+          bookingStatus: { in: activeOperationStatuses }
+        },
+        select: {
+          id: true,
+          bookingCode: true,
+          bookingStatus: true,
+          startTime: true,
+          endTime: true,
+          user: { select: { fullName: true, phone: true } }
+        }
+      }),
+      prisma.courtAvailabilityBlock.findMany({
+        where: {
+          courtId,
+          OR: [{ courtSurfaceId }, { courtSurfaceId: null }],
+          blockDate: toDbDate(date),
+          status: "ACTIVE"
+        },
+        select: { id: true, startTime: true, endTime: true, reason: true }
+      })
+    ]);
 
     const opening = ceilToFullHour(timeToMinutes(dbTime(court.openingTime)));
     const closing = floorToFullHour(timeToMinutes(dbTime(court.closingTime)));
@@ -486,9 +504,21 @@ export const recipientService = {
     const slots = [];
     for (let cursor = opening; cursor < closing; cursor += 60) {
       const slot = { startTime: minutesToTime(cursor), endTime: minutesToTime(cursor + 60) };
-      const status = bookings.some((booking) => overlapsSlot(slot, booking)) ? "BOOKED" : "AVAILABLE";
+      const booking = bookings.find((item) => overlapsSlot(slot, item));
+      const block = !booking ? blocks.find((item) => overlapsSlot(slot, item)) : undefined;
       const price = slotPrice(slot, date, court.prices);
-      slots.push({ ...slot, status, price });
+      slots.push({
+        ...slot,
+        status: booking ? "BOOKED" : block ? "BLOCKED" : "AVAILABLE",
+        price,
+        bookingId: booking?.id ?? null,
+        bookingCode: booking?.bookingCode ?? null,
+        bookingStatus: booking?.bookingStatus ?? null,
+        customerName: booking?.user.fullName ?? null,
+        customerPhone: booking?.user.phone ?? null,
+        blockId: block?.id ?? null,
+        reason: block?.reason ?? null
+      });
     }
 
     return {
@@ -499,6 +529,49 @@ export const recipientService = {
       slotDurationMinutes: 60,
       slots
     };
+  },
+
+  async lockSurfaceSlot(
+    userId: string,
+    courtSurfaceId: string,
+    input: { bookingDate: string; startTime: string; minutes: number; reason?: string }
+  ) {
+    const courtId = await getManagedCourtId(userId);
+    const surface = await prisma.courtSurface.findFirst({ where: { id: courtSurfaceId, courtId } });
+    if (!surface) throw new NotFoundError("Khong tim thay san con thuoc quyen quan ly cua ban");
+
+    const startTime = timeToDate(input.startTime);
+    const endTime = timeToDate(minutesToTime(timeToMinutes(input.startTime) + input.minutes));
+
+    const conflict = await prisma.booking.findFirst({
+      where: {
+        courtId,
+        OR: [{ courtSurfaceId }, { courtSurfaceId: null }],
+        bookingDate: toDbDate(input.bookingDate),
+        bookingStatus: { in: activeOperationStatuses },
+        ...overlapWhere(startTime, endTime)
+      }
+    });
+    if (conflict) throw new ConflictError("Khung gio nay da co khach dat, khong the khoa", "LOCK_SLOT_CONFLICT");
+
+    return prisma.courtAvailabilityBlock.create({
+      data: {
+        courtId,
+        courtSurfaceId,
+        blockDate: toDbDate(input.bookingDate),
+        startTime,
+        endTime,
+        reason: input.reason,
+        status: "ACTIVE"
+      }
+    });
+  },
+
+  async unlockSurfaceSlot(userId: string, blockId: string) {
+    const courtId = await getManagedCourtId(userId);
+    const block = await prisma.courtAvailabilityBlock.findFirst({ where: { id: blockId, courtId } });
+    if (!block) throw new NotFoundError("Khong tim thay lich khoa nay");
+    return prisma.courtAvailabilityBlock.update({ where: { id: blockId }, data: { status: "INACTIVE" } });
   },
 
   async operations(userId: string, query: { date?: string; nowTime?: string }) {

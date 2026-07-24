@@ -87,7 +87,7 @@ export function DashboardLayout() {
 
   return (
     <div className="min-h-screen bg-[#f7f8f8] text-[#111811]">
-      <aside className="group fixed inset-y-0 left-0 z-20 hidden w-20 flex-col overflow-hidden border-r border-[#c8d8c3] bg-[#eaf3e7] transition-[width] duration-200 ease-in-out md:flex hover:w-80">
+      <aside className="group fixed inset-y-0 left-0 z-30 hidden w-20 flex-col overflow-hidden border-r border-[#c8d8c3] bg-[#eaf3e7] transition-[width] duration-200 ease-in-out md:flex hover:w-80">
         <div className="shrink-0 px-6 pb-4 pt-6">
           <p className="hidden truncate text-3xl font-extrabold leading-tight text-[#02712a] group-hover:block">{portalTitle}</p>
           <p className="mt-2 hidden truncate font-semibold tracking-widest group-hover:block">{portalSubtitle}</p>

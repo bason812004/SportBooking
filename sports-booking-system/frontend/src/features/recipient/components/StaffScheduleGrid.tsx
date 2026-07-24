@@ -6,6 +6,7 @@ import { formatYmd, startOfWeek } from "../../bookings/components/BookingCalenda
 import type { WeeklyScheduleSlot } from "../../../types/api";
 import { useSurfaceWeeklySchedule } from "../hooks/useSurfaceWeeklySchedule";
 import { useWalkInBooking } from "./WalkInBookingForm";
+import { SlotManageModal } from "./SlotManageModal";
 
 type WalkIn = ReturnType<typeof useWalkInBooking>;
 
@@ -45,6 +46,7 @@ export function StaffScheduleGrid({
 
   const [weekStart, setWeekStart] = useState(() => startOfWeek(bookingDate));
   const [focusedDate, setFocusedDate] = useState(() => new Date(`${bookingDate}T00:00:00`));
+  const [managingSlot, setManagingSlot] = useState<WeeklyScheduleSlot | null>(null);
 
   const schedule = useSurfaceWeeklySchedule(courtSurfaceId, weekStart, surfaceName);
 
@@ -138,8 +140,20 @@ export function StaffScheduleGrid({
           language="vi"
           forceDayOnCompact
           selectionMode="multi-day"
+          manageable
+          onManage={setManagingSlot}
         />
       )}
+
+      {managingSlot ? (
+        <SlotManageModal
+          slot={managingSlot}
+          courtSurfaceId={courtSurfaceId}
+          surfaceName={surfaceName}
+          onClose={() => setManagingSlot(null)}
+          onChanged={schedule.refetch}
+        />
+      ) : null}
     </div>
   );
 }
