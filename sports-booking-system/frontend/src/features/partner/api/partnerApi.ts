@@ -87,6 +87,11 @@ export type PartnerCalendar = {
   items: PartnerCalendarBooking[];
 };
 
+export type PartnerBookingGroup = {
+  orderId: string | null;
+  bookings: Booking[];
+};
+
 export type PartnerVoucherPayload = {
   courtId?: string | null;
   code: string;
@@ -180,7 +185,7 @@ export const partnerApi = {
     const cleanParams = Object.fromEntries(
       Object.entries(params).filter(([, value]) => value !== "" && value !== undefined)
     );
-    const { data } = await api.get<ApiResponse<Paginated<Booking>>>("/partner/bookings", {
+    const { data } = await api.get<ApiResponse<Paginated<PartnerBookingGroup>>>("/partner/bookings", {
       params: cleanParams
     });
     return data.data;

@@ -268,13 +268,11 @@ export const partnerRepository = {
     return prisma.courtService.update({ where: { id: serviceId }, data: { status: "INACTIVE" } });
   },
 
-  bookings(
+  bookingWhere(
     partnerId: string,
-    page: number,
-    limit: number,
-    filters: { courtId?: string; status?: BookingStatus; search?: string; fromDate?: Date; toDate?: Date; sortBy?: string; sortOrder?: string }
-  ) {
-    const where: Prisma.BookingWhereInput = {
+    filters: { courtId?: string; status?: BookingStatus; search?: string; fromDate?: Date; toDate?: Date }
+  ): Prisma.BookingWhereInput {
+    return {
       court: { partnerId },
       courtId: filters.courtId,
       bookingStatus: filters.status,
@@ -290,16 +288,37 @@ export const partnerRepository = {
           ]
         : undefined
     };
-    return prisma.$transaction([
-      prisma.booking.findMany({
-        where,
-        include: { user: { select: { id: true, fullName: true, email: true, phone: true } }, court: true },
-        orderBy: bookingOrderBy(filters.sortBy, filters.sortOrder),
-        skip: (page - 1) * limit,
-        take: limit
-      }),
-      prisma.booking.count({ where })
-    ]);
+  },
+
+  bookingMatchingRows(where: Prisma.BookingWhereInput, sortBy?: string, sortOrder?: string) {
+    return prisma.booking.findMany({
+      where,
+      orderBy: bookingOrderBy(sortBy, sortOrder),
+      select: { id: true, bookingOrderId: true }
+    });
+  },
+
+  bookingsByOrderIds(partnerId: string, orderIds: string[]) {
+    return prisma.booking.findMany({
+      where: { court: { partnerId }, bookingOrderId: { in: orderIds } },
+      include: {
+        user: { select: { id: true, fullName: true, email: true, phone: true } },
+        court: true,
+        courtSurface: { select: { id: true, name: true, code: true } }
+      },
+      orderBy: [{ bookingDate: "asc" }, { startTime: "asc" }]
+    });
+  },
+
+  bookingsByIds(partnerId: string, ids: string[]) {
+    return prisma.booking.findMany({
+      where: { court: { partnerId }, id: { in: ids } },
+      include: {
+        user: { select: { id: true, fullName: true, email: true, phone: true } },
+        court: true,
+        courtSurface: { select: { id: true, name: true, code: true } }
+      }
+    });
   },
 
   bookingByPartner(bookingId: string, partnerId: string) {

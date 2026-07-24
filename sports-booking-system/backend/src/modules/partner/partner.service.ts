@@ -259,15 +259,57 @@ export const partnerService = {
     if (query.fromDate && query.toDate && query.fromDate > query.toDate) {
       throw new ValidationError("Khoang ngay khong hop le");
     }
-    const [items, total] = await partnerRepository.bookings(profile.id, page, limit, {
+
+    const where = partnerRepository.bookingWhere(profile.id, {
       courtId: query.courtId,
       status: query.status,
       search: query.search,
       fromDate: query.fromDate ? toDbDate(query.fromDate) : undefined,
-      toDate: query.toDate ? toDbDate(query.toDate) : undefined,
-      sortBy: query.sortBy,
-      sortOrder: query.sortOrder
+      toDate: query.toDate ? toDbDate(query.toDate) : undefined
     });
+
+    // Bookings created together as one order (multi-slot/multi-surface walk-in,
+    // or a customer's multi-day booking) share a bookingOrderId and should
+    // page/display as a single group, not as N separate rows. A group can't be
+    // split across pages, so paginate over deduped group keys first.
+    const matchingRows = await partnerRepository.bookingMatchingRows(where, query.sortBy, query.sortOrder);
+
+    const groupKeys: string[] = [];
+    const isOrderKey = new Map<string, boolean>();
+    const seen = new Set<string>();
+    for (const row of matchingRows) {
+      const key = row.bookingOrderId ?? row.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      groupKeys.push(key);
+      isOrderKey.set(key, Boolean(row.bookingOrderId));
+    }
+
+    const total = groupKeys.length;
+    const pageKeys = groupKeys.slice((page - 1) * limit, (page - 1) * limit + limit);
+    const orderIds = pageKeys.filter((key) => isOrderKey.get(key));
+    const standaloneIds = pageKeys.filter((key) => !isOrderKey.get(key));
+
+    const [orderBookings, standaloneBookings] = await Promise.all([
+      partnerRepository.bookingsByOrderIds(profile.id, orderIds),
+      partnerRepository.bookingsByIds(profile.id, standaloneIds)
+    ]);
+
+    const bookingsByOrderId = new Map<string, typeof orderBookings>();
+    for (const booking of orderBookings) {
+      const key = booking.bookingOrderId!;
+      const list = bookingsByOrderId.get(key);
+      if (list) list.push(booking);
+      else bookingsByOrderId.set(key, [booking]);
+    }
+    const standaloneById = new Map(standaloneBookings.map((booking) => [booking.id, booking]));
+
+    const items = pageKeys.map((key) =>
+      isOrderKey.get(key)
+        ? { orderId: key, bookings: bookingsByOrderId.get(key) ?? [] }
+        : { orderId: null, bookings: [standaloneById.get(key)!] }
+    );
+
     return { items, meta: paginationMeta(page, limit, total) };
   },
 
