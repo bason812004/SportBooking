@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { useMemo, useState } from "react";
 import {
+  Calendar,
   Check,
   Clock3,
   CreditCard,
@@ -18,7 +19,9 @@ import { formatCurrency } from "../../../../lib/format";
 import {
   compareTime,
   formatLongDayLabel,
+  formatWeekRangeLabel,
   predictionLabel,
+  startOfWeek,
   type Language
 } from "./utils";
 
@@ -57,12 +60,25 @@ export type BookingSummaryProps = {
   highestDemandSlot?: WeeklyScheduleSlot | null;
 };
 
+interface WeekGroup {
+  weekStart: Date;
+  weekLabel: string;
+  days: DayGroup[];
+  weekSubtotal: number;
+  unavailableCount: number;
+}
+
+interface DayGroup {
+  date: string;
+  dayLabel: string;
+  slots: WeeklyScheduleSlot[];
+}
+
 export function BookingSummary(props: BookingSummaryProps) {
   const {
     slots,
     courtName,
     selectedDate,
-    focusedDate,
     appliedVoucher,
     voucherInput,
     onChangeVoucherInput,
@@ -85,21 +101,91 @@ export function BookingSummary(props: BookingSummaryProps) {
   } = props;
   const [showAllVouchers, setShowAllVouchers] = useState(false);
 
+  // Sort slots by date + time
   const sorted = useMemo(
-    () => [...slots].sort((a, b) => `${a.date}${a.startTime}`.localeCompare(`${b.date}${b.startTime}`)),
+    () => [...slots].sort((a, b) => {
+      const dc = a.date.localeCompare(b.date);
+      return dc !== 0 ? dc : compareTime(a.startTime, b.startTime);
+    }),
     [slots]
   );
 
+  // Unavailable slots warning
+  const unavailableSlots = useMemo(
+    () => sorted.filter((s) => s.status !== "AVAILABLE"),
+    [sorted]
+  );
+
+  // Group by week → by day
+  const weekGroups = useMemo((): WeekGroup[] => {
+    const weekMap = new Map<string, WeekGroup>();
+
+    for (const slot of sorted) {
+      const slotDate = new Date(`${slot.date}T00:00:00`);
+      const weekStart = startOfWeek(slotDate);
+      const weekKey = weekStart.toISOString();
+      const dayKey = slot.date;
+
+      let week = weekMap.get(weekKey);
+      if (!week) {
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekStart.getDate() + 6);
+        week = {
+          weekStart,
+          weekLabel: formatWeekRangeLabel(weekStart, weekEnd, language),
+          days: [],
+          weekSubtotal: 0,
+          unavailableCount: 0
+        };
+        weekMap.set(weekKey, week);
+      }
+
+      let day = week.days.find((d) => d.date === dayKey);
+      if (!day) {
+        day = {
+          date: dayKey,
+          dayLabel: formatLongDayLabel(slotDate, language),
+          slots: []
+        };
+        week.days.push(day);
+      }
+
+      day.slots.push(slot);
+
+      if (slot.status === "AVAILABLE") {
+        week.weekSubtotal += slot.finalPrice || slot.basePrice || 0;
+      } else {
+        week.unavailableCount += 1;
+      }
+    }
+
+    // Sort days within each week by date
+    for (const week of weekMap.values()) {
+      week.days.sort((a, b) => a.date.localeCompare(b.date));
+      for (const day of week.days) {
+        day.slots.sort((a, b) => compareTime(a.startTime, b.startTime));
+      }
+    }
+
+    return Array.from(weekMap.values()).sort(
+      (a, b) => a.weekStart.getTime() - b.weekStart.getTime()
+    );
+  }, [sorted, language]);
+
+  // Global stats
+  const totalHours = sorted.length;
+  const totalDays = new Set(sorted.map((s) => s.date)).size;
+  const totalWeeks = weekGroups.length;
   const subtotal = useMemo(
-    () => sorted.reduce((sum, slot) => sum + (slot.finalPrice || slot.basePrice || 0), 0),
+    () => sorted.reduce((sum, s) => sum + (s.finalPrice || s.basePrice || 0), 0),
     [sorted]
   );
   const basePriceTotal = useMemo(
-    () => sorted.reduce((sum, slot) => sum + (slot.basePrice || 0), 0),
+    () => sorted.reduce((sum, s) => sum + (s.basePrice || 0), 0),
     [sorted]
   );
   const dynamicAdjustment = useMemo(
-    () => sorted.reduce((sum, slot) => sum + slot.dynamicAdjustmentAmount, 0),
+    () => sorted.reduce((sum, s) => sum + s.dynamicAdjustmentAmount, 0),
     [sorted]
   );
   const discount = appliedVoucher ? Math.min(appliedVoucher.discountAmount, subtotal) : 0;
@@ -111,40 +197,23 @@ export function BookingSummary(props: BookingSummaryProps) {
         ? finalTotal
         : 0;
   const remainingAmount = Math.max(0, finalTotal - paymentAmount);
-  const hours = sorted.length;
 
-  const groupedByDay = useMemo(() => {
-    const map = new Map<string, WeeklyScheduleSlot[]>();
-    for (const slot of sorted) {
-      const list = map.get(slot.date) ?? [];
-      list.push(slot);
-      map.set(slot.date, list);
-    }
-    return Array.from(map.entries()).map(([date, list]) => ({
-      date,
-      slots: list.sort((a, b) => compareTime(a.startTime, b.startTime))
-    }));
-  }, [sorted]);
-
+  // Highlight applicable vouchers
   const highlightedVoucherIds = useMemo(() => {
     return new Set(
       availableVouchers
-        .filter((voucher) => !appliedVoucher || voucher.code !== appliedVoucher.code)
-        .filter((voucher) => voucher.minBookingAmount <= subtotal)
+        .filter((v) => !appliedVoucher || v.code !== appliedVoucher.code)
+        .filter((v) => v.minBookingAmount <= subtotal)
         .slice(0, 3)
-        .map((voucher) => voucher.id)
+        .map((v) => v.id)
     );
   }, [availableVouchers, appliedVoucher, subtotal]);
-
-  const visibleVouchers = useMemo(() => {
-    if (showAllVouchers) return availableVouchers;
-    return availableVouchers.slice(0, 3);
-  }, [availableVouchers, showAllVouchers]);
 
   const appliedVoucherId = appliedVoucher?.id;
 
   return (
     <aside className="space-y-4">
+      {/* ── Slot Selection ─────────────────────────────── */}
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between">
           <div>
@@ -153,44 +222,84 @@ export function BookingSummary(props: BookingSummaryProps) {
             </p>
             <h3 className="mt-1 text-base font-black text-slate-950">{courtName}</h3>
           </div>
-          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">
-            {hours} {language === "en" ? "hours" : "giờ"}
-          </span>
+          <div className="flex flex-wrap gap-1">
+            {totalWeeks > 1 && (
+              <span className="rounded-full bg-violet-50 px-2 py-0.5 text-xs font-black text-violet-700">
+                {totalWeeks} {language === "en" ? "weeks" : "tuần"}
+              </span>
+            )}
+            <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-black text-emerald-700">
+              {totalDays} {language === "en" ? "days" : "ngày"}
+            </span>
+            <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-black text-emerald-700">
+              {totalHours} {language === "en" ? "hours" : "giờ"}
+            </span>
+          </div>
         </div>
 
-        {selectedDate && (
-          <p className="mt-3 inline-flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-1 text-xs font-bold text-slate-600">
-            <Clock3 className="h-3.5 w-3.5 text-emerald-600" />
-            {language === "en" ? "Selected" : "Đang chọn"}: {formatLongDayLabel(selectedDate, language)}
-          </p>
+        {/* Unavailable slot warning */}
+        {unavailableSlots.length > 0 && (
+          <div className="mt-3 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700">
+            <Clock3 className="h-4 w-4 shrink-0" />
+            {language === "en"
+              ? `${unavailableSlots.length} slot(s) no longer available — will be skipped.`
+              : `${unavailableSlots.length} khung giờ không còn khả dụng — sẽ bị bỏ qua.`}
+          </div>
         )}
 
         {sorted.length === 0 ? (
           <p className="mt-4 rounded-xl bg-slate-50 px-3 py-4 text-sm font-semibold text-slate-500">
             {language === "en"
-              ? "Click an empty slot in the calendar. You can select multiple consecutive hours."
-              : "Bấm vào ô còn trống trên lịch. Có thể chọn nhiều giờ liên tiếp."}
+              ? "Click an empty slot in the calendar."
+              : "Bấm vào ô còn trống trên lịch."}
           </p>
         ) : (
-          <ul className="mt-4 space-y-2">
-            {groupedByDay.map((group) => (
-              <li
-                key={group.date}
-                className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-xs"
-              >
-                <p className="text-[10px] font-black uppercase tracking-wide text-slate-500">
-                  {formatLongDayLabel(new Date(`${group.date}T00:00:00`), language)}
-                </p>
-                <p className="mt-1 flex flex-wrap gap-1 font-black text-slate-800">
-                  {group.slots.map((slot) => (
-                    <span
-                      key={`${slot.date}-${slot.startTime}`}
-                      className="rounded-lg bg-white px-2 py-1 ring-1 ring-slate-200"
-                    >
-                      {slot.startTime}-{slot.endTime}
-                    </span>
-                  ))}
-                </p>
+          <ul className="mt-4 space-y-3">
+            {weekGroups.map((week) => (
+              <li key={week.weekStart.toISOString()} className="rounded-xl border border-violet-100 bg-violet-50/40 px-3 py-2">
+                {/* Week header */}
+                <div className="flex items-center justify-between">
+                  <p className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wide text-violet-700">
+                    <Calendar className="h-3.5 w-3.5" />
+                    {week.weekLabel}
+                  </p>
+                  <p className="text-[10px] font-black text-violet-500">
+                    {formatCurrency(week.weekSubtotal)}
+                    {week.unavailableCount > 0 && (
+                      <span className="ml-1 text-rose-400">
+                        ({week.unavailableCount} unavailable)
+                      </span>
+                    )}
+                  </p>
+                </div>
+
+                {/* Days and slots */}
+                {week.days.map((day) => (
+                  <div key={day.date} className="mt-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                      {day.dayLabel}
+                    </p>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {day.slots.map((slot) => {
+                        const isUnavailable = slot.status !== "AVAILABLE";
+                        return (
+                          <span
+                            key={`${slot.date}-${slot.startTime}`}
+                            className={clsx(
+                              "inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-black ring-1",
+                              isUnavailable
+                                ? "bg-rose-50 text-rose-500 ring-rose-200 line-through opacity-60"
+                                : "bg-white text-slate-800 ring-slate-200"
+                            )}
+                          >
+                            {isUnavailable && <Clock3 className="h-3 w-3" />}
+                            {slot.startTime}-{slot.endTime}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
               </li>
             ))}
           </ul>
@@ -203,11 +312,12 @@ export function BookingSummary(props: BookingSummaryProps) {
             className="mt-4 inline-flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-700"
           >
             <Trash2 className="h-3.5 w-3.5" />
-            {language === "en" ? "Clear selection" : "Bỏ chọn"}
+            {language === "en" ? "Clear selection" : "Bỏ chọn tất cả"}
           </button>
         )}
       </section>
 
+      {/* ── Dynamic Pricing ────────────────────────────── */}
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between">
           <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-700">
@@ -240,6 +350,7 @@ export function BookingSummary(props: BookingSummaryProps) {
         )}
       </section>
 
+      {/* ── Demand Prediction ─────────────────────────── */}
       {highestDemandSlot && highestDemandSlot.predictionStatus === "GENERATED" && (
         <section className="rounded-2xl border border-rose-200 bg-rose-50 p-4 shadow-sm">
           <div className="flex items-center gap-2">
@@ -256,12 +367,13 @@ export function BookingSummary(props: BookingSummaryProps) {
           </p>
           <p className="mt-1 text-xs text-rose-700">
             {language === "en"
-              ? `Suggested by partner for ${highestDemandSlot.startTime}-${highestDemandSlot.endTime}.`
+              ? `Suggested for ${highestDemandSlot.startTime}-${highestDemandSlot.endTime}.`
               : `Đối tác gợi ý khung giờ ${highestDemandSlot.startTime}-${highestDemandSlot.endTime}.`}
           </p>
         </section>
       )}
 
+      {/* ── Vouchers ─────────────────────────────────── */}
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between">
           <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-700">
@@ -275,94 +387,95 @@ export function BookingSummary(props: BookingSummaryProps) {
         {availableVouchers.length === 0 ? (
           <p className="mt-3 rounded-xl bg-slate-50 px-3 py-4 text-xs text-slate-500">
             {language === "en"
-              ? "No voucher is currently applicable to this court in the selected week."
-              : "Hiện không có voucher nào phù hợp với sân trong tuần đã chọn."}
+              ? "No voucher is currently applicable."
+              : "Hiện không có voucher nào phù hợp."}
           </p>
         ) : (
-          <ul className="mt-3 space-y-2">
-            {visibleVouchers.map((voucher) => {
-              const isApplied = appliedVoucherId === voucher.id;
-              const eligible = highlightedVoucherIds.has(voucher.id);
-              const meetsMin = subtotal >= voucher.minBookingAmount;
-              const discountLabel = formatVoucherDiscount(voucher);
-              return (
-                <li
-                  key={voucher.id}
-                  className={clsx(
-                    "rounded-xl border px-3 py-2 transition",
-                    isApplied
-                      ? "border-emerald-500 bg-emerald-50"
-                      : eligible
-                        ? "border-emerald-200 bg-emerald-50/40"
-                        : "border-slate-200 bg-white"
-                  )}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-black text-slate-900">{voucher.title}</p>
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                        {voucher.code} · {discountLabel}
-                      </p>
-                      <p className="mt-1 text-[11px] text-slate-500">
-                        {language === "en" ? "Min" : "Tối thiểu"}: {formatCurrency(voucher.minBookingAmount)} ·{" "}
-                        {language === "en" ? "Ends" : "Hết hạn"}: {voucher.endDate}
-                      </p>
-                      {!meetsMin && (
-                        <p className="mt-1 text-[11px] font-bold text-amber-700">
-                          {language === "en"
-                            ? `Need ${formatCurrency(voucher.minBookingAmount - subtotal)} more.`
-                            : `Cần thêm ${formatCurrency(voucher.minBookingAmount - subtotal)}.`}
+          <>
+            <ul className="mt-3 space-y-2">
+              {(showAllVouchers ? availableVouchers : availableVouchers.slice(0, 3)).map((voucher) => {
+                const isApplied = appliedVoucherId === voucher.id;
+                const eligible = highlightedVoucherIds.has(voucher.id);
+                const meetsMin = subtotal >= voucher.minBookingAmount;
+                return (
+                  <li
+                    key={voucher.id}
+                    className={clsx(
+                      "rounded-xl border px-3 py-2 transition",
+                      isApplied
+                        ? "border-emerald-500 bg-emerald-50"
+                        : eligible
+                          ? "border-emerald-200 bg-emerald-50/40"
+                          : "border-slate-200 bg-white"
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-black text-slate-900">{voucher.title}</p>
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                          {voucher.code} · {formatVoucherDiscount(voucher)}
                         </p>
-                      )}
+                        <p className="mt-1 text-[11px] text-slate-500">
+                          {language === "en" ? "Min" : "Tối thiểu"}: {formatCurrency(voucher.minBookingAmount)} ·{" "}
+                          {language === "en" ? "Ends" : "Hết hạn"}: {voucher.endDate}
+                        </p>
+                        {!meetsMin && (
+                          <p className="mt-1 text-[11px] font-bold text-amber-700">
+                            {language === "en"
+                              ? `Need ${formatCurrency(voucher.minBookingAmount - subtotal)} more.`
+                              : `Cần thêm ${formatCurrency(voucher.minBookingAmount - subtotal)}.`}
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onApplyFromList?.(voucher)}
+                        disabled={isApplied || !meetsMin}
+                        className={clsx(
+                          "shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-black uppercase tracking-wide transition",
+                          isApplied
+                            ? "bg-emerald-600 text-white"
+                            : meetsMin
+                              ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                              : "bg-slate-200 text-slate-500"
+                        )}
+                      >
+                        {isApplied
+                          ? language === "en"
+                            ? "Applied"
+                            : "Đã áp dụng"
+                          : language === "en"
+                            ? "Apply"
+                            : "Áp dụng"}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => onApplyFromList?.(voucher)}
-                      disabled={isApplied || !meetsMin}
-                      className={clsx(
-                        "shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-black uppercase tracking-wide transition",
-                        isApplied
-                          ? "bg-emerald-600 text-white"
-                          : meetsMin
-                            ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                            : "bg-slate-200 text-slate-500"
-                      )}
-                    >
-                      {isApplied
-                        ? language === "en"
-                          ? "Applied"
-                          : "Đã áp dụng"
-                        : language === "en"
-                          ? "Apply"
-                          : "Áp dụng"}
-                    </button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+                  </li>
+                );
+              })}
+            </ul>
 
-        {availableVouchers.length > 3 && (
-          <button
-            type="button"
-            onClick={() => setShowAllVouchers((value) => !value)}
-            className="mt-3 inline-flex items-center gap-1 text-xs font-bold text-emerald-700 hover:text-emerald-800"
-          >
-            {showAllVouchers
-              ? language === "en"
-                ? "Show less"
-                : "Thu gọn"
-              : language === "en"
-                ? `Show all (${availableVouchers.length})`
-                : `Xem tất cả (${availableVouchers.length})`}
-          </button>
+            {availableVouchers.length > 3 && (
+              <button
+                type="button"
+                onClick={() => setShowAllVouchers((v) => !v)}
+                className="mt-3 inline-flex items-center gap-1 text-xs font-bold text-emerald-700 hover:text-emerald-800"
+              >
+                {showAllVouchers
+                  ? language === "en"
+                    ? "Show less"
+                    : "Thu gọn"
+                  : language === "en"
+                    ? `Show all (${availableVouchers.length})`
+                    : `Xem tất cả (${availableVouchers.length})`}
+              </button>
+            )}
+          </>
         )}
 
         <div className="mt-4 flex gap-2">
           <input
             value={voucherInput}
-            onChange={(event) => onChangeVoucherInput(event.target.value.toUpperCase())}
+            onChange={(e) => onChangeVoucherInput(e.target.value.toUpperCase())}
             placeholder={language === "en" ? "Enter voucher code" : "Nhập mã voucher"}
             className="h-10 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black uppercase tracking-wide outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
           />
@@ -399,6 +512,7 @@ export function BookingSummary(props: BookingSummaryProps) {
         )}
       </section>
 
+      {/* ── Order Summary ─────────────────────────────── */}
       <section className="rounded-2xl border border-emerald-200 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between">
           <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-700">
@@ -407,34 +521,43 @@ export function BookingSummary(props: BookingSummaryProps) {
           <Wallet className="h-4 w-4 text-emerald-700" />
         </div>
 
+        {/* Per-week breakdown */}
+        {weekGroups.length > 1 && (
+          <div className="mt-4 space-y-1">
+            {weekGroups.map((week) => (
+              <div key={week.weekStart.toISOString()} className="flex items-center justify-between text-xs">
+                <span className="truncate text-slate-500">{week.weekLabel}</span>
+                <span className="shrink-0 font-bold text-slate-700">{formatCurrency(week.weekSubtotal)}</span>
+              </div>
+            ))}
+            <div className="border-t border-slate-200" />
+          </div>
+        )}
+
         <div className="mt-4 space-y-2 text-sm">
-          <Row
+          <SummaryRow
             label={language === "en" ? "Base price" : "Giá cơ bản"}
             value={formatCurrency(basePriceTotal)}
           />
           {dynamicAdjustment > 0 && (
-            <Row
+            <SummaryRow
               label={language === "en" ? "Dynamic pricing" : "Giá động"}
               value={`+${formatCurrency(dynamicAdjustment)}`}
               accent
             />
           )}
-          <Row
+          <SummaryRow
             label={language === "en" ? "Subtotal" : "Tạm tính"}
             value={formatCurrency(subtotal)}
             strong
           />
-          <Row
-            label={
-              appliedVoucher
-                ? `${language === "en" ? "Voucher" : "Voucher"} ${appliedVoucher.code}`
-                : language === "en"
-                  ? "Voucher"
-                  : "Voucher"
-            }
-            value={discount > 0 ? `-${formatCurrency(discount)}` : "—"}
-            accent={discount > 0}
-          />
+          {appliedVoucher && (
+            <SummaryRow
+              label={`${language === "en" ? "Voucher" : "Voucher"} ${appliedVoucher.code}`}
+              value={discount > 0 ? `-${formatCurrency(discount)}` : "—"}
+              accent={discount > 0}
+            />
+          )}
         </div>
 
         <div className="mt-5 rounded-2xl bg-slate-950 p-4 text-white">
@@ -456,6 +579,7 @@ export function BookingSummary(props: BookingSummaryProps) {
         </div>
 
         <div className="mt-5 space-y-3">
+          {/* Payment method */}
           <div>
             <label className="text-xs font-black uppercase tracking-wide text-slate-500">
               {language === "en" ? "Payment method" : "Phương thức thanh toán"}
@@ -497,41 +621,43 @@ export function BookingSummary(props: BookingSummaryProps) {
             </div>
           </div>
 
+          {/* Policy agreement */}
           <label className="flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] font-semibold text-slate-600">
             <input
               type="checkbox"
               checked={agreedToPolicies}
-              onChange={(event) => onToggleAgreed(event.target.checked)}
+              onChange={(e) => onToggleAgreed(e.target.checked)}
               className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
             />
             <span>
               {language === "en"
-                ? "I agree to the booking and cancellation policy. The backend will recompute the final price to confirm."
-                : "Tôi đồng ý với chính sách đặt & huỷ sân. Backend sẽ tính lại tổng tiền để xác nhận."}
+                ? "I agree to the booking and cancellation policy."
+                : "Tôi đồng ý với chính sách đặt & huỷ sân."}
             </span>
           </label>
 
+          {/* Checkout button */}
           <button
             type="button"
             onClick={onCheckout}
-            disabled={sorted.length === 0 || finalTotal === 0 || !agreedToPolicies || pending}
+            disabled={sorted.filter((s) => s.status === "AVAILABLE").length === 0 || finalTotal === 0 || !agreedToPolicies || pending}
             className={clsx(
-              "flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 text-base font-black text-white transition hover:bg-emerald-700",
-              (sorted.length === 0 || !agreedToPolicies) && "opacity-50"
+              "flex h-12 w-full items-center justify-center gap-2 rounded-xl text-base font-black text-white transition",
+              "bg-emerald-600 hover:bg-emerald-700",
+              (sorted.filter((s) => s.status === "AVAILABLE").length === 0 || !agreedToPolicies) && "opacity-50"
             )}
           >
             {pending ? (
-              <Clock3 className="h-4 w-4 animate-spin" />
+              <>
+                <Clock3 className="h-4 w-4 animate-spin" />
+                {language === "en" ? "Processing…" : "Đang xử lý…"}
+              </>
             ) : (
-              <Check className="h-4 w-4" />
+              <>
+                <Check className="h-4 w-4" />
+                {language === "en" ? "Confirm booking" : "Xác nhận đặt sân"}
+              </>
             )}
-            {pending
-              ? language === "en"
-                ? "Processing…"
-                : "Đang xử lý…"
-              : language === "en"
-                ? "Confirm booking"
-                : "Xác nhận đặt sân"}
           </button>
         </div>
       </section>
@@ -539,7 +665,7 @@ export function BookingSummary(props: BookingSummaryProps) {
   );
 }
 
-function Row({
+function SummaryRow({
   label,
   value,
   strong,
@@ -551,9 +677,19 @@ function Row({
   accent?: boolean;
 }) {
   return (
-    <div className={clsx("flex items-center justify-between text-sm", strong && "border-t border-slate-200 pt-2 font-black")}>
+    <div
+      className={clsx(
+        "flex items-center justify-between text-sm",
+        strong && "border-t border-slate-200 pt-2 font-black"
+      )}
+    >
       <span className="text-slate-500">{label}</span>
-      <span className={clsx(strong ? "text-slate-950" : "font-bold text-slate-800", accent && "text-emerald-700")}>
+      <span
+        className={clsx(
+          strong ? "text-slate-950" : "font-bold text-slate-800",
+          accent && "text-emerald-700"
+        )}
+      >
         {value}
       </span>
     </div>

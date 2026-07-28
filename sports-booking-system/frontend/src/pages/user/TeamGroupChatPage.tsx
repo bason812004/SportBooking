@@ -145,14 +145,15 @@ export function TeamGroupChatPage() {
     if (!content && !pendingMedia) return;
 
     setSending(true);
-    try {
-      let attachmentUrl: string | undefined;
-      let attachmentName: string | undefined;
-      let attachmentSize: number | undefined;
-      let thumbnailUrl: string | undefined;
-      let mimeType: string | undefined;
-      let messageType: "TEXT" | "IMAGE" | "VIDEO" = "TEXT";
+    let attachmentUrl: string | undefined;
+    let attachmentName: string | undefined;
+    let attachmentSize: number | undefined;
+    let thumbnailUrl: string | undefined;
+    let mimeType: string | undefined;
+    let messageType: "TEXT" | "IMAGE" | "VIDEO" = "TEXT";
+    const previewUrl = pendingMedia?.previewUrl;
 
+    try {
       if (pendingMedia) {
         setUploadingMedia(true);
         const uploaded = pendingMedia.type === "IMAGE"
@@ -166,7 +167,7 @@ export function TeamGroupChatPage() {
         setUploadingMedia(false);
       }
 
-      await contentApi.createTeamPostMessage(id, {
+      const created = await contentApi.createTeamPostMessage(id, {
         content: content || undefined,
         messageType,
         attachmentUrl,
@@ -175,12 +176,22 @@ export function TeamGroupChatPage() {
         thumbnailUrl,
         mimeType
       });
+
+      // Optimistic update — append new message immediately, no race
+      queryClient.setQueryData<TeamPostMessage[]>(
+        ["team-post-messages", id],
+        (old) => {
+          if (!old) return [created];
+          if (old.some((m) => m.id === created.id)) return old;
+          return [...old, created];
+        }
+      );
+
       setMessage("");
       if (pendingMedia) {
-        URL.revokeObjectURL(pendingMedia.previewUrl);
+        URL.revokeObjectURL(previewUrl!);
         setPendingMedia(null);
       }
-      await queryClient.invalidateQueries({ queryKey: ["team-post-messages", id] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không thể gửi tin nhắn.");
     } finally {

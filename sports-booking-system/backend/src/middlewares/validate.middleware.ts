@@ -11,9 +11,17 @@ export function validate(schema: AnyZodObject) {
         query: req.query,
         params: req.params
       });
-      req.body = parsed.body ?? req.body;
-      req.query = parsed.query ?? req.query;
-      req.params = parsed.params ?? req.params;
+
+      // Schema is wrapped: { body, query, params } → extract each part
+      if ("body" in parsed && "query" in parsed && "params" in parsed) {
+        req.body = (parsed as { body: unknown }).body ?? req.body;
+        req.query = (parsed as { query: unknown }).query as typeof req.query ?? req.query;
+        req.params = (parsed as { params: unknown }).params as typeof req.params ?? req.params;
+      } else {
+        // Schema is flat → whole parsed object is the body
+        req.body = parsed as typeof req.body;
+      }
+
       return next();
     } catch (error) {
       if (error instanceof ZodError) {

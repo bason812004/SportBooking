@@ -333,7 +333,7 @@ function Info({ title, lines }: { title: string; lines: Array<string | null | un
   return (
     <div className="rounded-lg border p-4">
       <p className="font-bold">{title}</p>
-      {values.length ? values.map((line, index) => <p key={index} className="mt-1 text-sm text-slate-600">{line}</p>) : <p className="mt-1 text-sm text-slate-500">-</p>}
+      {values.length ? values.map((line, index) => <p key={`${line}-${index}`} className="mt-1 text-sm text-slate-600">{line}</p>) : <p className="mt-1 text-sm text-slate-500">-</p>}
     </div>
   );
 }

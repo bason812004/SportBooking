@@ -315,7 +315,7 @@ function Info({ title, lines }: { title: string; lines: Array<string | number | 
     <div className="rounded-lg border p-4">
       <h3 className="font-bold">{title}</h3>
       <div className="mt-2 space-y-1 text-sm text-slate-600">
-        {lines.filter(Boolean).map((line, index) => <p key={index}>{line}</p>)}
+        {lines.filter(Boolean).map((line, index) => <p key={`${line}-${index}`}>{line}</p>)}
       </div>
     </div>
   );

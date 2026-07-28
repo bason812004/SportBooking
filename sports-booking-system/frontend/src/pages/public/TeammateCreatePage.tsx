@@ -158,7 +158,7 @@ export function TeammateCreatePage() {
             </Field>
             <Field label="Loại thể thao">
               <select value={form.sportType} onChange={(event) => update("sportType", event.target.value)} className={inputClass}>
-                {sportOptions.map((item) => <option key={item}>{item}</option>)}
+                {sportOptions.map((item, idx) => <option key={`sport-${idx}`}>{item}</option>)}
               </select>
             </Field>
             <Field label="Tên sân" error={errors.courtName}>

@@ -3,25 +3,14 @@ import { CalendarLegend } from "./CalendarLegend";
 import { CalendarHeader } from "./CalendarHeader";
 import { BookingCalendar } from "./BookingCalendar";
 import { DayView } from "./DayView";
-import {
-  compareTime,
-  findDay,
-  formatYmd,
-  isSlotSelectable,
-  slotKey,
-  startOfWeek,
-  type Language
-} from "./utils";
-import type {
-  WeeklyScheduleResponse,
-  WeeklyScheduleSlot
-} from "../../../../types/api";
+import { formatWeekRangeLabel, formatYmd, isSlotSelectable, slotKey, startOfWeek, type Language } from "./utils";
+import type { WeeklyScheduleResponse, WeeklyScheduleSlot } from "../../../../types/api";
 
 export type WeeklyCalendarSectionProps = {
   response: WeeklyScheduleResponse | undefined;
   isLoading?: boolean;
   isError?: boolean;
-  error?: Error | null;
+  error: Error | null;
   onRetry?: () => void;
   weekStart: Date;
   onWeekStartChange: (next: Date) => void;
@@ -30,11 +19,9 @@ export type WeeklyCalendarSectionProps = {
   selected: WeeklyScheduleSlot[];
   onSelectedChange: (next: WeeklyScheduleSlot[]) => void;
   language: Language;
-  /**
-   * If true, the calendar auto-switches to Day View on compact screens (mobile).
-   * Otherwise the caller controls the view.
-   */
+  /** Auto-switch to Day view on compact screens (mobile). Default: true. */
   forceDayOnCompact?: boolean;
+  /** Optional side panel slot (e.g. booking summary). */
   rightSlot?: React.ReactNode;
 };
 
@@ -57,53 +44,75 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
   } = props;
 
   const { isCompact } = useResponsiveLayout();
-  const initialView: "WEEK" | "DAY" = forceDayOnCompact && isCompact ? "DAY" : "WEEK";
-  const [view, setView] = useState<"WEEK" | "DAY">(initialView);
+  const [view, setView] = useState<"WEEK" | "DAY">(
+    forceDayOnCompact && isCompact ? "DAY" : "WEEK"
+  );
   const [userOverride, setUserOverride] = useState(false);
+
+  // Derived view: if user has explicitly overridden, respect their choice;
+  // otherwise apply compact-mode default
   const activeView = !userOverride && forceDayOnCompact && isCompact ? "DAY" : view;
+
   const weekEndDate = useMemo(() => {
     const d = new Date(weekStart);
     d.setDate(weekStart.getDate() + 6);
     return d;
   }, [weekStart]);
 
-  const focusedDay = useMemo(
-    () => (response ? findDay(response, formatYmd(focusedDate)) : undefined),
-    [response, focusedDate]
-  );
-
+  // ── Slot selection ──────────────────────────────────────────────
   const toggleSlot = useCallback(
     (slot: WeeklyScheduleSlot) => {
       if (!isSlotSelectable(slot)) return;
-      onSelectedChange(
-        toggleSelection(selected, slot)
-      );
+      const key = slotKey(slot);
+      const exists = selected.some((s) => slotKey(s) === key);
+      if (exists) {
+        onSelectedChange(selected.filter((s) => slotKey(s) !== key));
+      } else {
+        const sameDay = selected.filter((s) => s.date === slot.date);
+        const last = sameDay[sameDay.length - 1];
+        const lastHour = last ? Number(last.startTime.slice(0, 2)) : -1;
+        const slotHour = Number(slot.startTime.slice(0, 2));
+        const isConsecutive =
+          lastHour !== -1 &&
+          (slotHour === lastHour + 1 || slotHour === lastHour - 1);
+        const next = [...selected, slot];
+        // Keep sorted: by date asc, then startTime asc
+        next.sort((a, b) => {
+          const dc = a.date.localeCompare(b.date);
+          return dc !== 0 ? dc : a.startTime.localeCompare(b.startTime);
+        });
+        onSelectedChange(next);
+      }
     },
     [selected, onSelectedChange]
   );
 
+  // ── Navigation ────────────────────────────────────────────────
   const jumpToToday = useCallback(() => {
-    const today = startOfWeek(new Date());
-    onWeekStartChange(today);
-    onFocusedDateChange(new Date());
+    const today = new Date();
+    const todayWeekStart = startOfWeek(today);
+    onWeekStartChange(todayWeekStart);
+    onFocusedDateChange(today);
     onSelectedChange([]);
-  }, [onWeekStartChange, onFocusedDateChange, onSelectedChange]);
+    setUserOverride(false);
+    setView(forceDayOnCompact && isCompact ? "DAY" : "WEEK");
+  }, [onWeekStartChange, onFocusedDateChange, onSelectedChange, forceDayOnCompact, isCompact]);
 
   const shiftWeek = useCallback(
     (offset: number) => {
       const next = new Date(weekStart);
       next.setDate(weekStart.getDate() + offset);
       onWeekStartChange(next);
-      onSelectedChange([]);
     },
-    [weekStart, onWeekStartChange, onSelectedChange]
+    [weekStart, onWeekStartChange]
   );
 
   const jumpToDate = useCallback(
-    (value: string) => {
-      const target = new Date(`${value}T00:00:00`);
+    (dateStr: string) => {
+      const target = new Date(`${dateStr}T00:00:00`);
       onFocusedDateChange(target);
       onWeekStartChange(startOfWeek(target));
+      setUserOverride(false);
     },
     [onFocusedDateChange, onWeekStartChange]
   );
@@ -117,6 +126,7 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
     [onFocusedDateChange]
   );
 
+  // ── Render ─────────────────────────────────────────────────
   return (
     <div className="space-y-4">
       <CalendarHeader
@@ -128,10 +138,10 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
         onPrev={() => shiftWeek(-7)}
         onNext={() => shiftWeek(7)}
         onToday={jumpToToday}
-        onPickWeek={(value) => jumpToDate(value)}
-        onSwitchView={(value) => {
+        onPickWeek={jumpToDate}
+        onSwitchView={(v) => {
           setUserOverride(true);
-          setView(value);
+          setView(v);
         }}
         focusedDate={focusedDate}
         onSelectDay={enterDayView}
@@ -183,20 +193,7 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
   );
 }
 
-function toggleSelection(current: WeeklyScheduleSlot[], slot: WeeklyScheduleSlot): WeeklyScheduleSlot[] {
-  const exists = current.some((s) => slotKey(s) === slotKey(slot));
-  if (exists) return current.filter((s) => slotKey(s) !== slotKey(slot));
-  const sameDay = current.filter((s) => s.date === slot.date);
-  if (sameDay.length === 0) return [...current, slot].sort((a, b) => compareTime(a.startTime, b.startTime));
-  const last = sameDay[sameDay.length - 1];
-  const lastHour = Number(last.startTime.slice(0, 2));
-  const slotHour = Number(slot.startTime.slice(0, 2));
-  if (slotHour === lastHour + 1 || slotHour === lastHour - 1) {
-    return [...current, slot].sort((a, b) => compareTime(a.startTime, b.startTime));
-  }
-  return [...current, slot].sort((a, b) => compareTime(a.startTime, b.startTime));
-}
-
+// ── Internal helpers ────────────────────────────────────────────
 function useResponsiveLayout() {
   const [isCompact, setIsCompact] = useState(false);
   useEffect(() => {

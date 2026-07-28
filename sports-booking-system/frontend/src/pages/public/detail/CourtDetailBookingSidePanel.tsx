@@ -1,14 +1,17 @@
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { CalendarDays, Clock3, WalletCards, type LucideIcon } from "lucide-react";
 import type { WeeklyScheduleSlot } from "../../../types/api";
 
 export function bookingSelectionPath(
   courtId: string,
-  date: string,
-  selectedSlots: Array<Pick<WeeklyScheduleSlot, "startTime" | "endTime">>
+  selectedSlots: WeeklyScheduleSlot[]
 ) {
-  const params = new URLSearchParams({ date });
-  selectedSlots.forEach((slot) => params.append("slot", `${slot.startTime}-${slot.endTime}`));
+  const params = new URLSearchParams();
+  selectedSlots.forEach((slot) => {
+    params.append("date", slot.date);
+    params.append("slot", `${slot.startTime}-${slot.endTime}`);
+  });
   return `/booking/${courtId}?${params.toString()}`;
 }
 
@@ -27,9 +30,17 @@ export function CourtDetailBookingSidePanel({
   );
   const hours = selectedSlots.length;
   const disabled = hours === 0;
-  const href = bookingSelectionPath(courtId, selectedDate, selectedSlots);
-  const firstSlot = selectedSlots[0];
-  const lastSlot = selectedSlots[selectedSlots.length - 1];
+  const href = bookingSelectionPath(courtId, selectedSlots);
+
+  const slotsByDate = useMemo(() => {
+    const map = new Map<string, WeeklyScheduleSlot[]>();
+    for (const slot of selectedSlots) {
+      const list = map.get(slot.date) ?? [];
+      list.push(slot);
+      map.set(slot.date, list);
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [selectedSlots]);
 
   return (
     <aside className="space-y-4 lg:sticky lg:top-32">
@@ -45,22 +56,16 @@ export function CourtDetailBookingSidePanel({
                 : "bg-emerald-50 text-emerald-700"
             }`}
           >
-            {hours} giờ
+            {hours} giờ · {slotsByDate.length} ngày
           </span>
         </div>
 
         <div className="mt-4 space-y-3 text-sm">
-          <Field icon={CalendarDays} label="Ngày đặt" value={selectedDate} />
+          <Field icon={CalendarDays} label="Ngày đặt" value={`${slotsByDate.length} ngày đã chọn`} />
           <Field
             icon={Clock3}
-            label="Khung giờ"
-            value={
-              hours > 0
-                ? `${firstSlot?.startTime ?? ""}${
-                    firstSlot && lastSlot && firstSlot !== lastSlot ? ` – ${lastSlot.endTime}` : ""
-                  }`
-                : "Chưa chọn"
-            }
+            label="Tổng giờ"
+            value={`${hours} giờ`}
           />
           <Field
             icon={WalletCards}
@@ -70,18 +75,32 @@ export function CourtDetailBookingSidePanel({
         </div>
 
         {hours > 0 ? (
-          <ul className="mt-4 space-y-1.5 rounded-2xl bg-slate-50 p-3 text-xs">
-            {selectedSlots.map((slot) => (
-              <li
-                key={`${slot.date}-${slot.startTime}-${slot.endTime}`}
-                className="flex justify-between font-semibold text-slate-600"
-              >
-                <span>
-                  {slot.startTime} – {slot.endTime}
-                </span>
-                <span>{formatVnd(slot.finalPrice || slot.basePrice || 0)}</span>
-              </li>
-            ))}
+          <ul className="mt-4 space-y-3 rounded-2xl bg-slate-50 p-3 text-xs">
+            {slotsByDate.map(([date, daySlots]) => {
+              const daySubtotal = daySlots.reduce(
+                (s, slot) => s + (slot.finalPrice || slot.basePrice || 0),
+                0
+              );
+              return (
+                <li key={date} className="space-y-1.5">
+                  <li className="flex justify-between font-black text-emerald-700">
+                    <span>{formatDateDisplay(date)}</span>
+                    <span>{formatVnd(daySubtotal)}</span>
+                  </li>
+                  {daySlots.map((slot) => (
+                    <li
+                      key={`${slot.date}-${slot.startTime}`}
+                      className="flex justify-between pl-2 font-semibold text-slate-600"
+                    >
+                      <span>
+                        {slot.startTime} – {slot.endTime}
+                      </span>
+                      <span>{formatVnd(slot.finalPrice || slot.basePrice || 0)}</span>
+                    </li>
+                  ))}
+                </li>
+              );
+            })}
             <li className="flex justify-between border-t border-slate-200 pt-2 text-sm font-black text-slate-900">
               <span>Tạm tính</span>
               <span>{formatVnd(subtotal)}</span>
@@ -89,7 +108,7 @@ export function CourtDetailBookingSidePanel({
           </ul>
         ) : (
           <p className="mt-4 rounded-2xl bg-slate-50 p-3 text-xs text-slate-500">
-            Bấm vào ô giờ trên lịch tuần để chọn. Có thể chọn nhiều giờ liên tiếp trong cùng một ngày.
+            Bấm vào ô giờ trên lịch tuần để chọn. Có thể chọn nhiều giờ liên tiếp trong cùng một ngày hoặc nhiều ngày khác nhau.
           </p>
         )}
 
@@ -127,4 +146,9 @@ function Field({ icon: Icon, label, value }: { icon: LucideIcon; label: string; 
 
 function formatVnd(value: number) {
   return value.toLocaleString("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 });
+}
+
+function formatDateDisplay(dateStr: string) {
+  const date = new Date(`${dateStr}T00:00:00`);
+  return date.toLocaleDateString("vi-VN", { weekday: "short", day: "2-digit", month: "2-digit" });
 }

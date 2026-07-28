@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { LoadingState, ErrorState, EmptyState } from "../../components/common/States";
 import { useCourt } from "../../features/courts/hooks/useCourts";
@@ -49,11 +49,23 @@ function timeText(value?: string) {
 
 export function CourtDetailPage() {
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
   const court = useCourt(id);
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
-  const [weekStartDate, setWeekStartDate] = useState<Date>(() => startOfWeek(today));
-  const [focusedDate, setFocusedDate] = useState<Date>(() => new Date(`${today}T00:00:00`));
+
+  // Initialise week from URL ?week= param or default to current week
+  const initialWeekFromUrl = searchParams.get("week") ?? undefined;
+  const [weekStartDate, setWeekStartDate] = useState<Date>(
+    () => startOfWeek(
+      initialWeekFromUrl
+        ? new Date(`${initialWeekFromUrl}T00:00:00`)
+        : new Date()
+    )
+  );
+  const [focusedDate, setFocusedDate] = useState<Date>(() => new Date());
+  // selected slots are NOT reset when week changes
   const [selected, setSelected] = useState<WeeklyScheduleSlot[]>([]);
+  const selectedWeekRef = useRef<string>("");
+
   const { language } = useLanguage();
   const { token } = useAuth();
   const queryClient = useQueryClient();
@@ -63,6 +75,13 @@ export function CourtDetailPage() {
   const schedule = useWeeklySchedule(id, weekStart);
 
   usePrefetchAdjacentWeeks(id, weekStart);
+
+  // ── Sync week to URL ───────────────────────────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams);
+    params.set("week", weekStart);
+    window.history.replaceState(null, "", `${location.pathname}?${params.toString()}`);
+  }, [weekStartDate]);
 
   // Realtime: invalidate weekly-schedule cache when bookings change.
   useEffect(() => {
@@ -181,10 +200,7 @@ export function CourtDetailPage() {
                   error={schedule.error as Error | null}
                   onRetry={() => schedule.refetch()}
                   weekStart={weekStartDate}
-                  onWeekStartChange={(next) => {
-                    setWeekStartDate(next);
-                    setSelected([]);
-                  }}
+                  onWeekStartChange={(next) => setWeekStartDate(next)}
                   focusedDate={focusedDate}
                   onFocusedDateChange={setFocusedDate}
                   selected={selected}

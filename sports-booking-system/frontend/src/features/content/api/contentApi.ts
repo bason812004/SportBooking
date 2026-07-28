@@ -45,7 +45,7 @@ export const contentApi = {
 
   async createBlogComment(slug: string, content: string) {
     const { data } = await api.post<ApiResponse<BlogComment>>(`/blogs/${slug}/comments`, { content });
-    return repairObject(data.data);
+    return repairObject(data.data) as BlogComment;
   },
 
   async updateBlogComment(slug: string, commentId: string, content: string) {
@@ -184,8 +184,10 @@ export const contentApi = {
       mimeType?: string;
     }
   ) {
-    const { data } = await api.post<ApiResponse<TeamPostMessage>>(`/team-posts/${id}/messages`, payload);
-    return repairObject(data.data);
+    // Backend returns TeamPostMessage[] — extract the first (the newly created message)
+    const { data } = await api.post<ApiResponse<TeamPostMessage[]>>(`/team-posts/${id}/messages`, payload);
+    const messages = repairObject(data.data) as TeamPostMessage[];
+    return messages[0];
   },
 
   async reactToMessage(postId: string, payload: { messageId: string; reaction: string }) {
