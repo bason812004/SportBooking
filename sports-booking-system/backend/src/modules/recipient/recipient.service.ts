@@ -290,9 +290,9 @@ export const recipientService = {
   async lookupCustomersByPhone(userId: string, phone: string) {
     const courtId = await getManagedCourtId(userId);
     const users = await prisma.user.findMany({
-      where: { phone: { contains: phone } },
+      where: { phone: { startsWith: phone } },
       select: { id: true, fullName: true, phone: true },
-      take: 5
+      take: 8
     });
 
     const matches = await Promise.all(
@@ -332,7 +332,7 @@ export const recipientService = {
       }
     });
 
-    return { customer, bookings };
+    return { customer, bookings: bookings.map((booking) => ({ ...booking, totalPrice: Number(booking.totalPrice) })) };
   },
 
   async updateBookingStatus(userId: string, bookingId: string, status: BookingStatus) {

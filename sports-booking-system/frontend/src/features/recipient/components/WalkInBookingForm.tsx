@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { recipientApi, type RecipientSurfaceAvailabilitySlot, type RecipientWalkInPayment } from "../api/recipientApi";
+import { recipientApi, type RecipientCustomerMatch, type RecipientSurfaceAvailabilitySlot, type RecipientWalkInPayment } from "../api/recipientApi";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
 import { Select } from "../../../components/ui/Select";
@@ -112,6 +112,8 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
   const [repeatWeekly, setRepeatWeekly] = useState(false);
   const [occurrences, setOccurrences] = useState(4);
   const [selectedHistoryCustomerId, setSelectedHistoryCustomerId] = useState<string | null>(null);
+  const [selectedMatch, setSelectedMatch] = useState<RecipientCustomerMatch | null>(null);
+  const [showDropdown, setShowDropdown] = useState(false);
 
   useEffect(() => {
     if ((!isToday || repeatWeekly) && mode === "now") setMode("grid");
@@ -131,7 +133,7 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
   const customerMatches = useQuery({
     queryKey: ["recipient-customer-lookup", debouncedPhone],
     queryFn: () => recipientApi.lookupCustomers(debouncedPhone),
-    enabled: Boolean(enableCustomerLookup) && debouncedPhone.length >= 8
+    enabled: Boolean(enableCustomerLookup) && debouncedPhone.length >= 4
   });
 
   const customerHistory = useQuery({
@@ -140,8 +142,10 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
     enabled: Boolean(enableCustomerLookup) && Boolean(selectedHistoryCustomerId)
   });
 
-  const applyCustomerMatch = (fullName: string) => {
-    setWalkInForm((current) => ({ ...current, customerName: fullName }));
+  const selectMatch = (match: RecipientCustomerMatch) => {
+    setWalkInForm((current) => ({ ...current, customerPhone: match.phone ?? current.customerPhone, customerName: match.fullName }));
+    setSelectedMatch(match);
+    setShowDropdown(false);
   };
 
   const walkInPaymentStatus = useQuery({
@@ -210,6 +214,7 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
       } else {
         toast.success(result.bookingsCount > 1 ? `Đã tạo 1 lần đặt gồm ${result.bookingsCount} khung giờ cho khách` : "Đã tạo booking tại quầy cho khách");
         setWalkInForm(defaultWalkInForm());
+        setSelectedMatch(null);
         onSettled?.();
       }
     },
@@ -241,6 +246,7 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
         toast.success(`Đã tạo đủ ${result.created.length} buổi lặp hàng tuần`);
       }
       setWalkInForm(defaultWalkInForm());
+      setSelectedMatch(null);
       setRepeatWeekly(false);
       onSettled?.();
     },
@@ -253,6 +259,7 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
       toast.success("Đã xác nhận thanh toán chuyển khoản");
       setActiveWalkInPayment(null);
       setWalkInForm(defaultWalkInForm());
+      setSelectedMatch(null);
       onBookingCreated?.();
       onSettled?.();
     },
@@ -264,6 +271,7 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
       toast.success("Đã nhận được thanh toán chuyển khoản");
       setActiveWalkInPayment(null);
       setWalkInForm(defaultWalkInForm());
+      setSelectedMatch(null);
       onBookingCreated?.();
       onSettled?.();
     }
@@ -302,7 +310,11 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
     customerHistory,
     selectedHistoryCustomerId,
     setSelectedHistoryCustomerId,
-    applyCustomerMatch
+    selectedMatch,
+    setSelectedMatch,
+    showDropdown,
+    setShowDropdown,
+    selectMatch
   };
 }
 
@@ -571,7 +583,11 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
     occurrences,
     setOccurrences,
     customerMatches,
-    applyCustomerMatch,
+    selectedMatch,
+    setSelectedMatch,
+    showDropdown,
+    setShowDropdown,
+    selectMatch,
     setSelectedHistoryCustomerId
   } = walkIn;
 
@@ -645,35 +661,65 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
         )}
       </div>
 
-      <Input dense label="Số điện thoại" value={walkInForm.customerPhone} onChange={(event) => setWalkInForm({ ...walkInForm, customerPhone: event.target.value })} required />
-      <Input dense label="Tên khách" value={walkInForm.customerName} onChange={(event) => setWalkInForm({ ...walkInForm, customerName: event.target.value })} required />
+      <div className="relative">
+        <Input
+          dense
+          label="Số điện thoại"
+          value={walkInForm.customerPhone}
+          onChange={(event) => {
+            const value = event.target.value;
+            setWalkInForm({ ...walkInForm, customerPhone: value });
+            if (selectedMatch && value !== selectedMatch.phone) setSelectedMatch(null);
+          }}
+          onFocus={() => setShowDropdown(true)}
+          onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
+          required
+        />
+        {showDropdown && !selectedMatch && matches.length > 0 ? (
+          <div className="absolute z-20 mt-1 max-h-48 w-full space-y-0.5 overflow-y-auto rounded-lg border border-emerald-200 bg-white p-1 shadow-lg">
+            {matches.map((match) => (
+              <button
+                key={match.id}
+                type="button"
+                className="block w-full rounded-md px-2 py-1.5 text-left text-xs font-semibold text-slate-700 hover:bg-emerald-50"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  selectMatch(match);
+                }}
+              >
+                {match.phone}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      <Input
+        dense
+        label="Tên khách"
+        value={walkInForm.customerName}
+        onChange={(event) => setWalkInForm({ ...walkInForm, customerName: event.target.value })}
+        readOnly={Boolean(selectedMatch)}
+        className={selectedMatch ? "cursor-not-allowed bg-slate-100" : undefined}
+        required
+      />
 
-      {matches.length > 0 ? (
+      {selectedMatch ? (
         <div className="space-y-1.5 rounded-lg border border-emerald-200 bg-white p-2">
-          <p className="text-xs font-black uppercase tracking-wide text-emerald-700">
-            {matches.length === 1 ? "Khách quen tìm thấy" : `Tìm thấy ${matches.length} khách trùng số điện thoại`}
-          </p>
-          {matches.map((match) => (
-            <div key={match.id} className="flex items-center justify-between gap-2 rounded-md bg-emerald-50/60 px-2 py-1.5 text-xs">
-              <span className="min-w-0 truncate font-semibold text-slate-700">
-                {match.fullName} — đã đặt {match.bookingsCount} lần
-                {match.lastBookingDate ? `, gần nhất ${new Date(match.lastBookingDate).toLocaleDateString("vi-VN")}` : ""}
-              </span>
-              <span className="flex shrink-0 gap-1">
-                <button type="button" className="rounded-md bg-emerald-600 px-2 py-1 font-bold text-white hover:bg-emerald-700" onClick={() => applyCustomerMatch(match.fullName)}>
-                  Dùng tên này
-                </button>
-                <button
-                  type="button"
-                  className="flex items-center gap-1 rounded-md border border-emerald-300 px-2 py-1 font-bold text-emerald-700 hover:bg-emerald-100"
-                  onClick={() => setSelectedHistoryCustomerId(match.id)}
-                >
-                  <History className="h-3 w-3" />
-                  Lịch sử
-                </button>
-              </span>
-            </div>
-          ))}
+          <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Khách quen tìm thấy</p>
+          <div className="flex items-center justify-between gap-2 rounded-md bg-emerald-50/60 px-2 py-1.5 text-xs">
+            <span className="min-w-0 truncate font-semibold text-slate-700">
+              {selectedMatch.fullName} — đã đặt {selectedMatch.bookingsCount} lần
+              {selectedMatch.lastBookingDate ? `, gần nhất ${new Date(selectedMatch.lastBookingDate).toLocaleDateString("vi-VN")}` : ""}
+            </span>
+            <button
+              type="button"
+              className="flex shrink-0 items-center gap-1 rounded-md border border-emerald-300 px-2 py-1 font-bold text-emerald-700 hover:bg-emerald-100"
+              onClick={() => setSelectedHistoryCustomerId(selectedMatch.id)}
+            >
+              <History className="h-3 w-3" />
+              Lịch sử
+            </button>
+          </div>
         </div>
       ) : null}
 

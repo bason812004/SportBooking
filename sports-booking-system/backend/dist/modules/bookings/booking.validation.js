@@ -21,11 +21,14 @@ const bookingServiceSchema = z.object({
     serviceId: z.string().min(1),
     quantity: z.number().int().positive().max(99)
 });
+const bookingDaySchema = z.object({
+    bookingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    slots: z.array(bookingSlotSchema).min(1).max(12)
+});
 export const bookingQuoteSchema = z.object({
     body: z.object({
         courtId: z.string().min(1),
-        bookingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-        slots: z.array(bookingSlotSchema).min(1).max(12),
+        days: z.array(bookingDaySchema).min(1).max(14),
         services: z.array(bookingServiceSchema).default([]),
         voucherId: z.string().min(1).optional(),
         voucherCode: z.string().min(2).max(40).optional()
@@ -34,8 +37,7 @@ export const bookingQuoteSchema = z.object({
 export const bookingCheckoutSchema = z.object({
     body: z.object({
         courtId: z.string().min(1),
-        bookingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-        slots: z.array(bookingSlotSchema).min(1).max(12),
+        days: z.array(bookingDaySchema).min(1).max(14),
         services: z.array(bookingServiceSchema).default([]),
         voucherId: z.string().min(1).optional(),
         voucherCode: z.string().min(2).max(40).optional(),

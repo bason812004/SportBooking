@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 const selectPost = `
   select
@@ -395,11 +396,14 @@ export const teamPostRepository = {
         await ensureTeamChatTables();
         if (messageIds.length === 0)
             return [];
-        const rows = await prisma.$queryRaw `
-      select message_id as "messageId", user_id as "userId", reaction, created_at as "createdAt"
+        const rows = await prisma.$queryRaw(Prisma.sql `
+      select message_id as "messageId",
+             user_id as "userId",
+             reaction,
+             created_at as "createdAt"
       from team_post_message_reactions
-      where message_id = ANY(${[messageIds]}::varchar[])
-    `;
+      where message_id in (${Prisma.join(messageIds)})
+    `);
         return rows;
     },
     async messageBelongsToPost(messageId, postId) {

@@ -7,12 +7,10 @@ import { voucherController } from "./voucher.controller.js";
 import { applyVoucherSchema, partnerVoucherUpdateSchema, partnerVoucherWriteSchema, voucherIdParamsSchema } from "./voucher.validation.js";
 
 export const userVoucherRoutes = Router();
-userVoucherRoutes.use(authMiddleware, requireRole(UserRole.USER));
-userVoucherRoutes.get("/me/vouchers", voucherController.myVouchers);
+userVoucherRoutes.get("/me/vouchers", authMiddleware, requireRole(UserRole.USER), voucherController.myVouchers);
 
 export const bookingVoucherRoutes = Router();
-bookingVoucherRoutes.use(authMiddleware, requireRole(UserRole.USER));
-bookingVoucherRoutes.post("/apply-voucher", validate(applyVoucherSchema), voucherController.apply);
+bookingVoucherRoutes.post("/apply-voucher", authMiddleware, requireRole(UserRole.USER), validate(applyVoucherSchema), voucherController.apply);
 
 export const partnerVoucherRoutes = Router();
 partnerVoucherRoutes.use(authMiddleware, requireRole(UserRole.PARTNER));
