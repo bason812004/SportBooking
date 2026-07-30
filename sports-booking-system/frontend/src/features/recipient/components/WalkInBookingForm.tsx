@@ -38,8 +38,8 @@ function weekdayDate(date: string) {
   return new Date(`${date}T00:00:00`).toLocaleDateString("vi-VN", { weekday: "long", day: "2-digit", month: "2-digit" });
 }
 
-function slotPriceKey(date: string, startTime: string, endTime: string) {
-  return `${date}|${startTime}|${endTime}`;
+function slotPriceKey(courtSurfaceId: string, date: string, startTime: string, endTime: string) {
+  return `${courtSurfaceId}|${date}|${startTime}|${endTime}`;
 }
 
 function minutesBetween(startTime: string, endTime: string) {
@@ -138,47 +138,71 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
   const bookedRanges = useMemo(() => mergeBookedRanges(surfaceAvailability.data?.slots ?? []), [surfaceAvailability.data?.slots]);
   const slotClusters = useMemo(() => clusterSlots(walkInSlots, effectiveDate, courtSurfaceId), [walkInSlots, effectiveDate, courtSurfaceId]);
 
-  // Slots picked via StaffScheduleGrid can span multiple dates; fetch price data for
-  // every date actually selected (not just `effectiveDate`) so the "Khung giờ đã chọn"
-  // summary can show a real price per slot instead of just times.
-  const selectedDates = useMemo(
-    () => Array.from(new Set(walkInSlots.map((slot) => slot.date ?? effectiveDate))),
-    [walkInSlots, effectiveDate]
-  );
+  // Slots picked via StaffScheduleGrid can span multiple dates AND multiple
+  // surfaces (switching "sân" tiles without clearing the selection) — fetch
+  // price data per (courtSurfaceId, date) pair actually selected, not just
+  // the currently active courtSurfaceId/effectiveDate, so a slot picked on a
+  // different sân never borrows another sân's price.
+  const selectedSurfaceDates = useMemo(() => {
+    const map = new Map<string, { courtSurfaceId: string; date: string }>();
+    for (const slot of walkInSlots) {
+      const surface = slot.courtSurfaceId ?? courtSurfaceId;
+      const date = slot.date ?? effectiveDate;
+      map.set(`${surface}|${date}`, { courtSurfaceId: surface, date });
+    }
+    return Array.from(map.values());
+  }, [walkInSlots, courtSurfaceId, effectiveDate]);
   const priceQueries = useQueries({
-    queries: selectedDates.map((date) => ({
-      queryKey: ["recipient-surface-availability", courtSurfaceId, date],
-      queryFn: () => recipientApi.surfaceAvailability(courtSurfaceId, date),
-      enabled: Boolean(courtSurfaceId)
+    queries: selectedSurfaceDates.map(({ courtSurfaceId: surface, date }) => ({
+      queryKey: ["recipient-surface-availability", surface, date],
+      queryFn: () => recipientApi.surfaceAvailability(surface, date),
+      enabled: Boolean(surface)
     }))
   });
   const priceByKey = useMemo(() => {
     const map = new Map<string, number>();
     priceQueries.forEach((query, index) => {
-      const date = selectedDates[index];
+      const { courtSurfaceId: surface, date } = selectedSurfaceDates[index];
       for (const slot of query.data?.slots ?? []) {
-        map.set(slotPriceKey(date, slot.startTime, slot.endTime), slot.price);
+        map.set(slotPriceKey(surface, date, slot.startTime, slot.endTime), slot.price);
       }
     });
     return map;
-  }, [priceQueries, selectedDates]);
+  }, [priceQueries, selectedSurfaceDates]);
 
-  const selectedSlotsByDate = useMemo(() => {
-    const byDate = new Map<string, { startTime: string; endTime: string; price: number }[]>();
+  // Grouped sân → ngày → khung giờ, để nhân viên luôn thấy rõ khung giờ nào
+  // thuộc sân nào khi lựa chọn trải trên nhiều sân khác nhau.
+  const selectedSlotsBySurface = useMemo(() => {
+    const bySurface = new Map<string, Map<string, { startTime: string; endTime: string; price: number }[]>>();
     for (const slot of walkInSlots) {
+      const surface = slot.courtSurfaceId ?? courtSurfaceId;
       const date = slot.date ?? effectiveDate;
+      const byDate = bySurface.get(surface) ?? new Map();
       const list = byDate.get(date) ?? [];
-      list.push({ startTime: slot.startTime, endTime: slot.endTime, price: priceByKey.get(slotPriceKey(date, slot.startTime, slot.endTime)) ?? 0 });
+      list.push({ startTime: slot.startTime, endTime: slot.endTime, price: priceByKey.get(slotPriceKey(surface, date, slot.startTime, slot.endTime)) ?? 0 });
       byDate.set(date, list);
+      bySurface.set(surface, byDate);
     }
-    for (const list of byDate.values()) list.sort((a, b) => a.startTime.localeCompare(b.startTime));
-    return Array.from(byDate.entries())
+    for (const byDate of bySurface.values()) {
+      for (const list of byDate.values()) list.sort((a, b) => a.startTime.localeCompare(b.startTime));
+    }
+    return Array.from(bySurface.entries())
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, slots]) => ({ date, slots, daySubtotal: slots.reduce((sum, s) => sum + s.price, 0) }));
-  }, [walkInSlots, effectiveDate, priceByKey]);
+      .map(([surfaceId, byDate]) => {
+        const days = Array.from(byDate.entries())
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([date, slots]) => ({ date, slots, daySubtotal: slots.reduce((sum, s) => sum + s.price, 0) }));
+        return {
+          courtSurfaceId: surfaceId,
+          surfaceName: surfaceNames?.[surfaceId] ?? "Sân đang chọn",
+          days,
+          surfaceSubtotal: days.reduce((sum, d) => sum + d.daySubtotal, 0)
+        };
+      });
+  }, [walkInSlots, courtSurfaceId, effectiveDate, priceByKey, surfaceNames]);
   const walkInSubtotal = useMemo(
-    () => selectedSlotsByDate.reduce((sum, day) => sum + day.daySubtotal, 0),
-    [selectedSlotsByDate]
+    () => selectedSlotsBySurface.reduce((sum, surface) => sum + surface.surfaceSubtotal, 0),
+    [selectedSlotsBySurface]
   );
 
   const debouncedPhone = useDebounce(walkInForm.customerPhone.trim(), 350);
@@ -340,7 +364,7 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
     walkInSlots,
     setWalkInSlots,
     slotClusters,
-    selectedSlotsByDate,
+    selectedSlotsBySurface,
     walkInSubtotal,
     activeWalkInPayment,
     setActiveWalkInPayment,
@@ -622,6 +646,7 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
   const {
     activeWalkInPayment,
     effectiveDate,
+    courtSurfaceId,
     walkInForm,
     setWalkInForm,
     createWalkIn,
@@ -629,7 +654,7 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
     mode,
     customStart,
     slotClusters,
-    selectedSlotsByDate,
+    selectedSlotsBySurface,
     walkInSubtotal,
     setWalkInSlots,
     repeatWeekly,
@@ -666,43 +691,59 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
 
       <div className="rounded-lg border border-emerald-100 bg-white p-2">
         <p className="mb-1 text-[11px] font-black uppercase tracking-wide text-slate-500">Khung giờ đã chọn</p>
-        {selectedSlotsByDate.length === 0 ? (
+        {selectedSlotsBySurface.length === 0 ? (
           <p className="text-xs font-semibold text-slate-400">Chưa chọn khung giờ nào</p>
         ) : (
           <div className="space-y-2">
-            <ul className="space-y-2 rounded-lg bg-slate-50 p-2 text-xs">
-              {selectedSlotsByDate.map((day) => (
-                <li key={day.date} className="space-y-1">
-                  <div className="flex items-center justify-between font-black text-emerald-700">
-                    <span>{weekdayDate(day.date)}</span>
-                    <span>{formatCurrency(day.daySubtotal)}</span>
-                  </div>
-                  {day.slots.map((slot) => (
-                    <div key={`${day.date}-${slot.startTime}`} className="flex items-center justify-between gap-2 pl-2 font-semibold text-slate-600">
-                      <span>
-                        {slot.startTime} – {slot.endTime}
+            <ul className="space-y-3 rounded-lg bg-slate-50 p-2 text-xs">
+              {selectedSlotsBySurface.map((surface) => (
+                <li key={surface.courtSurfaceId} className="space-y-1.5">
+                  {selectedSlotsBySurface.length > 1 ? (
+                    <div className="flex items-center justify-between rounded-md bg-emerald-100/70 px-1.5 py-1 font-black text-emerald-800">
+                      <span className="flex items-center gap-1">
+                        <LayoutGrid className="h-3 w-3" />
+                        {surface.surfaceName}
                       </span>
-                      <span className="flex shrink-0 items-center gap-1.5">
-                        {formatCurrency(slot.price)}
-                        <button
-                          type="button"
-                          className="text-rose-500 hover:text-rose-700"
-                          onClick={() =>
-                            setWalkInSlots((current) =>
-                              current.filter(
-                                (s) =>
-                                  (s.date ?? effectiveDate) !== day.date ||
-                                  s.startTime !== slot.startTime ||
-                                  s.endTime !== slot.endTime
-                              )
-                            )
-                          }
-                        >
-                          <X className="h-2.5 w-2.5" />
-                        </button>
-                      </span>
+                      <span>{formatCurrency(surface.surfaceSubtotal)}</span>
                     </div>
-                  ))}
+                  ) : null}
+                  <ul className="space-y-1">
+                    {surface.days.map((day) => (
+                      <li key={`${surface.courtSurfaceId}-${day.date}`} className="space-y-1">
+                        <div className="flex items-center justify-between font-black text-emerald-700">
+                          <span>{weekdayDate(day.date)}</span>
+                          <span>{formatCurrency(day.daySubtotal)}</span>
+                        </div>
+                        {day.slots.map((slot) => (
+                          <div key={`${surface.courtSurfaceId}-${day.date}-${slot.startTime}`} className="flex items-center justify-between gap-2 pl-2 font-semibold text-slate-600">
+                            <span>
+                              {slot.startTime} – {slot.endTime}
+                            </span>
+                            <span className="flex shrink-0 items-center gap-1.5">
+                              {formatCurrency(slot.price)}
+                              <button
+                                type="button"
+                                className="text-rose-500 hover:text-rose-700"
+                                onClick={() =>
+                                  setWalkInSlots((current) =>
+                                    current.filter(
+                                      (s) =>
+                                        (s.courtSurfaceId ?? courtSurfaceId) !== surface.courtSurfaceId ||
+                                        (s.date ?? effectiveDate) !== day.date ||
+                                        s.startTime !== slot.startTime ||
+                                        s.endTime !== slot.endTime
+                                    )
+                                  )
+                                }
+                              >
+                                <X className="h-2.5 w-2.5" />
+                              </button>
+                            </span>
+                          </div>
+                        ))}
+                      </li>
+                    ))}
+                  </ul>
                 </li>
               ))}
               <li className="flex items-center justify-between border-t border-slate-200 pt-1.5 font-black text-slate-900">
