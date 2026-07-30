@@ -18,6 +18,9 @@ export type WeeklyCalendarSectionProps = {
   onFocusedDateChange: (next: Date) => void;
   selected: WeeklyScheduleSlot[];
   onSelectedChange: (next: WeeklyScheduleSlot[]) => void;
+  /** When provided, slot toggling uses this global handler (e.g. from BookingContext).
+   *  Navigation (prev/next/today) will NOT reset selected slots. */
+  onToggleSlot?: (slot: WeeklyScheduleSlot) => void;
   language: Language;
   /** Auto-switch to Day view on compact screens (mobile). Default: true. */
   forceDayOnCompact?: boolean;
@@ -38,6 +41,7 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
     onFocusedDateChange,
     selected,
     onSelectedChange,
+    onToggleSlot,
     language,
     forceDayOnCompact = true,
     rightSlot
@@ -63,6 +67,13 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
   const toggleSlot = useCallback(
     (slot: WeeklyScheduleSlot) => {
       if (!isSlotSelectable(slot)) return;
+      // If a global toggle handler is provided (e.g. from BookingContext), delegate to it.
+      // This preserves multi-week slot state across week navigation.
+      if (onToggleSlot) {
+        onToggleSlot(slot);
+        return;
+      }
+      // Fallback: local selection management.
       const key = slotKey(slot);
       const exists = selected.some((s) => slotKey(s) === key);
       if (exists) {
@@ -75,8 +86,8 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
         const isConsecutive =
           lastHour !== -1 &&
           (slotHour === lastHour + 1 || slotHour === lastHour - 1);
+        void isConsecutive; // Reserved for future consecutive-slot validation
         const next = [...selected, slot];
-        // Keep sorted: by date asc, then startTime asc
         next.sort((a, b) => {
           const dc = a.date.localeCompare(b.date);
           return dc !== 0 ? dc : a.startTime.localeCompare(b.startTime);
@@ -84,7 +95,7 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
         onSelectedChange(next);
       }
     },
-    [selected, onSelectedChange]
+    [selected, onSelectedChange, onToggleSlot]
   );
 
   // ── Navigation ────────────────────────────────────────────────
@@ -93,10 +104,12 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
     const todayWeekStart = startOfWeek(today);
     onWeekStartChange(todayWeekStart);
     onFocusedDateChange(today);
-    onSelectedChange([]);
+    if (!onToggleSlot) {
+      onSelectedChange([]);
+    }
     setUserOverride(false);
     setView(forceDayOnCompact && isCompact ? "DAY" : "WEEK");
-  }, [onWeekStartChange, onFocusedDateChange, onSelectedChange, forceDayOnCompact, isCompact]);
+  }, [onWeekStartChange, onFocusedDateChange, onSelectedChange, onToggleSlot, forceDayOnCompact, isCompact]);
 
   const shiftWeek = useCallback(
     (offset: number) => {

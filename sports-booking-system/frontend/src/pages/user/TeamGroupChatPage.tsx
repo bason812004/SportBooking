@@ -8,7 +8,7 @@ import { contentApi, type BlogWriteInput } from "../../features/content/api/cont
 import { useTeamPost, useTeamPostMessages } from "../../features/content/hooks/useContent";
 import { useAuth } from "../../features/auth/hooks/useAuth";
 import { getSocket } from "../../lib/socket";
-import { uploadApi } from "../../features/uploads/api/uploadApi";
+import { uploadApi, type UploadProgress } from "../../features/uploads/api/uploadApi";
 import type { TeamPostMessage } from "../../types/api";
 
 const dateFormat = new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -51,6 +51,7 @@ export function TeamGroupChatPage() {
   const [sending, setSending] = useState(false);
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [members, setMembers] = useState<GroupMember[]>([]);
   const [showReactionFor, setShowReactionFor] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -130,9 +131,15 @@ export function TeamGroupChatPage() {
     }
   }
 
+  const ALLOWED_VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
+
   function handlePickMedia(file: File, kind: "IMAGE" | "VIDEO") {
     if (file.size > (kind === "IMAGE" ? 5 : 25) * 1024 * 1024) {
-      toast.error(`File toi da ${kind === "IMAGE" ? "5MB" : "25MB"}`);
+      toast.error(`File tối đa ${kind === "IMAGE" ? "5MB" : "25MB"}`);
+      return;
+    }
+    if (kind === "VIDEO" && !ALLOWED_VIDEO_TYPES.has(file.type)) {
+      toast.error("Chỉ chấp nhận video MP4, WebM hoặc MOV");
       return;
     }
     setPendingMedia({ file, type: kind, previewUrl: URL.createObjectURL(file) });
@@ -156,14 +163,20 @@ export function TeamGroupChatPage() {
     try {
       if (pendingMedia) {
         setUploadingMedia(true);
+        setUploadProgress(null);
         const uploaded = pendingMedia.type === "IMAGE"
-          ? await uploadApi.uploadTeamChatImage(id, pendingMedia.file)
-          : await uploadApi.uploadTeamChatVideo(id, pendingMedia.file);
+          ? await uploadApi.uploadTeamChatImage(id, pendingMedia.file, {
+              onProgress: (p) => setUploadProgress(p)
+            })
+          : await uploadApi.uploadTeamChatVideo(id, pendingMedia.file, {
+              onProgress: (p) => setUploadProgress(p)
+            });
         attachmentUrl = uploaded.url;
         attachmentName = pendingMedia.file.name;
         attachmentSize = pendingMedia.file.size;
         mimeType = pendingMedia.file.type;
         messageType = pendingMedia.type;
+        setUploadProgress(null);
         setUploadingMedia(false);
       }
 
@@ -276,7 +289,7 @@ export function TeamGroupChatPage() {
             <h1 className="mt-4 text-2xl font-black leading-tight">{group.title}</h1>
             <div className="mt-4 space-y-3 text-sm font-semibold text-slate-600">
               <p className="flex gap-2"><MapPin className="h-4 w-4 shrink-0 text-emerald-700" />{group.courtName} - {group.address}</p>
-              <p className="flex gap-2"><CalendarDays className="h-4 w-4 shrink-0 text-emerald-700" />{group.playingDate ? dateFormat.format(new Date(group.playingDate)) : "Linh hoạt"} · {group.startTime.slice(0, 5)} - {group.endTime.slice(0, 5)}</p>
+              <p className="flex gap-2"><CalendarDays className="h-4 w-4 shrink-0 text-emerald-700" />{group.playingDate ? dateFormat.format(new Date(group.playingDate)) : "Linh hoạt"} · {(group.startTime ?? "").slice(0, 5)} - {(group.endTime ?? "").slice(0, 5)}</p>
               <p className="flex gap-2"><UsersRound className="h-4 w-4 shrink-0 text-emerald-700" />{group.currentPlayers}/{group.maxPlayers} người</p>
             </div>
             <Link to={`/teammates/${group.id}`} className="mt-5 inline-flex w-full items-center justify-center rounded-xl border border-slate-200 px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50">
@@ -356,6 +369,7 @@ export function TeamGroupChatPage() {
               <div className="flex flex-1 flex-col gap-3 overflow-y-auto bg-slate-50 p-4">
                 {(messages.data as TeamPostMessageWithReactions[] | undefined)?.length ? (
                   (messages.data as TeamPostMessageWithReactions[]).map((chat) => {
+                    if (!chat.sender) return null;
                     const mine = chat.sender.id === user?.id;
                     const reactionsByEmoji = new Map<string, number>();
                     (chat.reactions ?? []).forEach((r) => {
@@ -444,11 +458,25 @@ export function TeamGroupChatPage() {
                     )}
                     <button
                       type="button"
-                      onClick={() => { URL.revokeObjectURL(pendingMedia.previewUrl); setPendingMedia(null); }}
-                      className="absolute -right-2 -top-2 rounded-full bg-rose-600 p-1 text-white shadow"
+                      onClick={() => { URL.revokeObjectURL(pendingMedia.previewUrl); setPendingMedia(null); setUploadProgress(null); }}
+                      disabled={uploadingMedia}
+                      className="absolute -right-2 -top-2 rounded-full bg-rose-600 p-1 text-white shadow disabled:opacity-50"
                     >
                       <X className="h-3 w-3" />
                     </button>
+                    {uploadingMedia && uploadProgress && (
+                      <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/50">
+                        <div className="text-center">
+                          <p className="text-xs font-black text-white">{uploadProgress.percent}%</p>
+                          <div className="mt-1 h-1.5 w-16 overflow-hidden rounded-full bg-white/30">
+                            <div
+                              className="h-full bg-emerald-400 transition-all"
+                              style={{ width: `${uploadProgress.percent}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

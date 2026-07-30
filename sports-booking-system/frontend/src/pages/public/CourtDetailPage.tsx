@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { LoadingState, ErrorState, EmptyState } from "../../components/common/States";
@@ -11,7 +11,6 @@ import {
   usePrefetchAdjacentWeeks,
   useWeeklySchedule
 } from "../../features/bookings/hooks/useBookingSchedule";
-import type { WeeklyScheduleSlot } from "../../types/api";
 import { getSocket } from "../../lib/socket";
 import { HeroGallery } from "./detail/HeroGallery";
 import { StickyBookingBar } from "./detail/StickyBookingBar";
@@ -29,9 +28,10 @@ import { CourtSectionNav } from "./detail/CourtSectionNav";
 import { DetailSection } from "./detail/detailUtils";
 import { CourtDetailBookingSidePanel } from "./detail/CourtDetailBookingSidePanel";
 import { detailImages } from "./detail/detailData";
+import { useBookingContext } from "../../context/BookingContext";
 
 function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const R = 6371; // Radius of the earth in km
+  const R = 6371;
   const dLat = (lat2 - lat1) * (Math.PI / 180);
   const dLon = (lon2 - lon1) * (Math.PI / 180);
   const a =
@@ -51,39 +51,50 @@ export function CourtDetailPage() {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
   const court = useCourt(id);
-
-  // Initialise week from URL ?week= param or default to current week
-  const initialWeekFromUrl = searchParams.get("week") ?? undefined;
-  const [weekStartDate, setWeekStartDate] = useState<Date>(
-    () => startOfWeek(
-      initialWeekFromUrl
-        ? new Date(`${initialWeekFromUrl}T00:00:00`)
-        : new Date()
-    )
-  );
-  const [focusedDate, setFocusedDate] = useState<Date>(() => new Date());
-  // selected slots are NOT reset when week changes
-  const [selected, setSelected] = useState<WeeklyScheduleSlot[]>([]);
-  const selectedWeekRef = useRef<string>("");
-
   const { language } = useLanguage();
   const { token } = useAuth();
   const queryClient = useQueryClient();
   const { location: userLoc } = useUserLocation({ autoRequest: true });
 
+  // ── Global booking context ──────────────────────────────────────────────────
+  // This is the single source of truth for all booking state.
+  // Slots, week navigation, and court info are shared across the entire app.
+  const {
+    state: bookingState,
+    toggleSlot,
+    setWeekStart: ctxSetWeekStart,
+    setFocusedDate: ctxSetFocusedDate,
+    goToNextWeek,
+    goToPrevWeek,
+    goToToday,
+    setCourt: ctxSetCourt,
+    totalSlots
+  } = useBookingContext();
+
+  // ── Initialize week from URL ────────────────────────────────────────────────
+  const initialWeekFromUrl = searchParams.get("week") ?? undefined;
+  const [weekStartDate, setWeekStartDate] = [bookingState.weekStart, ctxSetWeekStart];
+
+  // ── Sync court info to global context ───────────────────────────────────────
+  useEffect(() => {
+    if (court.data?.id && court.data?.name) {
+      ctxSetCourt(court.data.id, court.data.name);
+    }
+  }, [court.data?.id, court.data?.name, ctxSetCourt]);
+
+  // ── Sync week to URL ────────────────────────────────────────────────────────
   const weekStart = formatYmd(weekStartDate);
-  const schedule = useWeeklySchedule(id, weekStart);
-
-  usePrefetchAdjacentWeeks(id, weekStart);
-
-  // ── Sync week to URL ───────────────────────────────────────────
   useEffect(() => {
     const params = new URLSearchParams(searchParams);
     params.set("week", weekStart);
-    window.history.replaceState(null, "", `${location.pathname}?${params.toString()}`);
-  }, [weekStartDate]);
+    // Preserve slot params for multi-week deep-linking
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+  }, [weekStart]);
 
-  // Realtime: invalidate weekly-schedule cache when bookings change.
+  const schedule = useWeeklySchedule(id, weekStart);
+  usePrefetchAdjacentWeeks(id, weekStart);
+
+  // ── Realtime invalidation ──────────────────────────────────────────────────
   useEffect(() => {
     if (!id || !token) return;
     const socket = getSocket(token);
@@ -103,6 +114,7 @@ export function CourtDetailPage() {
     };
   }, [id, queryClient, token]);
 
+  // ── Derived ────────────────────────────────────────────────────────────────
   const distanceText = useMemo(() => {
     const data = court.data;
     if (userLoc && data?.latitude && data?.longitude) {
@@ -139,7 +151,7 @@ export function CourtDetailPage() {
     };
   }, [court.data, id]);
 
-  const selectedDate = formatYmd(focusedDate);
+  const selectedDate = formatYmd(bookingState.focusedDate);
 
   if (court.isLoading) return <div className="px-5 py-16"><LoadingState /></div>;
   if (court.isError) return <div className="px-5 py-16"><ErrorState message={court.error.message} /></div>;
@@ -152,7 +164,7 @@ export function CourtDetailPage() {
         price={view.price}
         rating={view.rating}
         selectedDate={selectedDate}
-        selectedSlots={selected}
+        selectedSlots={bookingState.selectedSlots}
       />
       <div className="mx-auto max-w-[1600px] space-y-6 px-4 py-6">
         <HeroGallery images={view.images} />
@@ -200,18 +212,23 @@ export function CourtDetailPage() {
                   error={schedule.error as Error | null}
                   onRetry={() => schedule.refetch()}
                   weekStart={weekStartDate}
-                  onWeekStartChange={(next) => setWeekStartDate(next)}
-                  focusedDate={focusedDate}
-                  onFocusedDateChange={setFocusedDate}
-                  selected={selected}
-                  onSelectedChange={setSelected}
+                  onWeekStartChange={ctxSetWeekStart}
+                  focusedDate={bookingState.focusedDate}
+                  onFocusedDateChange={ctxSetFocusedDate}
+                  selected={bookingState.selectedSlots}
+                  onSelectedChange={(slots) => {
+                    // slots from WeeklyCalendarSection are only the NEW slot being toggled
+                    // We use toggleSlot from context instead
+                    // This callback is only used internally by the calendar
+                  }}
+                  onToggleSlot={toggleSlot}
                   language={language}
                   forceDayOnCompact
                   rightSlot={
                     <CourtDetailBookingSidePanel
                       courtId={view.id}
                       selectedDate={selectedDate}
-                      selectedSlots={selected}
+                      selectedSlots={bookingState.selectedSlots}
                     />
                   }
                 />

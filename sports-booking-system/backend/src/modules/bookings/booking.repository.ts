@@ -189,17 +189,20 @@ export const bookingRepository = {
       });
 
       if (input.voucherId && input.voucherDiscountAmount > 0) {
-        const voucherUpdate = await tx.voucher.updateMany({
-          where: {
-            id: input.voucherId,
-            status: "ACTIVE",
-            OR: [{ usageLimit: null }, { usedCount: { lt: tx.voucher.fields.usageLimit } }]
-          },
-          data: { usedCount: { increment: 1 } }
+        const existingVoucher = await tx.voucher.findUnique({
+          where: { id: input.voucherId },
+          select: { id: true, usageLimit: true, usedCount: true, status: true }
         });
-        if (voucherUpdate.count !== 1) {
+        if (!existingVoucher || existingVoucher.status !== "ACTIVE") {
+          throw new ValidationError("Voucher khong hop le");
+        }
+        if (existingVoucher.usageLimit !== null && existingVoucher.usedCount >= existingVoucher.usageLimit) {
           throw new ValidationError("Voucher da het luot su dung");
         }
+        await tx.voucher.update({
+          where: { id: input.voucherId },
+          data: { usedCount: { increment: 1 } }
+        });
         const split = await voucherDiscountSplit(tx, input.voucherId, input.voucherDiscountAmount);
         await tx.bookingVoucher.create({
           data: {
@@ -336,17 +339,20 @@ export const bookingRepository = {
         });
 
         if (input.voucherId && input.voucherDiscountAmount > 0) {
-          const voucherUpdate = await tx.voucher.updateMany({
-            where: {
-              id: input.voucherId,
-              status: "ACTIVE",
-              OR: [{ usageLimit: null }, { usedCount: { lt: tx.voucher.fields.usageLimit } }]
-            },
-            data: { usedCount: { increment: 1 } }
+          const existingVoucher = await tx.voucher.findUnique({
+            where: { id: input.voucherId },
+            select: { id: true, usageLimit: true, usedCount: true, status: true }
           });
-          if (voucherUpdate.count !== 1) {
+          if (!existingVoucher || existingVoucher.status !== "ACTIVE") {
+            throw new ValidationError("Voucher khong hop le");
+          }
+          if (existingVoucher.usageLimit !== null && existingVoucher.usedCount >= existingVoucher.usageLimit) {
             throw new ValidationError("Voucher da het luot su dung");
           }
+          await tx.voucher.update({
+            where: { id: input.voucherId },
+            data: { usedCount: { increment: 1 } }
+          });
           const split = await voucherDiscountSplit(tx, input.voucherId, input.voucherDiscountAmount);
           await tx.bookingVoucher.create({
             data: {
@@ -452,17 +458,20 @@ export const bookingRepository = {
         });
 
         if (input.voucherId && input.voucherDiscountAmount > 0) {
-          const voucherUpdate = await tx.voucher.updateMany({
-            where: {
-              id: input.voucherId,
-              status: "ACTIVE",
-              OR: [{ usageLimit: null }, { usedCount: { lt: tx.voucher.fields.usageLimit } }]
-            },
-            data: { usedCount: { increment: 1 } }
+          const existingVoucher = await tx.voucher.findUnique({
+            where: { id: input.voucherId },
+            select: { id: true, usageLimit: true, usedCount: true, status: true }
           });
-          if (voucherUpdate.count !== 1) {
+          if (!existingVoucher || existingVoucher.status !== "ACTIVE") {
+            throw new ValidationError("Voucher khong hop le");
+          }
+          if (existingVoucher.usageLimit !== null && existingVoucher.usedCount >= existingVoucher.usageLimit) {
             throw new ValidationError("Voucher da het luot su dung");
           }
+          await tx.voucher.update({
+            where: { id: input.voucherId },
+            data: { usedCount: { increment: 1 } }
+          });
           const split = await voucherDiscountSplit(tx, input.voucherId, input.voucherDiscountAmount);
           await tx.bookingVoucher.create({
             data: {

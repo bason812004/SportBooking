@@ -40,7 +40,7 @@ export const demandPredictionRepository = {
              to_char(end_time, 'HH24:MI') as "endTime",
              count(*)::int as count
       from bookings
-      where court_id = ${courtId}::uuid
+      where court_id = ${courtId}
         and booking_status not in ('CANCELLED'::booking_status, 'NO_SHOW'::booking_status)
       group by start_time, end_time
     `;
@@ -56,7 +56,7 @@ export const demandPredictionRepository = {
       from (
         select booking_date, start_time, count(*) as slot_count
         from bookings
-        where court_id = ${courtId}::uuid
+        where court_id = ${courtId}
           and booking_status not in ('CANCELLED'::booking_status, 'NO_SHOW'::booking_status)
         group by booking_date, start_time
       ) grouped_slots
@@ -94,7 +94,7 @@ export const demandPredictionRepository = {
       select c.id as "courtId", c.name as "courtName", extract(hour from b.start_time)::int as hour, count(*)::bigint as "bookingCount"
       from bookings b
       join courts c on c.id = b.court_id
-      where c.partner_id = ${partnerId}::uuid
+      where c.partner_id = ${partnerId}
         and b.booking_status not in ('CANCELLED'::booking_status, 'NO_SHOW'::booking_status)
       group by c.id, c.name, extract(hour from b.start_time)
       order by "bookingCount" desc
