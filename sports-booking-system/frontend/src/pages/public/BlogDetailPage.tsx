@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { CalendarDays, Eye, FileText, MessageCircle, MessageCircleOff, Send, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
+import type { BlogComment } from "../../types/api";
 import { contentApi } from "../../features/content/api/contentApi";
 import { useBlog, useBlogComments, useBlogs } from "../../features/content/hooks/useContent";
 import { useAuth } from "../../features/auth/hooks/useAuth";
@@ -50,15 +51,25 @@ export function BlogDetailPage() {
       toast.error("Vui lòng nhập nội dung bình luận.");
       return;
     }
+    const content = comment.trim();
     setSubmitting(true);
     try {
-      await contentApi.createBlogComment(slug, comment.trim());
+      const created = await contentApi.createBlogComment(slug, content);
+      // Update cache immediately — no race with invalidateQueries
+      queryClient.setQueryData<BlogComment[]>(
+        ["blog-comments", slug],
+        (old) => {
+          if (!old) return [created];
+          // Avoid duplicates
+          if (old.some((c) => c.id === created.id)) return old;
+          return [created, ...old];
+        }
+      );
       setComment("");
       toast.success("Đã gửi bình luận.");
-      await queryClient.invalidateQueries({ queryKey: ["blog-comments", slug] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không thể gửi bình luận.");
-      await queryClient.invalidateQueries({ queryKey: ["public-blog", slug] });
+      await queryClient.invalidateQueries({ queryKey: ["blog-comments", slug] });
     } finally {
       setSubmitting(false);
     }
@@ -66,12 +77,19 @@ export function BlogDetailPage() {
 
   async function handleEditComment(commentId: string) {
     if (!slug || !editText.trim()) return;
+    const updatedContent = editText.trim();
+    // Optimistic update
+    queryClient.setQueryData<BlogComment[]>(
+      ["blog-comments", slug],
+      (old) => old?.map((c) => c.id === commentId ? { ...c, content: updatedContent, isEdited: true } : c)
+    );
+    setEditingId(null);
     try {
-      await contentApi.updateBlogComment(slug, commentId, editText.trim());
-      setEditingId(null);
+      await contentApi.updateBlogComment(slug, commentId, updatedContent);
       toast.success("Đã chỉnh sửa bình luận.");
-      await queryClient.invalidateQueries({ queryKey: ["blog-comments", slug] });
     } catch (error) {
+      // Revert on failure
+      await queryClient.invalidateQueries({ queryKey: ["blog-comments", slug] });
       toast.error(error instanceof Error ? error.message : "Không thể chỉnh sửa bình luận.");
     }
   }
@@ -79,11 +97,18 @@ export function BlogDetailPage() {
   async function handleDeleteComment(commentId: string) {
     if (!slug) return;
     if (!window.confirm("Bạn có chắc chắn muốn xóa bình luận này?")) return;
+    // Optimistic remove
+    const snapshot = queryClient.getQueryData<BlogComment[]>(["blog-comments", slug]);
+    queryClient.setQueryData<BlogComment[]>(
+      ["blog-comments", slug],
+      (old) => old?.filter((c) => c.id !== commentId)
+    );
     try {
       await contentApi.deleteBlogComment(slug, commentId);
       toast.success("Đã xóa bình luận.");
-      await queryClient.invalidateQueries({ queryKey: ["blog-comments", slug] });
     } catch (error) {
+      // Revert on failure
+      queryClient.setQueryData(["blog-comments", slug], snapshot);
       toast.error(error instanceof Error ? error.message : "Không thể xóa bình luận.");
     }
   }
@@ -112,7 +137,7 @@ export function BlogDetailPage() {
           </div>
           {item.coverImageUrl && <img src={item.coverImageUrl} alt={item.title} className="mt-7 aspect-[16/8] w-full rounded-2xl object-cover" />}
           <div className="mt-8 space-y-5 text-base leading-8 text-slate-700">
-            {item.content.split("\n").filter(Boolean).map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+            {item.content.split("\n").filter(Boolean).map((paragraph, idx) => <p key={`${paragraph}-${idx}`}>{paragraph}</p>)}
           </div>
         </div>
 

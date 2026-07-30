@@ -1,5 +1,20 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 import type { DbClient, WithdrawalStatus } from "./withdrawal.types.js";
+
+function withdrawalOrderBy(sortBy?: string, sortOrder?: string): Prisma.WithdrawalRequestOrderByWithRelationInput {
+  const direction = sortOrder === "asc" ? "asc" : "desc";
+  switch (sortBy) {
+    case "amount":
+      return { amount: direction };
+    case "status":
+      return { status: direction };
+    case "partnerName":
+      return { partner: { businessName: direction } };
+    default:
+      return { createdAt: direction };
+  }
+}
 
 const listInclude = {
   partner: {
@@ -33,7 +48,15 @@ export const withdrawalRepository = {
   async transition(
     id: string,
     fromStatuses: WithdrawalStatus[],
-    data: { status: WithdrawalStatus; processedBy?: string; processedAt?: Date; note?: string | null },
+    data: {
+      status: WithdrawalStatus;
+      processedBy?: string;
+      processedAt?: Date;
+      note?: string | null;
+      providerName?: string;
+      providerTransactionId?: string;
+      providerResponse?: Prisma.InputJsonValue;
+    },
     db: DbClient
   ) {
     const result = await db.withdrawalRequest.updateMany({
@@ -43,13 +66,34 @@ export const withdrawalRepository = {
     return result.count;
   },
 
-  async list(filters: { partnerId?: string; status?: WithdrawalStatus }, page: number, limit: number) {
-    const where = { partnerId: filters.partnerId, status: filters.status };
+  async list(
+    filters: {
+      partnerId?: string;
+      status?: WithdrawalStatus;
+      sortBy?: string;
+      sortOrder?: string;
+      fromDate?: string;
+      toDate?: string;
+    },
+    page: number,
+    limit: number
+  ) {
+    const where: Prisma.WithdrawalRequestWhereInput = {
+      partnerId: filters.partnerId,
+      status: filters.status,
+      createdAt:
+        filters.fromDate || filters.toDate
+          ? {
+              gte: filters.fromDate ? new Date(`${filters.fromDate}T00:00:00`) : undefined,
+              lte: filters.toDate ? new Date(`${filters.toDate}T23:59:59.999`) : undefined
+            }
+          : undefined
+    };
     const [items, total] = await Promise.all([
       prisma.withdrawalRequest.findMany({
         where,
         include: listInclude,
-        orderBy: { createdAt: "desc" },
+        orderBy: withdrawalOrderBy(filters.sortBy, filters.sortOrder),
         skip: (page - 1) * limit,
         take: limit
       }),

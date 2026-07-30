@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { recipientApi, type RecipientCustomerMatch, type RecipientSurfaceAvailabilitySlot, type RecipientWalkInPayment } from "../api/recipientApi";
 import { Button } from "../../../components/ui/Button";
@@ -9,6 +9,7 @@ import { SlotGrid, type SlotGridSelection } from "../../../components/booking/Sl
 import { QrPaymentPanel } from "../../../components/payment/QrPaymentPanel";
 import { Overlay } from "../../../components/common/Overlay";
 import { useDebounce } from "../../../hooks/useDebounce";
+import { formatCurrency } from "../../../lib/format";
 import { CalendarDays, Clock, LayoutGrid, PhoneCall, PlusCircle, History, User, Wallet, X } from "lucide-react";
 
 const paymentDoneStatuses = ["PAID", "FAILED", "EXPIRED", "CANCELLED"];
@@ -31,6 +32,14 @@ const defaultWalkInForm = (): WalkInForm => ({
 
 function shortDate(date: string) {
   return new Date(`${date}T00:00:00`).toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" });
+}
+
+function weekdayDate(date: string) {
+  return new Date(`${date}T00:00:00`).toLocaleDateString("vi-VN", { weekday: "long", day: "2-digit", month: "2-digit" });
+}
+
+function slotPriceKey(date: string, startTime: string, endTime: string) {
+  return `${date}|${startTime}|${endTime}`;
 }
 
 function minutesBetween(startTime: string, endTime: string) {
@@ -128,6 +137,49 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
 
   const bookedRanges = useMemo(() => mergeBookedRanges(surfaceAvailability.data?.slots ?? []), [surfaceAvailability.data?.slots]);
   const slotClusters = useMemo(() => clusterSlots(walkInSlots, effectiveDate, courtSurfaceId), [walkInSlots, effectiveDate, courtSurfaceId]);
+
+  // Slots picked via StaffScheduleGrid can span multiple dates; fetch price data for
+  // every date actually selected (not just `effectiveDate`) so the "Khung giờ đã chọn"
+  // summary can show a real price per slot instead of just times.
+  const selectedDates = useMemo(
+    () => Array.from(new Set(walkInSlots.map((slot) => slot.date ?? effectiveDate))),
+    [walkInSlots, effectiveDate]
+  );
+  const priceQueries = useQueries({
+    queries: selectedDates.map((date) => ({
+      queryKey: ["recipient-surface-availability", courtSurfaceId, date],
+      queryFn: () => recipientApi.surfaceAvailability(courtSurfaceId, date),
+      enabled: Boolean(courtSurfaceId)
+    }))
+  });
+  const priceByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    priceQueries.forEach((query, index) => {
+      const date = selectedDates[index];
+      for (const slot of query.data?.slots ?? []) {
+        map.set(slotPriceKey(date, slot.startTime, slot.endTime), slot.price);
+      }
+    });
+    return map;
+  }, [priceQueries, selectedDates]);
+
+  const selectedSlotsByDate = useMemo(() => {
+    const byDate = new Map<string, { startTime: string; endTime: string; price: number }[]>();
+    for (const slot of walkInSlots) {
+      const date = slot.date ?? effectiveDate;
+      const list = byDate.get(date) ?? [];
+      list.push({ startTime: slot.startTime, endTime: slot.endTime, price: priceByKey.get(slotPriceKey(date, slot.startTime, slot.endTime)) ?? 0 });
+      byDate.set(date, list);
+    }
+    for (const list of byDate.values()) list.sort((a, b) => a.startTime.localeCompare(b.startTime));
+    return Array.from(byDate.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, slots]) => ({ date, slots, daySubtotal: slots.reduce((sum, s) => sum + s.price, 0) }));
+  }, [walkInSlots, effectiveDate, priceByKey]);
+  const walkInSubtotal = useMemo(
+    () => selectedSlotsByDate.reduce((sum, day) => sum + day.daySubtotal, 0),
+    [selectedSlotsByDate]
+  );
 
   const debouncedPhone = useDebounce(walkInForm.customerPhone.trim(), 350);
   const customerMatches = useQuery({
@@ -288,6 +340,8 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
     walkInSlots,
     setWalkInSlots,
     slotClusters,
+    selectedSlotsByDate,
+    walkInSubtotal,
     activeWalkInPayment,
     setActiveWalkInPayment,
     mode,
@@ -568,8 +622,6 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
   const {
     activeWalkInPayment,
     effectiveDate,
-    courtSurfaceId,
-    surfaceNames,
     walkInForm,
     setWalkInForm,
     createWalkIn,
@@ -577,6 +629,8 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
     mode,
     customStart,
     slotClusters,
+    selectedSlotsByDate,
+    walkInSubtotal,
     setWalkInSlots,
     repeatWeekly,
     setRepeatWeekly,
@@ -594,8 +648,6 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
   if (activeWalkInPayment) return <WalkInPaymentPanel walkIn={walkIn} />;
 
   const matches = customerMatches.data?.matches ?? [];
-  const hasMultipleDates = new Set(slotClusters.map((cluster) => cluster.date ?? effectiveDate)).size > 1;
-  const hasMultipleSurfaces = new Set(slotClusters.map((cluster) => cluster.courtSurfaceId ?? courtSurfaceId)).size > 1;
 
   return (
     <>
@@ -614,49 +666,60 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
 
       <div className="rounded-lg border border-emerald-100 bg-white p-2">
         <p className="mb-1 text-[11px] font-black uppercase tracking-wide text-slate-500">Khung giờ đã chọn</p>
-        {slotClusters.length === 0 ? (
+        {selectedSlotsByDate.length === 0 ? (
           <p className="text-xs font-semibold text-slate-400">Chưa chọn khung giờ nào</p>
         ) : (
-          <div className="space-y-1">
-            <div className="flex flex-wrap gap-1">
-              {slotClusters.map((cluster) => {
-                const clusterDate = cluster.date ?? effectiveDate;
-                const clusterSurfaceId = cluster.courtSurfaceId ?? courtSurfaceId;
-                const clusterSurfaceName = surfaceNames?.[clusterSurfaceId];
-                return (
-                  <span key={`${clusterSurfaceId}-${clusterDate}-${cluster.startTime}-${cluster.endTime}`} className="flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-1 text-[11px] font-bold text-slate-700">
-                    {hasMultipleSurfaces && clusterSurfaceName ? `${clusterSurfaceName} · ` : ""}
-                    {hasMultipleDates ? `${shortDate(clusterDate)} · ` : ""}
-                    {cluster.startTime} - {cluster.endTime}
-                    <button
-                      type="button"
-                      className="text-rose-500 hover:text-rose-700"
-                      onClick={() =>
-                        setWalkInSlots((current) =>
-                          current.filter(
-                            (slot) =>
-                              (slot.courtSurfaceId ?? courtSurfaceId) !== clusterSurfaceId ||
-                              (slot.date ?? effectiveDate) !== clusterDate ||
-                              slot.startTime < cluster.startTime ||
-                              slot.startTime >= cluster.endTime
-                          )
-                        )
-                      }
-                    >
-                      <X className="h-2.5 w-2.5" />
-                    </button>
-                  </span>
-                );
-              })}
+          <div className="space-y-2">
+            <ul className="space-y-2 rounded-lg bg-slate-50 p-2 text-xs">
+              {selectedSlotsByDate.map((day) => (
+                <li key={day.date} className="space-y-1">
+                  <div className="flex items-center justify-between font-black text-emerald-700">
+                    <span>{weekdayDate(day.date)}</span>
+                    <span>{formatCurrency(day.daySubtotal)}</span>
+                  </div>
+                  {day.slots.map((slot) => (
+                    <div key={`${day.date}-${slot.startTime}`} className="flex items-center justify-between gap-2 pl-2 font-semibold text-slate-600">
+                      <span>
+                        {slot.startTime} – {slot.endTime}
+                      </span>
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        {formatCurrency(slot.price)}
+                        <button
+                          type="button"
+                          className="text-rose-500 hover:text-rose-700"
+                          onClick={() =>
+                            setWalkInSlots((current) =>
+                              current.filter(
+                                (s) =>
+                                  (s.date ?? effectiveDate) !== day.date ||
+                                  s.startTime !== slot.startTime ||
+                                  s.endTime !== slot.endTime
+                              )
+                            )
+                          }
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </span>
+                    </div>
+                  ))}
+                </li>
+              ))}
+              <li className="flex items-center justify-between border-t border-slate-200 pt-1.5 font-black text-slate-900">
+                <span>Tạm tính</span>
+                <span>{formatCurrency(walkInSubtotal)}</span>
+              </li>
+            </ul>
+            <div className="flex items-center justify-between gap-2">
               <button type="button" onClick={() => setWalkInSlots([])} className="rounded-md px-1.5 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-50">
                 Bỏ chọn tất cả
               </button>
+              {slotClusters.length > 1 ? (
+                <p className="rounded-md bg-amber-50 px-1.5 py-1 text-[11px] font-bold text-amber-700">
+                  {slotClusters.length} khung giờ → gộp thành 1 lần đặt, thanh toán bằng tiền mặt.
+                </p>
+              ) : null}
             </div>
-            {slotClusters.length > 1 ? (
-              <p className="rounded-md bg-amber-50 px-1.5 py-1 text-[11px] font-bold text-amber-700">
-                {slotClusters.length} khung giờ → gộp thành 1 lần đặt, thanh toán bằng tiền mặt.
-              </p>
-            ) : null}
           </div>
         )}
       </div>

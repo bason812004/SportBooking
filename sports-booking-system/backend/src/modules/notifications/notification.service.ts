@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { prisma } from "../../config/db.js";
 import { NotFoundError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
 import { parseLimit, parsePage } from "../../shared/utils/time.js";
@@ -23,6 +24,24 @@ export const notificationService = {
     });
     realtimeService.toUser(input.userId, realtimeEvents.notificationNew, notification);
     return notification;
+  },
+
+  async notifyCourtStaff(courtId: string, input: { title: string; content: string; type: string; metadata?: Prisma.InputJsonValue }) {
+    const court = await prisma.court.findUnique({
+      where: { id: courtId },
+      select: {
+        partner: { select: { userId: true } },
+        recipients: { where: { role: "RECIPIENT" }, select: { id: true } }
+      }
+    });
+    if (!court) return;
+    const targetUserIds = [court.partner.userId, ...court.recipients.map((recipient) => recipient.id)];
+    await Promise.all(targetUserIds.map((userId) => this.create({ userId, ...input })));
+  },
+
+  async notifyAdmins(input: { title: string; content: string; type: string; metadata?: Prisma.InputJsonValue }) {
+    const admins = await prisma.user.findMany({ where: { role: "ADMIN", status: "ACTIVE" }, select: { id: true } });
+    await Promise.all(admins.map((admin) => this.create({ userId: admin.id, ...input })));
   },
 
   async list(userId: string, query: { page?: string; limit?: string }) {

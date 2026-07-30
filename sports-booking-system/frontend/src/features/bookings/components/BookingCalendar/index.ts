@@ -13,4 +13,5 @@ export {
   type BookingSummaryProps
 } from "./BookingSummary";
 export { WeeklyCalendarSection, type WeeklyCalendarSectionProps } from "./WeeklyCalendarSection";
+export { useCalendarNavigation, type CalendarView, type CalendarNavigationOptions, type CalendarNavigationResult } from "./useCalendarNavigation";
 export * from "./utils";

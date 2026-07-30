@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ErrorState, LoadingState } from "../../components/common/States";
+import { PageHero } from "../../components/common/PageHero";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
@@ -185,10 +186,11 @@ export function AdminVoucherFormPage() {
 
   return (
     <div className="mx-auto max-w-6xl">
-      <div>
-        <h1 className="text-3xl font-bold">{editing ? "Chỉnh sửa voucher hệ thống" : "Tạo voucher hệ thống"}</h1>
-        <p className="mt-2 text-slate-600">Voucher do Admin phát hành áp dụng cho mọi sân, mọi đối tác trên toàn hệ thống.</p>
-      </div>
+      <PageHero
+        eyebrow="Nội dung"
+        title={editing ? "Chỉnh sửa voucher hệ thống" : "Tạo voucher hệ thống"}
+        subtitle="Voucher do Admin phát hành áp dụng cho mọi sân, mọi đối tác trên toàn hệ thống."
+      />
 
       {!editing && (
         <section className="mt-6 rounded-2xl border border-line bg-white p-5">

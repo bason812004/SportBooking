@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { Filter } from "lucide-react";
 import { adminApi } from "../../features/admin/api/adminApi";
 import type { AdminBooking } from "../../types/api";
 import { Button } from "../../components/ui/Button";
@@ -9,9 +10,11 @@ import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { ErrorState, LoadingState } from "../../components/common/States";
 import { PageHero } from "../../components/common/PageHero";
+import { PeriodRangeFilter } from "../../components/common/PeriodRangeFilter";
 import { SortableTh } from "../../components/common/SortableTh";
 import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { useUrlSort } from "../../hooks/useUrlSort";
+import { usePeriodRange } from "../../hooks/usePeriodRange";
 
 const bookingStatuses = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"];
 const paymentStatuses = ["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"];
@@ -33,8 +36,6 @@ const paymentStatusLabels: Record<string, string> = {
 
 type Filters = {
   search: string;
-  fromDate: string;
-  toDate: string;
   courtId: string;
   partnerId: string;
   userId: string;
@@ -52,14 +53,8 @@ type BookingAdminForm = {
   actionNote: string;
 };
 
-function currentYearRange() {
-  const year = new Date().getFullYear();
-  return { fromDate: `${year}-01-01`, toDate: `${year}-12-31` };
-}
-
 const defaultFilters: Filters = {
   search: "",
-  ...currentYearRange(),
   courtId: "",
   partnerId: "",
   userId: "",
@@ -76,6 +71,7 @@ export function AdminBookingsPage() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string | null>(null);
   const [filters, setFilters] = useState<Filters>(defaultFilters);
+  const period = usePeriodRange({ defaultMode: "day", onChange: () => setPage(1) });
 
   const { sortField, sortOrder, handleSort: sortBy } = useUrlSort<SortField>({
     fields: SORT_FIELDS,
@@ -87,8 +83,17 @@ export function AdminBookingsPage() {
   };
 
   const list = useQuery({
-    queryKey: ["admin-bookings", page, filters, sortField, sortOrder],
-    queryFn: () => adminApi.bookings({ page, limit: 10, ...filters, sortBy: sortField ?? undefined, sortOrder }),
+    queryKey: ["admin-bookings", page, filters, period.range, sortField, sortOrder],
+    queryFn: () =>
+      adminApi.bookings({
+        page,
+        limit: 10,
+        ...filters,
+        fromDate: period.range.fromDate,
+        toDate: period.range.toDate,
+        sortBy: sortField ?? undefined,
+        sortOrder
+      }),
     placeholderData: keepPreviousData
   });
   const detail = useQuery({
@@ -107,21 +112,32 @@ export function AdminBookingsPage() {
         title="Quản lý đơn đặt sân"
         subtitle="Theo dõi, lọc và xử lý booking toàn hệ thống."
         actions={
-          <Button className="bg-white/20 text-white ring-1 ring-white/30 hover:bg-white/30" onClick={() => { setPage(1); setFilters(defaultFilters); }}>
+          <Button
+            className="bg-white/20 text-white ring-1 ring-white/30 hover:bg-white/30"
+            onClick={() => { setPage(1); setFilters(defaultFilters); period.reset(); }}
+          >
             Xóa lọc
           </Button>
         }
       />
 
-      <div className="grid gap-3 rounded-lg border bg-white p-4 md:grid-cols-2 xl:grid-cols-4">
-        <Input label="Tìm kiếm" value={filters.search} onChange={(event) => updateFilter(setPage, setFilters, "search", event.target.value)} placeholder="Mã đơn, khách, sân, đối tác" />
-        <Input label="Từ ngày" type="date" value={filters.fromDate} onChange={(event) => updateFilter(setPage, setFilters, "fromDate", event.target.value)} />
-        <Input label="Đến ngày" type="date" value={filters.toDate} onChange={(event) => updateFilter(setPage, setFilters, "toDate", event.target.value)} />
-        <Input label="ID sân" value={filters.courtId} onChange={(event) => updateFilter(setPage, setFilters, "courtId", event.target.value)} placeholder="c0001" />
-        <Input label="ID đối tác" value={filters.partnerId} onChange={(event) => updateFilter(setPage, setFilters, "partnerId", event.target.value)} placeholder="pp0001" />
-        <Input label="ID người dùng" value={filters.userId} onChange={(event) => updateFilter(setPage, setFilters, "userId", event.target.value)} placeholder="u0001" />
-        <Select label="Thanh toán" value={filters.paymentStatus} onChange={(event) => updateFilter(setPage, setFilters, "paymentStatus", event.target.value)} options={withAll(paymentStatuses, paymentStatusLabels)} />
-        <Select label="Trạng thái đơn" value={filters.bookingStatus} onChange={(event) => updateFilter(setPage, setFilters, "bookingStatus", event.target.value)} options={withAll(bookingStatuses, bookingStatusLabels)} />
+      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+        <p className="mb-3 flex items-center gap-1.5 text-xs font-black uppercase tracking-wide text-slate-500">
+          <Filter className="h-3.5 w-3.5" />
+          Bộ lọc
+        </p>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <Input label="Tìm kiếm" value={filters.search} onChange={(event) => updateFilter(setPage, setFilters, "search", event.target.value)} placeholder="Mã đơn, khách, sân, đối tác" />
+          <Input label="ID sân" value={filters.courtId} onChange={(event) => updateFilter(setPage, setFilters, "courtId", event.target.value)} placeholder="c0001" />
+          <Input label="ID đối tác" value={filters.partnerId} onChange={(event) => updateFilter(setPage, setFilters, "partnerId", event.target.value)} placeholder="pp0001" />
+          <Input label="ID người dùng" value={filters.userId} onChange={(event) => updateFilter(setPage, setFilters, "userId", event.target.value)} placeholder="u0001" />
+          <Select label="Thanh toán" value={filters.paymentStatus} onChange={(event) => updateFilter(setPage, setFilters, "paymentStatus", event.target.value)} options={withAll(paymentStatuses, paymentStatusLabels)} />
+          <Select label="Trạng thái đơn" value={filters.bookingStatus} onChange={(event) => updateFilter(setPage, setFilters, "bookingStatus", event.target.value)} options={withAll(bookingStatuses, bookingStatusLabels)} />
+        </div>
+
+        <div className="mt-4">
+          <PeriodRangeFilter period={period} />
+        </div>
       </div>
 
       <Table minWidth="980px">
@@ -334,7 +350,7 @@ function Info({ title, lines }: { title: string; lines: Array<string | null | un
   return (
     <div className="rounded-lg border p-4">
       <p className="font-bold">{title}</p>
-      {values.length ? values.map((line, index) => <p key={index} className="mt-1 text-sm text-slate-600">{line}</p>) : <p className="mt-1 text-sm text-slate-500">-</p>}
+      {values.length ? values.map((line, index) => <p key={`${line}-${index}`} className="mt-1 text-sm text-slate-600">{line}</p>) : <p className="mt-1 text-sm text-slate-500">-</p>}
     </div>
   );
 }

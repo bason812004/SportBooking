@@ -803,7 +803,7 @@ export type WeeklyScheduleResponse = {
 };
 
 export type SettlementStatus = "PENDING" | "PROCESSING" | "SETTLED" | "FAILED" | "CANCELLED";
-export type WithdrawalStatus = "PENDING" | "APPROVED" | "REJECTED" | "PAID";
+export type WithdrawalStatus = "PENDING" | "APPROVED" | "PROCESSING" | "REJECTED" | "FAILED" | "PAID";
 
 export type PartnerWallet = {
   id: string;

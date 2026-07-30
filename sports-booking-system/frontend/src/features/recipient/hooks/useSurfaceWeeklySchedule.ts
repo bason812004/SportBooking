@@ -23,7 +23,7 @@ export function useSurfaceWeeklySchedule(courtSurfaceId: string, weekStart: Date
 
   const isLoading = queries.some((q) => q.isLoading);
   const isError = queries.some((q) => q.isError);
-  const error = queries.find((q) => q.isError)?.error as Error | undefined;
+  const error = (queries.find((q) => q.isError)?.error as Error | undefined) ?? null;
 
   const loaded = queries.every((q) => q.data);
   let response: WeeklyScheduleResponse | undefined;

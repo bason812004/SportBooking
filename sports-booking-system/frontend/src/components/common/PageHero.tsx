@@ -4,12 +4,14 @@ export function PageHero({
   eyebrow,
   title,
   subtitle,
-  actions
+  actions,
+  children
 }: {
   eyebrow?: string;
   title: string;
   subtitle?: string;
   actions?: ReactNode;
+  children?: ReactNode;
 }) {
   return (
     <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-700 via-teal-700 to-slate-900 p-4 text-white shadow-xl">
@@ -28,6 +30,7 @@ export function PageHero({
         </div>
         {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
       </div>
+      {children && <div className="relative mt-4 flex flex-wrap justify-start">{children}</div>}
     </section>
   );
 }

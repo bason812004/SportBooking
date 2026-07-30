@@ -59,6 +59,7 @@ const menus = {
     { to: "/admin/tournaments/pending", label: "Duyệt giải đấu", icon: Trophy, group: "Nội dung" },
     { to: "/admin/finance", label: "Tài chính", icon: WalletCards, group: "Tài chính" },
     { to: "/admin/commission", label: "Hoa hồng", icon: WalletCards, group: "Tài chính" },
+    { to: "/admin/withdrawals", label: "Rút tiền", icon: Banknote, group: "Tài chính" },
     { to: "/admin/reports", label: "Báo cáo", icon: BarChart3, group: "Bảo mật" },
     { to: "/admin/audit-logs", label: "Nhật ký kiểm toán", icon: CalendarDays, group: "Bảo mật" },
     { to: "/admin/blockchain-logs", label: "Nhật ký blockchain", icon: Link2, group: "Bảo mật" }

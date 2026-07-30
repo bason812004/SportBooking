@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { authMiddleware } from "../../middlewares/auth.middleware.js";
+import { authMiddleware, optionalAuthMiddleware } from "../../middlewares/auth.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
 import { authController } from "./auth.controller.js";
 import {
@@ -26,6 +26,6 @@ authRoutes.post("/register-partner/resend-code", validate(resendRegistrationCode
 authRoutes.post("/login", validate(loginSchema), authController.login);
 authRoutes.post("/google", validate(googleAuthSchema), authController.google);
 authRoutes.post("/refresh-token", validate(refreshTokenSchema), authController.refreshToken);
-authRoutes.post("/logout", authMiddleware, authController.logout);
+authRoutes.post("/logout", optionalAuthMiddleware, authController.logout);
 authRoutes.get("/me", authMiddleware, authController.me);
 authRoutes.put("/change-password", authMiddleware, validate(changePasswordSchema), authController.changePassword);

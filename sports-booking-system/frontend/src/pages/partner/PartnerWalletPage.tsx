@@ -201,8 +201,18 @@ function WithdrawModal({ open, wallet, onClose }: { open: boolean; wallet: Partn
         bankAccountNumber: bankAccountNumber.trim() || undefined,
         bankAccountName: bankAccountName.trim() || undefined
       }),
-    onSuccess: async () => {
-      toast.success("Đã gửi yêu cầu rút tiền");
+    onSuccess: async (result) => {
+      if (result.status === "PENDING") {
+        toast.success("Đã gửi yêu cầu rút tiền, chờ Admin duyệt");
+      } else if (result.status === "PROCESSING" || result.status === "APPROVED") {
+        toast.success("Yêu cầu rút tiền đã được duyệt tự động, đang chuyển khoản...");
+      } else if (result.status === "PAID") {
+        toast.success("Rút tiền thành công");
+      } else if (result.status === "FAILED") {
+        toast.error("Chuyển khoản thất bại, số dư khả dụng đã được hoàn lại");
+      } else {
+        toast.success("Đã gửi yêu cầu rút tiền");
+      }
       setAmount("");
       onClose();
       await queryClient.invalidateQueries({ queryKey: ["partner-wallet"] });

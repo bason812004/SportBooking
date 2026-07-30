@@ -17,14 +17,18 @@ const settlementTones: Record<string, string> = {
 const withdrawalLabels: Record<string, string> = {
   PENDING: "Chờ duyệt",
   APPROVED: "Đã duyệt",
+  PROCESSING: "Đang chuyển khoản",
   REJECTED: "Từ chối",
+  FAILED: "Chuyển khoản thất bại",
   PAID: "Đã chuyển khoản"
 };
 
 const withdrawalTones: Record<string, string> = {
   PENDING: "bg-amber-100 text-amber-700",
   APPROVED: "bg-sky-100 text-sky-700",
+  PROCESSING: "bg-violet-100 text-violet-700",
   REJECTED: "bg-red-100 text-red-700",
+  FAILED: "bg-red-100 text-red-700",
   PAID: "bg-emerald-100 text-emerald-700"
 };
 

@@ -47,6 +47,30 @@ function minutesRange(slots: Array<{ startTime: string; endTime: string }>) {
   return { startTime: sorted[0].startTime, endTime: sorted[sorted.length - 1].endTime };
 }
 
+async function customerContact(userId: string) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true, phone: true } });
+  return { fullName: user?.fullName ?? "Khach hang", phone: user?.phone ?? null };
+}
+
+function formatVnd(amount: number) {
+  return `${Math.round(amount).toLocaleString("vi-VN")} VND`;
+}
+
+function buildBookingStaffNotification(
+  courtName: string,
+  customer: { fullName: string; phone: string | null },
+  days: Array<{ bookingDate: string; slots: Array<unknown> }>,
+  totalAmount: number
+) {
+  const totalSlots = days.reduce((sum, day) => sum + day.slots.length, 0);
+  const dayLabel = days.length > 1 ? `${days[0].bookingDate} - ${days[days.length - 1].bookingDate}` : days[0].bookingDate;
+  const contact = customer.phone ? `${customer.fullName} (${customer.phone})` : customer.fullName;
+  return {
+    title: `Đơn đặt sân mới - ${courtName}`,
+    content: `${contact} dat ${totalSlots} khung gio ngay ${dayLabel}, tong ${formatVnd(totalAmount)}.`
+  };
+}
+
 // Booking tu ngay thu 2 tro di trong 1 don nhieu-ngay khong co Payment rieng
 // (chi booking dau tien cua BookingOrder duoc gan Payment). De trang "Thanh toan"
 // cua khach van bam vao duoc tu bat ky ngay nao, muon lai Payment chung cua order.
@@ -223,6 +247,12 @@ export const bookingService = {
         realtimeService.toUser(userId, realtimeEvents.bookingCreated, booking);
         realtimeService.toCourt(input.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: input.courtId, bookingDate: booking.bookingDate });
       }
+      const payAtCourtCustomer = await customerContact(userId);
+      await notificationService.notifyCourtStaff(input.courtId, {
+        ...buildBookingStaffNotification(quote.court.name, payAtCourtCustomer, quote.days, quote.totalAmount),
+        type: "BOOKING_CREATED",
+        metadata: { orderId: result.orderId, courtId: input.courtId }
+      });
 
       return {
         orderId: result.orderId,
@@ -283,6 +313,12 @@ export const bookingService = {
       realtimeService.toUser(userId, realtimeEvents.bookingPendingPayment, booking);
       realtimeService.toCourt(input.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: input.courtId, bookingDate: booking.bookingDate });
     }
+    const onlinePaymentCustomer = await customerContact(userId);
+    await notificationService.notifyCourtStaff(input.courtId, {
+      ...buildBookingStaffNotification(quote.court.name, onlinePaymentCustomer, quote.days, quote.totalAmount),
+      type: "BOOKING_CREATED",
+      metadata: { orderId: result.orderId, courtId: input.courtId }
+    });
 
     return {
       orderId: result.orderId,
@@ -423,8 +459,18 @@ export const bookingService = {
 
     await notificationService.create({
       userId,
-      title: "Dat san thanh cong",
+      title: "Đặt sân thành công",
       content: `Don ${booking.bookingCode} da duoc tao thanh cong.`,
+      type: "BOOKING_CREATED",
+      metadata: { bookingId: booking.id, courtId: input.courtId }
+    });
+    const legacyBookingCustomer = await customerContact(userId);
+    const legacyBookingContact = legacyBookingCustomer.phone
+      ? `${legacyBookingCustomer.fullName} (${legacyBookingCustomer.phone})`
+      : legacyBookingCustomer.fullName;
+    await notificationService.notifyCourtStaff(input.courtId, {
+      title: `Đơn đặt sân mới - ${court.name}`,
+      content: `${legacyBookingContact} dat ${input.startTime}-${input.endTime} ngay ${input.bookingDate}, tong ${formatVnd(totalPrice)}.`,
       type: "BOOKING_CREATED",
       metadata: { bookingId: booking.id, courtId: input.courtId }
     });
@@ -499,7 +545,7 @@ export const bookingService = {
     }
     await notificationService.create({
       userId,
-      title: "Don dat san da huy",
+      title: "Đơn đặt sân đã huỷ",
       content: `Don ${cancelled.bookingCode} da duoc huy.`,
       type: "BOOKING_CANCELLED",
       metadata: { bookingId: cancelled.id, courtId: cancelled.courtId }

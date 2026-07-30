@@ -1,12 +1,36 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Bell } from "lucide-react";
 import { formatDateTime } from "../../lib/format";
+import { useAuth } from "../../features/auth/hooks/useAuth";
 import { useMarkAllNotificationsRead, useMarkNotificationRead, useMyNotifications } from "../../features/notifications/hooks/useNotifications";
+import type { NotificationItem } from "../../features/notifications/api/notificationApi";
+import type { Role } from "../../types/api";
+
+function resolveNotificationRoute(item: NotificationItem, role?: Role): string | null {
+  const metadata = (item.metadata ?? {}) as Record<string, unknown>;
+  switch (item.type) {
+    case "BOOKING_CREATED":
+    case "BOOKING_CANCELLED":
+      if (role === "PARTNER") return "/partner/bookings";
+      if (role === "RECIPIENT") return "/recipient/bookings";
+      if (role === "USER") {
+        return typeof metadata.bookingId === "string" ? `/user/bookings/${metadata.bookingId}` : "/user/bookings";
+      }
+      return null;
+    case "BLOG_UPDATE_REQUESTED":
+      return role === "ADMIN" ? "/admin/blogs/pending" : null;
+    default:
+      return null;
+  }
+}
 
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | null>(null);
+  const navigate = useNavigate();
+  const { user } = useAuth();
 
   const { data } = useMyNotifications();
   const markRead = useMarkNotificationRead();
@@ -77,7 +101,14 @@ export function NotificationBell() {
             items.map((item) => (
               <button
                 key={item.id}
-                onClick={() => !item.isRead && markRead.mutate(item.id)}
+                onClick={() => {
+                  if (!item.isRead) markRead.mutate(item.id);
+                  const target = resolveNotificationRoute(item, user?.role);
+                  if (target) {
+                    setOpen(false);
+                    navigate(target);
+                  }
+                }}
                 className={`block w-full border-b border-slate-50 px-4 py-3 text-left transition hover:bg-slate-50 ${
                   item.isRead ? "" : "bg-teal-50/60"
                 }`}

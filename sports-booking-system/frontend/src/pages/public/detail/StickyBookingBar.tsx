@@ -39,7 +39,7 @@ export function StickyBookingBar({
           </button>
         ) : (
           <Link
-            to={bookingSelectionPath(courtId, selectedDate, selectedSlots)}
+            to={bookingSelectionPath(courtId, selectedSlots)}
             className="rounded-2xl bg-emerald-600 px-5 py-3 font-black text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
           >
             Đặt ngay

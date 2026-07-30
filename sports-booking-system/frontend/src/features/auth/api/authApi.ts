@@ -50,8 +50,10 @@ export const authApi = {
     return data.data;
   },
   async logout(refreshToken?: string | null) {
-    const { data } = await api.post<ApiResponse<{ message: string }>>("/auth/logout", { refreshToken });
-    return data.data;
+    // Fire-and-forget: backend is idempotent and the token may be expired.
+    // State is cleared immediately below — no await.
+    void api.post<ApiResponse<{ message: string }>>("/auth/logout", { refreshToken });
+    return { message: "Dang xuat thanh cong" };
   },
   async changePassword(payload: { currentPassword: string; newPassword: string }) {
     const { data } = await api.put<ApiResponse<{ message: string }>>("/auth/change-password", payload);

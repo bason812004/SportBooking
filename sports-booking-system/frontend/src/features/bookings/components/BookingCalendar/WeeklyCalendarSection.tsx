@@ -4,24 +4,14 @@ import { CalendarLegend } from "./CalendarLegend";
 import { CalendarHeader } from "./CalendarHeader";
 import { BookingCalendar } from "./BookingCalendar";
 import { DayView } from "./DayView";
-import {
-  findDay,
-  formatYmd,
-  isSlotSelectable,
-  slotKey,
-  startOfWeek,
-  type Language
-} from "./utils";
-import type {
-  WeeklyScheduleResponse,
-  WeeklyScheduleSlot
-} from "../../../../types/api";
+import { isSlotSelectable, slotKey, startOfWeek, type Language } from "./utils";
+import type { WeeklyScheduleResponse, WeeklyScheduleSlot } from "../../../../types/api";
 
 export type WeeklyCalendarSectionProps = {
   response: WeeklyScheduleResponse | undefined;
   isLoading?: boolean;
   isError?: boolean;
-  error?: Error | null;
+  error: Error | null;
   onRetry?: () => void;
   weekStart: Date;
   onWeekStartChange: (next: Date) => void;
@@ -30,11 +20,9 @@ export type WeeklyCalendarSectionProps = {
   selected: WeeklyScheduleSlot[];
   onSelectedChange: (next: WeeklyScheduleSlot[]) => void;
   language: Language;
-  /**
-   * If true, the calendar auto-switches to Day View on compact screens (mobile).
-   * Otherwise the caller controls the view.
-   */
+  /** Auto-switch to Day view on compact screens (mobile). Default: true. */
   forceDayOnCompact?: boolean;
+  /** Optional side panel slot (e.g. booking summary). */
   rightSlot?: React.ReactNode;
   /**
    * "multi-day" (default) lets the customer booking cart span several different
@@ -71,21 +59,22 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
   } = props;
 
   const { isCompact } = useResponsiveLayout();
-  const initialView: "WEEK" | "DAY" = forceDayOnCompact && isCompact ? "DAY" : "WEEK";
-  const [view, setView] = useState<"WEEK" | "DAY">(initialView);
+  const [view, setView] = useState<"WEEK" | "DAY">(
+    forceDayOnCompact && isCompact ? "DAY" : "WEEK"
+  );
   const [userOverride, setUserOverride] = useState(false);
+
+  // Derived view: if user has explicitly overridden, respect their choice;
+  // otherwise apply compact-mode default
   const activeView = !userOverride && forceDayOnCompact && isCompact ? "DAY" : view;
+
   const weekEndDate = useMemo(() => {
     const d = new Date(weekStart);
     d.setDate(weekStart.getDate() + 6);
     return d;
   }, [weekStart]);
 
-  const focusedDay = useMemo(
-    () => (response ? findDay(response, formatYmd(focusedDate)) : undefined),
-    [response, focusedDate]
-  );
-
+  // ── Slot selection ──────────────────────────────────────────────
   const MAX_ORDER_DAYS = 14;
 
   const toggleSlot = useCallback(
@@ -119,11 +108,14 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
     [selected, onSelectedChange, language, selectionMode]
   );
 
+  // ── Navigation ────────────────────────────────────────────────
   const jumpToToday = useCallback(() => {
-    const today = startOfWeek(new Date());
-    onWeekStartChange(today);
-    onFocusedDateChange(new Date());
-  }, [onWeekStartChange, onFocusedDateChange]);
+    const today = new Date();
+    onWeekStartChange(startOfWeek(today));
+    onFocusedDateChange(today);
+    setUserOverride(false);
+    setView(forceDayOnCompact && isCompact ? "DAY" : "WEEK");
+  }, [onWeekStartChange, onFocusedDateChange, forceDayOnCompact, isCompact]);
 
   const shiftWeek = useCallback(
     (offset: number) => {
@@ -135,10 +127,11 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
   );
 
   const jumpToDate = useCallback(
-    (value: string) => {
-      const target = new Date(`${value}T00:00:00`);
+    (dateStr: string) => {
+      const target = new Date(`${dateStr}T00:00:00`);
       onFocusedDateChange(target);
       onWeekStartChange(startOfWeek(target));
+      setUserOverride(false);
     },
     [onFocusedDateChange, onWeekStartChange]
   );
@@ -152,6 +145,7 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
     [onFocusedDateChange]
   );
 
+  // ── Render ─────────────────────────────────────────────────
   return (
     <div className="space-y-4">
       <CalendarHeader
@@ -163,10 +157,10 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
         onPrev={() => shiftWeek(-7)}
         onNext={() => shiftWeek(7)}
         onToday={jumpToToday}
-        onPickWeek={(value) => jumpToDate(value)}
-        onSwitchView={(value) => {
+        onPickWeek={jumpToDate}
+        onSwitchView={(v) => {
           setUserOverride(true);
-          setView(value);
+          setView(v);
         }}
         focusedDate={focusedDate}
         onSelectDay={enterDayView}
@@ -221,6 +215,7 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
   );
 }
 
+// ── Internal helpers ────────────────────────────────────────────
 function useResponsiveLayout() {
   const [isCompact, setIsCompact] = useState(false);
   useEffect(() => {

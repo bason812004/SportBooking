@@ -50,7 +50,7 @@ export function SiteFooter() {
     <footer id="contact" className="border-t border-slate-200 bg-[#07130f] text-white">
       <div className="mx-auto max-w-7xl px-4 py-12">
         <div className="grid gap-4 rounded-[2rem] border border-white/10 bg-white/5 p-5 sm:grid-cols-2 lg:grid-cols-4">
-          {stats.map((item) => <div key={item} className="text-xl font-black">{t(item)}</div>)}
+          {stats.map((item, idx) => <div key={`${item}-${idx}`} className="text-xl font-black">{t(item)}</div>)}
         </div>
 
         <div className="mt-12 grid gap-10 lg:grid-cols-[1fr_2fr]">

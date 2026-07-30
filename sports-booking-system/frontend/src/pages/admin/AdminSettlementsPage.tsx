@@ -5,6 +5,7 @@ import { ErrorState, LoadingState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
 import { Select } from "../../components/ui/Select";
 import { THead, TBody, Tr, Th, Td } from "../../components/common/Table";
+import { PageHero } from "../../components/common/PageHero";
 import { adminApi } from "../../features/admin/api/adminApi";
 import { SettlementStatusBadge } from "./StatusBadges";
 import type { Settlement } from "../../types/api";
@@ -52,11 +53,13 @@ export function AdminSettlementsPage() {
 
   return (
     <div className="space-y-5">
+      <PageHero
+        eyebrow="Tài chính"
+        title="Quyết toán doanh thu"
+        subtitle="Theo dõi quyết toán từng booking đã thanh toán online và số tiền partner thực nhận."
+      />
+
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold">Quyết toán doanh thu</h1>
-          <p className="text-sm text-slate-600">Theo dõi quyết toán từng booking đã thanh toán online và số tiền partner thực nhận.</p>
-        </div>
         <Select label="Trạng thái" value={status} options={statusOptions} onChange={(event) => { setPage(1); setStatus(event.target.value); }} />
       </div>
 
