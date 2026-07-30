@@ -20,8 +20,3 @@ partnerVoucherRoutes.put("/:id", validate(partnerVoucherUpdateSchema), voucherCo
 partnerVoucherRoutes.delete("/:id", validate(voucherIdParamsSchema), voucherController.partnerDelete);
 partnerVoucherRoutes.put("/:id/activate", validate(voucherIdParamsSchema), voucherController.partnerActivate);
 partnerVoucherRoutes.put("/:id/disable", validate(voucherIdParamsSchema), voucherController.partnerDisable);
-
-export const adminVoucherRoutes = Router();
-adminVoucherRoutes.use(authMiddleware, requireRole(UserRole.ADMIN));
-adminVoucherRoutes.get("/", voucherController.adminList);
-adminVoucherRoutes.put("/:id/disable", validate(voucherIdParamsSchema), voucherController.adminDisable);

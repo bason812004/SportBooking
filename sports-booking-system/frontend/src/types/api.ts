@@ -285,8 +285,9 @@ export type AdminCourt = Omit<Court, "category" | "images" | "prices" | "service
 
 export type AdminVoucher = {
   id: string; code: string; title: string; discountType: string; discountValue: number;
+  minBookingAmount: number;
   usedCount: number; usageLimit?: number | null; startDate: string; endDate: string;
-  status: string; businessName: string; courtName?: string | null;
+  status: string; businessName: string | null; courtName?: string | null; createdAt: string;
 };
 
 export type AdminVoucherInput = {

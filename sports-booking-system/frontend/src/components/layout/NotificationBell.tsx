@@ -20,6 +20,11 @@ function resolveNotificationRoute(item: NotificationItem, role?: Role): string |
       return null;
     case "BLOG_UPDATE_REQUESTED":
       return role === "ADMIN" ? "/admin/blogs/pending" : null;
+    case "TOURNAMENT_CREATED":
+      return role === "ADMIN" ? "/admin/tournaments/pending" : null;
+    case "TOURNAMENT_APPROVED":
+    case "TOURNAMENT_REJECTED":
+      return role === "PARTNER" ? "/partner/tournaments" : null;
     default:
       return null;
   }

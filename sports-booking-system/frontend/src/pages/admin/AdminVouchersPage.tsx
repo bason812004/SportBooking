@@ -1,22 +1,37 @@
 import { useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Gift, Plus, ShieldCheck, ShieldOff } from "lucide-react";
+import { Plus, ShieldCheck, ShieldOff, TicketPercent } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
-import { ErrorState, LoadingState } from "../../components/common/States";
+import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { AdminReasonModal } from "./AdminReasonModal";
-import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { PageHero } from "../../components/common/PageHero";
+import type { AdminVoucher } from "../../types/api";
 
-const statusLabel: Record<string, { label: string; className: string }> = {
-  DRAFT: { label: "Nháp", className: "bg-slate-100 text-slate-700" },
-  ACTIVE: { label: "Đang hoạt động", className: "bg-emerald-100 text-emerald-800" },
-  EXPIRED: { label: "Hết hạn", className: "bg-amber-100 text-amber-800" },
-  DISABLED: { label: "Vô hiệu hóa", className: "bg-red-100 text-red-800" }
+const money = (value: number) => `${Number(value ?? 0).toLocaleString("vi-VN")} đ`;
+const date = (value: string) => new Date(value).toLocaleDateString("vi-VN");
+const dateTime = (value: string) => new Date(value).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
+
+function discount(voucher: AdminVoucher) {
+  return voucher.discountType === "PERCENTAGE" ? `${voucher.discountValue}%` : money(voucher.discountValue);
+}
+
+const statusTones: Record<string, string> = {
+  DRAFT: "bg-slate-100 text-slate-700",
+  ACTIVE: "bg-emerald-100 text-emerald-800",
+  EXPIRED: "bg-amber-100 text-amber-800",
+  DISABLED: "bg-red-100 text-red-800"
+};
+
+const statusLabels: Record<string, string> = {
+  DRAFT: "Nháp",
+  ACTIVE: "Đang hoạt động",
+  EXPIRED: "Hết hạn",
+  DISABLED: "Vô hiệu hóa"
 };
 
 const statusFilterOptions = [
@@ -26,6 +41,10 @@ const statusFilterOptions = [
   { value: "EXPIRED", label: "Hết hạn" },
   { value: "DISABLED", label: "Vô hiệu hóa" }
 ];
+
+function Status({ value }: { value: string }) {
+  return <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${statusTones[value] ?? statusTones.DRAFT}`}>{statusLabels[value] ?? value}</span>;
+}
 
 export function AdminVouchersPage() {
   const qc = useQueryClient();
@@ -61,7 +80,7 @@ export function AdminVouchersPage() {
       <PageHero
         eyebrow="Nội dung"
         title="Voucher toàn hệ thống"
-        subtitle="Quản lý tất cả voucher của đối tác trên hệ thống."
+        subtitle="Quản lý voucher do Admin phát hành và voucher của các đối tác."
         actions={
           <Link to="/admin/vouchers/create">
             <Button className="bg-white/20 text-white ring-1 ring-white/30 hover:bg-white/30">
@@ -86,65 +105,59 @@ export function AdminVouchersPage() {
       </div>
 
       {!items.length ? (
-        <div className="rounded-2xl border border-dashed bg-white p-8 text-center">
-          <Gift className="mx-auto h-12 w-12 text-slate-300" />
-          <p className="mt-3 font-semibold text-slate-500">Không có voucher phù hợp.</p>
-        </div>
+        <EmptyState title="Không có voucher phù hợp." description="Thử đổi bộ lọc hoặc tạo voucher mới." />
       ) : (
-        <Table minWidth="900px">
-          <THead>
-            <tr>
-              <Th>Mã</Th>
-              <Th>Voucher</Th>
-              <Th>Đối tác</Th>
-              <Th>Giảm giá</Th>
-              <Th>Đã dùng</Th>
-              <Th>Trạng thái</Th>
-              <Th></Th>
-            </tr>
-          </THead>
-          <TBody>
-            {items.map((v: any) => {
-              const st = statusLabel[v.status] ?? { label: v.status, className: "bg-slate-100 text-slate-700" };
-              return (
-                <Tr key={v.id}>
-                  <Td className="font-bold font-mono text-sm">{v.code}</Td>
-                  <Td>
-                    <p className="font-bold">{v.title}</p>
-                    {v.description && <p className="mt-0.5 text-xs text-slate-500 line-clamp-1">{v.description}</p>}
-                  </Td>
-                  <Td>
-                    <p className="font-semibold">{v.businessName}</p>
-                    <span className="text-xs text-slate-500">{v.courtName || "Tất cả sân"}</span>
-                  </Td>
-                  <Td className="font-semibold">
-                    {v.discountType === "PERCENTAGE" ? `${v.discountValue}%` : `${Number(v.discountValue).toLocaleString("vi-VN")}đ`}
-                  </Td>
-                  <Td className="font-semibold">{v.usedCount}/{v.usageLimit ?? "∞"}</Td>
-                  <Td>
-                    <span className={`rounded-full px-3 py-1 text-xs font-black ${st.className}`}>
-                      {st.label}
-                    </span>
-                  </Td>
-                  <Td>
-                    {(v.status === "ACTIVE" || v.status === "DISABLED") && (
-                      <Button
-                        variant={v.status === "ACTIVE" ? "danger" : "secondary"}
-                        onClick={() => setPending({ id: v.id, action: v.status === "ACTIVE" ? "disable" : "activate" })}
-                      >
-                        {v.status === "ACTIVE" ? (
-                          <><ShieldOff className="h-4 w-4" /> Vô hiệu hóa</>
-                        ) : (
-                          <><ShieldCheck className="h-4 w-4" /> Kích hoạt</>
-                        )}
-                      </Button>
-                    )}
-                  </Td>
-                </Tr>
-              );
-            })}
-          </TBody>
-        </Table>
+        <div className="grid gap-4 xl:grid-cols-2">
+          {items.map((voucher) => (
+            <article key={voucher.id} className="rounded-2xl border border-line bg-white p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex gap-3">
+                  <span className="rounded-xl bg-emerald-50 p-3 text-emerald-700">
+                    <TicketPercent className="h-6 w-6" />
+                  </span>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-xl font-bold">{voucher.title}</h2>
+                      <Status value={voucher.status} />
+                    </div>
+                    <p className="mt-1 font-mono font-bold text-blue-700">{voucher.code}</p>
+                  </div>
+                </div>
+                <p className="shrink-0 text-lg font-bold text-emerald-700">Giảm {discount(voucher)}</p>
+              </div>
+
+              <div className="mt-5 grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
+                <p>Đối tác: <strong>{voucher.businessName ?? "Toàn hệ thống (Admin)"}</strong></p>
+                <p>Áp dụng: <strong>{voucher.courtName ?? "Tất cả sân"}</strong></p>
+                <p>Đơn tối thiểu: <strong>{money(voucher.minBookingAmount)}</strong></p>
+                <p>Thời hạn: <strong>{date(voucher.startDate)} - {date(voucher.endDate)}</strong></p>
+                <p>Lượt dùng: <strong>{voucher.usedCount}/{voucher.usageLimit ?? "Không giới hạn"}</strong></p>
+                <p>Ngày tạo: <strong>{dateTime(voucher.createdAt)}</strong></p>
+              </div>
+
+              <div className="mt-5 flex flex-wrap gap-2">
+                {voucher.status === "DRAFT" && (
+                  <>
+                    <Link to={`/admin/vouchers/${voucher.id}/edit`}><Button variant="secondary">Chỉnh sửa</Button></Link>
+                    <Button onClick={() => setPending({ id: voucher.id, action: "activate" })}>
+                      <ShieldCheck className="h-4 w-4" /> Kích hoạt
+                    </Button>
+                  </>
+                )}
+                {voucher.status === "ACTIVE" && (
+                  <Button variant="danger" onClick={() => setPending({ id: voucher.id, action: "disable" })}>
+                    <ShieldOff className="h-4 w-4" /> Vô hiệu hóa
+                  </Button>
+                )}
+                {voucher.status === "DISABLED" && (
+                  <Button onClick={() => setPending({ id: voucher.id, action: "activate" })}>
+                    <ShieldCheck className="h-4 w-4" /> Kích hoạt lại
+                  </Button>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
       )}
 
       <Pager page={page} total={q.data?.meta?.totalPages ?? 1} setPage={setPage} />

@@ -21,7 +21,6 @@ import {
   priceWriteSchema,
   profileUpdateSchema,
   serviceWriteSchema,
-  tournamentWriteSchema,
   voucherWriteSchema,
   recipientWriteSchema,
   recipientUpdateSchema
@@ -78,12 +77,6 @@ partnerRoutes.put("/blogs/:id", validate(blogWriteSchema), partnerController.upd
 partnerRoutes.patch("/blogs/:id/comments", validate(blogCommentsToggleSchema), partnerController.updateBlogComments);
 partnerRoutes.put("/blogs/:id/submit", partnerController.submitBlog);
 partnerRoutes.delete("/blogs/:id", partnerController.deleteBlog);
-partnerRoutes.get("/tournaments", partnerController.tournaments);
-partnerRoutes.post("/tournaments", validate(tournamentWriteSchema), partnerController.createTournament);
-partnerRoutes.get("/tournaments/:id", partnerController.tournamentDetail);
-partnerRoutes.put("/tournaments/:id", validate(tournamentWriteSchema), partnerController.updateTournament);
-partnerRoutes.put("/tournaments/:id/submit", partnerController.submitTournament);
-partnerRoutes.delete("/tournaments/:id", partnerController.deleteTournament);
 
 partnerRoutes.get("/recipients", partnerController.listRecipients);
 partnerRoutes.post("/recipients", validate(recipientWriteSchema), partnerController.createRecipient);

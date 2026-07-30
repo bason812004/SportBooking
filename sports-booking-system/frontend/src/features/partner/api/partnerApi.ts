@@ -304,10 +304,6 @@ export const partnerApi = {
     const { data } = await api.put<ApiResponse<PartnerTournament>>(`/partner/tournaments/${id}`, payload);
     return data.data;
   },
-  async submitTournament(id: string) {
-    const { data } = await api.put<ApiResponse<PartnerTournament>>(`/partner/tournaments/${id}/submit`);
-    return data.data;
-  },
   async deleteTournament(id: string) {
     const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/tournaments/${id}`);
     return data.data;

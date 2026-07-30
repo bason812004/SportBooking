@@ -110,24 +110,6 @@ export const blogCommentsToggleSchema = z.object({
   })
 });
 
-export const tournamentWriteSchema = z.object({
-  body: z.object({
-    courtId: id,
-    title: z.string().trim().min(3).max(220),
-    description: z.string().trim().max(5000).optional(),
-    sportType: z.string().trim().min(2).max(80),
-    coverImageUrl: z.union([z.string().url(), z.literal(""), z.null()]).optional(),
-    startDate: z.string().datetime(),
-    endDate: z.string().datetime(),
-    registrationDeadline: z.string().datetime(),
-
-
-    maxParticipants: z.number().int().positive(),
-    entryFee: z.number().nonnegative(),
-    prizeDescription: z.string().trim().max(2000).optional()
-  })
-});
-
 const nullablePositiveNumber = z.union([z.number().positive(), z.null()]).optional();
 
 export const voucherWriteSchema = z.object({

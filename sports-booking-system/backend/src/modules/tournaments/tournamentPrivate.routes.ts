@@ -16,9 +16,3 @@ partnerTournamentRoutes.delete("/:id", validate(tournamentIdParamsSchema), tourn
 partnerTournamentRoutes.get("/:id/registrations", validate(tournamentIdParamsSchema), tournamentController.partnerRegistrations);
 partnerTournamentRoutes.put("/registrations/:id/approve", validate(tournamentIdParamsSchema), tournamentController.approveRegistration);
 partnerTournamentRoutes.put("/registrations/:id/reject", validate(tournamentIdParamsSchema), tournamentController.rejectRegistration);
-
-export const adminTournamentRoutes = Router();
-adminTournamentRoutes.use(authMiddleware, requireRole(UserRole.ADMIN));
-adminTournamentRoutes.get("/pending", tournamentController.adminPending);
-adminTournamentRoutes.put("/:id/approve", validate(tournamentIdParamsSchema), tournamentController.adminApprove);
-adminTournamentRoutes.put("/:id/reject", validate(tournamentIdParamsSchema), tournamentController.adminReject);

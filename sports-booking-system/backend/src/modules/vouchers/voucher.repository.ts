@@ -544,7 +544,7 @@ export const voucherRepository = {
         select 1
         from vouchers
         where upper(code) = upper(${code})
-          and (${excludeId ?? null} is null or id <> ${excludeId ?? null})
+          and (${excludeId ?? null}::varchar(20) is null or id <> ${excludeId ?? null}::varchar(20))
       ) as "exists"
     `;
   },
@@ -587,25 +587,25 @@ export const voucherRepository = {
             applicable_start_date, applicable_end_date
           ) values (
             ${partnerId},
-            ${input.courtId ?? null},
+            ${input.courtId ?? null}::varchar(20),
             ${input.code},
             ${input.title},
-            ${input.description ?? null},
+            ${input.description ?? null}::text,
             ${input.discountType}::voucher_discount_type,
             ${input.discountValue},
-            ${input.maxDiscountAmount ?? null},
+            ${input.maxDiscountAmount ?? null}::numeric(12,2),
             ${input.minBookingAmount},
-            ${input.usageLimit ?? null},
+            ${input.usageLimit ?? null}::integer,
             ${input.startDate},
             ${input.endDate},
             'DRAFT'::voucher_status,
-            ${input.applicableDays ?? null},
-            ${input.startTime ?? null},
-            ${input.endTime ?? null},
+            ${input.applicableDays ?? null}::varchar(120),
+            ${input.startTime ?? null}::time,
+            ${input.endTime ?? null}::time,
             ${input.holidayOnly ?? false},
             ${input.holidayDates && input.holidayDates.length ? input.holidayDates.map(d => `${d}`) : Prisma.sql`null`}::date[],
-            ${input.applicableStartDate ?? null},
-            ${input.applicableEndDate ?? null}
+            ${input.applicableStartDate ?? null}::timestamptz,
+            ${input.applicableEndDate ?? null}::timestamptz
           )
           returning id
         `
@@ -616,15 +616,15 @@ export const voucherRepository = {
             usage_limit, start_date, end_date, status
           ) values (
             ${partnerId},
-            ${input.courtId ?? null},
+            ${input.courtId ?? null}::varchar(20),
             ${input.code},
             ${input.title},
-            ${input.description ?? null},
+            ${input.description ?? null}::text,
             ${input.discountType}::voucher_discount_type,
             ${input.discountValue},
-            ${input.maxDiscountAmount ?? null},
+            ${input.maxDiscountAmount ?? null}::numeric(12,2),
             ${input.minBookingAmount},
-            ${input.usageLimit ?? null},
+            ${input.usageLimit ?? null}::integer,
             ${input.startDate},
             ${input.endDate},
             'DRAFT'::voucher_status
@@ -662,15 +662,15 @@ export const voucherRepository = {
     if (!hasEligibility) {
       return prisma.$executeRaw`
         update vouchers
-        set court_id = ${input.courtId ?? null},
+        set court_id = ${input.courtId ?? null}::varchar(20),
             code = ${input.code},
             title = ${input.title},
-            description = ${input.description ?? null},
+            description = ${input.description ?? null}::text,
             discount_type = ${input.discountType}::voucher_discount_type,
             discount_value = ${input.discountValue},
-            max_discount_amount = ${input.maxDiscountAmount ?? null},
+            max_discount_amount = ${input.maxDiscountAmount ?? null}::numeric(12,2),
             min_booking_amount = ${input.minBookingAmount},
-            usage_limit = ${input.usageLimit ?? null},
+            usage_limit = ${input.usageLimit ?? null}::integer,
             start_date = ${input.startDate},
             end_date = ${input.endDate},
             updated_at = now()
@@ -681,24 +681,24 @@ export const voucherRepository = {
     }
     return prisma.$executeRaw`
       update vouchers
-      set court_id = ${input.courtId ?? null},
+      set court_id = ${input.courtId ?? null}::varchar(20),
           code = ${input.code},
           title = ${input.title},
-          description = ${input.description ?? null},
+          description = ${input.description ?? null}::text,
           discount_type = ${input.discountType}::voucher_discount_type,
           discount_value = ${input.discountValue},
-          max_discount_amount = ${input.maxDiscountAmount ?? null},
+          max_discount_amount = ${input.maxDiscountAmount ?? null}::numeric(12,2),
           min_booking_amount = ${input.minBookingAmount},
-          usage_limit = ${input.usageLimit ?? null},
+          usage_limit = ${input.usageLimit ?? null}::integer,
           start_date = ${input.startDate},
           end_date = ${input.endDate},
-          applicable_days = ${input.applicableDays ?? null},
-          start_time = ${input.startTime ?? null},
-          end_time = ${input.endTime ?? null},
+          applicable_days = ${input.applicableDays ?? null}::varchar(120),
+          start_time = ${input.startTime ?? null}::time,
+          end_time = ${input.endTime ?? null}::time,
           holiday_only = ${input.holidayOnly ?? false},
           holiday_dates = ${input.holidayDates && input.holidayDates.length ? input.holidayDates.map(d => `${d}`) : Prisma.sql`null`}::date[],
-          applicable_start_date = ${input.applicableStartDate ?? null},
-          applicable_end_date = ${input.applicableEndDate ?? null},
+          applicable_start_date = ${input.applicableStartDate ?? null}::timestamptz,
+          applicable_end_date = ${input.applicableEndDate ?? null}::timestamptz,
           updated_at = now()
       where id = ${id}
         and partner_id = ${partnerId}
@@ -725,16 +725,5 @@ export const voucherRepository = {
         and status = 'DRAFT'::voucher_status
         and used_count = 0
     `;
-  },
-
-  listAdmin() {
-    return prisma.voucher.findMany({
-      include: { court: true, partner: true },
-      orderBy: { createdAt: "desc" }
-    });
-  },
-
-  disableAdmin(id: string) {
-    return prisma.voucher.update({ where: { id }, data: { status: "DISABLED" } });
   }
 };

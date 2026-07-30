@@ -1129,17 +1129,18 @@ export const adminRepository = {
     return prisma.$transaction([
       prisma.$queryRaw<any[]>`
         select v.id, v.code, v.title, v.discount_type::text as "discountType",
-          v.discount_value::float as "discountValue", v.used_count as "usedCount",
+          v.discount_value::float as "discountValue", v.min_booking_amount::float as "minBookingAmount",
+          v.used_count as "usedCount",
           v.usage_limit as "usageLimit", v.start_date as "startDate", v.end_date as "endDate",
-          v.status::text, p.business_name as "businessName", c.name as "courtName"
-        from vouchers v join partner_profiles p on p.id = v.partner_id
+          v.status::text, p.business_name as "businessName", c.name as "courtName", v.created_at as "createdAt"
+        from vouchers v left join partner_profiles p on p.id = v.partner_id
         left join courts c on c.id = v.court_id
         where (${filters.status ?? null}::text is null or v.status::text = ${filters.status ?? null})
           and (${search}::text is null or v.code ilike ${search} or v.title ilike ${search} or p.business_name ilike ${search})
         order by v.created_at desc offset ${(page - 1) * limit} limit ${limit}
       `,
       prisma.$queryRaw<Array<{ count: bigint }>>`
-        select count(*)::bigint as count from vouchers v join partner_profiles p on p.id = v.partner_id
+        select count(*)::bigint as count from vouchers v left join partner_profiles p on p.id = v.partner_id
         where (${filters.status ?? null}::text is null or v.status::text = ${filters.status ?? null})
           and (${search}::text is null or v.code ilike ${search} or v.title ilike ${search} or p.business_name ilike ${search})
       `
@@ -1301,7 +1302,16 @@ export const adminRepository = {
   moderateTournament(id: string, status: "APPROVED" | "REJECTED") {
     return prisma.$executeRaw`
       update tournaments set status = ${status}::tournament_status, updated_at = now()
-      where id = ${id}::uuid and status = 'PENDING'::tournament_status
+      where id = ${id} and status = 'PENDING'::tournament_status
+    `;
+  },
+
+  tournamentPartnerUser(id: string) {
+    return prisma.$queryRaw<Array<{ title: string; userId: string }>>`
+      select t.title, p.user_id as "userId"
+      from tournaments t join partner_profiles p on p.id = t.partner_id
+      where t.id = ${id}
+      limit 1
     `;
   },
 

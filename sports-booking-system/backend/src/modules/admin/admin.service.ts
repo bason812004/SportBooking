@@ -3,6 +3,7 @@ import { paginationMeta } from "../../shared/utils/response.js";
 import { parseLimit, parsePage } from "../../shared/utils/time.js";
 import { slugify } from "../../shared/utils/slug.js";
 import { commissionService, monthRange } from "../commission/commission.service.js";
+import { notificationService } from "../notifications/notification.service.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { voucherRepository } from "../vouchers/voucher.repository.js";
@@ -512,6 +513,18 @@ export const adminService = {
     if (!(await adminRepository.moderateTournament(id, status))) throw new ValidationError("Giai dau khong con cho duyet");
     await adminRepository.addModerationHistory({ entityType: "TOURNAMENT", entityId: id, action: status, reason, actorId });
     await recordAdminAction(actorId, `TOURNAMENT_${status}`, "TOURNAMENT", id, { reason });
+    const [target] = await adminRepository.tournamentPartnerUser(id);
+    if (target) {
+      await notificationService.create({
+        userId: target.userId,
+        title: status === "APPROVED" ? "Giải đấu đã được duyệt" : "Giải đấu bị từ chối",
+        content: status === "APPROVED"
+          ? `Giải đấu "${target.title}" đã được duyệt và hiển thị công khai.`
+          : `Giải đấu "${target.title}" đã bị từ chối.${reason ? ` Lý do: ${reason}` : ""}`,
+        type: status === "APPROVED" ? "TOURNAMENT_APPROVED" : "TOURNAMENT_REJECTED",
+        metadata: { tournamentId: id }
+      });
+    }
     return { id, status };
   },
 

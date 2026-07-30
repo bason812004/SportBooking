@@ -1,8 +1,8 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, ReceiptText, RefreshCcw, WalletCards } from "lucide-react";
+import { Banknote, Coins, Download, HandCoins, ReceiptText, RefreshCcw, WalletCards } from "lucide-react";
 import { toast } from "sonner";
-import { ErrorState, LoadingState } from "../../components/common/States";
+import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { PageHero } from "../../components/common/PageHero";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
@@ -30,6 +30,14 @@ const eventLabels: Record<string, string> = {
   COMPLETED: "Hoàn thành",
   NO_SHOW: "Không đến",
   REFUND: "Hoàn tiền"
+};
+const paymentStatusLabels: Record<string, string> = {
+  REFUNDED: "Đã hoàn tiền",
+  PARTIALLY_REFUNDED: "Hoàn tiền một phần"
+};
+const paymentStatusTones: Record<string, string> = {
+  REFUNDED: "bg-emerald-100 text-emerald-800",
+  PARTIALLY_REFUNDED: "bg-amber-100 text-amber-800"
 };
 
 type RecSortField = "businessName" | "transactionCount" | "grossAmount" | "commissionAmount" | "netAmount" | "refundAmount" | "payoutStatus" | "paidAt";
@@ -136,10 +144,10 @@ export function AdminFinancePage() {
 
       {reconciliation.data && (
         <div className="grid gap-3 md:grid-cols-4">
-          <Summary label="Doanh thu ghi nhận" value={money(reconciliation.data.summary.grossAmount)} />
-          <Summary label="Hoa hồng platform" value={money(reconciliation.data.summary.commissionAmount)} />
-          <Summary label="Partner thực nhận" value={money(reconciliation.data.summary.netAmount)} />
-          <Summary label="Đã hoàn tiền" value={money(reconciliation.data.summary.refundAmount)} />
+          <Summary icon={ReceiptText} tone="slate" label="Doanh thu ghi nhận" value={money(reconciliation.data.summary.grossAmount)} />
+          <Summary icon={Coins} tone="rose" label="Hoa hồng platform" value={money(reconciliation.data.summary.commissionAmount)} />
+          <Summary icon={HandCoins} tone="emerald" label="Partner thực nhận" value={money(reconciliation.data.summary.netAmount)} />
+          <Summary icon={Banknote} tone="amber" label="Đã hoàn tiền" value={money(reconciliation.data.summary.refundAmount)} />
         </div>
       )}
 
@@ -158,7 +166,7 @@ export function AdminFinancePage() {
         </TabButton>
       </div>
 
-      <div className="grid gap-3 rounded-lg border bg-white p-4 md:grid-cols-2">
+      <div className="grid gap-3 rounded-2xl border border-line bg-white p-4 md:grid-cols-2">
         <Input label="Tìm kiếm" value={search} onChange={(event) => { setTxPage(1); setRefundPage(1); setSearch(event.target.value); }} placeholder="Mã booking, sân, partner, khách hàng" />
         <Input label="ID partner" value={partnerId} onChange={(event) => { setTxPage(1); setRefundPage(1); setPartnerId(event.target.value); }} placeholder="pp0001" />
       </div>
@@ -199,7 +207,7 @@ export function AdminFinancePage() {
               ))}
             </TBody>
           </Table>
-          {!reconciliation.data.partners.length && <p className="p-6 text-center text-slate-500">Chưa có dữ liệu đối soát tháng này</p>}
+          {!reconciliation.data.partners.length && <EmptyState title="Chưa có dữ liệu đối soát tháng này." />}
         </>
       )}
 
@@ -233,6 +241,7 @@ export function AdminFinancePage() {
               ))}
             </TBody>
           </Table>
+          {transactions.data && !transactions.data.items.length && <EmptyState title="Chưa có giao dịch phù hợp." />}
         </QueryTable>
       )}
       {tab === "transactions" && <Pager page={txPage} total={transactions.data?.meta.totalPages ?? 1} setPage={setTxPage} />}
@@ -261,12 +270,17 @@ export function AdminFinancePage() {
                   <Td className="text-right">{money(item.totalPrice)}</Td>
                   <Td className="text-right text-red-600">{money(item.refundAmount)}</Td>
                   <Td className="text-right">{money(item.platformRetainedAmount)}</Td>
-                  <Td>{item.paymentStatus}</Td>
+                  <Td>
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${paymentStatusTones[item.paymentStatus] ?? "bg-slate-100 text-slate-700"}`}>
+                      {paymentStatusLabels[item.paymentStatus] ?? item.paymentStatus}
+                    </span>
+                  </Td>
                   <Td>{new Date(item.refundedAt).toLocaleString("vi-VN")}</Td>
                 </Tr>
               ))}
             </TBody>
           </Table>
+          {refunds.data && !refunds.data.items.length && <EmptyState title="Chưa có hoàn tiền nào." />}
         </QueryTable>
       )}
       {tab === "refunds" && <Pager page={refundPage} total={refunds.data?.meta.totalPages ?? 1} setPage={setRefundPage} />}
@@ -284,11 +298,23 @@ function Pager({ page, total, setPage }: { page: number; total: number; setPage:
   );
 }
 
-function Summary({ label, value }: { label: string; value: string }) {
+const summaryTones: Record<string, string> = {
+  slate: "bg-slate-100 text-slate-700",
+  rose: "bg-rose-100 text-rose-700",
+  emerald: "bg-emerald-100 text-emerald-700",
+  amber: "bg-amber-100 text-amber-700"
+};
+
+function Summary({ icon: Icon, tone, label, value }: { icon: ComponentType<{ className?: string }>; tone: string; label: string; value: string }) {
   return (
-    <div className="rounded-lg bg-slate-900 p-4 text-white">
-      <p className="text-sm text-slate-300">{label}</p>
-      <p className="mt-2 text-2xl font-bold">{value}</p>
+    <div className="flex items-center gap-3 rounded-2xl border border-line bg-white p-4">
+      <span className={`shrink-0 rounded-xl p-3 ${summaryTones[tone] ?? summaryTones.slate}`}>
+        <Icon className="h-5 w-5" />
+      </span>
+      <div className="min-w-0">
+        <p className="truncate text-sm text-slate-500">{label}</p>
+        <p className="text-xl font-bold text-ink">{value}</p>
+      </div>
     </div>
   );
 }
@@ -296,7 +322,7 @@ function Summary({ label, value }: { label: string; value: string }) {
 function TabButton({ active, children, onClick }: { active: boolean; children: ReactNode; onClick: () => void }) {
   return (
     <button
-      className={`inline-flex h-10 items-center gap-2 rounded-md border px-4 text-sm font-semibold ${active ? "border-action bg-action text-white" : "border-line bg-white text-ink"}`}
+      className={`inline-flex h-10 items-center gap-2 rounded-full border px-4 text-sm font-semibold transition ${active ? "border-action bg-action text-white shadow-md" : "border-line bg-white text-ink hover:bg-field"}`}
       onClick={onClick}
     >
       {children}
@@ -310,8 +336,16 @@ function QueryTable({ loading, error, children }: { loading: boolean; error?: st
   return <>{children}</>;
 }
 
+const payoutTones: Record<string, string> = {
+  PENDING: "bg-amber-100 text-amber-800",
+  PROCESSING: "bg-blue-100 text-blue-800",
+  PAID: "bg-emerald-100 text-emerald-800",
+  FAILED: "bg-red-100 text-red-800",
+  CANCELLED: "bg-slate-100 text-slate-700"
+};
+
 function Status({ value }: { value: string }) {
-  return <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{payoutLabels[value] ?? value}</span>;
+  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${payoutTones[value] ?? payoutTones.CANCELLED}`}>{payoutLabels[value] ?? value}</span>;
 }
 
 function money(value: number | string | null | undefined) {

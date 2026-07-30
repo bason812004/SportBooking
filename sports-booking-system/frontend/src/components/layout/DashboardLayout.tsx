@@ -92,8 +92,8 @@ export function DashboardLayout() {
         <div className="shrink-0 px-6 pb-4 pt-6">
           <p className="hidden truncate text-3xl font-extrabold leading-tight text-[#02712a] group-hover:block">{portalTitle}</p>
           <p className="mt-2 hidden truncate font-semibold tracking-widest group-hover:block">{portalSubtitle}</p>
-          <div className="mt-8 flex items-center gap-4 rounded-lg bg-white/45 p-4">
-            <img className="h-14 w-14 shrink-0 rounded-full object-cover" src="https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=200&q=80" alt="Profile" />
+          <div className="mt-8 flex items-center justify-center gap-4 rounded-lg p-0 group-hover:justify-start group-hover:bg-white/45 group-hover:p-4">
+            <img className="h-12 w-12 shrink-0 rounded-full object-cover group-hover:h-14 group-hover:w-14" src="https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&w=200&q=80" alt="Profile" />
             <div className="hidden min-w-0 group-hover:block">
               <p className="truncate font-bold">{profileName}</p>
               <p className="truncate text-sm text-slate-600">{profileRole}</p>
@@ -101,18 +101,21 @@ export function DashboardLayout() {
           </div>
         </div>
 
-        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden px-4 py-3">
+        <nav className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overflow-x-hidden px-4 py-3 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#b7cdb0] [&::-webkit-scrollbar-track]:bg-transparent">
           {items.map((item, index) => (
             <div key={item.to}>
               {item.group && (!items[index - 1] || items[index - 1].group !== item.group) && (
-                <p className="hidden truncate px-3 pb-2 pt-5 text-xs font-bold uppercase tracking-wider text-slate-600 first:pt-0 group-hover:block">{item.group}</p>
+                <>
+                  <div className="mx-3 my-2 border-t border-[#c8d8c3] first:hidden group-hover:hidden" />
+                  <p className="hidden truncate px-3 pb-2 pt-5 text-xs font-bold uppercase tracking-wider text-slate-600 first:pt-0 group-hover:block">{item.group}</p>
+                </>
               )}
               <NavLink
                 to={item.to}
                 end={item.to === "/admin/courts"}
                 title={t(item.label)}
                 className={({ isActive }) =>
-                  `flex h-12 items-center gap-3 rounded-lg px-4 text-base font-bold tracking-wide transition ${isActive ? "bg-blue-600 text-white shadow-lg" : "text-[#26352b] hover:bg-white/70"
+                  `flex h-12 items-center justify-center gap-3 rounded-lg px-4 text-base font-bold tracking-wide transition group-hover:justify-start ${isActive ? "bg-blue-600 text-white shadow-lg" : "text-[#26352b] hover:bg-white/70"
                   }`
                 }
               >

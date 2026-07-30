@@ -13,6 +13,7 @@ import type { PartnerVoucher } from "../../types/api";
 
 const money = (value: number) => `${value.toLocaleString("vi-VN")} đ`;
 const date = (value: string) => new Date(value).toLocaleDateString("vi-VN");
+const dateTime = (value: string) => new Date(value).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
 
 const statusOptions = [
   { value: "", label: "Tất cả trạng thái" },
@@ -108,6 +109,7 @@ export function PartnerVouchersPage() {
                     <p>Đơn tối thiểu: <strong>{money(voucher.minBookingAmount)}</strong></p>
                     <p>Thời hạn: <strong>{date(voucher.startDate)} - {date(voucher.endDate)}</strong></p>
                     <p>Lượt dùng: <strong>{voucher.usedCount}/{voucher.usageLimit ?? "Không giới hạn"}</strong></p>
+                    <p>Ngày tạo: <strong>{dateTime(voucher.createdAt)}</strong></p>
                   </div>
 
                   <div className="mt-5 flex flex-wrap gap-2">

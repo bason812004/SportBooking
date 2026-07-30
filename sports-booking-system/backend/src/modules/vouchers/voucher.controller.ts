@@ -25,7 +25,5 @@ export const voucherController = {
   partnerUpdate: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.updatePartner(req.user!.id, req.params.id, req.body))),
   partnerDelete: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.deletePartner(req.user!.id, req.params.id))),
   partnerActivate: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.setPartnerStatus(req.user!.id, req.params.id, "ACTIVE"))),
-  partnerDisable: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.setPartnerStatus(req.user!.id, req.params.id, "DISABLED"))),
-  adminList: asyncHandler(async (_req, res) => sendSuccess(res, await voucherService.listAdmin())),
-  adminDisable: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.disableAdmin(req.params.id)))
+  partnerDisable: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.setPartnerStatus(req.user!.id, req.params.id, "DISABLED")))
 };

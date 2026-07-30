@@ -590,52 +590,6 @@ export const partnerService = {
     return { id };
   },
 
-  async tournaments(userId: string) {
-    const profile = await getProfile(userId);
-    return partnerRepository.listTournaments(profile.id);
-  },
-
-  async tournamentDetail(userId: string, id: string) {
-    const profile = await getProfile(userId);
-    const [tournament] = await partnerRepository.findTournament(id, profile.id);
-    if (!tournament) throw new NotFoundError("Khong tim thay giai dau cua ban");
-    return tournament;
-  },
-
-  async createTournament(userId: string, input: any) {
-    const profile = await getProfile(userId);
-    await validateTournament(profile.id, input);
-    const [created] = await partnerRepository.createTournament(profile.id, { ...input, slug: uniqueSlug(input.title) });
-    return this.tournamentDetail(userId, created.id);
-  },
-
-  async updateTournament(userId: string, id: string, input: any) {
-    const profile = await getProfile(userId);
-    await this.tournamentDetail(userId, id);
-    await validateTournament(profile.id, input);
-    if (!(await partnerRepository.updateTournament(id, profile.id, { ...input, slug: uniqueSlug(input.title) }))) {
-      throw new ValidationError("Chi co the sua giai dau nhap");
-    }
-    return this.tournamentDetail(userId, id);
-  },
-
-  async submitTournament(userId: string, id: string) {
-    const profile = await getProfile(userId);
-    await this.tournamentDetail(userId, id);
-    if (!(await partnerRepository.submitTournament(id, profile.id))) {
-      throw new ValidationError("Chi co the gui duyet giai dau nhap");
-    }
-    return this.tournamentDetail(userId, id);
-  },
-
-  async deleteTournament(userId: string, id: string) {
-    const profile = await getProfile(userId);
-    if (!(await partnerRepository.deleteTournament(id, profile.id))) {
-      throw new ValidationError("Chi co the xoa giai dau nhap");
-    }
-    return { id };
-  },
-
   async listRecipients(userId: string) {
     const profile = await getProfile(userId);
     return partnerRepository.listRecipients(profile.id);
@@ -693,12 +647,3 @@ export const partnerService = {
     return { id };
   }
 };
-
-async function validateTournament(partnerId: string, input: any) {
-  const court = await partnerRepository.courtByPartner(input.courtId, partnerId);
-  if (!court) throw new ValidationError("San khong thuoc doi tac");
-  const deadline = new Date(input.registrationDeadline);
-  const start = new Date(input.startDate);
-  const end = new Date(input.endDate);
-  if (deadline > start || start > end) throw new ValidationError("Thoi gian giai dau khong hop le");
-}

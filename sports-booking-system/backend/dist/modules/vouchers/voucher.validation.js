@@ -28,15 +28,15 @@ export const validateVoucherSchema = z.object({
     }).refine((value) => value.voucherId || value.code, { message: "voucherId hoặc code là bắt buộc" })
 });
 const partnerVoucherBodySchema = z.object({
-    courtId: id.optional(),
+    courtId: id.optional().nullable(),
     code: z.string().min(2).max(40),
     title: z.string().min(2).max(160),
     description: z.string().optional(),
     discountType: z.enum(["PERCENTAGE", "FIXED_AMOUNT"]),
     discountValue: z.number().positive(),
-    maxDiscountAmount: z.number().nonnegative().optional(),
+    maxDiscountAmount: z.number().nonnegative().optional().nullable(),
     minBookingAmount: z.number().nonnegative().default(0),
-    usageLimit: z.number().int().positive().optional(),
+    usageLimit: z.number().int().positive().optional().nullable(),
     startDate: z.string().datetime(),
     endDate: z.string().datetime(),
     status: z.enum(["DRAFT", "ACTIVE", "EXPIRED", "DISABLED"]).default("DRAFT")
