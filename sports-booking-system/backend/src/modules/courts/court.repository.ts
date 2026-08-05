@@ -110,12 +110,17 @@ export const courtRepository = {
       query.sortBy === "name" ? { name: query.sortOrder ?? "asc" } : query.sort === "newest" || !query.sort ? { createdAt: "desc" } : { name: "asc" };
 
     if (hasLocation || query.sortBy === "distance") {
-      const candidates = await prisma.court.findMany({
-        where,
-        include: courtInclude,
-        orderBy
-      });
-      return { items: candidates, total: candidates.length };
+      const candidateCap = Math.max(limit * 20, 200);
+      const [candidates, total] = await Promise.all([
+        prisma.court.findMany({
+          where,
+          include: courtInclude,
+          orderBy,
+          take: candidateCap
+        }),
+        prisma.court.count({ where })
+      ]);
+      return { items: candidates, total };
     }
 
     const [items, total] = await prisma.$transaction([

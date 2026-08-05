@@ -20,8 +20,7 @@ export async function columnExists(tableName, columnName) {
     ) as "exists"
   `;
     const exists = Boolean(row?.exists);
-    if (exists)
-        columnExistsCache.set(cacheKey, true);
+    columnExistsCache.set(cacheKey, exists);
     return exists;
 }
 // ============================================================
@@ -29,14 +28,23 @@ export async function columnExists(tableName, columnName) {
 // Includes the new eligibility fields when present.
 // ============================================================
 async function eligibilitySelectSql() {
+    const [applicableDays, startTime, endTime, holidayOnly, holidayDates, applicableStartDate, applicableEndDate] = await Promise.all([
+        columnExists("vouchers", "applicable_days"),
+        columnExists("vouchers", "start_time"),
+        columnExists("vouchers", "end_time"),
+        columnExists("vouchers", "holiday_only"),
+        columnExists("vouchers", "holiday_dates"),
+        columnExists("vouchers", "applicable_start_date"),
+        columnExists("vouchers", "applicable_end_date")
+    ]);
     const has = {
-        applicableDays: await columnExists("vouchers", "applicable_days"),
-        startTime: await columnExists("vouchers", "start_time"),
-        endTime: await columnExists("vouchers", "end_time"),
-        holidayOnly: await columnExists("vouchers", "holiday_only"),
-        holidayDates: await columnExists("vouchers", "holiday_dates"),
-        applicableStartDate: await columnExists("vouchers", "applicable_start_date"),
-        applicableEndDate: await columnExists("vouchers", "applicable_end_date"),
+        applicableDays,
+        startTime,
+        endTime,
+        holidayOnly,
+        holidayDates,
+        applicableStartDate,
+        applicableEndDate
     };
     return {
         applicableDays: has.applicableDays ? Prisma.sql `v.applicable_days` : Prisma.sql `null::varchar`,

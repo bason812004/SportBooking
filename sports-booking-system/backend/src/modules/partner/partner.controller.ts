@@ -38,6 +38,7 @@ export const partnerController = {
   calendar: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.calendar(req.user!.id, req.query as any))),
   courtSurfaces: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.courtSurfaces(req.user!.id, req.params.id))),
   updateCourtSurfaceStatus: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateCourtSurfaceStatus(req.user!.id, req.params.id, req.params.surfaceId, req.body.status))),
+  updateCourtSurface: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateCourtSurface(req.user!.id, req.params.id, req.params.surfaceId, req.body))),
   vouchers: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.vouchers(req.user!.id))),
   voucherDetail: asyncHandler(async (req, res) =>
     sendSuccess(res, await partnerService.voucherDetail(req.user!.id, req.params.id))

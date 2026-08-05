@@ -41,7 +41,7 @@ export const demandPredictionRepository = {
              to_char(end_time, 'HH24:MI') as "endTime",
              count(*)::int as count
       from bookings
-      where court_id = ${courtId}::uuid
+      where court_id = ${courtId}
         and booking_status not in ('CANCELLED'::booking_status, 'NO_SHOW'::booking_status)
       group by start_time, end_time
     `;

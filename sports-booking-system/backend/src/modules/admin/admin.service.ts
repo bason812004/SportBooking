@@ -402,7 +402,12 @@ export const adminService = {
     return result;
   },
 
-  pendingCourts() { return adminRepository.pendingCourts(); },
+  async pendingCourts(query: any) {
+    const page = parsePage(query.page);
+    const limit = parseLimit(query.limit);
+    const [items, total] = await adminRepository.pendingCourts(page, limit);
+    return { items, meta: paginationMeta(page, limit, total) };
+  },
   async approveCourt(actorId: string, id: string) {
     const result = await adminRepository.setCourtApproval(id, "APPROVED", undefined);
     await adminRepository.addModerationHistory({ entityType: "COURT", entityId: id, action: "APPROVED", actorId });
@@ -433,12 +438,22 @@ export const adminService = {
     return result;
   },
 
-  reviews() { return adminRepository.reviews(); },
+  async reviews(query: any) {
+    const page = parsePage(query.page);
+    const limit = parseLimit(query.limit);
+    const [items, total] = await adminRepository.reviews(page, limit);
+    return { items, meta: paginationMeta(page, limit, total) };
+  },
   async hideReview(actorId: string, id: string) { const result = await adminRepository.setReviewDisplay(id, "HIDDEN"); await recordAdminAction(actorId, "REVIEW_HIDDEN", "REVIEW", id); return result; },
   async showReview(actorId: string, id: string) { const result = await adminRepository.setReviewDisplay(id, "VISIBLE"); await recordAdminAction(actorId, "REVIEW_SHOWN", "REVIEW", id); return result; },
   async deleteReview(actorId: string, id: string) { const result = await adminRepository.deleteReview(id); await recordAdminAction(actorId, "REVIEW_DELETED", "REVIEW", id); return result; },
 
-  reports() { return adminRepository.reports(); },
+  async reports(query: any) {
+    const page = parsePage(query.page);
+    const limit = parseLimit(query.limit);
+    const [items, total] = await adminRepository.reports(page, limit);
+    return { items, meta: paginationMeta(page, limit, total) };
+  },
   async resolveReport(actorId: string, id: string) { const result = await adminRepository.setReportStatus(id, "RESOLVED"); await recordAdminAction(actorId, "REPORT_RESOLVED", "REPORT", id); return result; },
   async rejectReport(actorId: string, id: string) { const result = await adminRepository.setReportStatus(id, "REJECTED"); await recordAdminAction(actorId, "REPORT_REJECTED", "REPORT", id); return result; },
 

@@ -510,6 +510,8 @@ model CourtSurface {
   imageUrl           String?                  @map("image_url")
   status             CourtActiveStatus        @default(ACTIVE)
   sortOrder          Int                      @default(0) @map("sort_order")
+  openingTime        DateTime?                @map("opening_time") @db.Time(6)
+  closingTime        DateTime?                @map("closing_time") @db.Time(6)
   createdAt          DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
   booking_slots      BookingSlot[]
   bookings           Booking[]

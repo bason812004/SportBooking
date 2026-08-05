@@ -72,10 +72,31 @@ export const bookingRepository = {
     return prisma.$transaction([
       prisma.booking.findMany({
         where,
-        include: {
-          court: { include: { images: { orderBy: { sortOrder: "asc" } }, category: true, partner: true } },
+        select: {
+          id: true,
+          bookingCode: true,
+          bookingStatus: true,
+          paymentStatus: true,
+          paymentMethod: true,
+          bookingDate: true,
+          startTime: true,
+          endTime: true,
+          totalPrice: true,
+          subtotal: true,
+          createdAt: true,
+          court: {
+            select: {
+              id: true,
+              name: true,
+              address: true,
+              district: true,
+              city: true,
+              images: { orderBy: { sortOrder: "asc" }, take: 1 },
+              category: { select: { name: true } }
+            }
+          },
           bookingServices: { include: { service: true } },
-          bookingVoucher: { include: { voucher: true } },
+          bookingVoucher: { include: { voucher: { select: { code: true } } } },
           payments: { orderBy: { createdAt: "desc" }, take: 1 },
           bookingOrder: { select: { payment: true } }
         },

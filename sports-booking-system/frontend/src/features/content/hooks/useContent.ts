@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { contentApi } from "../api/contentApi";
 
-const realtimeQuery = { refetchInterval: 8000, refetchOnWindowFocus: true };
+const realtimeQuery = { refetchInterval: 45000, refetchOnWindowFocus: true };
 
 export function useVouchers() {
   return useQuery({ queryKey: ["public-vouchers"], queryFn: contentApi.vouchers, ...realtimeQuery });

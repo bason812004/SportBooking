@@ -8,6 +8,7 @@ import {
   courtWriteSchema,
   courtStatusSchema,
   courtSurfaceStatusSchema,
+  courtSurfaceUpdateSchema,
   courtBlockWriteSchema,
   courtBlockParamsSchema,
   courtBlockBulkWriteSchema,
@@ -39,6 +40,7 @@ partnerRoutes.post("/courts", validate(courtWriteSchema), partnerController.crea
 partnerRoutes.get("/courts/:id", partnerController.courtDetail);
 partnerRoutes.get("/courts/:id/surfaces", partnerController.courtSurfaces);
 partnerRoutes.put("/courts/:id/surfaces/:surfaceId/status", validate(courtSurfaceStatusSchema), partnerController.updateCourtSurfaceStatus);
+partnerRoutes.put("/courts/:id/surfaces/:surfaceId", validate(courtSurfaceUpdateSchema), partnerController.updateCourtSurface);
 partnerRoutes.put("/courts/:id", validate(courtWriteSchema.partial()), partnerController.updateCourt);
 partnerRoutes.delete("/courts/:id", partnerController.deactivateCourt);
 partnerRoutes.put("/courts/:id/status", validate(courtStatusSchema), partnerController.updateCourtStatus);

@@ -361,6 +361,10 @@ export const partnerRepository = {
     return prisma.courtSurface.update({ where: { id: surfaceId }, data: { status } });
   },
 
+  updateCourtSurface(surfaceId: string, data: { openingTime?: Date | null; closingTime?: Date | null }) {
+    return prisma.courtSurface.update({ where: { id: surfaceId }, data });
+  },
+
   courtBlocks(courtId: string) {
     return prisma.courtAvailabilityBlock.findMany({
       where: { courtId, status: "ACTIVE" },

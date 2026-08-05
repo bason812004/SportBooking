@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff, MessageSquare, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
@@ -27,10 +28,12 @@ function StarRating({ rating }: { rating: number }) {
 
 export function AdminReviewsPage() {
   const qc = useQueryClient();
+  const [page, setPage] = useState(1);
 
   const q = useQuery({
-    queryKey: ["admin-reviews"],
-    queryFn: adminApi.reviews
+    queryKey: ["admin-reviews", page],
+    queryFn: () => adminApi.reviews({ page, limit: 10 }),
+    placeholderData: keepPreviousData
   });
 
   const action = useMutation({
@@ -46,7 +49,7 @@ export function AdminReviewsPage() {
   if (q.isLoading) return <LoadingState />;
   if (q.isError) return <ErrorState message={q.error.message} />;
 
-  const items = (q.data as any[]) ?? [];
+  const items = q.data?.items ?? [];
 
   return (
     <div className="space-y-6">
@@ -106,6 +109,19 @@ export function AdminReviewsPage() {
           })}
         </div>
       )}
+
+      <Pager page={page} total={q.data?.meta?.totalPages ?? 1} setPage={setPage} />
+    </div>
+  );
+}
+
+function Pager({ page, total, setPage }: { page: number; total: number; setPage: (v: number) => void }) {
+  if (total <= 1) return null;
+  return (
+    <div className="flex justify-end gap-3">
+      <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Trước</Button>
+      <span className="py-2 text-sm font-semibold">{page}/{Math.max(total, 1)}</span>
+      <Button variant="secondary" disabled={page >= total} onClick={() => setPage(page + 1)}>Sau</Button>
     </div>
   );
 }

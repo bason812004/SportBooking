@@ -1,3 +1,4 @@
+import compression from "compression";
 import cors from "cors";
 import express from "express";
 import rateLimit from "express-rate-limit";
@@ -45,6 +46,7 @@ const allowedOrigins = new Set([
 ]);
 
 app.use(helmet());
+app.use(compression());
 app.use(
   cors({
     origin(origin, callback) {

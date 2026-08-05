@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, FolderCheck, MapPin, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
@@ -11,10 +11,12 @@ import { PageHero } from "../../components/common/PageHero";
 export function AdminPendingCourtsPage() {
   const queryClient = useQueryClient();
   const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
 
   const courts = useQuery({
-    queryKey: ["admin-pending-courts"],
-    queryFn: adminApi.pendingCourts
+    queryKey: ["admin-pending-courts", page],
+    queryFn: () => adminApi.pendingCourts({ page, limit: 10 }),
+    placeholderData: keepPreviousData
   });
 
   const approve = useMutation({
@@ -38,7 +40,7 @@ export function AdminPendingCourtsPage() {
   if (courts.isLoading) return <LoadingState />;
   if (courts.isError) return <ErrorState message={courts.error.message} />;
 
-  const items = courts.data ?? [];
+  const items = courts.data?.items ?? [];
 
   return (
     <div className="space-y-6">
@@ -86,6 +88,8 @@ export function AdminPendingCourtsPage() {
         </div>
       )}
 
+      <Pager page={page} total={courts.data?.meta?.totalPages ?? 1} setPage={setPage} />
+
       <AdminReasonModal
         open={Boolean(rejectingId)}
         title="Từ chối sân"
@@ -93,6 +97,17 @@ export function AdminPendingCourtsPage() {
         onClose={() => setRejectingId(null)}
         onConfirm={(reason) => rejectingId && reject.mutate({ id: rejectingId, reason })}
       />
+    </div>
+  );
+}
+
+function Pager({ page, total, setPage }: { page: number; total: number; setPage: (v: number) => void }) {
+  if (total <= 1) return null;
+  return (
+    <div className="flex justify-end gap-3">
+      <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Trước</Button>
+      <span className="py-2 text-sm font-semibold">{page}/{Math.max(total, 1)}</span>
+      <Button variant="secondary" disabled={page >= total} onClick={() => setPage(page + 1)}>Sau</Button>
     </div>
   );
 }

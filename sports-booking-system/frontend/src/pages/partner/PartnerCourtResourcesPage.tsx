@@ -146,6 +146,16 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
     },
     onError: (error: any) => toast.error(error.message || "Không thể cập nhật trạng thái sân con")
   });
+  const updateSurfaceHours = useMutation({
+    mutationFn: ({ surfaceId, openingTime, closingTime }: { surfaceId: string; openingTime: string | null; closingTime: string | null }) =>
+      partnerApi.updateCourtSurface(id, surfaceId, { openingTime, closingTime }),
+    onSuccess: async () => {
+      toast.success("Đã cập nhật giờ hoạt động sân con");
+      await refresh();
+      await queryClient.invalidateQueries({ queryKey: ["partner-court-grid", id] });
+    },
+    onError: (error: any) => toast.error(error.message || "Không thể cập nhật giờ hoạt động")
+  });
 
   const savePrice = useMutation({
     mutationFn: (values: PriceForm) => editingId ? partnerApi.updatePrice(editingId, values) : partnerApi.addPrice(id, values),
@@ -316,16 +326,12 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
 
   const surfaceLookup = new Map((data.surfaces ?? []).map((surface) => [surface.id, surface]));
 
-  // TODO(backend): CourtSurface has no per-surface operating hours field yet, so every
-  // row mocks the court cluster's openingTime/closingTime. Swap this for the real
-  // per-surface value once the backend adds it — CourtScheduleGrid already renders
-  // each row's operatingHours independently.
   const scheduleRows: ScheduleRow[] = (grid.data ?? []).map((surface) => ({
     surfaceId: surface.surfaceId,
     surfaceName: surface.surfaceName,
     code: surface.code,
     status: surface.status,
-    operatingHours: { open: timeText(data.openingTime), close: timeText(data.closingTime) },
+    operatingHours: surface.operatingHours,
     slots: surface.slots
   }));
 
@@ -656,6 +662,27 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
             </div>
           </div>
 
+          {Boolean(data.surfaces?.length) && (
+            <div className="rounded-2xl border border-line bg-white p-4">
+              <p className="text-sm font-bold">Giờ hoạt động riêng theo sân con</p>
+              <p className="text-sm text-slate-500">
+                Để trống nếu muốn dùng giờ mở/đóng chung của cả cụm sân ({timeText(data.openingTime)} - {timeText(data.closingTime)}).
+              </p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {(data.surfaces ?? []).map((surface) => (
+                  <SurfaceHoursRow
+                    key={surface.id}
+                    name={surface.name}
+                    openingTime={surface.openingTime ? timeText(surface.openingTime) : ""}
+                    closingTime={surface.closingTime ? timeText(surface.closingTime) : ""}
+                    pending={updateSurfaceHours.isPending}
+                    onSave={(openingTime, closingTime) => updateSurfaceHours.mutate({ surfaceId: surface.id, openingTime: openingTime || null, closingTime: closingTime || null })}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
           {!data.surfaces?.length ? (
             <div className="rounded-2xl border border-line bg-white p-4"><EmptyState title="Cụm sân này chưa có sân con nào." /></div>
           ) : grid.isLoading ? (
@@ -757,6 +784,43 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
           setPriceCellPopover(null);
         }}
       />
+    </div>
+  );
+}
+
+function SurfaceHoursRow({
+  name,
+  openingTime,
+  closingTime,
+  pending,
+  onSave
+}: {
+  name: string;
+  openingTime: string;
+  closingTime: string;
+  pending: boolean;
+  onSave: (openingTime: string, closingTime: string) => void;
+}) {
+  const [open, setOpen] = useState(openingTime);
+  const [close, setClose] = useState(closingTime);
+  const dirty = open !== openingTime || close !== closingTime;
+
+  return (
+    <div className="rounded-xl border border-line p-3">
+      <p className="text-sm font-bold">{name}</p>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <Input label="Giờ mở" type="time" value={open} onChange={(e) => setOpen(e.target.value)} />
+        <Input label="Giờ đóng" type="time" value={close} onChange={(e) => setClose(e.target.value)} />
+      </div>
+      <Button
+        type="button"
+        variant="secondary"
+        className="mt-2 w-full"
+        disabled={pending || !dirty}
+        onClick={() => onSave(open, close)}
+      >
+        {pending ? "Đang lưu..." : "Lưu giờ hoạt động"}
+      </Button>
     </div>
   );
 }

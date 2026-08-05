@@ -1,3 +1,4 @@
+import compression from "compression";
 import cors from "cors";
 import express from "express";
 import rateLimit from "express-rate-limit";
@@ -42,6 +43,7 @@ const allowedOrigins = new Set([
     "http://127.0.0.1:5173"
 ]);
 app.use(helmet());
+app.use(compression());
 app.use(cors({
     origin(origin, callback) {
         if (!origin || allowedOrigins.has(origin))

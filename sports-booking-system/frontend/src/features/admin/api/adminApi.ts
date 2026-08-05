@@ -164,8 +164,8 @@ export const adminApi = {
     const { data } = await api.post<ApiResponse<AdminCourt>>(`/admin/courts/${id}/request-update`, { note });
     return data.data;
   },
-  async pendingCourts() {
-    const { data } = await api.get<ApiResponse<Court[]>>("/admin/courts/pending");
+  async pendingCourts(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<Court>>>("/admin/courts/pending", { params: clean(params) });
     return data.data;
   },
   async approveCourt(id: string) {
@@ -192,8 +192,8 @@ export const adminApi = {
     const { data } = await api.delete<ApiResponse<Category>>(`/admin/categories/${id}`);
     return data.data;
   },
-  async reviews() {
-    const { data } = await api.get<ApiResponse<unknown[]>>("/admin/reviews");
+  async reviews(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<any>>>("/admin/reviews", { params: clean(params) });
     return data.data;
   },
   async setReviewStatus(id: string, action: "hide" | "show") {
@@ -204,8 +204,8 @@ export const adminApi = {
     const { data } = await api.delete<ApiResponse<unknown>>(`/admin/reviews/${id}`);
     return data.data;
   },
-  async reports() {
-    const { data } = await api.get<ApiResponse<unknown[]>>("/admin/reports");
+  async reports(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<any>>>("/admin/reports", { params: clean(params) });
     return data.data;
   },
   async setReportStatus(id: string, action: "resolve" | "reject") {

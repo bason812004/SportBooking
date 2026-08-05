@@ -3,6 +3,8 @@ import type {
   ApiResponse,
   Booking,
   Court,
+  DynamicPricingRule,
+  DynamicPricingRuleInput,
   Paginated,
   PartnerBlog,
   PartnerDashboard,
@@ -27,6 +29,8 @@ export type PartnerCourtSurface = {
   imageUrl?: string | null;
   status: "ACTIVE" | "INACTIVE";
   sortOrder: number;
+  openingTime?: string | null;
+  closingTime?: string | null;
 };
 
 export type PartnerCourtBlock = {
@@ -55,6 +59,7 @@ export type PartnerSurfaceGrid = {
   surfaceName: string;
   code: string;
   status: "ACTIVE" | "INACTIVE";
+  operatingHours: { open: string; close: string };
   slots: PartnerSurfaceSlot[];
 };
 
@@ -212,6 +217,10 @@ export const partnerApi = {
     const { data } = await api.put<ApiResponse<PartnerCourtSurface>>(`/partner/courts/${courtId}/surfaces/${surfaceId}/status`, { status });
     return data.data;
   },
+  async updateCourtSurface(courtId: string, surfaceId: string, payload: { openingTime?: string | null; closingTime?: string | null }) {
+    const { data } = await api.put<ApiResponse<PartnerCourtSurface>>(`/partner/courts/${courtId}/surfaces/${surfaceId}`, payload);
+    return data.data;
+  },
   async courtBlocks(courtId: string) {
     const { data } = await api.get<ApiResponse<PartnerCourtBlock[]>>(`/partner/courts/${courtId}/blocks`);
     return data.data;
@@ -258,6 +267,34 @@ export const partnerApi = {
   },
   async deleteVoucher(id: string) {
     const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/vouchers/${id}`);
+    return data.data;
+  },
+  async pricingRules() {
+    const { data } = await api.get<ApiResponse<DynamicPricingRule[]>>("/partner/dynamic-pricing/rules");
+    return data.data;
+  },
+  async pricingRuleDetail(id: string) {
+    const { data } = await api.get<ApiResponse<DynamicPricingRule>>(`/partner/dynamic-pricing/rules/${id}`);
+    return data.data;
+  },
+  async createPricingRule(payload: DynamicPricingRuleInput) {
+    const { data } = await api.post<ApiResponse<DynamicPricingRule>>("/partner/dynamic-pricing/rules", payload);
+    return data.data;
+  },
+  async updatePricingRule(id: string, payload: DynamicPricingRuleInput) {
+    const { data } = await api.put<ApiResponse<DynamicPricingRule>>(`/partner/dynamic-pricing/rules/${id}`, payload);
+    return data.data;
+  },
+  async activatePricingRule(id: string) {
+    const { data } = await api.put<ApiResponse<DynamicPricingRule>>(`/partner/dynamic-pricing/rules/${id}/activate`);
+    return data.data;
+  },
+  async deactivatePricingRule(id: string) {
+    const { data } = await api.put<ApiResponse<DynamicPricingRule>>(`/partner/dynamic-pricing/rules/${id}/deactivate`);
+    return data.data;
+  },
+  async deletePricingRule(id: string) {
+    const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/dynamic-pricing/rules/${id}`);
     return data.data;
   },
   async blogs() {

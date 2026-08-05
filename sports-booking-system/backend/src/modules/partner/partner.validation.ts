@@ -154,6 +154,14 @@ export const courtSurfaceStatusSchema = z.object({
   })
 });
 
+export const courtSurfaceUpdateSchema = z.object({
+  params: z.object({ id, surfaceId: id }),
+  body: z.object({
+    openingTime: z.union([flexTime, z.null()]).optional(),
+    closingTime: z.union([flexTime, z.null()]).optional()
+  })
+});
+
 export const courtBlockWriteSchema = z.object({
   body: z.object({
     courtSurfaceId: z.union([id, z.null()]).optional(),

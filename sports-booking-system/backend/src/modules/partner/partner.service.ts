@@ -405,6 +405,16 @@ export const partnerService = {
     return partnerRepository.updateCourtSurfaceStatus(surfaceId, status);
   },
 
+  async updateCourtSurface(userId: string, courtId: string, surfaceId: string, input: { openingTime?: string | null; closingTime?: string | null }) {
+    const profile = await getProfile(userId);
+    const surface = await partnerRepository.courtSurfaceByPartner(surfaceId, courtId, profile.id);
+    if (!surface) throw new NotFoundError("Khong tim thay san con thuoc cum san cua ban");
+    return partnerRepository.updateCourtSurface(surfaceId, {
+      openingTime: input.openingTime === undefined ? undefined : input.openingTime ? timeToDate(input.openingTime) : null,
+      closingTime: input.closingTime === undefined ? undefined : input.closingTime ? timeToDate(input.closingTime) : null
+    });
+  },
+
   async courtBlocks(userId: string, courtId: string) {
     const profile = await getProfile(userId);
     const court = await partnerRepository.courtByPartner(courtId, profile.id);
@@ -455,22 +465,27 @@ export const partnerService = {
     ]);
     const bookingSlots = bookingSlotsRaw.map((bookingSlot) => ({ ...bookingSlot, courtSurfaceId: bookingSlot.court_surface_id }));
 
-    return (court.surfaces ?? []).map((surface) => ({
-      surfaceId: surface.id,
-      surfaceName: surface.name,
-      code: surface.code,
-      status: surface.status,
-      slots: buildSlotGrid({
-        date,
-        openingTime: court.openingTime,
-        closingTime: court.closingTime,
-        bookings,
-        bookingSlots,
-        blocks,
-        prices: court.prices,
-        courtSurfaceId: surface.id
-      })
-    }));
+    return (court.surfaces ?? []).map((surface) => {
+      const openingTime = surface.openingTime ?? court.openingTime;
+      const closingTime = surface.closingTime ?? court.closingTime;
+      return {
+        surfaceId: surface.id,
+        surfaceName: surface.name,
+        code: surface.code,
+        status: surface.status,
+        operatingHours: { open: dbTime(openingTime), close: dbTime(closingTime) },
+        slots: buildSlotGrid({
+          date,
+          openingTime,
+          closingTime,
+          bookings,
+          bookingSlots,
+          blocks,
+          prices: court.prices,
+          courtSurfaceId: surface.id
+        })
+      };
+    });
   },
 
   async createCourtBlockBulk(

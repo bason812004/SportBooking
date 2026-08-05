@@ -1041,12 +1041,18 @@ export const adminRepository = {
     return prisma.partnerProfile.update({ where: { id }, data: { approvalStatus } });
   },
 
-  pendingCourts() {
-    return prisma.court.findMany({
-      where: { approvalStatus: "PENDING" },
-      include: { category: true, partner: { include: { user: { select: { fullName: true, email: true } } } }, images: true },
-      orderBy: { createdAt: "desc" }
-    });
+  pendingCourts(page: number, limit: number) {
+    const where: Prisma.CourtWhereInput = { approvalStatus: "PENDING" };
+    return prisma.$transaction([
+      prisma.court.findMany({
+        where,
+        include: { category: true, partner: { include: { user: { select: { fullName: true, email: true } } } }, images: true },
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit
+      }),
+      prisma.court.count({ where })
+    ]);
   },
 
   setCourtApproval(id: string, approvalStatus: "APPROVED" | "REJECTED", rejectionReason?: string) {
@@ -1066,11 +1072,16 @@ export const adminRepository = {
     return prisma.courtCategory.update({ where: { id }, data: { status: "INACTIVE" } });
   },
 
-  reviews() {
-    return prisma.review.findMany({
-      include: { user: { select: { fullName: true, email: true } }, court: { select: { name: true } } },
-      orderBy: { createdAt: "desc" }
-    });
+  reviews(page: number, limit: number) {
+    return prisma.$transaction([
+      prisma.review.findMany({
+        include: { user: { select: { fullName: true, email: true } }, court: { select: { name: true } } },
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit
+      }),
+      prisma.review.count()
+    ]);
   },
   setReviewDisplay(id: string, displayStatus: "VISIBLE" | "HIDDEN") {
     return prisma.review.update({ where: { id }, data: { displayStatus } });
@@ -1079,11 +1090,16 @@ export const adminRepository = {
     return prisma.review.delete({ where: { id } });
   },
 
-  reports() {
-    return prisma.report.findMany({
-      include: { user: { select: { fullName: true, email: true } }, court: { select: { name: true } } },
-      orderBy: { createdAt: "desc" }
-    });
+  reports(page: number, limit: number) {
+    return prisma.$transaction([
+      prisma.report.findMany({
+        include: { user: { select: { fullName: true, email: true } }, court: { select: { name: true } } },
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit
+      }),
+      prisma.report.count()
+    ]);
   },
   setReportStatus(id: string, status: "RESOLVED" | "REJECTED") {
     return prisma.report.update({ where: { id }, data: { status, resolvedAt: new Date() } });

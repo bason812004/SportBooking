@@ -72,7 +72,7 @@ export type Court = {
     user?: { fullName: string; email: string; phone?: string | null };
   };
   images: Array<{ id: string; imageUrl: string; publicId?: string; sortOrder: number }>;
-  surfaces?: Array<{ id: string; code: string; name: string; capacity?: string; surface?: string; size?: string; imageUrl?: string; sortOrder: number }>;
+  surfaces?: Array<{ id: string; code: string; name: string; capacity?: string; surface?: string; size?: string; imageUrl?: string; sortOrder: number; openingTime?: string | null; closingTime?: string | null }>;
   amenities: Array<{ id: string; name: string }>;
   prices: Array<{ id: string; dayType: string; startTime: string; endTime: string; price: string; note?: string }>;
   services: Array<{ id: string; name: string; description?: string; price: string; status: string }>;
@@ -538,6 +538,62 @@ export type DemandPrediction = {
   confidenceScore: number;
   status: "GENERATED" | "INSUFFICIENT_DATA" | "FAILED";
   message?: { vi: string; en: string };
+};
+
+export type PartnerDemandPeakHour = {
+  courtId: string;
+  courtName: string;
+  hour: number;
+  bookingCount: number;
+};
+
+export type PartnerDemandOverview = {
+  peakHours: PartnerDemandPeakHour[];
+};
+
+export type PartnerDemandCourtOverview = {
+  courtId: string;
+  totalHistoricalBookings: number;
+  status: "READY" | "INSUFFICIENT_DATA";
+};
+
+export type DynamicPricingRuleType = "PEAK_HOUR" | "OFF_PEAK_HOUR" | "WEEKEND" | "HOLIDAY" | "HIGH_DEMAND" | "LOW_DEMAND" | "CUSTOM";
+
+export type DynamicPricingRule = {
+  id: string;
+  partnerId: string;
+  courtId: string;
+  name: string;
+  description?: string | null;
+  ruleType: DynamicPricingRuleType;
+  dayType?: "WEEKDAY" | "WEEKEND" | "HOLIDAY" | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  priceAdjustmentType: "PERCENTAGE" | "FIXED_AMOUNT";
+  priceAdjustmentValue: number | string;
+  minPrice?: number | string | null;
+  maxPrice?: number | string | null;
+  priority: number;
+  status: "ACTIVE" | "INACTIVE";
+  createdAt: string;
+  updatedAt: string;
+  court?: { id: string; name: string } | null;
+};
+
+export type DynamicPricingRuleInput = {
+  courtId: string;
+  name: string;
+  description?: string;
+  ruleType: DynamicPricingRuleType;
+  dayType?: "WEEKDAY" | "WEEKEND" | "HOLIDAY";
+  startTime?: string;
+  endTime?: string;
+  priceAdjustmentType: "PERCENTAGE" | "FIXED_AMOUNT";
+  priceAdjustmentValue: number;
+  minPrice?: number;
+  maxPrice?: number;
+  priority?: number;
+  status?: "ACTIVE" | "INACTIVE";
 };
 
 export type VoucherValidatePayload = {
