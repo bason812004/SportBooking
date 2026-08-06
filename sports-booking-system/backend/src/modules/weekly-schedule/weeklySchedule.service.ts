@@ -98,20 +98,30 @@ async function fetchPendingPayments(bookingIds: string[]): Promise<Map<string, {
 }
 
 /**
- * Check if a pending booking has an active (non-expired) payment.
- * Uses pre-fetched payment data to avoid N+1 queries.
+ * Check if a booking blocks the slot on the calendar.
+ * CONFIRMED and COMPLETED bookings ALWAYS block.
+ * PENDING or PENDING_PAYMENT bookings block as long as their payment is active / not expired.
  */
 function hasActivePayment(
   bookingId: string,
   bookingStatus: string,
   paymentMap: Map<string, { expiresAt: Date | null; status: string }[]>
 ): boolean {
-  const isPending = bookingStatus === "PENDING" || bookingStatus === "PENDING_PAYMENT";
-  if (!isPending) return false;
-  const payments = paymentMap.get(bookingId) ?? [];
-  const activePayment = payments.find((p) => p.status === "PENDING" || p.status === "UNPAID");
-  if (!activePayment) return false;
-  return !activePayment.expiresAt || activePayment.expiresAt.getTime() > Date.now();
+  if (bookingStatus === "CONFIRMED" || bookingStatus === "COMPLETED") {
+    return true;
+  }
+  if (bookingStatus === "PENDING" || bookingStatus === "PENDING_PAYMENT") {
+    const payments = paymentMap.get(bookingId);
+    if (!payments || payments.length === 0) {
+      return true;
+    }
+    const activePayment = payments.find((p) => p.status === "PENDING" || p.status === "UNPAID");
+    if (!activePayment) {
+      return true;
+    }
+    return !activePayment.expiresAt || activePayment.expiresAt.getTime() > Date.now();
+  }
+  return false;
 }
 
 function toIsoTime(value: Date | string | null | undefined) {

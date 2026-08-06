@@ -40,14 +40,25 @@ export const app = express();
 const allowedOrigins = new Set([
   env.FRONTEND_URL,
   "http://localhost:5173",
-  "http://127.0.0.1:5173"
+  "http://127.0.0.1:5173",
+  "http://localhost:8081",
+  "http://127.0.0.1:8081",
+  "http://localhost:19006",
+  "http://127.0.0.1:19006"
 ]);
 
 app.use(helmet());
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+      if (
+        !origin ||
+        allowedOrigins.has(origin) ||
+        process.env.NODE_ENV !== "production" ||
+        /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$/.test(origin)
+      ) {
+        return callback(null, true);
+      }
       return callback(new Error(`Origin ${origin} is not allowed by CORS`));
     },
     credentials: true

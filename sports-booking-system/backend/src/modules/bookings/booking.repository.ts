@@ -58,6 +58,7 @@ export const bookingRepository = {
       where: { id },
       include: {
         court: { include: { images: { orderBy: { sortOrder: "asc" } }, category: true, partner: true } },
+        bookingSlots: { orderBy: { startTime: "asc" } },
         bookingServices: { include: { service: true } },
         bookingVoucher: { include: { voucher: { include: { partner: true, court: true } } } },
         payments: { orderBy: { createdAt: "desc" } },
@@ -73,6 +74,7 @@ export const bookingRepository = {
         where,
         include: {
           court: { include: { images: { orderBy: { sortOrder: "asc" } }, category: true, partner: true } },
+          bookingSlots: { orderBy: { startTime: "asc" } },
           bookingServices: { include: { service: true } },
           bookingVoucher: { include: { voucher: true } },
           payments: { orderBy: { createdAt: "desc" }, take: 1 }
@@ -235,6 +237,8 @@ export const bookingRepository = {
     const conflicts: Array<unknown> = [];
 
     for (const slot of slots) {
+      const slotDateStr = (slot as any).date || date;
+      const bookingDate = toDbDate(slotDateStr);
       const startTime = timeToDate(slot.startTime.slice(0, 5));
       const endTime = timeToDate(slot.endTime.slice(0, 5));
       const legacyBooking = await tx.booking.findFirst({
@@ -320,7 +324,7 @@ export const bookingRepository = {
             bookingSlots: {
               create: sortedSlots.map((slot) => ({
                 courtId: input.courtId,
-                bookingDate: toDbDate(input.bookingDate),
+                bookingDate: toDbDate((slot as any).date || input.bookingDate),
                 startTime: timeToDate(slot.startTime),
                 endTime: timeToDate(slot.endTime),
                 slotPrice: slot.price
@@ -439,7 +443,7 @@ export const bookingRepository = {
             bookingSlots: {
               create: sortedSlots.map((slot) => ({
                 courtId: input.courtId,
-                bookingDate: toDbDate(input.bookingDate),
+                bookingDate: toDbDate((slot as any).date || input.bookingDate),
                 startTime: timeToDate(slot.startTime),
                 endTime: timeToDate(slot.endTime),
                 slotPrice: slot.price

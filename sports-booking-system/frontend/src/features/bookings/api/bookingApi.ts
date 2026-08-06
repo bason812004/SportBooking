@@ -14,6 +14,7 @@ export type BookingPayload = {
 };
 
 export type BookingSlotPayload = {
+  date?: string;
   startTime: string;
   endTime: string;
 };
@@ -64,7 +65,9 @@ export type BookingCheckoutResult = {
   qrPayload?: string | null;
   paymentReference?: string;
   expiresAt?: string | null;
-  providerConfigured: boolean;
+  providerConfigured?: boolean;
+  bookingCount?: number;
+  isMultiBooking?: boolean;
 };
 
 export const bookingApi = {

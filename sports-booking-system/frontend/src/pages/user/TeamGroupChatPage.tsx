@@ -190,15 +190,17 @@ export function TeamGroupChatPage() {
         mimeType
       });
 
-      // Optimistic update — append new message immediately, no race
-      queryClient.setQueryData<TeamPostMessage[]>(
-        ["team-post-messages", id],
-        (old) => {
-          if (!old) return [created];
-          if (old.some((m) => m.id === created.id)) return old;
-          return [...old, created];
-        }
-      );
+      // Optimistic update — append new message safely if returned
+      if (created?.id) {
+        queryClient.setQueryData<TeamPostMessage[]>(
+          ["team-post-messages", id],
+          (old) => {
+            if (!old) return [created];
+            if (old.some((m) => m?.id === created.id)) return old;
+            return [...old, created];
+          }
+        );
+      }
 
       setMessage("");
       if (pendingMedia) {
@@ -237,21 +239,25 @@ export function TeamGroupChatPage() {
 
   async function leaveGroup() {
     if (!id) return;
-    if (!confirm("Ban co chac muon roi nhom?")) return;
+    const confirmMsg = isPostOwner
+      ? "Bạn có chắc chắn muốn rời / giải tán nhóm này?"
+      : "Bạn có chắc chắn muốn rời nhóm?";
+    if (!confirm(confirmMsg)) return;
     try {
       await contentApi.leaveGroup(id);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["team-post", id] }),
         queryClient.invalidateQueries({ queryKey: ["team-post-messages", id] }),
         queryClient.invalidateQueries({ queryKey: ["joined-team-posts"] }),
-        contentApi.teamPostMembers(id).then((list) => setMembers(list)).catch(() => undefined)
+        queryClient.invalidateQueries({ queryKey: ["team-posts"] }),
+        queryClient.invalidateQueries({ queryKey: ["my-team-posts"] })
       ]);
       const socket = getSocket(token ?? "");
       socket.emit("team-post:unsubscribe", id);
-      toast.success("Đã rời nhóm.");
+      toast.success(isPostOwner ? "Đã rời / giải tán nhóm." : "Đã rời nhóm.");
       navigate("/user/team-groups");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Khong the roi nhom.");
+      toast.error(error instanceof Error ? error.message : "Không thể rời nhóm.");
     }
   }
 
@@ -295,20 +301,20 @@ export function TeamGroupChatPage() {
             <Link to={`/teammates/${group.id}`} className="mt-5 inline-flex w-full items-center justify-center rounded-xl border border-slate-200 px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50">
               Xem chi tiết bài đăng
             </Link>
-            {isMember && !isPostOwner && (
+            {isMember && (
               <button
-                onClick={leaveGroup}
+                onClick={() => void leaveGroup()}
                 className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 px-4 py-3 text-sm font-black text-rose-600 hover:bg-rose-50"
               >
                 <LogOut className="h-4 w-4" />
-                Rời nhóm
+                {isPostOwner ? "Giải tán / Rời nhóm" : "Rời nhóm"}
               </button>
             )}
           </section>
 
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-base font-black">Thành viên ({members.length})</h2>
-            <ul className="mt-3 space-y-2">
+            <ul className="mt-3 max-h-[300px] overflow-y-auto space-y-2 pr-1">
               {members.map((m) => (
                 <li key={m.userId} className="flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2">
                   <div className="flex items-center gap-2">
@@ -338,7 +344,7 @@ export function TeamGroupChatPage() {
           </section>
         </aside>
 
-        <section className="flex min-h-[72vh] flex-col rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <section className="flex h-[78vh] min-h-[520px] max-h-[820px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-5 py-4">
             <h2 className="text-xl font-black">Chat nhóm</h2>
             <p className="text-sm font-semibold text-slate-500">Tin nhắn realtime cho nhóm chơi thể thao này.</p>
@@ -367,10 +373,28 @@ export function TeamGroupChatPage() {
           ) : (
             <>
               <div className="flex flex-1 flex-col gap-3 overflow-y-auto bg-slate-50 p-4">
-                {(messages.data as TeamPostMessageWithReactions[] | undefined)?.length ? (
-                  (messages.data as TeamPostMessageWithReactions[]).map((chat) => {
-                    if (!chat.sender) return null;
-                    const mine = chat.sender.id === user?.id;
+                {(() => {
+                  const raw = (messages.data as TeamPostMessageWithReactions[] | undefined) ?? [];
+                  const seen = new Set<string>();
+                  const unique = raw.filter((m) => {
+                    if (!m?.id || seen.has(m.id)) return false;
+                    seen.add(m.id);
+                    return true;
+                  });
+
+                  if (!unique.length) {
+                    return (
+                      <div className="m-auto rounded-2xl bg-white p-5 text-center text-sm font-semibold text-slate-500 ring-1 ring-slate-200">
+                        Chưa có tin nhắn nào. Hãy bắt đầu trao đổi lịch chơi.
+                      </div>
+                    );
+                  }
+
+                  return unique.map((chat) => {
+                    const senderId = chat.sender?.id;
+                    const senderName = chat.sender?.fullName ?? "Thành viên";
+                    const senderAvatar = chat.sender?.avatarUrl ?? null;
+                    const mine = Boolean(senderId && user?.id && senderId === user.id);
                     const reactionsByEmoji = new Map<string, number>();
                     (chat.reactions ?? []).forEach((r) => {
                       reactionsByEmoji.set(r.reaction, (reactionsByEmoji.get(r.reaction) ?? 0) + 1);
@@ -394,10 +418,10 @@ export function TeamGroupChatPage() {
                         onTouchStart={handleTouchStart}
                         onTouchEnd={handleTouchEnd}
                       >
-                        {!mine && <Avatar name={chat.sender.fullName} src={chat.sender.avatarUrl} />}
+                        {!mine && <Avatar name={senderName} src={senderAvatar} />}
                         <div className="relative max-w-[78%]">
                           <div className={`rounded-2xl px-3 py-2 text-sm ${mine ? "bg-emerald-700 text-white" : "bg-white text-slate-800 ring-1 ring-slate-200"}`}>
-                            {!mine && <p className="mb-1 text-xs font-black text-emerald-700">{chat.sender.fullName}</p>}
+                            {!mine && <p className="mb-1 text-xs font-black text-emerald-700">{senderName}</p>}
                             <MessageBody chat={chat} mine={mine} />
                             <p className={`mt-1 text-[11px] ${mine ? "text-emerald-50/80" : "text-slate-400"}`}>{messageTimeFormat.format(new Date(chat.createdAt))}</p>
                           </div>
@@ -436,15 +460,11 @@ export function TeamGroupChatPage() {
                             </div>
                           )}
                         </div>
-                        {mine && <Avatar name={chat.sender.fullName} src={chat.sender.avatarUrl} />}
+                        {mine && <Avatar name={senderName} src={senderAvatar} />}
                       </div>
                     );
-                  })
-                ) : (
-                  <div className="m-auto rounded-2xl bg-white p-5 text-center text-sm font-semibold text-slate-500 ring-1 ring-slate-200">
-                    Chưa có tin nhắn nào. Hãy bắt đầu trao đổi lịch chơi.
-                  </div>
-                )}
+                  });
+                })()}
                 <div ref={messagesEndRef} />
               </div>
 

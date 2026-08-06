@@ -1,10 +1,29 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
+import Constants from "expo-constants";
 import type { ApiResponse, User } from "./types";
 
 type SessionRefreshed = (session: { accessToken: string; refreshToken: string; user?: User }) => void;
 type Unauthorized = () => void;
 
-export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:8080/api";
+function resolveApiBaseUrl(): string {
+  const envUrl = process.env.EXPO_PUBLIC_API_URL;
+  if (envUrl && !envUrl.includes("localhost") && !envUrl.includes("127.0.0.1")) {
+    return envUrl;
+  }
+
+  const hostUri = Constants.expoConfig?.hostUri ?? (Constants as any).manifest2?.extra?.expoGo?.debuggerHost;
+  if (hostUri) {
+    const hostIp = hostUri.split(":")[0];
+    // Check if hostIp is a numeric IPv4 address (not a tunnel hostname like ngrok)
+    if (hostIp && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostIp)) {
+      return `http://${hostIp}:8080/api`;
+    }
+  }
+
+  return envUrl ?? "http://localhost:8080/api";
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 
 let accessToken: string | null = null;
 let refreshToken: string | null = null;

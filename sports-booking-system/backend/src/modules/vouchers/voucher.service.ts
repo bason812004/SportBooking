@@ -42,39 +42,135 @@ export const voucherService = {
       throw new ConflictError("Ban da nhan voucher nay", "VOUCHER_ALREADY_CLAIMED");
     }
     const claimed = await voucherRepository.claim(userId, voucherId);
-    await trackEvent({
+    void trackEvent({
       userId,
       partnerId: voucher.partnerId,
       eventType: "VOUCHER_CLAIMED",
       entityType: "VOUCHER",
       entityId: voucherId
-    });
+    }).catch(() => undefined);
     realtimeService.toPublic(realtimeEvents.voucherClaimed, { id: voucherId, usedCount: voucher.usedCount });
     return claimed;
   },
 
   async claimAllPlatformVouchers(userId: string) {
-    const platformVouchers = await voucherRepository.listActivePlatform();
-    const claimed: Array<{ id: string; code: string; title: string }> = [];
+    const [platformVouchers, claimedVoucherIds] = await Promise.all([
+      voucherRepository.listActivePlatform(),
+      voucherRepository.getUserClaimedVoucherIds(userId)
+    ]);
+
+    const toClaim: VoucherRow[] = [];
     const skipped: Array<{ id: string; code: string; reason: string }> = [];
+
     for (const v of platformVouchers) {
-      try {
-        if (v.usageLimit != null && v.usedCount >= v.usageLimit) {
-          skipped.push({ id: v.id, code: v.code, reason: "het_luot" });
-          continue;
-        }
-        if (await voucherRepository.userVoucher(userId, v.id)) {
-          skipped.push({ id: v.id, code: v.code, reason: "da_nhan" });
-          continue;
-        }
-        const c = await voucherRepository.claim(userId, v.id);
-        claimed.push({ id: c.voucherId ?? v.id, code: v.code, title: v.title });
-        await trackEvent({ userId, partnerId: null, eventType: "VOUCHER_CLAIMED", entityType: "VOUCHER", entityId: v.id });
-      } catch {
-        skipped.push({ id: v.id, code: v.code, reason: "loi" });
+      if (v.usageLimit != null && v.usedCount >= v.usageLimit) {
+        skipped.push({ id: v.id, code: v.code, reason: "het_luot" });
+        continue;
       }
+      if (claimedVoucherIds.has(v.id)) {
+        skipped.push({ id: v.id, code: v.code, reason: "da_nhan" });
+        continue;
+      }
+      toClaim.push(v);
     }
-    return { claimed, skipped };
+
+    const claimed: Array<{ id: string; code: string; title: string }> = [];
+    if (toClaim.length > 0) {
+      const batchResult = await voucherRepository.claimBatch(
+        userId,
+        toClaim.map((v) => v.id)
+      );
+      const claimedSet = new Set(batchResult.map((r) => r.voucher_id));
+      for (const v of toClaim) {
+        if (claimedSet.has(v.id)) {
+          claimed.push({ id: v.id, code: v.code, title: v.title });
+        } else {
+          skipped.push({ id: v.id, code: v.code, reason: "da_nhan" });
+        }
+      }
+      void Promise.all(
+        claimed.map((c) =>
+          trackEvent({
+            userId,
+            partnerId: null,
+            eventType: "VOUCHER_CLAIMED",
+            entityType: "VOUCHER",
+            entityId: c.id
+          }).catch(() => undefined)
+        )
+      );
+    }
+
+    return {
+      claimedCount: claimed.length,
+      skippedCount: skipped.length,
+      claimedVouchers: claimed,
+      skippedVouchers: skipped
+    };
+  },
+
+  async claimAllVouchers(userId: string) {
+    const [vouchers, claimedVoucherIds] = await Promise.all([
+      voucherRepository.listActive(),
+      voucherRepository.getUserClaimedVoucherIds(userId)
+    ]);
+    const now = new Date();
+    const toClaim: VoucherRow[] = [];
+    const skipped: Array<{ id: string; code: string; reason: string }> = [];
+
+    for (const v of vouchers) {
+      if (v.status !== "ACTIVE") {
+        skipped.push({ id: v.id, code: v.code, reason: "inactive" });
+        continue;
+      }
+      if (new Date(v.endDate) < now || new Date(v.startDate) > now) {
+        skipped.push({ id: v.id, code: v.code, reason: "expired_or_not_started" });
+        continue;
+      }
+      if (v.usageLimit != null && v.usedCount >= v.usageLimit) {
+        skipped.push({ id: v.id, code: v.code, reason: "het_luot" });
+        continue;
+      }
+      if (claimedVoucherIds.has(v.id)) {
+        skipped.push({ id: v.id, code: v.code, reason: "da_nhan" });
+        continue;
+      }
+      toClaim.push(v);
+    }
+
+    const claimed: Array<{ id: string; code: string; title: string }> = [];
+    if (toClaim.length > 0) {
+      const batchResult = await voucherRepository.claimBatch(
+        userId,
+        toClaim.map((v) => v.id)
+      );
+      const claimedSet = new Set(batchResult.map((r) => r.voucher_id));
+      for (const v of toClaim) {
+        if (claimedSet.has(v.id)) {
+          claimed.push({ id: v.id, code: v.code, title: v.title });
+        } else {
+          skipped.push({ id: v.id, code: v.code, reason: "da_nhan" });
+        }
+      }
+      void Promise.all(
+        claimed.map((c) =>
+          trackEvent({
+            userId,
+            partnerId: null,
+            eventType: "VOUCHER_CLAIMED",
+            entityType: "VOUCHER",
+            entityId: c.id
+          }).catch(() => undefined)
+        )
+      );
+    }
+
+    return {
+      claimedCount: claimed.length,
+      skippedCount: skipped.length,
+      claimedVouchers: claimed,
+      skippedVouchers: skipped
+    };
   },
 
   listForUser(userId: string) {

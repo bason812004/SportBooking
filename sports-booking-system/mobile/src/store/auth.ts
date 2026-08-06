@@ -61,7 +61,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     setClientTokens({ accessToken: storedAccessToken, refreshToken: storedRefreshToken });
     try {
       const user = await authApi.me();
-      if (user.role !== "USER" || user.status !== "ACTIVE") {
+      if (!["USER", "PARTNER"].includes(user.role) || user.status !== "ACTIVE") {
         await clearStoredSession();
         set({ user: null, accessToken: null, refreshToken: null, bootstrapped: true });
         return;
@@ -76,9 +76,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   async login(payload) {
     const session = await authApi.login(payload);
     const accessToken = session.accessToken ?? session.token;
-    if (!accessToken) throw new Error("May chu khong tra ve access token");
-    if (session.user.role !== "USER") throw new Error("Ung dung mobile chi danh cho tai khoan khach hang");
-    if (session.user.status !== "ACTIVE") throw new Error("Tai khoan cua ban dang bi khoa");
+    if (!accessToken) throw new Error("Máy chủ không trả về access token");
+    if (!["USER", "PARTNER"].includes(session.user.role)) throw new Error("Ứng dụng dành cho Khách hàng và Đối tác");
+    if (session.user.status !== "ACTIVE") throw new Error("Tài khoản của bạn đang bị khóa");
     await get().setSession({ accessToken, refreshToken: session.refreshToken, user: session.user });
   },
 

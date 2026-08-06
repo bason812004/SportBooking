@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import {
   Calendar,
   Check,
@@ -318,6 +318,17 @@ export function BookingSummary(props: BookingSummaryStandaloneProps) {
 
   const appliedVoucherId = appliedVoucher?.id;
 
+  const sortedVouchers = useMemo(() => {
+    if (!availableVouchers) return [];
+    return [...availableVouchers].sort((a, b) => {
+      const aEligible = subtotal >= a.minBookingAmount;
+      const bEligible = subtotal >= b.minBookingAmount;
+      if (aEligible && !bEligible) return -1;
+      if (!aEligible && bEligible) return 1;
+      return a.minBookingAmount - b.minBookingAmount;
+    });
+  }, [availableVouchers, subtotal]);
+
   return (
     <aside className="space-y-4">
       {/* Slot Selection */}
@@ -437,8 +448,10 @@ export function BookingSummary(props: BookingSummaryStandaloneProps) {
         ) : (
           <>
             <ul className="mt-3 space-y-2">
-              {(showAllVouchers ? availableVouchers : availableVouchers.slice(0, 3)).map((voucher) => {
-                const isApplied = appliedVoucherId === voucher.id;
+              {(showAllVouchers ? sortedVouchers : sortedVouchers.slice(0, 3)).map((voucher) => {
+                const isApplied =
+                  (appliedVoucherId && appliedVoucherId === voucher.id) ||
+                  Boolean(appliedVoucher?.code && appliedVoucher.code.toUpperCase() === voucher.code.toUpperCase());
                 const eligible = highlightedVoucherIds.has(voucher.id);
                 const meetsMin = subtotal >= voucher.minBookingAmount;
                 return (
@@ -473,15 +486,19 @@ export function BookingSummary(props: BookingSummaryStandaloneProps) {
                       </div>
                       <button
                         type="button"
-                        onClick={() => onApplyFromList?.(voucher)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!meetsMin || isApplied) return;
+                          onApplyFromList?.(voucher);
+                        }}
                         disabled={isApplied || !meetsMin}
                         className={clsx(
                           "shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-black uppercase tracking-wide transition",
                           isApplied
-                            ? "bg-emerald-600 text-white"
+                            ? "bg-emerald-600 text-white cursor-default"
                             : meetsMin
-                              ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                              : "bg-slate-200 text-slate-500"
+                              ? "bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer"
+                              : "bg-slate-200 text-slate-400 cursor-not-allowed pointer-events-none opacity-60"
                         )}
                       >
                         {isApplied

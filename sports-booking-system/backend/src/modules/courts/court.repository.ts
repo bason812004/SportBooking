@@ -163,23 +163,25 @@ export const courtRepository = {
     });
   },
 
-  availability(courtId: string, date: string) {
+  availability(courtId: string, date: string | string[]) {
+    const dates = Array.isArray(date) ? date.map((d) => toDbDate(d)) : toDbDate(date);
     return prisma.booking.findMany({
       where: {
         courtId,
-        bookingDate: toDbDate(date),
+        bookingDate: Array.isArray(dates) ? { in: dates } : dates,
         bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] }
       },
-      select: { id: true, bookingCode: true, startTime: true, endTime: true, bookingStatus: true, payments: { select: { expiresAt: true, status: true } } },
+      select: { id: true, bookingCode: true, bookingDate: true, startTime: true, endTime: true, bookingStatus: true, payments: { select: { expiresAt: true, status: true } } },
       orderBy: { startTime: "asc" }
     });
   },
 
-  bookingSlots(courtId: string, date: string) {
+  bookingSlots(courtId: string, date: string | string[]) {
+    const dates = Array.isArray(date) ? date.map((d) => toDbDate(d)) : toDbDate(date);
     return prisma.bookingSlot.findMany({
       where: {
         courtId,
-        bookingDate: toDbDate(date),
+        bookingDate: Array.isArray(dates) ? { in: dates } : dates,
         booking: {
           bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] }
         }
@@ -187,6 +189,7 @@ export const courtRepository = {
       select: {
         id: true,
         bookingId: true,
+        bookingDate: true,
         startTime: true,
         endTime: true,
         slotPrice: true,
@@ -196,10 +199,11 @@ export const courtRepository = {
     });
   },
 
-  availabilityBlocks(courtId: string, date: string) {
+  availabilityBlocks(courtId: string, date: string | string[]) {
+    const dates = Array.isArray(date) ? date.map((d) => toDbDate(d)) : toDbDate(date);
     return prisma.courtAvailabilityBlock.findMany({
-      where: { courtId, blockDate: toDbDate(date), status: "ACTIVE" },
-      select: { id: true, startTime: true, endTime: true, reason: true, status: true },
+      where: { courtId, blockDate: Array.isArray(dates) ? { in: dates } : dates, status: "ACTIVE" },
+      select: { id: true, blockDate: true, startTime: true, endTime: true, reason: true, status: true },
       orderBy: { startTime: "asc" }
     });
   },

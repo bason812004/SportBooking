@@ -106,7 +106,7 @@ export const teamPostService = {
     const isMember = await teamPostRepository.isMember(id, userId);
     if (!isMember) throw new ForbiddenError("Ban can tham gia nhom de nhan tin");
 
-    const [message] = await teamPostRepository.createMessage(id, userId, {
+    const message = await teamPostRepository.createMessage(id, userId, {
       content: payload.content?.trim() || null,
       messageType: payload.messageType ?? "TEXT",
       attachmentUrl: payload.attachmentUrl || null,
@@ -153,11 +153,17 @@ export const teamPostService = {
   async leaveGroup(postId: string, userId: string) {
     const [post] = await teamPostRepository.findById(postId);
     if (!post) throw new NotFoundError("Khong tim thay bai dang");
-    if (ensurePostCreator(post, userId) === "OWNER") {
-      const adminCount = await teamPostRepository.countActiveAdmins(postId);
-      if (adminCount <= 1) {
-        throw new ValidationError("Ban la admin cuoi cung. Hay chuyen quyen admin hoac giai tan nhom truoc.");
+    const isOwner = ensurePostCreator(post, userId) === "OWNER";
+    if (isOwner) {
+      const activeMembers = await teamPostRepository.listMembers(postId);
+      const otherMembers = activeMembers.filter((m) => m.userId !== userId);
+      if (otherMembers.length === 0) {
+        await teamPostRepository.delete(postId, userId);
+        realtimeService.toTeamPost(postId, realtimeEvents.teamPostMemberRemoved, { postId, userId });
+        return { left: true, deleted: true };
       }
+      const nextAdmin = otherMembers[0];
+      await teamPostRepository.updateMemberRole(postId, nextAdmin.userId, "OWNER");
     }
     await teamPostRepository.leaveGroup(postId, userId);
     realtimeService.toTeamPost(postId, realtimeEvents.teamPostMemberLeft, { postId, userId });

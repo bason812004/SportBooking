@@ -1,6 +1,7 @@
 import { isFullHour, timeToMinutes } from "../../shared/utils/time.js";
 
 export type SlotInput = {
+  date?: string;
   startTime: string;
   endTime: string;
 };
@@ -27,6 +28,9 @@ export function calculateDistanceKm(from: { latitude: number; longitude: number 
 }
 
 export function checkBookingOverlap(left: SlotInput, right: SlotInput) {
+  if (left.date && right.date && left.date !== right.date) {
+    return false;
+  }
   return timeToMinutes(left.startTime) < timeToMinutes(right.endTime) && timeToMinutes(left.endTime) > timeToMinutes(right.startTime);
 }
 

@@ -55,6 +55,8 @@ export function BookingPage() {
     weekGroups
   } = useBookingContext();
 
+  const subtotal = contextSubtotal;
+
   const {
     selectedSlots,
     appliedVoucher,
@@ -102,6 +104,20 @@ export function BookingPage() {
     }
   }, [response, selectedSlots, language, removeSlot]);
 
+  // ── Auto-remove applied voucher if subtotal drops below minBookingAmount ──────
+  useEffect(() => {
+    if (!appliedVoucher) return;
+    const min = appliedVoucher.minBookingAmount ?? 0;
+    if (min > 0 && subtotal < min) {
+      removeVoucher();
+      toast.warning(
+        language === "en"
+          ? `Voucher ${appliedVoucher.code} was removed because order total (${formatCurrency(subtotal)}) is below minimum required (${formatCurrency(min)}).`
+          : `Voucher ${appliedVoucher.code} đã tự động bỏ do tổng tiền đơn hàng (${formatCurrency(subtotal)}) không đủ giá trị tối thiểu (${formatCurrency(min)}).`
+      );
+    }
+  }, [appliedVoucher, subtotal, language, removeVoucher]);
+
   // ── Update URL when week changes ───────────────────────────────
   useEffect(() => {
     const params = new URLSearchParams(searchParams);
@@ -136,34 +152,36 @@ export function BookingPage() {
     mutationFn: async () => {
       if (!courtId) throw new Error("Không tìm thấy sân.");
       if (selectedSlots.length === 0) throw new Error("Vui lòng chọn ít nhất một khung giờ.");
-      const byDay = new Map<string, WeeklyScheduleSlot[]>();
-      for (const slot of selectedSlots) {
-        const list = byDay.get(slot.date) ?? [];
-        list.push(slot);
-        byDay.set(slot.date, list);
-      }
-      const payloadDays: Array<{ date: string; slots: BookingCheckoutPayload["slots"] }> = [];
-      for (const [date, list] of byDay) {
-        const sorted = [...list].sort((a, b) => a.startTime.localeCompare(b.startTime));
-        payloadDays.push({ date, slots: sorted.map((s) => ({ startTime: s.startTime, endTime: s.endTime })) });
-      }
-      const [first] = payloadDays;
-      if (!first) throw new Error("Vui lòng chọn khung giờ hợp lệ.");
+
+      const sorted = [...selectedSlots].sort((a, b) => {
+        const dc = a.date.localeCompare(b.date);
+        return dc !== 0 ? dc : a.startTime.localeCompare(b.startTime);
+      });
+
+      const earliestDate = sorted[0].date;
+      const slotsPayload = sorted.map((s) => ({
+        date: s.date,
+        startTime: s.startTime,
+        endTime: s.endTime
+      }));
+
       const payload: BookingCheckoutPayload = {
         courtId,
-        bookingDate: first.date,
-        slots: first.slots,
+        bookingDate: earliestDate,
+        slots: slotsPayload,
         paymentType,
         voucherCode: appliedVoucher?.code,
         note: note || undefined
       };
+
       return bookingApi.checkout(payload);
     },
     onSuccess: (result) => {
       toast.success(`Đặt sân thành công. Tổng: ${formatCurrency(result.totalAmount)}.`);
       clearSlots(); // Clear global context after successful booking
       if (result.paymentId) navigate(`/payment/${result.paymentId}`);
-      else navigate(`/user/bookings/${result.bookingId}`);
+      else if (result.bookingId) navigate(`/user/bookings/${result.bookingId}`);
+      else navigate("/user/bookings");
     },
     onError: (error) => toast.error(error.message || "Không thể tạo đơn đặt sân.")
   });
@@ -182,8 +200,6 @@ export function BookingPage() {
   const openingTime = timeText(c.openingTime) || response?.openingTime || "05:00";
   const closingTime = timeText(c.closingTime) || response?.closingTime || "23:00";
   const firstImage = c.images?.[0]?.imageUrl;
-
-  const subtotal = contextSubtotal;
 
   const highestDemandSlot = useMemo<WeeklyScheduleSlot | null>(() => {
     if (!response) return null;
@@ -210,11 +226,29 @@ export function BookingPage() {
       voucherInput={voucherInput}
       onChangeVoucherInput={setVoucherInput}
       onApplyVoucher={() => {
-        if (!voucherInput.trim()) return;
-        applyVoucher({ code: voucherInput.trim(), discountAmount: 0 });
+        const code = voucherInput.trim().toUpperCase();
+        if (!code) return;
+        const found = response?.availableVouchers?.find((v) => v.code.toUpperCase() === code);
+        if (found && subtotal < found.minBookingAmount) {
+          toast.error(
+            language === "en"
+              ? `Minimum order amount of ${formatCurrency(found.minBookingAmount)} not reached.`
+              : `Chưa đạt giá trị đơn hàng tối thiểu (${formatCurrency(found.minBookingAmount)}).`
+          );
+          return;
+        }
+        applyVoucher({ code, discountAmount: 0, minBookingAmount: found?.minBookingAmount });
         toast.success("Đã áp dụng mã. Backend sẽ xác nhận khi tạo đơn.");
       }}
       onApplyFromList={(voucher) => {
+        if (subtotal < voucher.minBookingAmount) {
+          toast.error(
+            language === "en"
+              ? `Minimum order amount of ${formatCurrency(voucher.minBookingAmount)} not reached.`
+              : `Chưa đạt giá trị đơn hàng tối thiểu (${formatCurrency(voucher.minBookingAmount)}).`
+          );
+          return;
+        }
         const { estimatedDiscount } = isVoucherApplicableToSlot(voucher, subtotal);
         applyVoucher({
           id: voucher.id,

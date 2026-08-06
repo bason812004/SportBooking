@@ -1,8 +1,8 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useMemo, useState } from "react";
-import { Alert, StyleSheet, Text, View } from "react-native";
+import { useMemo, useState, useEffect } from "react";
+import { Alert, StyleSheet, Text, View, ScrollView, TouchableOpacity } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { bookingApi, type BookingSlotPayload } from "../../src/api/bookings";
+import { bookingApi } from "../../src/api/bookings";
 import { courtApi } from "../../src/api/courts";
 import { queryKeys } from "../../src/api/queryKeys";
 import type { AvailabilitySlot } from "../../src/api/types";
@@ -14,44 +14,86 @@ import { DateStrip, SlotPicker } from "../../src/components/SlotPicker";
 import { ErrorState, LoadingState } from "../../src/components/StateViews";
 import { StickyBottomAction } from "../../src/components/StickyBottomAction";
 import { useAuthStore } from "../../src/store/auth";
+import { useBookingStore, getSlotKey } from "../../src/store/useBookingStore";
+import { useLanguageStore } from "../../src/i18n";
 import { colors, spacing, typography } from "../../src/theme/tokens";
-import { formatCurrency, shortAddress, todayKey } from "../../src/utils/format";
-
-type PaymentType = "PAY_AT_COURT" | "DEPOSIT" | "FULL_PAYMENT";
+import { formatCurrency, shortAddress, todayKey, formatDate } from "../../src/utils/format";
+import { Trash2 } from "lucide-react-native";
 
 export default function BookingScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const user = useAuthStore((state) => state.user);
-  const params = useLocalSearchParams<{ courtId: string; date?: string; slots?: string; voucherId?: string }>();
+  const { t } = useLanguageStore();
+  const params = useLocalSearchParams<{ courtId: string; date?: string }>();
   const courtId = Array.isArray(params.courtId) ? params.courtId[0] : params.courtId;
+  
   const [date, setDate] = useState(params.date ?? todayKey());
-  const [selectedSlots, setSelectedSlots] = useState<BookingSlotPayload[]>(() => parseSlots(params.slots));
   const [serviceQuantities, setServiceQuantities] = useState<Record<string, number>>({});
   const [voucherCodeInput, setVoucherCodeInput] = useState("");
   const [voucherCode, setVoucherCode] = useState<string | undefined>(undefined);
-  const [paymentType, setPaymentType] = useState<PaymentType>("PAY_AT_COURT");
-  const [note, setNote] = useState("");
 
-  const court = useQuery({ queryKey: queryKeys.court(courtId), queryFn: () => courtApi.detail(courtId), enabled: Boolean(courtId) });
-  const availability = useQuery({ queryKey: queryKeys.courtAvailability(courtId, date), queryFn: () => courtApi.availability(courtId, date), enabled: Boolean(courtId) });
+  const {
+    selectedSlots,
+    paymentType,
+    note,
+    setCourtId,
+    toggleSlot,
+    removeSlot,
+    clearSlots,
+    setPaymentType,
+    setNote
+  } = useBookingStore();
+
+  useEffect(() => {
+    if (courtId) setCourtId(courtId);
+  }, [courtId, setCourtId]);
+
+  const court = useQuery({
+    queryKey: queryKeys.court(courtId),
+    queryFn: () => courtApi.detail(courtId),
+    enabled: Boolean(courtId)
+  });
+
+  const availability = useQuery({
+    queryKey: queryKeys.courtAvailability(courtId, date),
+    queryFn: () => courtApi.availability(courtId, date),
+    enabled: Boolean(courtId)
+  });
+
   const services = useMemo(
     () => Object.entries(serviceQuantities).filter(([, quantity]) => quantity > 0).map(([serviceId, quantity]) => ({ serviceId, quantity })),
     [serviceQuantities]
   );
-  const quotePayload = useMemo(() => ({
-    courtId,
-    bookingDate: date,
-    slots: selectedSlots,
-    services,
-    voucherId: params.voucherId,
-    voucherCode
-  }), [courtId, date, selectedSlots, services, params.voucherId, voucherCode]);
+
+  const earliestDate = useMemo(() => {
+    if (!selectedSlots.length) return date;
+    const sorted = [...selectedSlots].sort((a, b) => a.date.localeCompare(b.date));
+    return sorted[0].date;
+  }, [selectedSlots, date]);
+
+  const slotsPayload = useMemo(
+    () => selectedSlots.map((s) => ({ date: s.date, startTime: s.startTime, endTime: s.endTime })),
+    [selectedSlots]
+  );
+
+  const quotePayload = useMemo(
+    () => ({
+      courtId,
+      bookingDate: earliestDate,
+      slots: slotsPayload,
+      services,
+      voucherCode
+    }),
+    [courtId, earliestDate, slotsPayload, services, voucherCode]
+  );
+
   const quote = useQuery({
     queryKey: ["booking-quote", quotePayload],
     queryFn: () => bookingApi.quote(quotePayload),
     enabled: Boolean(user && courtId && selectedSlots.length > 0)
   });
+
   const checkout = useMutation({
     mutationFn: bookingApi.checkout,
     onSuccess: async (result) => {
@@ -59,101 +101,164 @@ export default function BookingScreen() {
         queryClient.invalidateQueries({ queryKey: queryKeys.bookings }),
         queryClient.invalidateQueries({ queryKey: queryKeys.courtAvailability(courtId, date) })
       ]);
+      clearSlots();
       if (result.paymentId) {
         router.replace(`/payment/${result.paymentId}`);
       } else {
         router.replace(`/bookings/${result.bookingId}`);
       }
     },
-    onError: (error) => Alert.alert("Khong tao duoc booking", error instanceof Error ? error.message : "Vui long thu lai")
+    onError: (error) => Alert.alert(t.common.error, error instanceof Error ? error.message : t.common.error)
   });
 
   if (!user) {
     return (
-      <Screen title="Dang nhap de dat san" subtitle="Sau khi dang nhap, ban se quay lai man hinh dat san." back>
+      <Screen title={t.auth.loginTitle} subtitle="Vui lòng đăng nhập để tiếp tục đặt sân." back>
         <Card>
-          <Text style={styles.body}>Booking can tai khoan USER de backend xac thuc quyen va tinh gia.</Text>
-          <Button onPress={() => router.push({ pathname: "/auth/login", params: { returnTo: `/booking/${courtId}` } })}>Dang nhap</Button>
+          <Text style={styles.body}>Bạn cần đăng nhập tài khoản Khách hàng để thực hiện đặt sân.</Text>
+          <Button onPress={() => router.push({ pathname: "/auth/login", params: { returnTo: `/booking/${courtId}` } })}>
+            {t.auth.loginButton}
+          </Button>
         </Card>
       </Screen>
     );
   }
 
-  function toggleSlot(slot: AvailabilitySlot) {
-    setSelectedSlots((current) => {
-      const exists = current.some((item) => item.startTime === slot.startTime && item.endTime === slot.endTime);
-      return exists ? current.filter((item) => item.startTime !== slot.startTime || item.endTime !== slot.endTime) : [...current, { startTime: slot.startTime, endTime: slot.endTime }].sort((a, b) => a.startTime.localeCompare(b.startTime));
+  const handleToggleSlot = (slot: AvailabilitySlot) => {
+    toggleSlot({
+      courtId,
+      date,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      price: slot.price ?? 0,
+      courtName: court.data?.name
     });
-  }
+  };
 
-  const selectedAvailabilitySlots = selectedSlots.map((slot) => ({ ...slot, status: "AVAILABLE", price: 0, bookingId: null } satisfies AvailabilitySlot));
+  const currentDaySelectedKeys = useMemo(
+    () => new Set(selectedSlots.filter((s) => s.date === date).map((s) => `${s.startTime}-${s.endTime}`)),
+    [selectedSlots, date]
+  );
+
+  const selectedAvailabilitySlots = selectedSlots
+    .filter((s) => s.date === date)
+    .map((s) => ({ startTime: s.startTime, endTime: s.endTime, status: "AVAILABLE" as const, price: s.price, bookingId: null }));
 
   return (
     <View style={{ flex: 1 }}>
-      <Screen title="Dat san" subtitle={court.data ? `${court.data.name} · ${shortAddress(court.data)}` : "Chon lich va thanh toan"} back>
+      <Screen title={t.courts.selectSchedule} subtitle={court.data ? `${court.data.name} · ${shortAddress(court.data)}` : ""} back>
         {court.isLoading ? <LoadingState /> : court.isError ? <ErrorState message={court.error.message} onRetry={() => void court.refetch()} /> : null}
 
-        <SectionHeader title="Ngay choi" />
-        <DateStrip value={date} onChange={(nextDate) => { setDate(nextDate); setSelectedSlots([]); }} />
+        <SectionHeader title="Chọn ngày chơi" />
+        <DateStrip value={date} onChange={(nextDate) => setDate(nextDate)} />
 
-        <SectionHeader title="Khung gio" />
-        {availability.isLoading ? <LoadingState label="Dang tai lich san" /> : availability.isError ? <ErrorState message={availability.error.message} onRetry={() => void availability.refetch()} /> : (
-          <SlotPicker slots={availability.data?.slots ?? []} selected={selectedAvailabilitySlots} onToggle={toggleSlot} />
+        <SectionHeader title={`Lịch sân ngày ${formatDate(date)}`} />
+        {availability.isLoading ? (
+          <LoadingState label="Đang tải lịch sân..." />
+        ) : availability.isError ? (
+          <ErrorState message={availability.error.message} onRetry={() => void availability.refetch()} />
+        ) : (
+          <SlotPicker
+            slots={availability.data?.slots ?? []}
+            selected={selectedAvailabilitySlots}
+            onToggle={handleToggleSlot}
+          />
+        )}
+
+        {selectedSlots.length > 0 && (
+          <>
+            <SectionHeader title={`${t.booking.selectedSlots} (${selectedSlots.length})`} />
+            <Card style={{ gap: 8 }}>
+              {selectedSlots.map((s) => {
+                const key = getSlotKey(s);
+                return (
+                  <View key={key} style={styles.selectedSlotRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontWeight: "800", color: colors.ink, fontSize: typography.body }}>
+                        {formatDate(s.date)} · {s.startTime} - {s.endTime}
+                      </Text>
+                    </View>
+                    <TouchableOpacity onPress={() => removeSlot(key)} style={{ padding: 4 }}>
+                      <Trash2 size={18} color="#ef4444" />
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </Card>
+          </>
         )}
 
         {court.data?.services?.length ? (
           <>
-            <SectionHeader title="Dich vu di kem" />
+            <SectionHeader title="Dịch vụ đi kèm" />
             {court.data.services.map((service) => (
               <Card key={service.id}>
                 <View style={styles.rowBetween}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.serviceName}>{service.name}</Text>
-                    <Text style={styles.meta}>{service.description ?? "Dich vu cua san"}</Text>
+                    <Text style={styles.meta}>{service.description ?? ""}</Text>
                     <Text style={styles.price}>{formatCurrency(service.price)}</Text>
                   </View>
-                  <QuantityStepper value={serviceQuantities[service.id] ?? 0} onChange={(quantity) => setServiceQuantities((current) => ({ ...current, [service.id]: quantity }))} />
+                  <QuantityStepper
+                    value={serviceQuantities[service.id] ?? 0}
+                    onChange={(quantity) => setServiceQuantities((current) => ({ ...current, [service.id]: quantity }))}
+                  />
                 </View>
               </Card>
             ))}
           </>
         ) : null}
 
-        <SectionHeader title="Voucher" />
-        <Card>
-          <FormInput label="Nhap ma voucher" value={voucherCodeInput} onChangeText={setVoucherCodeInput} autoCapitalize="characters" />
+        <SectionHeader title="Voucher ưu đãi" />
+        <Card style={{ gap: 10 }}>
+          <FormInput
+            label="Nhập mã Voucher"
+            value={voucherCodeInput}
+            onChangeText={setVoucherCodeInput}
+            autoCapitalize="characters"
+          />
           <View style={styles.actions}>
-            <Button variant="secondary" onPress={() => setVoucherCode(voucherCodeInput.trim() || undefined)}>Ap dung ma</Button>
-            <Button variant="ghost" onPress={() => router.push({ pathname: "/vouchers/select", params: { courtId, date, slots: JSON.stringify(selectedSlots) } })}>Chon voucher cua toi</Button>
+            <Button variant="secondary" onPress={() => setVoucherCode(voucherCodeInput.trim() || undefined)}>
+              {t.common.apply}
+            </Button>
           </View>
-          {params.voucherId ? <Text style={styles.meta}>Da chon voucher tu vi cua ban. Backend se validate lai khi quote.</Text> : null}
         </Card>
 
-        <SectionHeader title="Thanh toan" />
+        <SectionHeader title={t.booking.paymentMethod} />
         <View style={styles.actions}>
-          <Chip label="Tra tai san" active={paymentType === "PAY_AT_COURT"} onPress={() => setPaymentType("PAY_AT_COURT")} />
-          <Chip label="Coc QR" active={paymentType === "DEPOSIT"} onPress={() => setPaymentType("DEPOSIT")} />
-          <Chip label="Tra het QR" active={paymentType === "FULL_PAYMENT"} onPress={() => setPaymentType("FULL_PAYMENT")} />
+          <Chip label={t.booking.payAtCourt} active={paymentType === "PAY_AT_COURT"} onPress={() => setPaymentType("PAY_AT_COURT")} />
+          <Chip label={t.booking.depositPayment} active={paymentType === "DEPOSIT"} onPress={() => setPaymentType("DEPOSIT")} />
+          <Chip label={t.booking.fullPayment} active={paymentType === "FULL_PAYMENT"} onPress={() => setPaymentType("FULL_PAYMENT")} />
         </View>
-        <FormInput label="Ghi chu cho san" value={note} onChangeText={setNote} multiline maxLength={500} />
+        <FormInput label={t.booking.notePlaceholder} value={note} onChangeText={setNote} multiline maxLength={500} />
 
-        <SectionHeader title="Tom tat" />
-        <Card>
-          {quote.isLoading ? <LoadingState label="Dang tinh gia" /> : quote.isError ? <ErrorState message={quote.error.message} onRetry={() => void quote.refetch()} /> : quote.data ? (
+        <SectionHeader title={t.booking.summaryTitle} />
+        <Card style={{ gap: 8 }}>
+          {quote.isLoading ? (
+            <LoadingState label="Đang tính toán tổng chi phí..." />
+          ) : quote.isError ? (
+            <ErrorState message={quote.error.message} onRetry={() => void quote.refetch()} />
+          ) : quote.data ? (
             <>
-              <SummaryRow label="Tien san" value={formatCurrency(quote.data.courtSubtotal)} />
-              <SummaryRow label="Dich vu" value={formatCurrency(quote.data.servicesSubtotal)} />
-              <SummaryRow label="Voucher" value={`-${formatCurrency(quote.data.voucherDiscountAmount)}`} />
-              <SummaryRow label="Can thanh toan" value={formatCurrency(paymentType === "PAY_AT_COURT" ? 0 : paymentType === "DEPOSIT" ? quote.data.minimumDepositAmount : quote.data.totalAmount)} />
-              <SummaryRow label="Tong don" value={formatCurrency(quote.data.totalAmount)} strong />
+              <SummaryRow label={t.booking.basePrice} value={formatCurrency(quote.data.courtSubtotal)} />
+              <SummaryRow label="Dịch vụ đi kèm" value={formatCurrency(quote.data.servicesSubtotal)} />
+              <SummaryRow label={t.booking.voucherDiscount} value={`-${formatCurrency(quote.data.voucherDiscountAmount)}`} />
+              <SummaryRow
+                label={t.booking.totalAmount}
+                value={formatCurrency(paymentType === "PAY_AT_COURT" ? 0 : paymentType === "DEPOSIT" ? quote.data.minimumDepositAmount : quote.data.totalAmount)}
+                strong
+              />
             </>
-          ) : <Text style={styles.meta}>Chon slot de he thong tinh gia that.</Text>}
+          ) : (
+            <Text style={styles.meta}>Vui lòng chọn ít nhất 1 ô giờ để xem tổng giá.</Text>
+          )}
         </Card>
       </Screen>
+
       <StickyBottomAction>
         <View style={styles.rowBetween}>
           <View>
-            <Text style={styles.meta}>Tong don</Text>
+            <Text style={styles.meta}>{t.booking.totalAmount}</Text>
             <Text style={styles.bottomPrice}>{quote.data ? formatCurrency(quote.data.totalAmount) : "-"}</Text>
           </View>
           <Button
@@ -161,7 +266,7 @@ export default function BookingScreen() {
             disabled={!quote.data || checkout.isPending}
             onPress={() => checkout.mutate({ ...quotePayload, paymentType, note: note.trim() || undefined })}
           >
-            Xac nhan
+            {t.booking.confirmBooking}
           </Button>
         </View>
       </StickyBottomAction>
@@ -178,18 +283,6 @@ function SummaryRow({ label, value, strong }: { label: string; value: string; st
   );
 }
 
-function parseSlots(value: string | string[] | undefined): BookingSlotPayload[] {
-  const raw = Array.isArray(value) ? value[0] : value;
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.filter((item) => item?.startTime && item?.endTime).map((item) => ({ startTime: String(item.startTime), endTime: String(item.endTime) }));
-  } catch {
-    return [];
-  }
-  return [];
-}
-
 const styles = StyleSheet.create({
   rowBetween: {
     flexDirection: "row",
@@ -198,7 +291,7 @@ const styles = StyleSheet.create({
     gap: spacing.md
   },
   body: {
-    color: colors.text,
+    color: colors.ink,
     fontSize: typography.body,
     lineHeight: 22
   },
@@ -229,6 +322,15 @@ const styles = StyleSheet.create({
     color: colors.ink,
     fontSize: typography.h2,
     fontWeight: "900"
+  },
+  selectedSlotRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#f0fdf4",
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#bbf7d0"
   }
 });
-

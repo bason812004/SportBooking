@@ -437,14 +437,38 @@ export const voucherRepository = {
     return rows[0] ?? null;
   },
 
+  async getUserClaimedVoucherIds(userId: string): Promise<Set<string>> {
+    const rows = await prisma.$queryRaw<Array<{ voucher_id: string }>>`
+      select voucher_id
+      from user_vouchers
+      where user_id = ${userId}
+    `;
+    return new Set(rows.map((r) => r.voucher_id));
+  },
+
+  async claimBatch(userId: string, voucherIds: string[]) {
+    if (!voucherIds.length) return [];
+    const values = voucherIds.map(
+      (vId) => Prisma.sql`(${userId}, ${vId}, 'CLAIMED'::user_voucher_status, NOW())`
+    );
+    const rows = await prisma.$queryRaw<Array<{ id: string; voucher_id: string }>>(Prisma.sql`
+      INSERT INTO user_vouchers (user_id, voucher_id, status, claimed_at)
+      VALUES ${Prisma.join(values, ", ")}
+      ON CONFLICT (user_id, voucher_id) DO NOTHING
+      RETURNING id, voucher_id
+    `);
+    return rows;
+  },
+
   async claim(userId: string, voucherId: string) {
     const rows = await prisma.$queryRaw<Array<{ id: string; user_id: string; voucher_id: string; status: string; claimed_at: Date }>>`
       INSERT INTO user_vouchers (user_id, voucher_id, status, claimed_at)
       VALUES (${userId}, ${voucherId}, 'CLAIMED'::user_voucher_status, NOW())
+      ON CONFLICT (user_id, voucher_id) DO NOTHING
       RETURNING id, user_id, voucher_id, status, claimed_at
     `;
     const row = rows[0];
-    if (!row) throw new Error("Claim voucher that bai");
+    if (!row) return { id: "", userId, voucherId, status: "CLAIMED", claimedAt: new Date() };
     return {
       id: row.id,
       userId: row.user_id,

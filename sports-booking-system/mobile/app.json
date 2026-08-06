@@ -26,9 +26,6 @@
     },
     "plugins": [
       "expo-router",
-      "expo-dev-client",
-      "expo-secure-store",
-      "expo-image",
       "expo-location",
       "expo-notifications"
     ]

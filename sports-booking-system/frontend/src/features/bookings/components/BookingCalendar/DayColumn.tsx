@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import type { WeeklyScheduleDay } from "../../../../types/api";
 import { BookingBlock } from "./BookingBlock";
-import type { Language } from "./utils";
+import { slotKey, type Language } from "./utils";
 
 export type DayColumnProps = {
   day: WeeklyScheduleDay | undefined;
@@ -24,7 +24,7 @@ export function DayColumn({ day, hours, selectedKeys, onToggle, language }: DayC
           <BookingBlock
             key={`${day?.date ?? "na"}-${hour}`}
             slot={slot}
-            selected={slot ? selectedKeys.has(`${slot.date}#${slot.startTime}`) : false}
+            selected={slot ? selectedKeys.has(slotKey(slot)) : false}
             onToggle={onToggle}
             language={language}
           />

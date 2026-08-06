@@ -34,6 +34,10 @@ export const authApi = {
   async changePassword(payload: { currentPassword: string; newPassword: string }) {
     const { data } = await api.put<ApiResponse<{ message: string }>>("/auth/change-password", payload);
     return data.data;
+  },
+  async googleLogin(idToken: string) {
+    const { data } = await api.post<ApiResponse<AuthSession>>("/auth/google", { idToken });
+    return data.data;
   }
 };
 

@@ -110,6 +110,35 @@ export function VouchersPage() {
     return map;
   }, [localClaimedIds, myVouchers.data]);
 
+  const [claimingAll, setClaimingAll] = useState(false);
+
+  async function handleClaimAll() {
+    if (!isAuthenticated || user?.role !== "USER") {
+      toast.error("Vui lòng đăng nhập tài khoản người dùng để nhận tất cả voucher.");
+      navigate("/login");
+      return;
+    }
+
+    setClaimingAll(true);
+    try {
+      const res = await contentApi.claimAllVouchers();
+      void queryClient.invalidateQueries({ queryKey: ["my-vouchers"] });
+      void queryClient.invalidateQueries({ queryKey: ["active-vouchers"] });
+      void queryClient.invalidateQueries({ queryKey: ["public-vouchers"] });
+      void queryClient.invalidateQueries({ queryKey: ["userVouchers"] });
+
+      if (res.claimedCount > 0) {
+        toast.success(`Đã nhận thành công ${res.claimedCount} voucher mới!`);
+      } else {
+        toast.info("Bạn đã nhận tất cả voucher khả dụng.");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Không thể nhận tất cả voucher.");
+    } finally {
+      setClaimingAll(false);
+    }
+  }
+
   async function copyCode(voucher: Voucher) {
     trackVoucherClick(voucher.id);
     await navigator.clipboard?.writeText(voucher.code);
@@ -180,9 +209,20 @@ export function VouchersPage() {
                 Nhận voucher vào kho cá nhân, sau đó áp dụng khi đặt sân.
               </p>
             </div>
-            <div className="rounded-3xl bg-white/10 px-6 py-4 text-center">
-              <p className="text-4xl font-black">{vouchers.data?.length ?? 0}</p>
-              <p className="text-sm text-slate-300">mã khả dụng</p>
+            <div className="flex flex-col items-center gap-3 md:items-end">
+              <div className="rounded-3xl bg-white/10 px-6 py-4 text-center">
+                <p className="text-4xl font-black">{vouchers.data?.length ?? 0}</p>
+                <p className="text-sm text-slate-300">mã khả dụng</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleClaimAll()}
+                disabled={claimingAll || !vouchers.data?.length}
+                className="mt-2 flex items-center gap-2 rounded-2xl bg-teal-500 px-5 py-3 text-sm font-black text-slate-950 transition hover:bg-teal-400 disabled:opacity-50"
+              >
+                {claimingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Gift className="h-4 w-4" />}
+                Nhận tất cả voucher
+              </button>
             </div>
           </div>
         </div>

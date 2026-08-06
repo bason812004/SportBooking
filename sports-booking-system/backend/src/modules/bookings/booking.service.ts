@@ -18,6 +18,7 @@ import { dynamicPricingService } from "../dynamic-pricing/dynamicPricing.service
 import { voucherService } from "../vouchers/voucher.service.js";
 import { voucherRepository } from "../vouchers/voucher.repository.js";
 import { notificationService } from "../notifications/notification.service.js";
+import { invalidateWeeklyScheduleCache } from "../weekly-schedule/weeklySchedule.service.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { paymentProvider } from "../payments/providers/index.js";
@@ -29,6 +30,20 @@ import {
   validateSelectedSlots
 } from "./booking.calculations.js";
 import type { BookingCheckoutInput, BookingQuoteInput, CreateBookingInput } from "./booking.types.js";
+
+function toStrDate(val: any): string {
+  if (!val) return "";
+  if (typeof val === "string") return val.slice(0, 10);
+  if (val instanceof Date) return val.toISOString().slice(0, 10);
+  return String(val).slice(0, 10);
+}
+
+function toStrTime(val: any): string {
+  if (!val) return "";
+  if (typeof val === "string") return val.length >= 5 ? val.slice(0, 5) : val;
+  if (val instanceof Date) return val.toISOString().slice(11, 16);
+  return String(val);
+}
 
 function bookingCode() {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
@@ -47,19 +62,23 @@ function minutesRange(slots: Array<{ startTime: string; endTime: string }>) {
 
 async function buildQuote(userId: string, input: BookingQuoteInput) {
   if (!validateSelectedSlots(input.slots)) throw new ValidationError("Khung gio da chon khong hop le");
-  const duplicateOverlap = input.slots.some((slot, index) => input.slots.some((other, otherIndex) => index !== otherIndex && checkBookingOverlap(slot, other)));
+  const slotsWithDates = input.slots.map((s: any) => ({ ...s, date: s.date || input.bookingDate }));
+  const duplicateOverlap = slotsWithDates.some((slot, index) =>
+    slotsWithDates.some((other, otherIndex) => index !== otherIndex && checkBookingOverlap(slot, other))
+  );
   if (duplicateOverlap) throw new ValidationError("Cac khung gio da chon bi trung nhau");
 
   const court = await bookingRepository.courtWithPricing(input.courtId);
   if (!court) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
 
+  const uniqueDates = [...new Set(slotsWithDates.map((s) => s.date))];
   const [blocks, legacyBookings, bookingSlots] = await Promise.all([
-    courtRepository.availabilityBlocks(input.courtId, input.bookingDate),
-    courtRepository.availability(input.courtId, input.bookingDate),
-    courtRepository.bookingSlots(input.courtId, input.bookingDate)
+    courtRepository.availabilityBlocks(input.courtId, uniqueDates),
+    courtRepository.availability(input.courtId, uniqueDates),
+    courtRepository.bookingSlots(input.courtId, uniqueDates)
   ]);
 
-  const activeBookings = legacyBookings.filter(b => {
+  const activeBookings = legacyBookings.filter((b) => {
     const isPending = b.bookingStatus === "PENDING" || b.bookingStatus === "PENDING_PAYMENT";
     if (isPending) {
       if (!b.payments || b.payments.length === 0) return true;
@@ -71,7 +90,7 @@ async function buildQuote(userId: string, input: BookingQuoteInput) {
     return true;
   });
 
-  const activeBookingSlots = bookingSlots.filter(bs => {
+  const activeBookingSlots = bookingSlots.filter((bs) => {
     const isPending = bs.booking.bookingStatus === "PENDING" || bs.booking.bookingStatus === "PENDING_PAYMENT";
     if (isPending) {
       if (!bs.booking.payments || bs.booking.payments.length === 0) return true;
@@ -83,24 +102,38 @@ async function buildQuote(userId: string, input: BookingQuoteInput) {
     return true;
   });
 
-  for (const slot of input.slots) {
-    const blocked = blocks.some((block) => checkBookingOverlap(slot, { startTime: block.startTime.toISOString().slice(11, 16), endTime: block.endTime.toISOString().slice(11, 16) }));
-    const booked = activeBookings.some((booking) => checkBookingOverlap(slot, { startTime: booking.startTime.toISOString().slice(11, 16), endTime: booking.endTime.toISOString().slice(11, 16) }));
-    const bookedSlot = activeBookingSlots.some((bookingSlot) =>
-      checkBookingOverlap(slot, { startTime: bookingSlot.startTime.toISOString().slice(11, 16), endTime: bookingSlot.endTime.toISOString().slice(11, 16) })
-    );
+  for (const slot of slotsWithDates) {
+    const blocked = blocks.some((block) => {
+      const bDate = toStrDate(block.blockDate);
+      const bStart = toStrTime(block.startTime);
+      const bEnd = toStrTime(block.endTime);
+      return bDate && bStart && bEnd && checkBookingOverlap(slot, { date: bDate, startTime: bStart, endTime: bEnd });
+    });
+    const booked = activeBookings.some((booking) => {
+      const bDate = toStrDate(booking.bookingDate);
+      const bStart = toStrTime(booking.startTime);
+      const bEnd = toStrTime(booking.endTime);
+      return bDate && bStart && bEnd && checkBookingOverlap(slot, { date: bDate, startTime: bStart, endTime: bEnd });
+    });
+    const bookedSlot = activeBookingSlots.some((bookingSlot) => {
+      const bDate = toStrDate(bookingSlot.bookingDate);
+      const bStart = toStrTime(bookingSlot.startTime);
+      const bEnd = toStrTime(bookingSlot.endTime);
+      return bDate && bStart && bEnd && checkBookingOverlap(slot, { date: bDate, startTime: bStart, endTime: bEnd });
+    });
     if (blocked || booked || bookedSlot) throw new ConflictError("Mot hoac nhieu khung gio da duoc dat hoac bi khoa", "BOOKING_CONFLICT");
   }
 
   const pricedSlots = await Promise.all(
-    input.slots.map(async (slot) => {
+    input.slots.map(async (slot: { date?: string; startTime: string; endTime: string }) => {
+      const dateStr = slot.date || input.bookingDate;
       const dynamicPrice = await dynamicPricingService.calculate(input.courtId, {
-        date: input.bookingDate,
+        date: dateStr,
         startTime: slot.startTime,
         endTime: slot.endTime
       });
       const hours = durationHours(slot.startTime, slot.endTime);
-      return { ...slot, price: dynamicPrice.finalPrice * hours };
+      return { ...slot, date: dateStr, price: dynamicPrice.finalPrice * hours };
     })
   );
   const courtSubtotal = pricedSlots.reduce((sum, slot) => sum + slot.price, 0);
@@ -181,6 +214,7 @@ export const bookingService = {
       });
       if (result.conflict) throw new ConflictError("Mot hoac nhieu khung gio vua duoc dat boi nguoi khac", "BOOKING_CONFLICT");
 
+      invalidateWeeklyScheduleCache(input.courtId);
       realtimeService.toUser(userId, realtimeEvents.bookingCreated, result.booking);
       realtimeService.toCourt(input.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: input.courtId, bookingDate: input.bookingDate });
 
@@ -242,6 +276,7 @@ export const bookingService = {
     });
     if (result.conflict) throw new ConflictError("Mot hoac nhieu khung gio vua duoc dat boi nguoi khac", "BOOKING_CONFLICT");
 
+    invalidateWeeklyScheduleCache(input.courtId);
     realtimeService.toUser(userId, realtimeEvents.bookingPendingPayment, result.booking);
     realtimeService.toCourt(input.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: input.courtId, bookingDate: input.bookingDate });
 
@@ -365,7 +400,7 @@ export const bookingService = {
       services: serviceLines
     });
 
-    await trackEvent({
+    trackEvent({
       userId,
       partnerId: court.partnerId,
       eventType: "BOOKING_CREATED",
@@ -378,15 +413,16 @@ export const bookingService = {
         endTime: input.endTime,
         totalPrice: subtotal - voucherDiscountAmount
       }
-    });
+    }).catch(() => {});
 
-    await notificationService.create({
+    notificationService.create({
       userId,
       title: "Dat san thanh cong",
-      content: `Don ${booking.bookingCode} da duoc tao thanh cong.`,
-      type: "BOOKING_CREATED",
+      content: `Ban da dat san thanh cong. Ma don: ${booking.bookingCode}`,
+      type: "BOOKING",
       metadata: { bookingId: booking.id, courtId: input.courtId }
-    });
+    }).catch(() => {});
+
     realtimeService.toUser(userId, realtimeEvents.bookingCreated, booking);
     realtimeService.toCourt(input.courtId, realtimeEvents.courtAvailabilityUpdated, {
       courtId: input.courtId,
