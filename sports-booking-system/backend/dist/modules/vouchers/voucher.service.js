@@ -392,12 +392,6 @@ export const voucherService = {
         if (!profile)
             throw new ForbiddenError("Tai khoan doi tac chua co ho so");
         return status === "ACTIVE" ? this.activateForPartner(profile.id, id) : this.disableForPartner(profile.id, id);
-    },
-    listAdmin() {
-        return voucherRepository.listAdmin();
-    },
-    disableAdmin(id) {
-        return voucherRepository.disableAdmin(id);
     }
 };
 async function validatePartnerVoucher(partnerId, input, excludeId) {

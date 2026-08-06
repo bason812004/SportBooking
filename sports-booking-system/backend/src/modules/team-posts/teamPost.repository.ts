@@ -98,14 +98,22 @@ const selectMessage = `
     msg.mime_type as "mimeType",
     msg.created_at as "createdAt",
     msg.updated_at as "updatedAt",
-    json_build_object('id', u.id, 'fullName', u.full_name, 'avatarUrl', u.avatar_url) as "sender"
+    json_build_object('id', u.id, 'fullName', u.full_name, 'avatarUrl', u.avatar_url) as "sender",
+    coalesce(
+      (
+        select json_agg(json_build_object('reaction', r.reaction, 'userId', r.user_id, 'createdAt', r.created_at))
+        from team_post_message_reactions r
+        where r.message_id = msg.id
+      ),
+      '[]'::json
+    ) as "reactions"
   from team_post_messages msg
   join users u on u.id = msg.user_id
 `;
 
 let chatTablesReady = false;
 
-async function ensureTeamChatTables() {
+export async function ensureTeamChatTables() {
   if (chatTablesReady) return;
 
   const statements = [
@@ -487,7 +495,6 @@ export const teamPostRepository = {
   },
 
   async leaveGroup(postId: string, userId: string) {
-    chatTablesReady = false;
     await ensureTeamChatTables();
     await prisma.$executeRaw`
       update team_post_members
@@ -518,7 +525,6 @@ export const teamPostRepository = {
   },
 
   async removeMember(postId: string, userId: string) {
-    chatTablesReady = false;
     await ensureTeamChatTables();
     await prisma.$executeRaw`
       update team_post_members
@@ -549,7 +555,6 @@ export const teamPostRepository = {
   },
 
   async updateMemberRole(postId: string, userId: string, role: "OWNER" | "ADMIN" | "MEMBER") {
-    chatTablesReady = false;
     await ensureTeamChatTables();
     return prisma.$executeRaw`
       update team_post_members

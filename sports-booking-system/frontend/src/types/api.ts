@@ -52,6 +52,7 @@ export type Court = {
   sourceUrl?: string;
   verified?: boolean;
   courtCount?: number;
+  surfaceCount?: number;
   priceNote?: string;
   goldenPriceNote?: string;
   depositPercent?: number | null;
@@ -71,7 +72,7 @@ export type Court = {
     user?: { fullName: string; email: string; phone?: string | null };
   };
   images: Array<{ id: string; imageUrl: string; publicId?: string; sortOrder: number }>;
-  surfaces?: Array<{ id: string; code: string; name: string; capacity?: string; surface?: string; size?: string; imageUrl?: string; sortOrder: number }>;
+  surfaces?: Array<{ id: string; code: string; name: string; capacity?: string; surface?: string; size?: string; imageUrl?: string; sortOrder: number; openingTime?: string | null; closingTime?: string | null }>;
   amenities: Array<{ id: string; name: string }>;
   prices: Array<{ id: string; dayType: string; startTime: string; endTime: string; price: string; note?: string }>;
   services: Array<{ id: string; name: string; description?: string; price: string; status: string }>;
@@ -112,6 +113,7 @@ export type BookingVoucherInfo = {
 export type Booking = {
   id: string;
   bookingCode: string;
+  bookingOrderId?: string | null;
   bookingDate: string;
   startTime: string;
   endTime: string;
@@ -133,6 +135,7 @@ export type Booking = {
   refundAmount?: string;
   platformRetainedAmount?: string;
   court: Court;
+  courtSurface?: { id: string; name: string; code: string } | null;
   user?: { id?: string; fullName: string; email?: string; phone?: string };
   bookingServices?: BookingService[];
   bookingVoucher?: BookingVoucherInfo | null;
@@ -282,8 +285,22 @@ export type AdminCourt = Omit<Court, "category" | "images" | "prices" | "service
 
 export type AdminVoucher = {
   id: string; code: string; title: string; discountType: string; discountValue: number;
+  minBookingAmount: number;
   usedCount: number; usageLimit?: number | null; startDate: string; endDate: string;
-  status: string; businessName: string; courtName?: string | null;
+  status: string; businessName: string | null; courtName?: string | null; createdAt: string;
+};
+
+export type AdminVoucherInput = {
+  code: string;
+  title: string;
+  description?: string;
+  discountType: "PERCENTAGE" | "FIXED_AMOUNT";
+  discountValue: number;
+  maxDiscountAmount?: number | null;
+  minBookingAmount: number;
+  usageLimit?: number | null;
+  startDate: string;
+  endDate: string;
 };
 
 export type AuditLog = {
@@ -523,6 +540,62 @@ export type DemandPrediction = {
   message?: { vi: string; en: string };
 };
 
+export type PartnerDemandPeakHour = {
+  courtId: string;
+  courtName: string;
+  hour: number;
+  bookingCount: number;
+};
+
+export type PartnerDemandOverview = {
+  peakHours: PartnerDemandPeakHour[];
+};
+
+export type PartnerDemandCourtOverview = {
+  courtId: string;
+  totalHistoricalBookings: number;
+  status: "READY" | "INSUFFICIENT_DATA";
+};
+
+export type DynamicPricingRuleType = "PEAK_HOUR" | "OFF_PEAK_HOUR" | "WEEKEND" | "HOLIDAY" | "HIGH_DEMAND" | "LOW_DEMAND" | "CUSTOM";
+
+export type DynamicPricingRule = {
+  id: string;
+  partnerId: string;
+  courtId: string;
+  name: string;
+  description?: string | null;
+  ruleType: DynamicPricingRuleType;
+  dayType?: "WEEKDAY" | "WEEKEND" | "HOLIDAY" | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  priceAdjustmentType: "PERCENTAGE" | "FIXED_AMOUNT";
+  priceAdjustmentValue: number | string;
+  minPrice?: number | string | null;
+  maxPrice?: number | string | null;
+  priority: number;
+  status: "ACTIVE" | "INACTIVE";
+  createdAt: string;
+  updatedAt: string;
+  court?: { id: string; name: string } | null;
+};
+
+export type DynamicPricingRuleInput = {
+  courtId: string;
+  name: string;
+  description?: string;
+  ruleType: DynamicPricingRuleType;
+  dayType?: "WEEKDAY" | "WEEKEND" | "HOLIDAY";
+  startTime?: string;
+  endTime?: string;
+  priceAdjustmentType: "PERCENTAGE" | "FIXED_AMOUNT";
+  priceAdjustmentValue: number;
+  minPrice?: number;
+  maxPrice?: number;
+  priority?: number;
+  status?: "ACTIVE" | "INACTIVE";
+};
+
 export type VoucherValidatePayload = {
   voucherId?: string;
   code?: string;
@@ -692,6 +765,12 @@ export type WeeklyScheduleSlot = {
   predictedOccupancyRate: number | null;
   blockReason: string | null;
   bookingCode: string | null;
+  /** Staff-only fields (StaffScheduleGrid) — undefined on the customer-facing calendar. */
+  bookingId?: string | null;
+  bookingStatus?: string | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  blockId?: string | null;
 };
 
 export type WeeklyScheduleDay = {
@@ -780,11 +859,10 @@ export type WeeklyScheduleResponse = {
   availableVouchers: WeeklyScheduleVoucher[];
 };
 
-// ── Settlement & Wallet ───────────────────────────────────────────────────
-
 export type SettlementStatus = "PENDING" | "PROCESSING" | "SETTLED" | "FAILED" | "CANCELLED";
+export type WithdrawalStatus = "PENDING" | "APPROVED" | "PROCESSING" | "REJECTED" | "FAILED" | "PAID";
 
-export type PartnerWalletInfo = {
+export type PartnerWallet = {
   id: string;
   partnerId: string;
   availableBalance: number;
@@ -792,56 +870,82 @@ export type PartnerWalletInfo = {
   totalEarned: number;
   totalWithdrawn: number;
   currency: string;
-  createdAt: string;
   updatedAt: string;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankAccountHolder?: string | null;
+  partner?: {
+    id: string;
+    businessName: string;
+    bankName?: string | null;
+    bankAccountNumber?: string | null;
+    bankAccountHolder?: string | null;
+    user?: { id: string; fullName: string; email: string };
+  };
 };
 
-export type SettlementInfo = {
+export type Settlement = {
   id: string;
   bookingId: string;
   partnerId: string;
-  paymentId: string | null;
+  paymentId?: string | null;
   grossAmount: number;
   voucherDiscount: number;
   platformDiscount: number;
   partnerDiscount: number;
+  commissionRate: number;
   commissionAmount: number;
   serviceFee: number;
   netAmount: number;
   status: SettlementStatus;
-  settledAt: string | null;
+  settledAt?: string | null;
   createdAt: string;
   updatedAt: string;
   booking?: {
+    id: string;
     bookingCode: string;
     bookingDate: string;
-    court: { name: string };
+    bookingStatus: string;
+    court?: { id: string; name: string };
   };
+  partner?: { id: string; businessName: string };
 };
 
-export type SettlementSummary = {
-  grossAmount: number;
-  platformDiscount: number;
-  partnerDiscount: number;
-  commissionAmount: number;
-  netAmount: number;
-  totalCount: number;
-  pendingCount: number;
-  pendingAmount: number;
-};
-
-export type WithdrawalStatus = "PENDING" | "APPROVED" | "REJECTED" | "PAID";
-
-export type WithdrawalInfo = {
+export type WithdrawalRequest = {
   id: string;
   partnerId: string;
   amount: number;
-  bankName: string;
-  bankAccountNumber: string;
-  bankAccountName: string;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankAccountName?: string | null;
   status: WithdrawalStatus;
-  processedBy: string | null;
-  note: string | null;
+  processedBy?: string | null;
+  processedAt?: string | null;
+  note?: string | null;
   createdAt: string;
   updatedAt: string;
+  partner?: {
+    id: string;
+    businessName: string;
+    user?: { id: string; fullName: string; email: string };
+  };
+  processor?: { id: string; fullName: string } | null;
+};
+
+export type SettlementSummary = {
+  total: { count: number; grossAmount: number; commissionAmount: number; netAmount: number };
+  byStatus: Record<string, { count: number; grossAmount: number; commissionAmount: number; netAmount: number }>;
+};
+
+export type WithdrawalSummary = {
+  total: { count: number; amount: number };
+  byStatus: Record<string, { count: number; amount: number }>;
+};
+
+export type WalletAdminSummary = {
+  walletCount: number;
+  totalAvailable: number;
+  totalPending: number;
+  totalEarned: number;
+  totalWithdrawn: number;
 };

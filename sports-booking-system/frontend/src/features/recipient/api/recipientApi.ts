@@ -80,6 +80,47 @@ export type RecipientOperations = {
   items: RecipientOperationItem[];
 };
 
+export type RecipientSurfaceAvailabilitySlot = {
+  startTime: string;
+  endTime: string;
+  status: "AVAILABLE" | "BOOKED" | "BLOCKED";
+  price: number;
+  bookingId?: string | null;
+  bookingCode?: string | null;
+  bookingStatus?: string | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  blockId?: string | null;
+  reason?: string | null;
+};
+
+export type RecipientSurfaceAvailability = {
+  courtSurfaceId: string;
+  date: string;
+  openingTime: string;
+  closingTime: string;
+  slotDurationMinutes: number;
+  slots: RecipientSurfaceAvailabilitySlot[];
+};
+
+export type RecipientCalendarBooking = {
+  id: string;
+  bookingDate: string;
+  startTime: string;
+  endTime: string;
+  bookingStatus: string;
+  paymentStatus: string;
+  totalPrice: string;
+  courtSurfaceId: string | null;
+  courtSurface: { id: string; name: string; code: string } | null;
+  user: { fullName: string; phone?: string | null } | null;
+};
+
+export type RecipientCalendar = {
+  court: { openingTime: string; closingTime: string };
+  items: RecipientCalendarBooking[];
+};
+
 export type RecipientWalkInBookingPayload = {
   courtSurfaceId: string;
   customerName: string;
@@ -91,14 +132,105 @@ export type RecipientWalkInBookingPayload = {
   note?: string;
 };
 
+export type RecipientWalkInPayment = {
+  id: string;
+  provider: string;
+  qrCodeUrl?: string | null;
+  qrPayload?: string | null;
+  paymentReference: string;
+  expiresAt: string;
+  amount: number;
+};
+
+export type RecipientWalkInBookingResult = {
+  booking: Booking;
+  payment: RecipientWalkInPayment | null;
+};
+
+export type RecipientWalkInBookingOrderPayload = {
+  customerName: string;
+  customerPhone: string;
+  slots: Array<{ courtSurfaceId: string; bookingDate: string; startTime: string; minutes: number }>;
+  note?: string;
+};
+
+export type RecipientWalkInBookingOrderResult = {
+  orderId: string;
+  bookings: Booking[];
+};
+
+export type RecipientRecurringBookingPayload = {
+  courtSurfaceId: string;
+  customerName: string;
+  customerPhone: string;
+  startDate: string;
+  startTime: string;
+  minutes: number;
+  occurrences: number;
+  note?: string;
+};
+
+export type RecipientRecurringBookingResult = {
+  series: { id: string };
+  created: Booking[];
+  skipped: { date: string; reason: string }[];
+};
+
+export type RecipientCustomerMatch = {
+  id: string;
+  fullName: string;
+  phone: string | null;
+  bookingsCount: number;
+  lastBookingDate: string | null;
+};
+
+export type RecipientCustomerHistoryBooking = {
+  id: string;
+  bookingCode: string;
+  bookingDate: string;
+  startTime: string;
+  endTime: string;
+  bookingStatus: string;
+  totalPrice: number;
+  courtSurface: { name: string; code: string } | null;
+};
+
+export type RecipientCustomerHistory = {
+  customer: { id: string; fullName: string; phone: string | null };
+  bookings: RecipientCustomerHistoryBooking[];
+};
+
+export type RecipientPaymentStatus = {
+  id: string;
+  bookingId: string;
+  status: "UNPAID" | "PENDING" | "PROCESSING" | "PAID" | "FAILED" | "EXPIRED" | "CANCELLED" | "PARTIALLY_REFUNDED" | "REFUNDED";
+  bookingStatus: string;
+  amount: number;
+  expiresAt: string;
+  paidAt?: string | null;
+};
+
+export type RecipientBookingGroup = {
+  orderId: string | null;
+  bookings: Booking[];
+};
+
 export const recipientApi = {
   async dashboard() {
     const { data } = await api.get<ApiResponse<RecipientDashboard>>("/recipient/dashboard");
     return data.data;
   },
 
-  async bookings(params: { page?: number; limit?: number; status?: string; fromDate?: string; toDate?: string }) {
-    const { data } = await api.get<ApiResponse<Paginated<Booking>>>("/recipient/bookings", { params });
+  async bookings(params: {
+    page?: number;
+    limit?: number;
+    status?: string;
+    fromDate?: string;
+    toDate?: string;
+    sortBy?: string;
+    sortOrder?: "asc" | "desc";
+  }) {
+    const { data } = await api.get<ApiResponse<Paginated<RecipientBookingGroup>>>("/recipient/bookings", { params });
     return data.data;
   },
 
@@ -123,7 +255,7 @@ export const recipientApi = {
   },
 
   async calendar(params: { fromDate: string; toDate: string }) {
-    const { data } = await api.get<ApiResponse<any[]>>("/recipient/calendar", { params });
+    const { data } = await api.get<ApiResponse<RecipientCalendar>>("/recipient/calendar", { params });
     return data.data;
   },
 
@@ -134,6 +266,21 @@ export const recipientApi = {
 
   async updateCourtSurfaceStatus(id: string, status: "ACTIVE" | "INACTIVE") {
     const { data } = await api.put<ApiResponse<RecipientCourtSurface>>(`/recipient/court-surfaces/${id}/status`, { status });
+    return data.data;
+  },
+
+  async surfaceAvailability(courtSurfaceId: string, date: string) {
+    const { data } = await api.get<ApiResponse<RecipientSurfaceAvailability>>(`/recipient/court-surfaces/${courtSurfaceId}/availability`, { params: { date } });
+    return data.data;
+  },
+
+  async lockSlot(courtSurfaceId: string, payload: { bookingDate: string; startTime: string; minutes: number; reason?: string }) {
+    const { data } = await api.post<ApiResponse<{ id: string }>>(`/recipient/court-surfaces/${courtSurfaceId}/lock`, payload);
+    return data.data;
+  },
+
+  async unlockSlot(blockId: string) {
+    const { data } = await api.post<ApiResponse<{ id: string }>>(`/recipient/availability-blocks/${blockId}/unlock`);
     return data.data;
   },
 
@@ -148,7 +295,27 @@ export const recipientApi = {
   },
 
   async createWalkInBooking(payload: RecipientWalkInBookingPayload) {
-    const { data } = await api.post<ApiResponse<Booking>>("/recipient/operations/walk-in-booking", payload);
+    const { data } = await api.post<ApiResponse<RecipientWalkInBookingResult>>("/recipient/operations/walk-in-booking", payload);
+    return data.data;
+  },
+
+  async createWalkInBookingOrder(payload: RecipientWalkInBookingOrderPayload) {
+    const { data } = await api.post<ApiResponse<RecipientWalkInBookingOrderResult>>("/recipient/operations/walk-in-booking-order", payload);
+    return data.data;
+  },
+
+  async createRecurringWalkInBooking(payload: RecipientRecurringBookingPayload) {
+    const { data } = await api.post<ApiResponse<RecipientRecurringBookingResult>>("/recipient/operations/recurring-walk-in-booking", payload);
+    return data.data;
+  },
+
+  async lookupCustomers(phone: string) {
+    const { data } = await api.get<ApiResponse<{ matches: RecipientCustomerMatch[] }>>("/recipient/customers/lookup", { params: { phone } });
+    return data.data;
+  },
+
+  async customerHistory(customerId: string) {
+    const { data } = await api.get<ApiResponse<RecipientCustomerHistory>>(`/recipient/customers/${customerId}/history`);
     return data.data;
   },
 
@@ -159,6 +326,16 @@ export const recipientApi = {
 
   async earlyCheckOutBooking(id: string) {
     const { data } = await api.post<ApiResponse<Booking>>(`/recipient/bookings/${id}/early-check-out`);
+    return data.data;
+  },
+
+  async paymentStatus(paymentId: string) {
+    const { data } = await api.get<ApiResponse<RecipientPaymentStatus>>(`/recipient/payments/${paymentId}/status`);
+    return data.data;
+  },
+
+  async confirmPayment(paymentId: string) {
+    const { data } = await api.post<ApiResponse<{ id: string; status: string }>>(`/recipient/payments/${paymentId}/confirm`);
     return data.data;
   }
 };

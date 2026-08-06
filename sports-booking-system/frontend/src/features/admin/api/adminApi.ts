@@ -10,6 +10,7 @@ import type {
   AdminRefund,
   AdminPartner,
   AdminVoucher,
+  AdminVoucherInput,
   AuditLog,
   BlockchainLog,
   Category,
@@ -17,7 +18,13 @@ import type {
   CommissionReport,
   Court,
   Paginated,
-  User
+  PartnerWallet,
+  Settlement,
+  SettlementSummary,
+  User,
+  WalletAdminSummary,
+  WithdrawalRequest,
+  WithdrawalSummary
 } from "../../../types/api";
 
 export const adminApi = {
@@ -157,8 +164,8 @@ export const adminApi = {
     const { data } = await api.post<ApiResponse<AdminCourt>>(`/admin/courts/${id}/request-update`, { note });
     return data.data;
   },
-  async pendingCourts() {
-    const { data } = await api.get<ApiResponse<Court[]>>("/admin/courts/pending");
+  async pendingCourts(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<Court>>>("/admin/courts/pending", { params: clean(params) });
     return data.data;
   },
   async approveCourt(id: string) {
@@ -185,8 +192,8 @@ export const adminApi = {
     const { data } = await api.delete<ApiResponse<Category>>(`/admin/categories/${id}`);
     return data.data;
   },
-  async reviews() {
-    const { data } = await api.get<ApiResponse<unknown[]>>("/admin/reviews");
+  async reviews(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<any>>>("/admin/reviews", { params: clean(params) });
     return data.data;
   },
   async setReviewStatus(id: string, action: "hide" | "show") {
@@ -197,8 +204,8 @@ export const adminApi = {
     const { data } = await api.delete<ApiResponse<unknown>>(`/admin/reviews/${id}`);
     return data.data;
   },
-  async reports() {
-    const { data } = await api.get<ApiResponse<unknown[]>>("/admin/reports");
+  async reports(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<any>>>("/admin/reports", { params: clean(params) });
     return data.data;
   },
   async setReportStatus(id: string, action: "resolve" | "reject") {
@@ -213,6 +220,18 @@ export const adminApi = {
     const { data } = await api.get<ApiResponse<Paginated<AdminVoucher>>>("/admin/vouchers", { params: clean(params) });
     return data.data;
   },
+  async voucherDetail(id: string) {
+    const { data } = await api.get<ApiResponse<AdminVoucherInput & { id: string }>>(`/admin/vouchers/${id}`);
+    return data.data;
+  },
+  async createVoucher(payload: AdminVoucherInput) {
+    const { data } = await api.post<ApiResponse<AdminVoucher>>("/admin/vouchers", payload);
+    return data.data;
+  },
+  async updateVoucher(id: string, payload: AdminVoucherInput) {
+    const { data } = await api.put<ApiResponse<AdminVoucher>>(`/admin/vouchers/${id}`, payload);
+    return data.data;
+  },
   async setVoucherStatus(id: string, action: "activate" | "disable", reason?: string) {
     const { data } = await api.put<ApiResponse<unknown>>(`/admin/vouchers/${id}/${action}`, { reason });
     return data.data;
@@ -223,6 +242,10 @@ export const adminApi = {
   },
   async moderateBlog(id: string, action: "approve" | "reject", reason?: string) {
     const { data } = await api.put<ApiResponse<unknown>>(`/admin/blogs/${id}/${action}`, { reason });
+    return data.data;
+  },
+  async hideBlog(id: string, reason?: string) {
+    const { data } = await api.put<ApiResponse<unknown>>(`/admin/blogs/${id}/hide`, { reason });
     return data.data;
   },
   async pendingTournaments(params: Record<string, string | number | undefined> = {}) {
@@ -249,42 +272,52 @@ export const adminApi = {
     const { data } = await api.put<ApiResponse<BlockchainLog>>(`/admin/blockchain-logs/${id}/retry`);
     return data.data;
   },
-
-  // Settlement & Withdrawal
-  async settlements(params: { page?: number; limit?: number; status?: string; partnerId?: string } = {}) {
-    const { data } = await api.get<ApiResponse<Paginated<any>>>("/admin/settlements", { params: clean(params) });
+  async partnerWallets(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<PartnerWallet>>>("/admin/wallets/partner-wallets", { params: clean(params) });
     return data.data;
   },
-  async settlementSummary() {
-    const { data } = await api.get<ApiResponse<any>>("/admin/settlements/summary");
+  async partnerWalletSummary() {
+    const { data } = await api.get<ApiResponse<WalletAdminSummary>>("/admin/wallets/partner-wallets/summary");
+    return data.data;
+  },
+  async partnerWalletDetail(partnerId: string) {
+    const { data } = await api.get<ApiResponse<PartnerWallet>>(`/admin/wallets/partner-wallets/${partnerId}`);
+    return data.data;
+  },
+  async settlements(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<Settlement>>>("/admin/settlements", { params: clean(params) });
+    return data.data;
+  },
+  async settlementsSummary(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<SettlementSummary>>("/admin/settlements/summary", { params: clean(params) });
     return data.data;
   },
   async settleSettlement(id: string) {
-    const { data } = await api.put<ApiResponse<any>>(`/admin/settlements/${id}/settle`);
+    const { data } = await api.put<ApiResponse<Settlement>>(`/admin/settlements/${id}/settle`);
     return data.data;
   },
-  async cancelSettlement(id: string, reason?: string) {
-    const { data } = await api.put<ApiResponse<any>>(`/admin/settlements/${id}/cancel`, { reason });
+  async cancelSettlement(id: string) {
+    const { data } = await api.put<ApiResponse<Settlement>>(`/admin/settlements/${id}/cancel`);
     return data.data;
   },
-  async withdrawals(params: { page?: number; limit?: number; status?: string; partnerId?: string } = {}) {
-    const { data } = await api.get<ApiResponse<Paginated<any>>>("/admin/withdrawals", { params: clean(params) });
+  async withdrawals(params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<WithdrawalRequest>>>("/admin/withdrawals", { params: clean(params) });
     return data.data;
   },
-  async withdrawalSummary() {
-    const { data } = await api.get<ApiResponse<any>>("/admin/withdrawals/summary");
+  async withdrawalsSummary() {
+    const { data } = await api.get<ApiResponse<WithdrawalSummary>>("/admin/withdrawals/summary");
     return data.data;
   },
   async approveWithdrawal(id: string) {
-    const { data } = await api.put<ApiResponse<any>>(`/admin/withdrawals/${id}/approve`);
+    const { data } = await api.put<ApiResponse<WithdrawalRequest>>(`/admin/withdrawals/${id}/approve`);
     return data.data;
   },
   async rejectWithdrawal(id: string, note?: string) {
-    const { data } = await api.put<ApiResponse<any>>(`/admin/withdrawals/${id}/reject`, { note });
+    const { data } = await api.put<ApiResponse<WithdrawalRequest>>(`/admin/withdrawals/${id}/reject`, { note });
     return data.data;
   },
-  async markWithdrawalPaid(id: string) {
-    const { data } = await api.put<ApiResponse<any>>(`/admin/withdrawals/${id}/paid`);
+  async payWithdrawal(id: string, note?: string) {
+    const { data } = await api.put<ApiResponse<WithdrawalRequest>>(`/admin/withdrawals/${id}/paid`, { note });
     return data.data;
   }
 };

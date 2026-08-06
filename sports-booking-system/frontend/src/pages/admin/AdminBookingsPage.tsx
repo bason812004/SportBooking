@@ -2,14 +2,19 @@ import { useEffect, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { Filter } from "lucide-react";
 import { adminApi } from "../../features/admin/api/adminApi";
 import type { AdminBooking } from "../../types/api";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { ErrorState, LoadingState } from "../../components/common/States";
+import { PageHero } from "../../components/common/PageHero";
+import { PeriodRangeFilter } from "../../components/common/PeriodRangeFilter";
 import { SortableTh } from "../../components/common/SortableTh";
+import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { useUrlSort } from "../../hooks/useUrlSort";
+import { usePeriodRange } from "../../hooks/usePeriodRange";
 
 const bookingStatuses = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"];
 const paymentStatuses = ["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"];
@@ -31,8 +36,6 @@ const paymentStatusLabels: Record<string, string> = {
 
 type Filters = {
   search: string;
-  fromDate: string;
-  toDate: string;
   courtId: string;
   partnerId: string;
   userId: string;
@@ -50,14 +53,8 @@ type BookingAdminForm = {
   actionNote: string;
 };
 
-function currentYearRange() {
-  const year = new Date().getFullYear();
-  return { fromDate: `${year}-01-01`, toDate: `${year}-12-31` };
-}
-
 const defaultFilters: Filters = {
   search: "",
-  ...currentYearRange(),
   courtId: "",
   partnerId: "",
   userId: "",
@@ -74,6 +71,7 @@ export function AdminBookingsPage() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string | null>(null);
   const [filters, setFilters] = useState<Filters>(defaultFilters);
+  const period = usePeriodRange({ defaultMode: "day", onChange: () => setPage(1) });
 
   const { sortField, sortOrder, handleSort: sortBy } = useUrlSort<SortField>({
     fields: SORT_FIELDS,
@@ -85,8 +83,17 @@ export function AdminBookingsPage() {
   };
 
   const list = useQuery({
-    queryKey: ["admin-bookings", page, filters, sortField, sortOrder],
-    queryFn: () => adminApi.bookings({ page, limit: 10, ...filters, sortBy: sortField ?? undefined, sortOrder }),
+    queryKey: ["admin-bookings", page, filters, period.range, sortField, sortOrder],
+    queryFn: () =>
+      adminApi.bookings({
+        page,
+        limit: 10,
+        ...filters,
+        fromDate: period.range.fromDate,
+        toDate: period.range.toDate,
+        sortBy: sortField ?? undefined,
+        sortOrder
+      }),
     placeholderData: keepPreviousData
   });
   const detail = useQuery({
@@ -100,62 +107,72 @@ export function AdminBookingsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold">Quản lý đơn đặt sân</h1>
-          <p className="text-sm text-slate-600">Theo dõi, lọc và xử lý booking toàn hệ thống.</p>
+      <PageHero
+        eyebrow="Vận hành"
+        title="Quản lý đơn đặt sân"
+        subtitle="Theo dõi, lọc và xử lý booking toàn hệ thống."
+        actions={
+          <Button
+            className="bg-white/20 text-white ring-1 ring-white/30 hover:bg-white/30"
+            onClick={() => { setPage(1); setFilters(defaultFilters); period.reset(); }}
+          >
+            Xóa lọc
+          </Button>
+        }
+      />
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-4">
+        <p className="mb-3 flex items-center gap-1.5 text-xs font-black uppercase tracking-wide text-slate-500">
+          <Filter className="h-3.5 w-3.5" />
+          Bộ lọc
+        </p>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <Input label="Tìm kiếm" value={filters.search} onChange={(event) => updateFilter(setPage, setFilters, "search", event.target.value)} placeholder="Mã đơn, khách, sân, đối tác" />
+          <Input label="ID sân" value={filters.courtId} onChange={(event) => updateFilter(setPage, setFilters, "courtId", event.target.value)} placeholder="c0001" />
+          <Input label="ID đối tác" value={filters.partnerId} onChange={(event) => updateFilter(setPage, setFilters, "partnerId", event.target.value)} placeholder="pp0001" />
+          <Input label="ID người dùng" value={filters.userId} onChange={(event) => updateFilter(setPage, setFilters, "userId", event.target.value)} placeholder="u0001" />
+          <Select label="Thanh toán" value={filters.paymentStatus} onChange={(event) => updateFilter(setPage, setFilters, "paymentStatus", event.target.value)} options={withAll(paymentStatuses, paymentStatusLabels)} />
+          <Select label="Trạng thái đơn" value={filters.bookingStatus} onChange={(event) => updateFilter(setPage, setFilters, "bookingStatus", event.target.value)} options={withAll(bookingStatuses, bookingStatusLabels)} />
         </div>
-        <Button variant="secondary" onClick={() => { setPage(1); setFilters(defaultFilters); }}>
-          Xóa lọc
-        </Button>
+
+        <div className="mt-4">
+          <PeriodRangeFilter period={period} />
+        </div>
       </div>
 
-      <div className="grid gap-3 rounded-lg border bg-white p-4 md:grid-cols-2 xl:grid-cols-4">
-        <Input label="Tìm kiếm" value={filters.search} onChange={(event) => updateFilter(setPage, setFilters, "search", event.target.value)} placeholder="Mã đơn, khách, sân, đối tác" />
-        <Input label="Từ ngày" type="date" value={filters.fromDate} onChange={(event) => updateFilter(setPage, setFilters, "fromDate", event.target.value)} />
-        <Input label="Đến ngày" type="date" value={filters.toDate} onChange={(event) => updateFilter(setPage, setFilters, "toDate", event.target.value)} />
-        <Input label="ID sân" value={filters.courtId} onChange={(event) => updateFilter(setPage, setFilters, "courtId", event.target.value)} placeholder="c0001" />
-        <Input label="ID đối tác" value={filters.partnerId} onChange={(event) => updateFilter(setPage, setFilters, "partnerId", event.target.value)} placeholder="pp0001" />
-        <Input label="ID người dùng" value={filters.userId} onChange={(event) => updateFilter(setPage, setFilters, "userId", event.target.value)} placeholder="u0001" />
-        <Select label="Thanh toán" value={filters.paymentStatus} onChange={(event) => updateFilter(setPage, setFilters, "paymentStatus", event.target.value)} options={withAll(paymentStatuses, paymentStatusLabels)} />
-        <Select label="Trạng thái đơn" value={filters.bookingStatus} onChange={(event) => updateFilter(setPage, setFilters, "bookingStatus", event.target.value)} options={withAll(bookingStatuses, bookingStatusLabels)} />
-      </div>
-
-      <div className="overflow-auto rounded-lg border bg-white">
-        <table className="w-full min-w-[980px] text-sm">
-          <thead>
-            <tr className="bg-slate-50 text-left">
-              <SortableTh className="p-3" label="Mã đơn" field="bookingCode" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <SortableTh label="Khách hàng" field="customerName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <th>Sân / đối tác</th>
-              <SortableTh label="Lịch đặt" field="bookingDate" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <SortableTh label="Tổng tiền" field="totalPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <SortableTh label="Đơn" field="bookingStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <SortableTh label="Thanh toán" field="paymentStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {list.data?.items.map((booking) => (
-              <tr key={booking.id} className="border-t align-top">
-                <td className="p-3 font-bold">{booking.bookingCode}</td>
-                <td>{booking.user?.fullName}<br /><span className="text-xs text-slate-500">{booking.user?.email}</span></td>
-                <td>{booking.court.name}<br /><span className="text-xs text-slate-500">{booking.court.partner?.businessName}</span></td>
-                <td>{formatDate(booking.bookingDate)}<br /><span className="text-xs text-slate-500">{formatTime(booking.startTime)} - {formatTime(booking.endTime)}</span></td>
-                <td>{formatMoney(booking.totalPrice)}</td>
-                <td><StatusBadge value={booking.bookingStatus} labels={bookingStatusLabels} /></td>
-                <td><StatusBadge value={booking.paymentStatus} labels={paymentStatusLabels} /></td>
-                <td className="p-3 text-right">
-                  <Button variant="secondary" onClick={() => setSelected(booking.id)}>
-                    Chi tiết
-                  </Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {!list.data?.items.length && <p className="p-6 text-center text-slate-500">Không có đơn đặt sân phù hợp</p>}
-      </div>
+      <Table minWidth="980px">
+        <THead>
+          <tr>
+            <SortableTh label="Mã đơn" field="bookingCode" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh label="Khách hàng" field="customerName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <Th>Sân / đối tác</Th>
+            <SortableTh label="Lịch đặt" field="bookingDate" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh label="Tổng tiền" field="totalPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh label="Đơn" field="bookingStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh label="Thanh toán" field="paymentStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <Th></Th>
+          </tr>
+        </THead>
+        <TBody>
+          {list.data?.items.map((booking) => (
+            <Tr key={booking.id} className="align-top">
+              <Td className="font-bold">{booking.bookingCode}</Td>
+              <Td>{booking.user?.fullName}<br /><span className="text-xs text-slate-500">{booking.user?.email}</span></Td>
+              <Td>{booking.court.name}<br /><span className="text-xs text-slate-500">{booking.court.partner?.businessName}</span></Td>
+              <Td>{formatDate(booking.bookingDate)}<br /><span className="text-xs text-slate-500">{formatTime(booking.startTime)} - {formatTime(booking.endTime)}</span></Td>
+              <Td>{formatMoney(booking.totalPrice)}</Td>
+              <Td><StatusBadge value={booking.bookingStatus} labels={bookingStatusLabels} /></Td>
+              <Td><StatusBadge value={booking.paymentStatus} labels={paymentStatusLabels} /></Td>
+              <Td className="text-right">
+                <Button variant="secondary" onClick={() => setSelected(booking.id)}>
+                  Chi tiết
+                </Button>
+              </Td>
+            </Tr>
+          ))}
+        </TBody>
+      </Table>
+      {!list.data?.items.length && <p className="p-6 text-center text-slate-500">Không có đơn đặt sân phù hợp</p>}
 
       <Pager page={page} total={list.data?.meta.totalPages ?? 1} setPage={setPage} />
 

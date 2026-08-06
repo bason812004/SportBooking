@@ -1,45 +1,113 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CheckCircle2, FolderCheck, MapPin, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
-import { LoadingState, ErrorState, EmptyState } from "../../components/common/States";
+import { LoadingState, ErrorState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
-import { useLanguage } from "../../lib/i18n";
 import { AdminReasonModal } from "./AdminReasonModal";
+import { PageHero } from "../../components/common/PageHero";
 
 export function AdminPendingCourtsPage() {
-  const { t } = useLanguage();
   const queryClient = useQueryClient();
   const [rejectingId, setRejectingId] = useState<string | null>(null);
-  const courts = useQuery({ queryKey: ["admin-pending-courts"], queryFn: adminApi.pendingCourts });
+  const [page, setPage] = useState(1);
+
+  const courts = useQuery({
+    queryKey: ["admin-pending-courts", page],
+    queryFn: () => adminApi.pendingCourts({ page, limit: 10 }),
+    placeholderData: keepPreviousData
+  });
+
   const approve = useMutation({
     mutationFn: adminApi.approveCourt,
     onSuccess: () => {
-      toast.success(t("Đã duyệt sân"));
+      toast.success("Đã duyệt sân");
       queryClient.invalidateQueries({ queryKey: ["admin-pending-courts"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-dashboard"] });
     }
   });
+
   const reject = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) => adminApi.rejectCourt(id, reason),
     onSuccess: () => {
-      toast.success(t("Đã từ chối sân"));
+      toast.success("Đã từ chối sân");
       setRejectingId(null);
       queryClient.invalidateQueries({ queryKey: ["admin-pending-courts"] });
     }
   });
+
   if (courts.isLoading) return <LoadingState />;
   if (courts.isError) return <ErrorState message={courts.error.message} />;
-  if (courts.data?.length === 0) return <EmptyState title={t("Không có sân chờ duyệt")} />;
+
+  const items = courts.data?.items ?? [];
+
   return (
-    <div className="grid gap-4">
-      {courts.data?.map((court) => (
-        <div key={court.id} className="rounded-md border border-line bg-white p-4">
-          <h2 className="font-semibold">{court.name}</h2>
-          <p className="text-sm text-slate-600">{court.address}</p>
-          <div className="mt-3 flex gap-2"><Button onClick={() => approve.mutate(court.id)}>{t("Duyệt")}</Button><Button variant="danger" onClick={() => setRejectingId(court.id)}>{t("Từ chối")}</Button></div>
+    <div className="space-y-6">
+      <PageHero eyebrow="Vận hành" title="Duyệt sân" subtitle="Xem xét và phê duyệt các sân thể thao mới đăng ký." />
+
+      {!items.length ? (
+        <div className="rounded-2xl border border-dashed bg-white p-8 text-center">
+          <FolderCheck className="mx-auto h-12 w-12 text-slate-300" />
+          <p className="mt-3 font-semibold text-slate-500">Không có sân nào chờ duyệt.</p>
+          <p className="mt-1 text-sm text-slate-400">Tất cả sân đã được xử lý.</p>
         </div>
-      ))}
-      <AdminReasonModal open={Boolean(rejectingId)} title="Từ chối sân" required onClose={() => setRejectingId(null)} onConfirm={(reason) => rejectingId && reject.mutate({ id: rejectingId, reason })} />
+      ) : (
+        <div className="grid gap-4">
+          {items.map((court: any) => (
+            <article key={court.id} className="rounded-2xl border bg-white p-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap gap-2">
+                    <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">Chờ duyệt</span>
+                    {court.sportType && (
+                      <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-bold text-sky-800">{court.sportType}</span>
+                    )}
+                  </div>
+                  <h2 className="mt-2 text-lg font-bold">{court.name}</h2>
+                  {court.address && (
+                    <p className="mt-1 flex items-center gap-1 text-sm text-slate-500">
+                      <MapPin className="h-3.5 w-3.5" /> {court.address}
+                    </p>
+                  )}
+                  {court.partner && (
+                    <p className="mt-1 text-sm text-slate-500">Đối tác: {court.partner.businessName}</p>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button disabled={approve.isPending} onClick={() => approve.mutate(court.id)}>
+                    <CheckCircle2 className="h-4 w-4" /> Duyệt
+                  </Button>
+                  <Button disabled={reject.isPending} variant="danger" onClick={() => setRejectingId(court.id)}>
+                    <XCircle className="h-4 w-4" /> Từ chối
+                  </Button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+
+      <Pager page={page} total={courts.data?.meta?.totalPages ?? 1} setPage={setPage} />
+
+      <AdminReasonModal
+        open={Boolean(rejectingId)}
+        title="Từ chối sân"
+        required
+        onClose={() => setRejectingId(null)}
+        onConfirm={(reason) => rejectingId && reject.mutate({ id: rejectingId, reason })}
+      />
+    </div>
+  );
+}
+
+function Pager({ page, total, setPage }: { page: number; total: number; setPage: (v: number) => void }) {
+  if (total <= 1) return null;
+  return (
+    <div className="flex justify-end gap-3">
+      <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Trước</Button>
+      <span className="py-2 text-sm font-semibold">{page}/{Math.max(total, 1)}</span>
+      <Button variant="secondary" disabled={page >= total} onClick={() => setPage(page + 1)}>Sau</Button>
     </div>
   );
 }

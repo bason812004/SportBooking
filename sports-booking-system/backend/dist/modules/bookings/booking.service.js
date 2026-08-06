@@ -1,4 +1,5 @@
 import { BookingStatus } from "@prisma/client";
+import { prisma } from "../../config/db.js";
 import { env } from "../../config/env.js";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
@@ -13,6 +14,7 @@ import { notificationService } from "../notifications/notification.service.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { paymentProvider } from "../payments/providers/index.js";
+import { settlementService } from "../settlements/settlement.service.js";
 import { bookingRepository } from "./booking.repository.js";
 import { calculateBookingQuote, canCreateBookingCheckout, checkBookingOverlap, validateSelectedSlots } from "./booking.calculations.js";
 function bookingCode() {
@@ -27,56 +29,72 @@ function minutesRange(slots) {
     const sorted = [...slots].sort((left, right) => left.startTime.localeCompare(right.startTime));
     return { startTime: sorted[0].startTime, endTime: sorted[sorted.length - 1].endTime };
 }
-async function buildQuote(userId, input) {
-    if (!validateSelectedSlots(input.slots))
+async function customerContact(userId) {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true, phone: true } });
+    return { fullName: user?.fullName ?? "Khach hang", phone: user?.phone ?? null };
+}
+function formatVnd(amount) {
+    return `${Math.round(amount).toLocaleString("vi-VN")} VND`;
+}
+function buildBookingStaffNotification(courtName, customer, days, totalAmount) {
+    const totalSlots = days.reduce((sum, day) => sum + day.slots.length, 0);
+    const dayLabel = days.length > 1 ? `${days[0].bookingDate} - ${days[days.length - 1].bookingDate}` : days[0].bookingDate;
+    const contact = customer.phone ? `${customer.fullName} (${customer.phone})` : customer.fullName;
+    return {
+        title: `Đơn đặt sân mới - ${courtName}`,
+        content: `${contact} dat ${totalSlots} khung gio ngay ${dayLabel}, tong ${formatVnd(totalAmount)}.`
+    };
+}
+// Booking tu ngay thu 2 tro di trong 1 don nhieu-ngay khong co Payment rieng
+// (chi booking dau tien cua BookingOrder duoc gan Payment). De trang "Thanh toan"
+// cua khach van bam vao duoc tu bat ky ngay nao, muon lai Payment chung cua order.
+function withOrderPaymentFallback(booking) {
+    if (booking.payments.length > 0 || !booking.bookingOrder?.payment)
+        return booking;
+    return { ...booking, payments: [booking.bookingOrder.payment] };
+}
+function isPendingBookingActive(payments, orderPayment) {
+    const relevant = payments && payments.length > 0 ? payments : orderPayment ? [orderPayment] : [];
+    if (relevant.length === 0)
+        return true;
+    const activePayment = relevant.find((p) => p.status === "PENDING" || p.status === "UNPAID");
+    if (!activePayment)
+        return false;
+    return activePayment.expiresAt.getTime() > Date.now();
+}
+async function buildDayQuote(courtId, day) {
+    if (!validateSelectedSlots(day.slots))
         throw new ValidationError("Khung gio da chon khong hop le");
-    const duplicateOverlap = input.slots.some((slot, index) => input.slots.some((other, otherIndex) => index !== otherIndex && checkBookingOverlap(slot, other)));
+    const duplicateOverlap = day.slots.some((slot, index) => day.slots.some((other, otherIndex) => index !== otherIndex && checkBookingOverlap(slot, other)));
     if (duplicateOverlap)
         throw new ValidationError("Cac khung gio da chon bi trung nhau");
-    const court = await bookingRepository.courtWithPricing(input.courtId);
-    if (!court)
-        throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
     const [blocks, legacyBookings, bookingSlots] = await Promise.all([
-        courtRepository.availabilityBlocks(input.courtId, input.bookingDate),
-        courtRepository.availability(input.courtId, input.bookingDate),
-        courtRepository.bookingSlots(input.courtId, input.bookingDate)
+        courtRepository.availabilityBlocks(courtId, day.bookingDate),
+        courtRepository.availability(courtId, day.bookingDate),
+        courtRepository.bookingSlots(courtId, day.bookingDate)
     ]);
     const activeBookings = legacyBookings.filter(b => {
         const isPending = b.bookingStatus === "PENDING" || b.bookingStatus === "PENDING_PAYMENT";
-        if (isPending) {
-            if (!b.payments || b.payments.length === 0)
-                return true;
-            const activePayment = b.payments.find((p) => p.status === "PENDING" || p.status === "UNPAID");
-            if (!activePayment)
-                return false;
-            const isExpired = activePayment.expiresAt.getTime() <= Date.now();
-            return !isExpired;
-        }
-        return true;
+        if (!isPending)
+            return true;
+        return isPendingBookingActive(b.payments, b.bookingOrder?.payment);
     });
     const activeBookingSlots = bookingSlots.filter(bs => {
         const isPending = bs.booking.bookingStatus === "PENDING" || bs.booking.bookingStatus === "PENDING_PAYMENT";
-        if (isPending) {
-            if (!bs.booking.payments || bs.booking.payments.length === 0)
-                return true;
-            const activePayment = bs.booking.payments.find((p) => p.status === "PENDING" || p.status === "UNPAID");
-            if (!activePayment)
-                return false;
-            const isExpired = activePayment.expiresAt.getTime() <= Date.now();
-            return !isExpired;
-        }
-        return true;
+        if (!isPending)
+            return true;
+        return isPendingBookingActive(bs.booking.payments, bs.booking.bookingOrder?.payment);
     });
-    for (const slot of input.slots) {
+    for (const slot of day.slots) {
         const blocked = blocks.some((block) => checkBookingOverlap(slot, { startTime: block.startTime.toISOString().slice(11, 16), endTime: block.endTime.toISOString().slice(11, 16) }));
         const booked = activeBookings.some((booking) => checkBookingOverlap(slot, { startTime: booking.startTime.toISOString().slice(11, 16), endTime: booking.endTime.toISOString().slice(11, 16) }));
         const bookedSlot = activeBookingSlots.some((bookingSlot) => checkBookingOverlap(slot, { startTime: bookingSlot.startTime.toISOString().slice(11, 16), endTime: bookingSlot.endTime.toISOString().slice(11, 16) }));
         if (blocked || booked || bookedSlot)
-            throw new ConflictError("Mot hoac nhieu khung gio da duoc dat hoac bi khoa", "BOOKING_CONFLICT");
+            throw new ConflictError(`Mot hoac nhieu khung gio ngay ${day.bookingDate} da duoc dat hoac bi khoa`, "BOOKING_CONFLICT");
     }
-    const pricedSlots = await Promise.all(input.slots.map(async (slot) => {
-        const dynamicPrice = await dynamicPricingService.calculate(input.courtId, {
-            date: input.bookingDate,
+    const pricedSlots = await Promise.all(day.slots.map(async (slot) => {
+        const dynamicPrice = await dynamicPricingService.calculate(courtId, {
+            date: day.bookingDate,
             startTime: slot.startTime,
             endTime: slot.endTime
         });
@@ -84,6 +102,16 @@ async function buildQuote(userId, input) {
         return { ...slot, price: dynamicPrice.finalPrice * hours };
     }));
     const courtSubtotal = pricedSlots.reduce((sum, slot) => sum + slot.price, 0);
+    return { bookingDate: day.bookingDate, slots: pricedSlots, courtSubtotal };
+}
+async function buildQuote(userId, input) {
+    if (!input.days.length)
+        throw new ValidationError("Vui long chon it nhat mot ngay");
+    const court = await bookingRepository.courtWithPricing(input.courtId);
+    if (!court)
+        throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
+    const dayQuotes = await Promise.all(input.days.map((day) => buildDayQuote(input.courtId, day)));
+    const courtSubtotal = dayQuotes.reduce((sum, day) => sum + day.courtSubtotal, 0);
     const serviceIds = (input.services ?? []).map((service) => service.serviceId);
     const services = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
     if (services.length !== serviceIds.length)
@@ -113,7 +141,33 @@ async function buildQuote(userId, input) {
         voucherId = voucherResult.voucherId;
     }
     const depositPercent = await bookingRepository.courtDepositPercent(input.courtId);
-    const quote = calculateBookingQuote(pricedSlots, voucherDiscountAmount, servicesSubtotal, depositPercent);
+    const allPricedSlots = dayQuotes.flatMap((day) => day.slots);
+    const quote = calculateBookingQuote(allPricedSlots, voucherDiscountAmount, servicesSubtotal, depositPercent);
+    // Phan bo voucher discount + dich vu (neu co) theo tung ngay de moi Booking van co
+    // totalPrice/voucherDiscountAmount rieng phuc vu settlement (vi doi tac).
+    // Dich vu (neu co) duoc gan het cho ngay dau tien; ngay cuoi nhan phan con lai
+    // cua discount de tranh lech lam tron.
+    let allocatedDiscount = 0;
+    const days = dayQuotes.map((day, index) => {
+        const isFirstDay = index === 0;
+        const isLastDay = index === dayQuotes.length - 1;
+        const dayGross = day.courtSubtotal + (isFirstDay ? servicesSubtotal : 0);
+        const dayDiscount = isLastDay
+            ? Math.max(0, voucherDiscountAmount - allocatedDiscount)
+            : subtotal > 0
+                ? Math.round((voucherDiscountAmount * dayGross) / subtotal)
+                : 0;
+        allocatedDiscount += dayDiscount;
+        return {
+            bookingDate: day.bookingDate,
+            slots: day.slots,
+            services: isFirstDay ? serviceLines : [],
+            courtSubtotal: day.courtSubtotal,
+            subtotal: dayGross,
+            voucherDiscountAmount: dayDiscount,
+            totalAmount: Math.max(0, dayGross - dayDiscount)
+        };
+    });
     return {
         court: {
             id: court.id,
@@ -121,8 +175,7 @@ async function buildQuote(userId, input) {
             address: [court.address, court.district, court.city].filter(Boolean).join(", "),
             imageUrl: court.images?.[0]?.imageUrl ?? null
         },
-        bookingDate: input.bookingDate,
-        slots: pricedSlots,
+        days,
         services: serviceLines,
         courtSubtotal,
         servicesSubtotal,
@@ -144,29 +197,32 @@ export const bookingService = {
             throw new ValidationError("Lua chon thanh toan khong hop le");
         }
         if (input.paymentType === "PAY_AT_COURT") {
-            const result = await bookingRepository.createPayAtCourtCheckout({
-                bookingCode: bookingCode(),
+            const result = await bookingRepository.createPayAtCourtOrderCheckout({
                 userId,
                 courtId: input.courtId,
-                bookingDate: input.bookingDate,
-                slots: quote.slots,
-                services: quote.services,
-                courtSubtotal: quote.courtSubtotal,
-                subtotal: quote.subtotal,
-                voucherDiscountAmount: quote.voucherDiscountAmount,
-                totalAmount: quote.totalAmount,
+                days: quote.days.map((day) => ({ ...day, bookingCode: bookingCode() })),
                 voucherId: quote.voucherId,
                 note: input.note
             });
             if (result.conflict)
-                throw new ConflictError("Mot hoac nhieu khung gio vua duoc dat boi nguoi khac", "BOOKING_CONFLICT");
-            realtimeService.toUser(userId, realtimeEvents.bookingCreated, result.booking);
-            realtimeService.toCourt(input.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: input.courtId, bookingDate: input.bookingDate });
+                throw new ConflictError(`Mot hoac nhieu khung gio ngay ${result.conflictDate} vua duoc dat boi nguoi khac`, "BOOKING_CONFLICT");
+            for (const booking of result.bookings) {
+                realtimeService.toUser(userId, realtimeEvents.bookingCreated, booking);
+                realtimeService.toCourt(input.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: input.courtId, bookingDate: booking.bookingDate });
+            }
+            const payAtCourtCustomer = await customerContact(userId);
+            await notificationService.notifyCourtStaff(input.courtId, {
+                ...buildBookingStaffNotification(quote.court.name, payAtCourtCustomer, quote.days, quote.totalAmount),
+                type: "BOOKING_CREATED",
+                metadata: { orderId: result.orderId, courtId: input.courtId }
+            });
             return {
-                bookingId: result.booking.id,
+                orderId: result.orderId,
+                bookingId: result.bookings[0].id,
+                bookings: result.bookings.map((b) => ({ bookingId: b.id, bookingDate: b.bookingDate, totalAmount: Number(b.totalPrice) })),
                 paymentId: null,
-                bookingStatus: result.booking.bookingStatus,
-                paymentStatus: result.booking.paymentStatus,
+                bookingStatus: result.bookings[0].bookingStatus,
+                paymentStatus: result.bookings[0].paymentStatus,
                 paymentType: input.paymentType,
                 totalAmount: quote.totalAmount,
                 paymentAmount: 0,
@@ -193,18 +249,13 @@ export const bookingService = {
             description: `Thanh toan dat san ${quote.court.name}`,
             expiresAt
         });
-        const result = await bookingRepository.createCheckout({
-            bookingCode: bookingCode(),
+        const result = await bookingRepository.createOrderCheckout({
             userId,
             courtId: input.courtId,
-            bookingDate: input.bookingDate,
-            slots: quote.slots,
-            services: quote.services,
-            courtSubtotal: quote.courtSubtotal,
+            days: quote.days.map((day) => ({ ...day, bookingCode: bookingCode() })),
             subtotal: quote.subtotal,
             voucherDiscountAmount: quote.voucherDiscountAmount,
             totalAmount: quote.totalAmount,
-            depositAmount: quote.minimumDepositAmount,
             paymentType: input.paymentType,
             paymentAmount,
             voucherId: quote.voucherId,
@@ -217,13 +268,23 @@ export const bookingService = {
             expiresAt
         });
         if (result.conflict)
-            throw new ConflictError("Mot hoac nhieu khung gio vua duoc dat boi nguoi khac", "BOOKING_CONFLICT");
-        realtimeService.toUser(userId, realtimeEvents.bookingPendingPayment, result.booking);
-        realtimeService.toCourt(input.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: input.courtId, bookingDate: input.bookingDate });
+            throw new ConflictError(`Mot hoac nhieu khung gio ngay ${result.conflictDate} vua duoc dat boi nguoi khac`, "BOOKING_CONFLICT");
+        for (const booking of result.bookings) {
+            realtimeService.toUser(userId, realtimeEvents.bookingPendingPayment, booking);
+            realtimeService.toCourt(input.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: input.courtId, bookingDate: booking.bookingDate });
+        }
+        const onlinePaymentCustomer = await customerContact(userId);
+        await notificationService.notifyCourtStaff(input.courtId, {
+            ...buildBookingStaffNotification(quote.court.name, onlinePaymentCustomer, quote.days, quote.totalAmount),
+            type: "BOOKING_CREATED",
+            metadata: { orderId: result.orderId, courtId: input.courtId }
+        });
         return {
-            bookingId: result.booking.id,
+            orderId: result.orderId,
+            bookingId: result.bookings[0].id,
+            bookings: result.bookings.map((b) => ({ bookingId: b.id, bookingDate: b.bookingDate, totalAmount: Number(b.totalPrice) })),
             paymentId: result.payment.id,
-            bookingStatus: result.booking.bookingStatus,
+            bookingStatus: result.bookings[0].bookingStatus,
             paymentStatus: result.payment.status,
             paymentType: input.paymentType,
             totalAmount: quote.totalAmount,
@@ -350,8 +411,18 @@ export const bookingService = {
         });
         await notificationService.create({
             userId,
-            title: "Dat san thanh cong",
+            title: "Đặt sân thành công",
             content: `Don ${booking.bookingCode} da duoc tao thanh cong.`,
+            type: "BOOKING_CREATED",
+            metadata: { bookingId: booking.id, courtId: input.courtId }
+        });
+        const legacyBookingCustomer = await customerContact(userId);
+        const legacyBookingContact = legacyBookingCustomer.phone
+            ? `${legacyBookingCustomer.fullName} (${legacyBookingCustomer.phone})`
+            : legacyBookingCustomer.fullName;
+        await notificationService.notifyCourtStaff(input.courtId, {
+            title: `Đơn đặt sân mới - ${court.name}`,
+            content: `${legacyBookingContact} dat ${input.startTime}-${input.endTime} ngay ${input.bookingDate}, tong ${formatVnd(totalPrice)}.`,
             type: "BOOKING_CREATED",
             metadata: { bookingId: booking.id, courtId: input.courtId }
         });
@@ -371,13 +442,13 @@ export const bookingService = {
             throw new NotFoundError("Khong tim thay don dat san");
         if (booking.userId !== userId)
             throw new ForbiddenError();
-        return booking;
+        return withOrderPaymentFallback(booking);
     },
     async listForUser(userId, query) {
         const page = parsePage(query.page);
         const limit = parseLimit(query.limit);
         const [items, total] = await bookingRepository.listByUser(userId, page, limit);
-        return { items, meta: paginationMeta(page, limit, total) };
+        return { items: items.map(withOrderPaymentFallback), meta: paginationMeta(page, limit, total) };
     },
     async cancel(userId, bookingId, cancelReason) {
         const booking = await bookingRepository.findById(bookingId);
@@ -401,15 +472,25 @@ export const bookingService = {
             : refundAmount === paidAmount
                 ? "REFUNDED"
                 : "PARTIALLY_REFUNDED";
-        const cancelled = await bookingRepository.cancel(bookingId, {
-            cancelReason,
-            refundAmount,
-            platformRetainedAmount,
-            paymentStatus
+        const { cancelled, settlement } = await prisma.$transaction(async (tx) => {
+            const cancelledBooking = await bookingRepository.cancel(bookingId, {
+                cancelReason,
+                refundAmount,
+                platformRetainedAmount,
+                paymentStatus
+            }, tx);
+            const cancelledSettlement = await settlementService.cancelForBooking(bookingId, tx);
+            return { cancelled: cancelledBooking, settlement: cancelledSettlement };
         });
+        if (settlement) {
+            realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
+            realtimeService.toAdmin(realtimeEvents.settlementUpdated, settlement);
+            realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+            realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+        }
         await notificationService.create({
             userId,
-            title: "Don dat san da huy",
+            title: "Đơn đặt sân đã huỷ",
             content: `Don ${cancelled.bookingCode} da duoc huy.`,
             type: "BOOKING_CANCELLED",
             metadata: { bookingId: cancelled.id, courtId: cancelled.courtId }

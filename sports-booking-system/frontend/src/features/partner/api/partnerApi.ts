@@ -3,6 +3,8 @@ import type {
   ApiResponse,
   Booking,
   Court,
+  DynamicPricingRule,
+  DynamicPricingRuleInput,
   Paginated,
   PartnerBlog,
   PartnerDashboard,
@@ -10,11 +12,90 @@ import type {
   PartnerRevenueReport,
   PartnerTournament,
   PartnerVoucher,
-  PartnerWalletInfo,
-  SettlementInfo,
+  PartnerWallet,
+  Settlement,
   SettlementSummary,
-  WithdrawalInfo
+  WithdrawalRequest
 } from "../../../types/api";
+
+export type PartnerCourtSurface = {
+  id: string;
+  courtId: string;
+  code: string;
+  name: string;
+  capacity?: string | null;
+  surface?: string | null;
+  size?: string | null;
+  imageUrl?: string | null;
+  status: "ACTIVE" | "INACTIVE";
+  sortOrder: number;
+  openingTime?: string | null;
+  closingTime?: string | null;
+};
+
+export type PartnerCourtBlock = {
+  id: string;
+  courtId: string;
+  courtSurfaceId: string | null;
+  courtSurface: { id: string; name: string; code: string } | null;
+  blockDate: string;
+  startTime: string;
+  endTime: string;
+  reason?: string | null;
+  status: "ACTIVE" | "INACTIVE";
+};
+
+export type PartnerSurfaceSlot = {
+  startTime: string;
+  endTime: string;
+  status: "AVAILABLE" | "PENDING_PAYMENT" | "BOOKED" | "BLOCKED";
+  price: number;
+  bookingId: string | null;
+  blockId: string | null;
+};
+
+export type PartnerSurfaceGrid = {
+  surfaceId: string;
+  surfaceName: string;
+  code: string;
+  status: "ACTIVE" | "INACTIVE";
+  operatingHours: { open: string; close: string };
+  slots: PartnerSurfaceSlot[];
+};
+
+export type PartnerCourtBlockBulkPayload = {
+  courtSurfaceId?: string | null;
+  startDate: string;
+  endDate: string;
+  weekdays?: number[];
+  startTime: string;
+  endTime: string;
+  reason?: string;
+};
+
+export type PartnerCalendarBooking = {
+  id: string;
+  bookingDate: string;
+  startTime: string;
+  endTime: string;
+  bookingStatus: string;
+  paymentStatus: string;
+  totalPrice: string;
+  courtSurfaceId: string | null;
+  courtSurface: { id: string; name: string; code: string } | null;
+  court: { id: string; name: string };
+  user: { fullName: string; phone?: string | null } | null;
+};
+
+export type PartnerCalendar = {
+  court: { openingTime: string; closingTime: string };
+  items: PartnerCalendarBooking[];
+};
+
+export type PartnerBookingGroup = {
+  orderId: string | null;
+  bookings: Booking[];
+};
 
 export type PartnerVoucherPayload = {
   courtId?: string | null;
@@ -53,6 +134,10 @@ export const partnerApi = {
   },
   async updateCourt(id: string, payload: Record<string, unknown>) {
     const { data } = await api.put<ApiResponse<Court>>(`/partner/courts/${id}`, payload);
+    return data.data;
+  },
+  async updateCourtStatus(id: string, activeStatus: "ACTIVE" | "INACTIVE") {
+    const { data } = await api.put<ApiResponse<Court>>(`/partner/courts/${id}/status`, { activeStatus });
     return data.data;
   },
   async courtDetail(id: string) {
@@ -105,7 +190,7 @@ export const partnerApi = {
     const cleanParams = Object.fromEntries(
       Object.entries(params).filter(([, value]) => value !== "" && value !== undefined)
     );
-    const { data } = await api.get<ApiResponse<Paginated<Booking>>>("/partner/bookings", {
+    const { data } = await api.get<ApiResponse<Paginated<PartnerBookingGroup>>>("/partner/bookings", {
       params: cleanParams
     });
     return data.data;
@@ -120,8 +205,40 @@ export const partnerApi = {
     });
     return data.data;
   },
-  async calendar(params: { fromDate: string; toDate: string; courtId?: string }) {
-    const { data } = await api.get<ApiResponse<Booking[]>>("/partner/calendar", { params });
+  async calendar(params: { fromDate: string; toDate: string; courtId: string }) {
+    const { data } = await api.get<ApiResponse<PartnerCalendar>>("/partner/calendar", { params });
+    return data.data;
+  },
+  async courtSurfaces(courtId: string) {
+    const { data } = await api.get<ApiResponse<PartnerCourtSurface[]>>(`/partner/courts/${courtId}/surfaces`);
+    return data.data;
+  },
+  async updateCourtSurfaceStatus(courtId: string, surfaceId: string, status: "ACTIVE" | "INACTIVE") {
+    const { data } = await api.put<ApiResponse<PartnerCourtSurface>>(`/partner/courts/${courtId}/surfaces/${surfaceId}/status`, { status });
+    return data.data;
+  },
+  async updateCourtSurface(courtId: string, surfaceId: string, payload: { openingTime?: string | null; closingTime?: string | null }) {
+    const { data } = await api.put<ApiResponse<PartnerCourtSurface>>(`/partner/courts/${courtId}/surfaces/${surfaceId}`, payload);
+    return data.data;
+  },
+  async courtBlocks(courtId: string) {
+    const { data } = await api.get<ApiResponse<PartnerCourtBlock[]>>(`/partner/courts/${courtId}/blocks`);
+    return data.data;
+  },
+  async createCourtBlock(courtId: string, payload: { courtSurfaceId?: string | null; blockDate: string; startTime: string; endTime: string; reason?: string }) {
+    const { data } = await api.post<ApiResponse<PartnerCourtBlock>>(`/partner/courts/${courtId}/blocks`, payload);
+    return data.data;
+  },
+  async cancelCourtBlock(courtId: string, blockId: string) {
+    const { data } = await api.delete<ApiResponse<PartnerCourtBlock>>(`/partner/courts/${courtId}/blocks/${blockId}`);
+    return data.data;
+  },
+  async courtAvailabilityGrid(courtId: string, date: string) {
+    const { data } = await api.get<ApiResponse<PartnerSurfaceGrid[]>>(`/partner/courts/${courtId}/availability-grid`, { params: { date } });
+    return data.data;
+  },
+  async createCourtBlockBulk(courtId: string, payload: PartnerCourtBlockBulkPayload) {
+    const { data } = await api.post<ApiResponse<{ created: number }>>(`/partner/courts/${courtId}/blocks/bulk`, payload);
     return data.data;
   },
   async vouchers() {
@@ -150,6 +267,34 @@ export const partnerApi = {
   },
   async deleteVoucher(id: string) {
     const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/vouchers/${id}`);
+    return data.data;
+  },
+  async pricingRules() {
+    const { data } = await api.get<ApiResponse<DynamicPricingRule[]>>("/partner/dynamic-pricing/rules");
+    return data.data;
+  },
+  async pricingRuleDetail(id: string) {
+    const { data } = await api.get<ApiResponse<DynamicPricingRule>>(`/partner/dynamic-pricing/rules/${id}`);
+    return data.data;
+  },
+  async createPricingRule(payload: DynamicPricingRuleInput) {
+    const { data } = await api.post<ApiResponse<DynamicPricingRule>>("/partner/dynamic-pricing/rules", payload);
+    return data.data;
+  },
+  async updatePricingRule(id: string, payload: DynamicPricingRuleInput) {
+    const { data } = await api.put<ApiResponse<DynamicPricingRule>>(`/partner/dynamic-pricing/rules/${id}`, payload);
+    return data.data;
+  },
+  async activatePricingRule(id: string) {
+    const { data } = await api.put<ApiResponse<DynamicPricingRule>>(`/partner/dynamic-pricing/rules/${id}/activate`);
+    return data.data;
+  },
+  async deactivatePricingRule(id: string) {
+    const { data } = await api.put<ApiResponse<DynamicPricingRule>>(`/partner/dynamic-pricing/rules/${id}/deactivate`);
+    return data.data;
+  },
+  async deletePricingRule(id: string) {
+    const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/dynamic-pricing/rules/${id}`);
     return data.data;
   },
   async blogs() {
@@ -196,10 +341,6 @@ export const partnerApi = {
     const { data } = await api.put<ApiResponse<PartnerTournament>>(`/partner/tournaments/${id}`, payload);
     return data.data;
   },
-  async submitTournament(id: string) {
-    const { data } = await api.put<ApiResponse<PartnerTournament>>(`/partner/tournaments/${id}/submit`);
-    return data.data;
-  },
   async deleteTournament(id: string) {
     const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/tournaments/${id}`);
     return data.data;
@@ -220,26 +361,39 @@ export const partnerApi = {
     const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/recipients/${id}`);
     return data.data;
   },
-
-  // Wallet & Settlement
-  async wallet() {
-    const { data } = await api.get<ApiResponse<PartnerWalletInfo>>("/partner/wallet/me");
+  async myWallet() {
+    const { data } = await api.get<ApiResponse<PartnerWallet>>("/partner/wallet/me");
     return data.data;
   },
-  async settlements(params: { page?: number; limit?: number } = {}) {
-    const { data } = await api.get<ApiResponse<Paginated<SettlementInfo>>>("/partner/settlements", { params });
+  async mySettlements(params: Record<string, string | number | undefined> = {}) {
+    const cleaned = Object.fromEntries(
+      Object.entries(params).filter(([, value]) => value !== undefined && value !== "")
+    );
+    const { data } = await api.get<ApiResponse<Paginated<Settlement>>>("/partner/settlements", { params: cleaned });
     return data.data;
   },
   async settlementSummary() {
     const { data } = await api.get<ApiResponse<SettlementSummary>>("/partner/settlements/summary");
     return data.data;
   },
-  async withdrawals(params: { page?: number; limit?: number } = {}) {
-    const { data } = await api.get<ApiResponse<Paginated<WithdrawalInfo>>>(`/partner/withdrawals`, { params });
+  async settlementDetail(id: string) {
+    const { data } = await api.get<ApiResponse<Settlement>>(`/partner/settlements/${id}`);
     return data.data;
   },
-  async createWithdrawal(payload: { amount: number; bankName: string; bankAccountNumber: string; bankAccountName: string }) {
-    const { data } = await api.post<ApiResponse<WithdrawalInfo>>("/partner/withdrawals", payload);
+  async myWithdrawals(params: Record<string, string | number | undefined> = {}) {
+    const cleaned = Object.fromEntries(
+      Object.entries(params).filter(([, value]) => value !== undefined && value !== "")
+    );
+    const { data } = await api.get<ApiResponse<Paginated<WithdrawalRequest>>>("/partner/withdrawals", { params: cleaned });
+    return data.data;
+  },
+  async createWithdrawal(payload: {
+    amount: number;
+    bankName?: string;
+    bankAccountNumber?: string;
+    bankAccountName?: string;
+  }) {
+    const { data } = await api.post<ApiResponse<WithdrawalRequest>>("/partner/withdrawals", payload);
     return data.data;
   }
 };

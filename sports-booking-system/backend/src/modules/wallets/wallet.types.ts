@@ -1,4 +1,9 @@
-export type PartnerWalletInfo = {
+import type { Prisma } from "@prisma/client";
+import { prisma } from "../../config/db.js";
+
+export type DbClient = Prisma.TransactionClient | typeof prisma;
+
+export type WalletDto = {
   id: string;
   partnerId: string;
   availableBalance: number;
@@ -6,13 +11,5 @@ export type PartnerWalletInfo = {
   totalEarned: number;
   totalWithdrawn: number;
   currency: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type WalletSummary = {
-  availableBalance: number;
-  pendingBalance: number;
-  totalEarned: number;
-  totalWithdrawn: number;
+  updatedAt: Date;
 };

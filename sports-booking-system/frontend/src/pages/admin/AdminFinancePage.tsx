@@ -1,12 +1,14 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, ReceiptText, RefreshCcw, WalletCards } from "lucide-react";
+import { Banknote, Coins, Download, HandCoins, ReceiptText, RefreshCcw, WalletCards } from "lucide-react";
 import { toast } from "sonner";
-import { ErrorState, LoadingState } from "../../components/common/States";
+import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
+import { PageHero } from "../../components/common/PageHero";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { SortableTh } from "../../components/common/SortableTh";
+import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { useUrlSort } from "../../hooks/useUrlSort";
 import { adminApi } from "../../features/admin/api/adminApi";
 import type { AdminFinancePartner } from "../../types/api";
@@ -28,6 +30,14 @@ const eventLabels: Record<string, string> = {
   COMPLETED: "Hoàn thành",
   NO_SHOW: "Không đến",
   REFUND: "Hoàn tiền"
+};
+const paymentStatusLabels: Record<string, string> = {
+  REFUNDED: "Đã hoàn tiền",
+  PARTIALLY_REFUNDED: "Hoàn tiền một phần"
+};
+const paymentStatusTones: Record<string, string> = {
+  REFUNDED: "bg-emerald-100 text-emerald-800",
+  PARTIALLY_REFUNDED: "bg-amber-100 text-amber-800"
 };
 
 type RecSortField = "businessName" | "transactionCount" | "grossAmount" | "commissionAmount" | "netAmount" | "refundAmount" | "payoutStatus" | "paidAt";
@@ -117,26 +127,27 @@ export function AdminFinancePage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold">Tài chính</h1>
-          <p className="text-sm text-slate-600">Theo dõi giao dịch, hoàn tiền, đối soát doanh thu partner và trạng thái payout.</p>
-        </div>
-        <div className="flex flex-wrap items-end gap-2">
-          <Input label="Tháng" type="month" value={month} onChange={(event) => { setTxPage(1); setRefundPage(1); setMonth(event.target.value); }} />
-          <Button variant="secondary" disabled={exportReport.isPending} onClick={() => exportReport.mutate()}>
-            <Download className="h-4 w-4" />
-            Export CSV
-          </Button>
-        </div>
-      </div>
+      <PageHero
+        eyebrow="Tài chính"
+        title="Tài chính"
+        subtitle="Theo dõi giao dịch, hoàn tiền, đối soát doanh thu partner và trạng thái payout."
+        actions={
+          <div className="flex flex-wrap items-end gap-2 rounded-xl bg-white/95 p-2">
+            <Input label="Tháng" type="month" value={month} onChange={(event) => { setTxPage(1); setRefundPage(1); setMonth(event.target.value); }} />
+            <Button variant="secondary" disabled={exportReport.isPending} onClick={() => exportReport.mutate()}>
+              <Download className="h-4 w-4" />
+              Export CSV
+            </Button>
+          </div>
+        }
+      />
 
       {reconciliation.data && (
         <div className="grid gap-3 md:grid-cols-4">
-          <Summary label="Doanh thu ghi nhận" value={money(reconciliation.data.summary.grossAmount)} />
-          <Summary label="Hoa hồng platform" value={money(reconciliation.data.summary.commissionAmount)} />
-          <Summary label="Partner thực nhận" value={money(reconciliation.data.summary.netAmount)} />
-          <Summary label="Đã hoàn tiền" value={money(reconciliation.data.summary.refundAmount)} />
+          <Summary icon={ReceiptText} tone="slate" label="Doanh thu ghi nhận" value={money(reconciliation.data.summary.grossAmount)} />
+          <Summary icon={Coins} tone="rose" label="Hoa hồng platform" value={money(reconciliation.data.summary.commissionAmount)} />
+          <Summary icon={HandCoins} tone="emerald" label="Partner thực nhận" value={money(reconciliation.data.summary.netAmount)} />
+          <Summary icon={Banknote} tone="amber" label="Đã hoàn tiền" value={money(reconciliation.data.summary.refundAmount)} />
         </div>
       )}
 
@@ -155,17 +166,17 @@ export function AdminFinancePage() {
         </TabButton>
       </div>
 
-      <div className="grid gap-3 rounded-lg border bg-white p-4 md:grid-cols-2">
+      <div className="grid gap-3 rounded-2xl border border-line bg-white p-4 md:grid-cols-2">
         <Input label="Tìm kiếm" value={search} onChange={(event) => { setTxPage(1); setRefundPage(1); setSearch(event.target.value); }} placeholder="Mã booking, sân, partner, khách hàng" />
         <Input label="ID partner" value={partnerId} onChange={(event) => { setTxPage(1); setRefundPage(1); setPartnerId(event.target.value); }} placeholder="pp0001" />
       </div>
 
       {tab === "reconciliation" && reconciliation.data && (
-        <div className="overflow-auto rounded-lg border bg-white">
-          <table className="w-full min-w-[1120px] text-sm">
-            <thead>
-              <tr className="bg-slate-50 text-left">
-                <SortableTh className="p-3" label="Partner" field="businessName" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
+        <>
+          <Table minWidth="1120px">
+            <THead>
+              <tr>
+                <SortableTh label="Partner" field="businessName" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
                 <SortableTh className="text-right" label="Giao dịch" field="transactionCount" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
                 <SortableTh className="text-right" label="Doanh thu" field="grossAmount" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
                 <SortableTh className="text-right" label="Hoa hồng" field="commissionAmount" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
@@ -174,96 +185,102 @@ export function AdminFinancePage() {
                 <SortableTh label="Trạng thái payout" field="payoutStatus" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
                 <SortableTh label="Đã chi trả" field="paidAt" sortField={recSort.sortField} sortOrder={recSort.sortOrder} onSort={recSort.handleSort} />
               </tr>
-            </thead>
-            <tbody>
+            </THead>
+            <TBody>
               {sortedPartners.map((partner) => (
-                <tr key={partner.partnerId} className="border-t">
-                  <td className="p-3 font-medium">{partner.businessName}<br /><span className="text-xs text-slate-500">{partner.partnerId}</span></td>
-                  <td className="text-right">{partner.transactionCount}</td>
-                  <td className="text-right">{money(partner.grossAmount)}</td>
-                  <td className="text-right text-red-600">{money(partner.commissionAmount)}</td>
-                  <td className="text-right font-semibold text-emerald-700">{money(partner.netAmount)}</td>
-                  <td className="text-right">{money(partner.refundAmount)}<br /><span className="text-xs text-slate-500">{partner.refundCount} lượt</span></td>
-                  <td className="py-2">
+                <Tr key={partner.partnerId}>
+                  <Td className="font-medium">{partner.businessName}<br /><span className="text-xs text-slate-500">{partner.partnerId}</span></Td>
+                  <Td className="text-right">{partner.transactionCount}</Td>
+                  <Td className="text-right">{money(partner.grossAmount)}</Td>
+                  <Td className="text-right text-red-600">{money(partner.commissionAmount)}</Td>
+                  <Td className="text-right font-semibold text-emerald-700">{money(partner.netAmount)}</Td>
+                  <Td className="text-right">{money(partner.refundAmount)}<br /><span className="text-xs text-slate-500">{partner.refundCount} lượt</span></Td>
+                  <Td>
                     <Select
                       value={partner.payoutStatus}
                       onChange={(event) => payout.mutate({ partner, status: event.target.value })}
                       options={payoutStatuses.map((status) => ({ value: status, label: payoutLabels[status] }))}
                     />
-                  </td>
-                  <td>{partner.paidAt ? new Date(partner.paidAt).toLocaleString("vi-VN") : "-"}</td>
-                </tr>
+                  </Td>
+                  <Td>{partner.paidAt ? new Date(partner.paidAt).toLocaleString("vi-VN") : "-"}</Td>
+                </Tr>
               ))}
-            </tbody>
-          </table>
-          {!reconciliation.data.partners.length && <p className="p-6 text-center text-slate-500">Chưa có dữ liệu đối soát tháng này</p>}
-        </div>
+            </TBody>
+          </Table>
+          {!reconciliation.data.partners.length && <EmptyState title="Chưa có dữ liệu đối soát tháng này." />}
+        </>
       )}
 
       {tab === "transactions" && (
         <QueryTable loading={transactions.isLoading} error={transactions.error?.message}>
-          <table className="w-full min-w-[1160px] text-sm">
-            <thead>
-              <tr className="bg-slate-50 text-left">
-                <SortableTh className="p-3" label="Booking" field="bookingCode" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
-                <th>Partner / sân</th>
+          <Table minWidth="1160px">
+            <THead>
+              <tr>
+                <SortableTh label="Booking" field="bookingCode" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
+                <Th>Partner / sân</Th>
                 <SortableTh label="Loại" field="transactionType" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
                 <SortableTh className="text-right" label="Doanh thu" field="grossAmount" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
                 <SortableTh className="text-right" label="Hoa hồng" field="commissionAmount" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
                 <SortableTh className="text-right" label="Thực nhận" field="netAmount" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
                 <SortableTh label="Payout" field="payoutStatus" sortField={txSort.sortField} sortOrder={txSort.sortOrder} onSort={handleTxSort} />
-                <th>Ngày ghi nhận</th>
+                <Th>Ngày ghi nhận</Th>
               </tr>
-            </thead>
-            <tbody>
+            </THead>
+            <TBody>
               {transactions.data?.items.map((item) => (
-                <tr key={item.id} className="border-t">
-                  <td className="p-3 font-medium">{item.bookingCode}<br /><span className="text-xs text-slate-500">{new Date(item.bookingDate).toLocaleDateString("vi-VN")}</span></td>
-                  <td>{item.businessName}<br /><span className="text-xs text-slate-500">{item.courtName}</span></td>
-                  <td>{transactionLabels[item.transactionType] ?? item.transactionType}<br /><span className="text-xs text-slate-500">{eventLabels[item.eventType] ?? item.eventType}</span></td>
-                  <td className="text-right">{money(item.grossAmount)}</td>
-                  <td className="text-right text-red-600">{money(item.commissionAmount)}<br /><span className="text-xs text-slate-500">{item.commissionRate}%</span></td>
-                  <td className="text-right font-semibold text-emerald-700">{money(item.netAmount)}</td>
-                  <td><Status value={item.payoutStatus} /></td>
-                  <td>{new Date(item.createdAt).toLocaleString("vi-VN")}</td>
-                </tr>
+                <Tr key={item.id}>
+                  <Td className="font-medium">{item.bookingCode}<br /><span className="text-xs text-slate-500">{new Date(item.bookingDate).toLocaleDateString("vi-VN")}</span></Td>
+                  <Td>{item.businessName}<br /><span className="text-xs text-slate-500">{item.courtName}</span></Td>
+                  <Td>{transactionLabels[item.transactionType] ?? item.transactionType}<br /><span className="text-xs text-slate-500">{eventLabels[item.eventType] ?? item.eventType}</span></Td>
+                  <Td className="text-right">{money(item.grossAmount)}</Td>
+                  <Td className="text-right text-red-600">{money(item.commissionAmount)}<br /><span className="text-xs text-slate-500">{item.commissionRate}%</span></Td>
+                  <Td className="text-right font-semibold text-emerald-700">{money(item.netAmount)}</Td>
+                  <Td><Status value={item.payoutStatus} /></Td>
+                  <Td>{new Date(item.createdAt).toLocaleString("vi-VN")}</Td>
+                </Tr>
               ))}
-            </tbody>
-          </table>
+            </TBody>
+          </Table>
+          {transactions.data && !transactions.data.items.length && <EmptyState title="Chưa có giao dịch phù hợp." />}
         </QueryTable>
       )}
       {tab === "transactions" && <Pager page={txPage} total={transactions.data?.meta.totalPages ?? 1} setPage={setTxPage} />}
 
       {tab === "refunds" && (
         <QueryTable loading={refunds.isLoading} error={refunds.error?.message}>
-          <table className="w-full min-w-[1120px] text-sm">
-            <thead>
-              <tr className="bg-slate-50 text-left">
-                <SortableTh className="p-3" label="Booking" field="bookingCode" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
+          <Table minWidth="1120px">
+            <THead>
+              <tr>
+                <SortableTh label="Booking" field="bookingCode" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
                 <SortableTh label="Khách hàng" field="customerName" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
-                <th>Partner / sân</th>
+                <Th>Partner / sân</Th>
                 <SortableTh className="text-right" label="Tổng tiền" field="totalPrice" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
                 <SortableTh className="text-right" label="Hoàn tiền" field="refundAmount" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
                 <SortableTh className="text-right" label="Nền tảng giữ lại" field="platformRetainedAmount" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
                 <SortableTh label="Trạng thái" field="paymentStatus" sortField={refundSort.sortField} sortOrder={refundSort.sortOrder} onSort={handleRefundSort} />
-                <th>Thời gian</th>
+                <Th>Thời gian</Th>
               </tr>
-            </thead>
-            <tbody>
+            </THead>
+            <TBody>
               {refunds.data?.items.map((item) => (
-                <tr key={item.id} className="border-t">
-                  <td className="p-3 font-medium">{item.bookingCode}<br /><span className="text-xs text-slate-500">{new Date(item.bookingDate).toLocaleDateString("vi-VN")}</span></td>
-                  <td>{item.user.fullName}<br /><span className="text-xs text-slate-500">{item.user.email}</span></td>
-                  <td>{item.court.partner.businessName}<br /><span className="text-xs text-slate-500">{item.court.name}</span></td>
-                  <td className="text-right">{money(item.totalPrice)}</td>
-                  <td className="text-right text-red-600">{money(item.refundAmount)}</td>
-                  <td className="text-right">{money(item.platformRetainedAmount)}</td>
-                  <td>{item.paymentStatus}</td>
-                  <td>{new Date(item.refundedAt).toLocaleString("vi-VN")}</td>
-                </tr>
+                <Tr key={item.id}>
+                  <Td className="font-medium">{item.bookingCode}<br /><span className="text-xs text-slate-500">{new Date(item.bookingDate).toLocaleDateString("vi-VN")}</span></Td>
+                  <Td>{item.user.fullName}<br /><span className="text-xs text-slate-500">{item.user.email}</span></Td>
+                  <Td>{item.court.partner.businessName}<br /><span className="text-xs text-slate-500">{item.court.name}</span></Td>
+                  <Td className="text-right">{money(item.totalPrice)}</Td>
+                  <Td className="text-right text-red-600">{money(item.refundAmount)}</Td>
+                  <Td className="text-right">{money(item.platformRetainedAmount)}</Td>
+                  <Td>
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${paymentStatusTones[item.paymentStatus] ?? "bg-slate-100 text-slate-700"}`}>
+                      {paymentStatusLabels[item.paymentStatus] ?? item.paymentStatus}
+                    </span>
+                  </Td>
+                  <Td>{new Date(item.refundedAt).toLocaleString("vi-VN")}</Td>
+                </Tr>
               ))}
-            </tbody>
-          </table>
+            </TBody>
+          </Table>
+          {refunds.data && !refunds.data.items.length && <EmptyState title="Chưa có hoàn tiền nào." />}
         </QueryTable>
       )}
       {tab === "refunds" && <Pager page={refundPage} total={refunds.data?.meta.totalPages ?? 1} setPage={setRefundPage} />}
@@ -281,11 +298,23 @@ function Pager({ page, total, setPage }: { page: number; total: number; setPage:
   );
 }
 
-function Summary({ label, value }: { label: string; value: string }) {
+const summaryTones: Record<string, string> = {
+  slate: "bg-slate-100 text-slate-700",
+  rose: "bg-rose-100 text-rose-700",
+  emerald: "bg-emerald-100 text-emerald-700",
+  amber: "bg-amber-100 text-amber-700"
+};
+
+function Summary({ icon: Icon, tone, label, value }: { icon: ComponentType<{ className?: string }>; tone: string; label: string; value: string }) {
   return (
-    <div className="rounded-lg bg-slate-900 p-4 text-white">
-      <p className="text-sm text-slate-300">{label}</p>
-      <p className="mt-2 text-2xl font-bold">{value}</p>
+    <div className="flex items-center gap-3 rounded-2xl border border-line bg-white p-4">
+      <span className={`shrink-0 rounded-xl p-3 ${summaryTones[tone] ?? summaryTones.slate}`}>
+        <Icon className="h-5 w-5" />
+      </span>
+      <div className="min-w-0">
+        <p className="truncate text-sm text-slate-500">{label}</p>
+        <p className="text-xl font-bold text-ink">{value}</p>
+      </div>
     </div>
   );
 }
@@ -293,7 +322,7 @@ function Summary({ label, value }: { label: string; value: string }) {
 function TabButton({ active, children, onClick }: { active: boolean; children: ReactNode; onClick: () => void }) {
   return (
     <button
-      className={`inline-flex h-10 items-center gap-2 rounded-md border px-4 text-sm font-semibold ${active ? "border-action bg-action text-white" : "border-line bg-white text-ink"}`}
+      className={`inline-flex h-10 items-center gap-2 rounded-full border px-4 text-sm font-semibold transition ${active ? "border-action bg-action text-white shadow-md" : "border-line bg-white text-ink hover:bg-field"}`}
       onClick={onClick}
     >
       {children}
@@ -304,11 +333,19 @@ function TabButton({ active, children, onClick }: { active: boolean; children: R
 function QueryTable({ loading, error, children }: { loading: boolean; error?: string; children: ReactNode }) {
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
-  return <div className="overflow-auto rounded-lg border bg-white">{children}</div>;
+  return <>{children}</>;
 }
 
+const payoutTones: Record<string, string> = {
+  PENDING: "bg-amber-100 text-amber-800",
+  PROCESSING: "bg-blue-100 text-blue-800",
+  PAID: "bg-emerald-100 text-emerald-800",
+  FAILED: "bg-red-100 text-red-800",
+  CANCELLED: "bg-slate-100 text-slate-700"
+};
+
 function Status({ value }: { value: string }) {
-  return <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{payoutLabels[value] ?? value}</span>;
+  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${payoutTones[value] ?? payoutTones.CANCELLED}`}>{payoutLabels[value] ?? value}</span>;
 }
 
 function money(value: number | string | null | undefined) {

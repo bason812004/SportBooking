@@ -9,9 +9,11 @@ export type DayColumnProps = {
   selectedKeys: Set<string>;
   onToggle?: (slot: WeeklyScheduleDay["slots"][number]) => void;
   language: Language;
+  manageable?: boolean;
+  onManage?: (slot: WeeklyScheduleDay["slots"][number]) => void;
 };
 
-export function DayColumn({ day, hours, selectedKeys, onToggle, language }: DayColumnProps) {
+export function DayColumn({ day, hours, selectedKeys, onToggle, language, manageable, onManage }: DayColumnProps) {
   const slotByHour = new Map<string, WeeklyScheduleDay["slots"][number]>();
   if (day) {
     for (const slot of day.slots) slotByHour.set(slot.startTime, slot);
@@ -27,6 +29,8 @@ export function DayColumn({ day, hours, selectedKeys, onToggle, language }: DayC
             selected={slot ? selectedKeys.has(slotKey(slot)) : false}
             onToggle={onToggle}
             language={language}
+            manageable={manageable}
+            onManage={onManage}
           />
         );
       })}

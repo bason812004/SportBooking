@@ -4,8 +4,12 @@ import { ForbiddenError, NotFoundError, ValidationError, ConflictError } from ".
 import { cloudinaryService } from "../../shared/services/cloudinary.service.js";
 import { paginationMeta } from "../../shared/utils/response.js";
 import { bookingStartsAt, parseLimit, parsePage, timeToDate, timeToMinutes, toDbDate } from "../../shared/utils/time.js";
+import { buildSlotGrid } from "../../shared/utils/slotGrid.js";
 import { uniqueSlug } from "../../shared/utils/slug.js";
 import { commissionService } from "../commission/commission.service.js";
+import { realtimeEvents } from "../realtime/realtime.events.js";
+import { realtimeService } from "../realtime/realtime.service.js";
+import { settlementService } from "../settlements/settlement.service.js";
 import { voucherService } from "../vouchers/voucher.service.js";
 import { userRepository } from "../users/user.repository.js";
 import { partnerRepository } from "./partner.repository.js";
@@ -16,6 +20,12 @@ async function getProfile(userId: string) {
   if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
   return profile;
 }
+
+function dbTime(value: Date) {
+  return value.toISOString().slice(11, 16);
+}
+
+const MAX_BULK_BLOCK_DAYS = 92;
 
 export const partnerService = {
   async dashboard(userId: string) {
@@ -71,7 +81,8 @@ export const partnerService = {
 
   async courts(userId: string) {
     const profile = await getProfile(userId);
-    return partnerRepository.listCourts(profile.id);
+    const courts = await partnerRepository.listCourts(profile.id);
+    return courts.map(({ _count, ...court }) => ({ ...court, surfaceCount: _count.surfaces }));
   },
 
   async courtDetail(userId: string, courtId: string) {
@@ -122,6 +133,13 @@ export const partnerService = {
     const existing = await partnerRepository.courtByPartner(courtId, profile.id);
     if (!existing) throw new NotFoundError("Khong tim thay san cua ban");
     return partnerRepository.updateCourt(courtId, { activeStatus: "INACTIVE" });
+  },
+
+  async updateCourtStatus(userId: string, courtId: string, activeStatus: "ACTIVE" | "INACTIVE") {
+    const profile = await getProfile(userId);
+    const existing = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!existing) throw new NotFoundError("Khong tim thay san cua ban");
+    return partnerRepository.updateCourt(courtId, { activeStatus });
   },
 
   async addImage(userId: string, courtId: string, input: { imageUrl?: string; sortOrder?: number }, file?: Express.Multer.File) {
@@ -223,7 +241,17 @@ export const partnerService = {
 
   async bookings(
     userId: string,
-    query: { page?: string; limit?: string; courtId?: string; status?: BookingStatus; fromDate?: string; toDate?: string }
+    query: {
+      page?: string;
+      limit?: string;
+      courtId?: string;
+      status?: BookingStatus;
+      search?: string;
+      fromDate?: string;
+      toDate?: string;
+      sortBy?: string;
+      sortOrder?: string;
+    }
   ) {
     const profile = await getProfile(userId);
     const page = parsePage(query.page);
@@ -231,12 +259,57 @@ export const partnerService = {
     if (query.fromDate && query.toDate && query.fromDate > query.toDate) {
       throw new ValidationError("Khoang ngay khong hop le");
     }
-    const [items, total] = await partnerRepository.bookings(profile.id, page, limit, {
+
+    const where = partnerRepository.bookingWhere(profile.id, {
       courtId: query.courtId,
       status: query.status,
+      search: query.search,
       fromDate: query.fromDate ? toDbDate(query.fromDate) : undefined,
       toDate: query.toDate ? toDbDate(query.toDate) : undefined
     });
+
+    // Bookings created together as one order (multi-slot/multi-surface walk-in,
+    // or a customer's multi-day booking) share a bookingOrderId and should
+    // page/display as a single group, not as N separate rows. A group can't be
+    // split across pages, so paginate over deduped group keys first.
+    const matchingRows = await partnerRepository.bookingMatchingRows(where, query.sortBy, query.sortOrder);
+
+    const groupKeys: string[] = [];
+    const isOrderKey = new Map<string, boolean>();
+    const seen = new Set<string>();
+    for (const row of matchingRows) {
+      const key = row.bookingOrderId ?? row.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      groupKeys.push(key);
+      isOrderKey.set(key, Boolean(row.bookingOrderId));
+    }
+
+    const total = groupKeys.length;
+    const pageKeys = groupKeys.slice((page - 1) * limit, (page - 1) * limit + limit);
+    const orderIds = pageKeys.filter((key) => isOrderKey.get(key));
+    const standaloneIds = pageKeys.filter((key) => !isOrderKey.get(key));
+
+    const [orderBookings, standaloneBookings] = await Promise.all([
+      partnerRepository.bookingsByOrderIds(profile.id, orderIds),
+      partnerRepository.bookingsByIds(profile.id, standaloneIds)
+    ]);
+
+    const bookingsByOrderId = new Map<string, typeof orderBookings>();
+    for (const booking of orderBookings) {
+      const key = booking.bookingOrderId!;
+      const list = bookingsByOrderId.get(key);
+      if (list) list.push(booking);
+      else bookingsByOrderId.set(key, [booking]);
+    }
+    const standaloneById = new Map(standaloneBookings.map((booking) => [booking.id, booking]));
+
+    const items = pageKeys.map((key) =>
+      isOrderKey.get(key)
+        ? { orderId: key, bookings: bookingsByOrderId.get(key) ?? [] }
+        : { orderId: null, bookings: [standaloneById.get(key)!] }
+    );
+
     return { items, meta: paginationMeta(page, limit, total) };
   },
 
@@ -262,8 +335,8 @@ export const partnerService = {
       throw new ValidationError("Chi co the ket thuc don sau gio dat san");
     }
 
-    return prisma.$transaction(async (tx) => {
-      const updated = await tx.booking.update({
+    const { updated, settlement } = await prisma.$transaction(async (tx) => {
+      const updatedBooking = await tx.booking.update({
         where: { id: booking.id },
         data:
           status === BookingStatus.CANCELLED
@@ -281,11 +354,23 @@ export const partnerService = {
         include: { court: { include: { partner: true } } }
       });
 
+      let updatedSettlement = null;
       if (status === BookingStatus.COMPLETED || status === BookingStatus.NO_SHOW) {
-        await commissionService.createEarning(updated, status, tx);
+        await commissionService.createEarning(updatedBooking, status, tx);
+        updatedSettlement = await settlementService.settleForBooking(booking.id, tx);
+      } else if (status === BookingStatus.CANCELLED) {
+        updatedSettlement = await settlementService.cancelForBooking(booking.id, tx);
       }
-      return updated;
+      return { updated: updatedBooking, settlement: updatedSettlement };
     });
+
+    if (settlement) {
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toAdmin(realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+      realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+    }
+    return updated;
   },
 
   async revenue(userId: string, month?: string) {
@@ -296,7 +381,149 @@ export const partnerService = {
   async calendar(userId: string, query: { fromDate: string; toDate: string; courtId?: string }) {
     const profile = await getProfile(userId);
     if (query.fromDate > query.toDate) throw new ValidationError("Khoang ngay khong hop le");
-    return partnerRepository.calendar(profile.id, toDbDate(query.fromDate), toDbDate(query.toDate), query.courtId);
+    if (!query.courtId) throw new ValidationError("Vui long chon 1 san de xem lich");
+    const court = await partnerRepository.courtByPartner(query.courtId, profile.id);
+    if (!court) throw new NotFoundError("Khong tim thay san cua ban");
+    const items = await partnerRepository.calendar(profile.id, toDbDate(query.fromDate), toDbDate(query.toDate), query.courtId);
+    return {
+      court: { openingTime: dbTime(court.openingTime), closingTime: dbTime(court.closingTime) },
+      items
+    };
+  },
+
+  async courtSurfaces(userId: string, courtId: string) {
+    const profile = await getProfile(userId);
+    const court = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!court) throw new NotFoundError("Khong tim thay san cua ban");
+    return partnerRepository.courtSurfaces(courtId);
+  },
+
+  async updateCourtSurfaceStatus(userId: string, courtId: string, surfaceId: string, status: "ACTIVE" | "INACTIVE") {
+    const profile = await getProfile(userId);
+    const surface = await partnerRepository.courtSurfaceByPartner(surfaceId, courtId, profile.id);
+    if (!surface) throw new NotFoundError("Khong tim thay san con thuoc cum san cua ban");
+    return partnerRepository.updateCourtSurfaceStatus(surfaceId, status);
+  },
+
+  async updateCourtSurface(userId: string, courtId: string, surfaceId: string, input: { openingTime?: string | null; closingTime?: string | null }) {
+    const profile = await getProfile(userId);
+    const surface = await partnerRepository.courtSurfaceByPartner(surfaceId, courtId, profile.id);
+    if (!surface) throw new NotFoundError("Khong tim thay san con thuoc cum san cua ban");
+    return partnerRepository.updateCourtSurface(surfaceId, {
+      openingTime: input.openingTime === undefined ? undefined : input.openingTime ? timeToDate(input.openingTime) : null,
+      closingTime: input.closingTime === undefined ? undefined : input.closingTime ? timeToDate(input.closingTime) : null
+    });
+  },
+
+  async courtBlocks(userId: string, courtId: string) {
+    const profile = await getProfile(userId);
+    const court = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!court) throw new NotFoundError("Khong tim thay san cua ban");
+    return partnerRepository.courtBlocks(courtId);
+  },
+
+  async createCourtBlock(
+    userId: string,
+    courtId: string,
+    input: { courtSurfaceId?: string | null; blockDate: string; startTime: string; endTime: string; reason?: string }
+  ) {
+    const profile = await getProfile(userId);
+    const court = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!court) throw new NotFoundError("Khong tim thay san cua ban");
+    if (timeToMinutes(input.startTime) >= timeToMinutes(input.endTime)) throw new ValidationError("Gio ket thuc phai sau gio bat dau");
+    if (input.courtSurfaceId) {
+      const surfaces = await partnerRepository.courtSurfaces(courtId);
+      if (!surfaces.some((surface) => surface.id === input.courtSurfaceId)) throw new NotFoundError("San con khong thuoc cum san nay");
+    }
+    return partnerRepository.createCourtBlock({
+      courtId,
+      courtSurfaceId: input.courtSurfaceId ?? null,
+      blockDate: toDbDate(input.blockDate),
+      startTime: timeToDate(input.startTime),
+      endTime: timeToDate(input.endTime),
+      reason: input.reason
+    });
+  },
+
+  async cancelCourtBlock(userId: string, courtId: string, blockId: string) {
+    const profile = await getProfile(userId);
+    const block = await partnerRepository.blockByCourtAndPartner(blockId, courtId, profile.id);
+    if (!block) throw new NotFoundError("Khong tim thay lich nghi nay");
+    return partnerRepository.cancelCourtBlock(blockId);
+  },
+
+  async courtAvailabilityGrid(userId: string, courtId: string, date: string) {
+    const profile = await getProfile(userId);
+    const court = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!court) throw new NotFoundError("Khong tim thay san cua ban");
+
+    const dbDate = toDbDate(date);
+    const [bookings, bookingSlotsRaw, blocks] = await Promise.all([
+      partnerRepository.courtDayBookings(courtId, dbDate),
+      partnerRepository.courtDayBookingSlots(courtId, dbDate),
+      partnerRepository.courtDayBlocks(courtId, dbDate)
+    ]);
+    const bookingSlots = bookingSlotsRaw.map((bookingSlot) => ({ ...bookingSlot, courtSurfaceId: bookingSlot.court_surface_id }));
+
+    return (court.surfaces ?? []).map((surface) => {
+      const openingTime = surface.openingTime ?? court.openingTime;
+      const closingTime = surface.closingTime ?? court.closingTime;
+      return {
+        surfaceId: surface.id,
+        surfaceName: surface.name,
+        code: surface.code,
+        status: surface.status,
+        operatingHours: { open: dbTime(openingTime), close: dbTime(closingTime) },
+        slots: buildSlotGrid({
+          date,
+          openingTime,
+          closingTime,
+          bookings,
+          bookingSlots,
+          blocks,
+          prices: court.prices,
+          courtSurfaceId: surface.id
+        })
+      };
+    });
+  },
+
+  async createCourtBlockBulk(
+    userId: string,
+    courtId: string,
+    input: { courtSurfaceId?: string | null; startDate: string; endDate: string; weekdays?: number[]; startTime: string; endTime: string; reason?: string }
+  ) {
+    const profile = await getProfile(userId);
+    const court = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!court) throw new NotFoundError("Khong tim thay san cua ban");
+    if (timeToMinutes(input.startTime) >= timeToMinutes(input.endTime)) throw new ValidationError("Gio ket thuc phai sau gio bat dau");
+    if (input.startDate > input.endDate) throw new ValidationError("Ngay bat dau phai truoc hoac bang ngay ket thuc");
+    if (input.courtSurfaceId && !court.surfaces.some((surface) => surface.id === input.courtSurfaceId)) {
+      throw new NotFoundError("San con khong thuoc cum san nay");
+    }
+
+    const weekdaySet = input.weekdays && input.weekdays.length ? new Set(input.weekdays) : null;
+    const dates: string[] = [];
+    const cursor = new Date(`${input.startDate}T00:00:00.000Z`);
+    const end = new Date(`${input.endDate}T00:00:00.000Z`);
+    while (cursor <= end) {
+      if (!weekdaySet || weekdaySet.has(cursor.getUTCDay())) dates.push(cursor.toISOString().slice(0, 10));
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+      if (dates.length > MAX_BULK_BLOCK_DAYS) throw new ValidationError(`Chi duoc chan toi da ${MAX_BULK_BLOCK_DAYS} ngay moi lan`);
+    }
+    if (!dates.length) throw new ValidationError("Khong co ngay nao phu hop trong khoang da chon");
+
+    const result = await partnerRepository.createCourtBlocks(
+      dates.map((blockDate) => ({
+        courtId,
+        courtSurfaceId: input.courtSurfaceId ?? null,
+        blockDate: toDbDate(blockDate),
+        startTime: timeToDate(input.startTime),
+        endTime: timeToDate(input.endTime),
+        reason: input.reason
+      }))
+    );
+    return { created: result.count };
   },
 
   async vouchers(userId: string) {
@@ -378,52 +605,6 @@ export const partnerService = {
     return { id };
   },
 
-  async tournaments(userId: string) {
-    const profile = await getProfile(userId);
-    return partnerRepository.listTournaments(profile.id);
-  },
-
-  async tournamentDetail(userId: string, id: string) {
-    const profile = await getProfile(userId);
-    const [tournament] = await partnerRepository.findTournament(id, profile.id);
-    if (!tournament) throw new NotFoundError("Khong tim thay giai dau cua ban");
-    return tournament;
-  },
-
-  async createTournament(userId: string, input: any) {
-    const profile = await getProfile(userId);
-    await validateTournament(profile.id, input);
-    const [created] = await partnerRepository.createTournament(profile.id, { ...input, slug: uniqueSlug(input.title) });
-    return this.tournamentDetail(userId, created.id);
-  },
-
-  async updateTournament(userId: string, id: string, input: any) {
-    const profile = await getProfile(userId);
-    await this.tournamentDetail(userId, id);
-    await validateTournament(profile.id, input);
-    if (!(await partnerRepository.updateTournament(id, profile.id, { ...input, slug: uniqueSlug(input.title) }))) {
-      throw new ValidationError("Chi co the sua giai dau nhap");
-    }
-    return this.tournamentDetail(userId, id);
-  },
-
-  async submitTournament(userId: string, id: string) {
-    const profile = await getProfile(userId);
-    await this.tournamentDetail(userId, id);
-    if (!(await partnerRepository.submitTournament(id, profile.id))) {
-      throw new ValidationError("Chi co the gui duyet giai dau nhap");
-    }
-    return this.tournamentDetail(userId, id);
-  },
-
-  async deleteTournament(userId: string, id: string) {
-    const profile = await getProfile(userId);
-    if (!(await partnerRepository.deleteTournament(id, profile.id))) {
-      throw new ValidationError("Chi co the xoa giai dau nhap");
-    }
-    return { id };
-  },
-
   async listRecipients(userId: string) {
     const profile = await getProfile(userId);
     return partnerRepository.listRecipients(profile.id);
@@ -481,12 +662,3 @@ export const partnerService = {
     return { id };
   }
 };
-
-async function validateTournament(partnerId: string, input: any) {
-  const court = await partnerRepository.courtByPartner(input.courtId, partnerId);
-  if (!court) throw new ValidationError("San khong thuoc doi tac");
-  const deadline = new Date(input.registrationDeadline);
-  const start = new Date(input.startDate);
-  const end = new Date(input.endDate);
-  if (deadline > start || start > end) throw new ValidationError("Thoi gian giai dau khong hop le");
-}

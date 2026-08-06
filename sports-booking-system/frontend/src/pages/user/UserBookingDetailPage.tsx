@@ -25,7 +25,6 @@ import { LoadingState, ErrorState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
 import {
   bookingStatusLabel,
-  durationText,
   formatCurrency,
   formatDate,
   formatDateTime,
@@ -137,29 +136,53 @@ export function UserBookingDetailPage() {
             </Section>
 
             <Section title="Lịch chơi" icon={CalendarDays}>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <Info icon={CalendarDays} label="Ngày đặt sân" value={formatDate(data.bookingDate)} />
-                <Info icon={Clock3} label="Bắt đầu" value={timeText(data.startTime)} />
-                <Info icon={Clock3} label="Kết thúc" value={timeText(data.endTime)} />
-                <Info icon={Clock3} label="Thời lượng" value={durationText(data.startTime, data.endTime)} />
-              </div>
-              {data.bookingSlots && data.bookingSlots.length > 0 && (
-                <div className="mt-4 border-t border-slate-100 pt-3">
-                  <p className="text-xs font-black uppercase tracking-wide text-slate-500 mb-2">
-                    Các khung giờ trong đơn ({data.bookingSlots.length}):
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {data.bookingSlots.map((slot: any) => (
-                      <span key={slot.id || `${slot.bookingDate}-${slot.startTime}`} className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-800">
-                        <Clock3 className="h-3.5 w-3.5" />
-                        {slot.bookingDate ? `${formatDate(slot.bookingDate)} · ` : ""}
-                        {timeText(slot.startTime)} - {timeText(slot.endTime)}
-                        <span className="text-[11px] font-semibold text-emerald-600">({formatCurrency(Number(slot.slotPrice))})</span>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {(() => {
+                const slots = data.bookingSlots ?? [];
+                const uniqueDates = Array.from(new Set(slots.map((s: any) => String(s.bookingDate || data.bookingDate).slice(0, 10))));
+                const isMultiDay = uniqueDates.length > 1;
+                const totalHours = slots.length || 1;
+
+                return (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <Info
+                        icon={CalendarDays}
+                        label="Ngày đặt sân"
+                        value={isMultiDay ? `${uniqueDates.length} ngày đặt` : formatDate(data.bookingDate)}
+                      />
+                      <Info icon={Clock3} label="Bắt đầu" value={timeText(data.startTime)} />
+                      <Info icon={Clock3} label="Kết thúc" value={timeText(data.endTime)} />
+                      <Info
+                        icon={Clock3}
+                        label="Tổng thời lượng"
+                        value={`${totalHours} giờ`}
+                      />
+                    </div>
+                    {slots.length > 0 && (
+                      <div className="mt-4 border-t border-slate-100 pt-3">
+                        <p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">
+                          Các khung giờ trong đơn ({slots.length}):
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {slots.map((slot: any) => (
+                            <span
+                              key={slot.id || `${slot.bookingDate}-${slot.startTime}`}
+                              className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-800"
+                            >
+                              <Clock3 className="h-3.5 w-3.5" />
+                              {slot.bookingDate ? `${formatDate(slot.bookingDate)} · ` : ""}
+                              {timeText(slot.startTime)} - {timeText(slot.endTime)}
+                              <span className="text-[11px] font-semibold text-emerald-600">
+                                ({formatCurrency(Number(slot.slotPrice))})
+                              </span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
               {data.note && (
                 <div className="mt-4 rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
                   <span className="font-black">Ghi chú:</span> {data.note}

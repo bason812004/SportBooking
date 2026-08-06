@@ -4,5 +4,17 @@ export default defineConfig({
     plugins: [react()],
     server: {
         port: 5173
+    },
+    build: {
+        rollupOptions: {
+            output: {
+                manualChunks: {
+                    "react-vendor": ["react", "react-dom", "react-router-dom"],
+                    "charts-vendor": ["recharts"],
+                    "query-vendor": ["@tanstack/react-query"],
+                    "form-vendor": ["react-hook-form", "@hookform/resolvers", "zod"]
+                }
+            }
+        }
     }
 });

@@ -5,6 +5,8 @@ import { ErrorState, LoadingState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { adminApi } from "../../features/admin/api/adminApi";
+import { PageHero } from "../../components/common/PageHero";
+import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 
 const currentMonth = new Date().toISOString().slice(0, 7);
 const money = (value: number) => `${value.toLocaleString("vi-VN")} đ`;
@@ -37,12 +39,13 @@ export function AdminCommissionSettingsPage() {
 
   return (
     <div className="space-y-8">
+      <PageHero
+        eyebrow="Tài chính"
+        title="Hoa hồng"
+        subtitle="Tỷ lệ này áp dụng cho các đối tác chưa được cấu hình tỷ lệ riêng."
+      />
       <section className="rounded-2xl border border-line bg-white p-6">
-        <h1 className="text-3xl font-bold">Cài đặt hoa hồng</h1>
-        <p className="mt-2 text-slate-600">
-          Tỷ lệ này áp dụng cho các đối tác chưa được cấu hình tỷ lệ riêng.
-        </p>
-        <div className="mt-6 flex max-w-md items-end gap-3">
+        <div className="flex max-w-md items-end gap-3">
           <Input
             label="Tỷ lệ mặc định (%)"
             type="number"
@@ -64,7 +67,7 @@ export function AdminCommissionSettingsPage() {
       <section className="rounded-2xl border border-line bg-white p-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h2 className="text-2xl font-bold">Báo cáo hoa hồng</h2>
+            <h2 className="text-2xl font-bold">Thống kê</h2>
             <p className="mt-1 text-slate-600">Breakdown theo từng đối tác trong tháng.</p>
           </div>
           <Input label="Tháng" type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
@@ -78,29 +81,29 @@ export function AdminCommissionSettingsPage() {
               <Summary label="Platform nhận" value={money(report.data.summary.commissionAmount)} />
               <Summary label="Đối tác thực nhận" value={money(report.data.summary.netAmount)} />
             </div>
-            <div className="mt-6 overflow-auto">
-              <table className="w-full min-w-[720px] text-sm">
-                <thead className="bg-slate-50 text-left">
+            <div className="mt-6">
+              <Table minWidth="720px">
+                <THead>
                   <tr>
-                    <th className="p-3">Đối tác</th>
-                    <th className="p-3 text-right">Số giao dịch</th>
-                    <th className="p-3 text-right">Doanh thu gốc</th>
-                    <th className="p-3 text-right">Hoa hồng</th>
-                    <th className="p-3 text-right">Thực nhận</th>
+                    <Th>Đối tác</Th>
+                    <Th className="text-right">Số giao dịch</Th>
+                    <Th className="text-right">Doanh thu gốc</Th>
+                    <Th className="text-right">Hoa hồng</Th>
+                    <Th className="text-right">Thực nhận</Th>
                   </tr>
-                </thead>
-                <tbody>
+                </THead>
+                <TBody>
                   {report.data.partners.map((partner) => (
-                    <tr key={partner.partnerId} className="border-t border-line">
-                      <td className="p-3 font-medium">{partner.businessName}</td>
-                      <td className="p-3 text-right">{partner.transactionCount}</td>
-                      <td className="p-3 text-right">{money(partner.grossAmount)}</td>
-                      <td className="p-3 text-right text-red-600">{money(partner.commissionAmount)}</td>
-                      <td className="p-3 text-right font-medium text-emerald-700">{money(partner.netAmount)}</td>
-                    </tr>
+                    <Tr key={partner.partnerId}>
+                      <Td className="font-medium">{partner.businessName}</Td>
+                      <Td className="text-right">{partner.transactionCount}</Td>
+                      <Td className="text-right">{money(partner.grossAmount)}</Td>
+                      <Td className="text-right text-red-600">{money(partner.commissionAmount)}</Td>
+                      <Td className="text-right font-medium text-emerald-700">{money(partner.netAmount)}</Td>
+                    </Tr>
                   ))}
-                </tbody>
-              </table>
+                </TBody>
+              </Table>
             </div>
           </>
         )}

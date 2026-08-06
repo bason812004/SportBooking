@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { CalendarLegend } from "./CalendarLegend";
 import { CalendarHeader } from "./CalendarHeader";
 import { BookingCalendar } from "./BookingCalendar";
 import { DayView } from "./DayView";
-import { formatWeekRangeLabel, formatYmd, isSlotSelectable, slotKey, startOfWeek, type Language } from "./utils";
+import { isSlotSelectable, slotKey, startOfWeek, type Language } from "./utils";
 import type { WeeklyScheduleResponse, WeeklyScheduleSlot } from "../../../../types/api";
 
 export type WeeklyCalendarSectionProps = {
@@ -26,6 +27,17 @@ export type WeeklyCalendarSectionProps = {
   forceDayOnCompact?: boolean;
   /** Optional side panel slot (e.g. booking summary). */
   rightSlot?: React.ReactNode;
+  /**
+   * "multi-day" (default) lets the customer booking cart span several different
+   * dates (used for multi-day orders). "single-day" is for callers where a
+   * selection can only ever belong to one date (e.g. staff walk-in booking) —
+   * picking a slot on a different day replaces the whole selection instead of
+   * adding to it.
+   */
+  selectionMode?: "multi-day" | "single-day";
+  /** Staff-only: lets clicking a BOOKED/BLOCKED slot open a management action. Off by default. */
+  manageable?: boolean;
+  onManage?: (slot: WeeklyScheduleSlot) => void;
 };
 
 export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
@@ -44,7 +56,10 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
     onToggleSlot,
     language,
     forceDayOnCompact = true,
-    rightSlot
+    rightSlot,
+    selectionMode = "multi-day",
+    manageable,
+    onManage
   } = props;
 
   const { isCompact } = useResponsiveLayout();
@@ -64,6 +79,8 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
   }, [weekStart]);
 
   // ── Slot selection ──────────────────────────────────────────────
+  const MAX_ORDER_DAYS = 14;
+
   const toggleSlot = useCallback(
     (slot: WeeklyScheduleSlot) => {
       if (!isSlotSelectable(slot)) return;
@@ -78,31 +95,34 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
       const exists = selected.some((s) => slotKey(s) === key);
       if (exists) {
         onSelectedChange(selected.filter((s) => slotKey(s) !== key));
-      } else {
-        const sameDay = selected.filter((s) => s.date === slot.date);
-        const last = sameDay[sameDay.length - 1];
-        const lastHour = last ? Number(last.startTime.slice(0, 2)) : -1;
-        const slotHour = Number(slot.startTime.slice(0, 2));
-        const isConsecutive =
-          lastHour !== -1 &&
-          (slotHour === lastHour + 1 || slotHour === lastHour - 1);
-        void isConsecutive; // Reserved for future consecutive-slot validation
-        const next = [...selected, slot];
-        next.sort((a, b) => {
-          const dc = a.date.localeCompare(b.date);
-          return dc !== 0 ? dc : a.startTime.localeCompare(b.startTime);
-        });
-        onSelectedChange(next);
+        return;
       }
+
+      if (selectionMode === "single-day") {
+        const sameDay = selected.filter((s) => s.date === slot.date);
+        onSelectedChange([...sameDay, slot].sort((a, b) => `${a.date}${a.startTime}`.localeCompare(`${b.date}${b.startTime}`)));
+        return;
+      }
+
+      const selectedDays = new Set(selected.map((s) => s.date));
+      if (!selectedDays.has(slot.date) && selectedDays.size >= MAX_ORDER_DAYS) {
+        toast.error(
+          language === "en"
+            ? `You can select up to ${MAX_ORDER_DAYS} different days per order.`
+            : `Chỉ có thể chọn tối đa ${MAX_ORDER_DAYS} ngày khác nhau trong 1 lần đặt.`
+        );
+        return;
+      }
+
+      onSelectedChange([...selected, slot].sort((a, b) => `${a.date}${a.startTime}`.localeCompare(`${b.date}${b.startTime}`)));
     },
-    [selected, onSelectedChange, onToggleSlot]
+    [selected, onSelectedChange, onToggleSlot, language, selectionMode]
   );
 
   // ── Navigation ────────────────────────────────────────────────
   const jumpToToday = useCallback(() => {
     const today = new Date();
-    const todayWeekStart = startOfWeek(today);
-    onWeekStartChange(todayWeekStart);
+    onWeekStartChange(startOfWeek(today));
     onFocusedDateChange(today);
     if (!onToggleSlot) {
       onSelectedChange([]);
@@ -158,7 +178,6 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
         }}
         focusedDate={focusedDate}
         onSelectDay={enterDayView}
-        showWeekHeader={activeView === "WEEK"}
       />
       <CalendarLegend language={language} />
 
@@ -181,6 +200,8 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
                 onToggle={toggleSlot}
                 onSelectDay={enterDayView}
                 language={language}
+                manageable={manageable}
+                onManage={onManage}
               />
             ) : (
               <DayView
@@ -194,6 +215,8 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
                   setView("WEEK");
                 }}
                 language={language}
+                manageable={manageable}
+                onManage={onManage}
               />
             )
           ) : (

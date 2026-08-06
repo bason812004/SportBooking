@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 const selectPost = `
   select
@@ -198,76 +199,45 @@ export const teamPostRepository = {
     },
     async join(id, userId) {
         await ensureTeamChatTables();
+        // Fast path: already an active member
         const [existing] = await prisma.$queryRaw `
-      select exists (
-        select 1
-        from team_recruitment_posts p
-        left join team_post_members m on m.post_id = p.id and m.user_id = ${userId}
-        where p.id = ${id}
-          and (p.user_id = ${userId} or (m.id is not null and m.status = 'ACTIVE'))
-      ) as "exists",
-      case
-        when exists (
-          select 1 from team_post_members
-          where post_id = ${id} and user_id = ${userId} and status = 'ACTIVE'
-        )
-        then 'ACTIVE'
-        else null
-      end as "status"
+      select status
+      from team_post_members
+      where post_id = ${id} and user_id = ${userId}
+      limit 1
     `;
-        if (existing?.exists && existing.status === 'ACTIVE')
+        if (existing?.status === "ACTIVE")
             return this.findById(id);
-        // LEFT/REMOVED rows are kept; we will upsert to ACTIVE again.
-        const [joined] = await prisma.$queryRaw `
-      with target as (
-        select id
-        from team_recruitment_posts
-        where id = ${id}
-          and status = 'OPEN'::team_recruitment_status
-          and current_players < max_players
-        for update
-      ),
-      inserted as (
-        insert into team_post_members (post_id, user_id, role, status)
-        select id, ${userId}, 'MEMBER', 'ACTIVE'
-        from target
-        on conflict (post_id, user_id) do nothing
-        returning post_id, user_id
-      ),
-      reactivated as (
-        update team_post_members m
-        set status = 'ACTIVE', left_at = null, updated_at = now()
-        from target t
-        where m.post_id = t.id
-          and m.user_id = ${userId}
-          and m.status <> 'ACTIVE'
-          and not exists (select 1 from inserted i where i.user_id = m.user_id)
-        returning m.post_id
-      ),
-      final as (
-        select post_id from inserted
-        union
-        select post_id from reactivated
-      ),
-      counted as (
-        update team_recruitment_posts p
-        set current_players = (
-          select count(*) from team_post_members
-          where post_id = p.id and status = 'ACTIVE'
+        // Attempt to insert (idempotent: ON CONFLICT do nothing for duplicate)
+        await prisma.$executeRaw `
+      insert into team_post_members (post_id, user_id, role, status)
+      values (${id}, ${userId}, 'MEMBER', 'ACTIVE')
+      on conflict (post_id, user_id)
+        do update set status = 'ACTIVE', left_at = null
+        where team_post_members.status <> 'ACTIVE'
+    `;
+        // Update player count and status on the post
+        await prisma.$executeRaw `
+      update team_recruitment_posts
+      set
+        current_players = (
+          select count(*)::int
+          from team_post_members
+          where post_id = ${id} and status = 'ACTIVE'
         ),
         status = case
           when (
-            select count(*) from team_post_members where post_id = p.id and status = 'ACTIVE'
-          ) >= max_players then 'FULL'::team_recruitment_status
+            select count(*)::int
+            from team_post_members
+            where post_id = ${id} and status = 'ACTIVE'
+          ) >= max_players
+          then 'FULL'::team_recruitment_status
           else status
         end,
         updated_at = now()
-        where p.id in (select post_id from final)
-        returning p.id
-      )
-      select id from counted
+      where id = ${id}
     `;
-        return joined?.id ? this.findById(joined.id) : [];
+        return this.findById(id);
     },
     async isMember(postId, userId) {
         await ensureTeamChatTables();
@@ -300,22 +270,15 @@ export const teamPostRepository = {
     },
     async createMessage(postId, userId, payload) {
         await ensureTeamChatTables();
-        const [inserted] = await prisma.$queryRaw `
-      insert into team_post_messages
+        const contentVal = payload.content ?? null;
+        const msgType = (payload.messageType ?? "TEXT");
+        const [inserted] = await prisma.$queryRawUnsafe(`insert into team_post_messages
         (post_id, user_id, content, message_type, attachment_url, attachment_name, attachment_size, thumbnail_url, mime_type)
-      values
-        (${postId}, ${userId}, ${payload.content ?? null}, ${(payload.messageType ?? "TEXT")}::team_post_message_type,
-         ${payload.attachmentUrl ?? null}, ${payload.attachmentName ?? null}, ${payload.attachmentSize ?? null},
-         ${payload.thumbnailUrl ?? null}, ${payload.mimeType ?? null})
-      returning id
-    `;
+       values ($1, $2, $3, $4::team_post_message_type, $5, $6, $7, $8, $9)
+       returning id`, postId, userId, contentVal, msgType, payload.attachmentUrl ?? null, payload.attachmentName ?? null, payload.attachmentSize ?? null, payload.thumbnailUrl ?? null, payload.mimeType ?? null);
         if (!inserted?.id)
             return [];
-        return prisma.$queryRawUnsafe(`
-        ${selectMessage}
-        where msg.id = $1
-        limit 1
-      `, inserted.id);
+        return this.listMessages(postId);
     },
     async getMember(postId, userId) {
         await ensureTeamChatTables();
@@ -395,11 +358,14 @@ export const teamPostRepository = {
         await ensureTeamChatTables();
         if (messageIds.length === 0)
             return [];
-        const rows = await prisma.$queryRaw `
-      select message_id as "messageId", user_id as "userId", reaction, created_at as "createdAt"
+        const rows = await prisma.$queryRaw(Prisma.sql `
+      select message_id as "messageId",
+             user_id as "userId",
+             reaction,
+             created_at as "createdAt"
       from team_post_message_reactions
-      where message_id = ANY(${[messageIds]}::varchar[])
-    `;
+      where message_id in (${Prisma.join(messageIds)})
+    `);
         return rows;
     },
     async messageBelongsToPost(messageId, postId) {

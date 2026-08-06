@@ -1,171 +1,275 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { adminApi } from "../../features/admin/api/adminApi";
-import { LoadingState, ErrorState } from "../../components/common/States";
-import { formatCurrency } from "../../lib/format";
-import { WithdrawalStatusBadge } from "./StatusBadges";
-import { Button } from "../../components/ui/Button";
+import { useState, type ReactNode } from "react";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import {
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Clock3,
+  Landmark,
+  Loader2,
+  Send,
+  Wallet,
+  XCircle
+} from "lucide-react";
+import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
+import { PageHero } from "../../components/common/PageHero";
+import { Button } from "../../components/ui/Button";
+import { Input } from "../../components/ui/Input";
+import { Select } from "../../components/ui/Select";
+import { SortableTh } from "../../components/common/SortableTh";
+import { THead, TBody, Tr, Th, Td } from "../../components/common/Table";
+import { useUrlSort } from "../../hooks/useUrlSort";
+import { adminApi } from "../../features/admin/api/adminApi";
+import { AdminReasonModal } from "./AdminReasonModal";
+import { WithdrawalStatusBadge } from "./StatusBadges";
+import type { WithdrawalRequest } from "../../types/api";
+
+const money = (value: number | string | null | undefined) => `${Number(value ?? 0).toLocaleString("vi-VN")} đ`;
+
+const toIsoDate = (date: Date) => date.toISOString().slice(0, 10);
+const firstDayOfMonth = () => {
+  const now = new Date();
+  return toIsoDate(new Date(now.getFullYear(), now.getMonth(), 1));
+};
+const lastDayOfMonth = () => {
+  const now = new Date();
+  return toIsoDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+};
+
+const statusOptions = [
+  { value: "", label: "Tất cả trạng thái" },
+  { value: "PENDING", label: "Chờ duyệt" },
+  { value: "APPROVED", label: "Đã duyệt" },
+  { value: "PROCESSING", label: "Đang chuyển khoản" },
+  { value: "REJECTED", label: "Từ chối" },
+  { value: "FAILED", label: "Chuyển khoản thất bại" },
+  { value: "PAID", label: "Đã chuyển khoản" }
+];
+
+type SortField = "createdAt" | "amount" | "status" | "partnerName";
+const SORT_FIELDS: SortField[] = ["createdAt", "amount", "status", "partnerName"];
 
 export function AdminWithdrawalsPage() {
-  const [page] = useState(1);
-  const [statusFilter, setStatusFilter] = useState<string>("");
   const queryClient = useQueryClient();
+  const [status, setStatus] = useState("");
+  const [fromDate, setFromDate] = useState(firstDayOfMonth);
+  const [toDate, setToDate] = useState(lastDayOfMonth);
+  const [page, setPage] = useState(1);
+  const [rejecting, setRejecting] = useState<WithdrawalRequest | null>(null);
+  const { sortField, sortOrder, handleSort: sortBy } = useUrlSort<SortField>({
+    fields: SORT_FIELDS,
+    default: { field: "createdAt", order: "desc" }
+  });
+  const handleSort = (field: SortField) => { setPage(1); sortBy(field); };
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["admin-withdrawals", page, statusFilter],
-    queryFn: () => adminApi.withdrawals({ page, limit: 20, status: statusFilter || undefined })
+  const summary = useQuery({ queryKey: ["admin-withdrawals-summary"], queryFn: () => adminApi.withdrawalsSummary() });
+  const withdrawals = useQuery({
+    queryKey: ["admin-withdrawals", status, fromDate, toDate, page, sortField, sortOrder],
+    queryFn: () =>
+      adminApi.withdrawals({
+        status: status || undefined,
+        fromDate: fromDate || undefined,
+        toDate: toDate || undefined,
+        page,
+        limit: 10,
+        sortBy: sortField ?? undefined,
+        sortOrder
+      }),
+    placeholderData: keepPreviousData
   });
 
-  const summary = useQuery({
-    queryKey: ["admin-withdrawals-summary"],
-    queryFn: adminApi.withdrawalSummary
-  });
+  const refresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["admin-withdrawals"] });
+    await queryClient.invalidateQueries({ queryKey: ["admin-withdrawals-summary"] });
+    await queryClient.invalidateQueries({ queryKey: ["admin-wallets"] });
+  };
 
-  const settleMutation = useMutation({
-    mutationFn: (id: string) => adminApi.settleSettlement(id),
-    onSuccess: () => {
-      toast.success("Đã quyết toán settlement!");
-      queryClient.invalidateQueries({ queryKey: ["admin-settlements"] });
-      queryClient.invalidateQueries({ queryKey: ["admin-settlements-summary"] });
-    },
-    onError: (err: any) => toast.error(err?.message ?? "Lỗi")
-  });
-
-  const approveMutation = useMutation({
+  const approve = useMutation({
     mutationFn: (id: string) => adminApi.approveWithdrawal(id),
-    onSuccess: () => {
-      toast.success("Đã duyệt yêu cầu!");
-      queryClient.invalidateQueries({ queryKey: ["admin-withdrawals"] });
-    },
-    onError: (err: any) => toast.error(err?.message ?? "Lỗi")
+    onSuccess: async () => { toast.success("Đã duyệt yêu cầu"); await refresh(); },
+    onError: (error) => toast.error(error.message)
+  });
+  const reject = useMutation({
+    mutationFn: ({ id, note }: { id: string; note: string }) => adminApi.rejectWithdrawal(id, note || undefined),
+    onSuccess: async () => { toast.success("Đã từ chối và hoàn tiền vào ví"); setRejecting(null); await refresh(); },
+    onError: (error) => toast.error(error.message)
+  });
+  const pay = useMutation({
+    mutationFn: (id: string) => adminApi.payWithdrawal(id),
+    onSuccess: async () => { toast.success("Đã xác nhận chuyển khoản"); await refresh(); },
+    onError: (error) => toast.error(error.message)
   });
 
-  const rejectMutation = useMutation({
-    mutationFn: (id: string) => adminApi.rejectWithdrawal(id),
-    onSuccess: () => {
-      toast.success("Đã từ chối yêu cầu!");
-      queryClient.invalidateQueries({ queryKey: ["admin-withdrawals"] });
-    },
-    onError: (err: any) => toast.error(err?.message ?? "Lỗi")
-  });
+  if (summary.isLoading) return <LoadingState />;
+  if (summary.isError) return <ErrorState message={summary.error.message} />;
 
-  const paidMutation = useMutation({
-    mutationFn: (id: string) => adminApi.markWithdrawalPaid(id),
-    onSuccess: () => {
-      toast.success("Đã xác nhận thanh toán!");
-      queryClient.invalidateQueries({ queryKey: ["admin-withdrawals"] });
-    },
-    onError: (err: any) => toast.error(err?.message ?? "Lỗi")
-  });
-
-  if (isLoading) return <LoadingState />;
-  if (!data) return <ErrorState message="Không thể tải dữ liệu" />;
+  const data = summary.data!;
+  const pending = data.byStatus.PENDING;
+  const processing = data.byStatus.PROCESSING;
+  const paid = data.byStatus.PAID;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-black">Quản lý Rút tiền</h1>
-        <p className="mt-1 text-slate-500">Duyệt và xác nhận yêu cầu rút tiền từ Partner</p>
-      </div>
-
-      {/* Summary */}
-      {summary.data && (
-        <div className="grid gap-4 sm:grid-cols-3">
-          <div className="rounded-2xl border bg-white p-5">
-            <p className="text-sm text-slate-500">Tổng yêu cầu</p>
-            <p className="mt-1 text-xl font-bold">{summary.data.totalCount} yêu cầu · {formatCurrency(summary.data.totalAmount)}</p>
-          </div>
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
-            <p className="text-sm text-amber-700">Đang chờ duyệt</p>
-            <p className="mt-1 text-xl font-bold text-amber-700">{summary.data.pendingCount} yêu cầu · {formatCurrency(summary.data.pendingAmount)}</p>
-          </div>
-          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
-            <p className="text-sm text-emerald-700">Đã thanh toán</p>
-            <p className="mt-1 text-xl font-bold text-emerald-700">{summary.data.paidCount} yêu cầu · {formatCurrency(summary.data.paidAmount)}</p>
-          </div>
+      <PageHero
+        eyebrow="Tài chính"
+        title="Yêu cầu rút tiền"
+        subtitle="Duyệt và xác nhận chuyển khoản cho yêu cầu rút tiền của partner."
+      >
+        <div className="flex flex-wrap items-end gap-3 rounded-xl bg-white p-3 shadow-md">
+          <Input label="Từ ngày" type="date" value={fromDate} onChange={(event) => { setPage(1); setFromDate(event.target.value); }} />
+          <Input label="Đến ngày" type="date" value={toDate} onChange={(event) => { setPage(1); setToDate(event.target.value); }} />
+          <Select label="Trạng thái" value={status} options={statusOptions} onChange={(event) => { setPage(1); setStatus(event.target.value); }} />
         </div>
-      )}
+      </PageHero>
 
-      {/* Filters */}
-      <div className="flex items-center gap-3">
-        <select
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
-          className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        >
-          <option value="">Tất cả</option>
-          <option value="PENDING">Chờ duyệt</option>
-          <option value="APPROVED">Đã duyệt</option>
-          <option value="PAID">Đã thanh toán</option>
-          <option value="REJECTED">Từ chối</option>
-        </select>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard icon={<Wallet className="h-5 w-5" />} label="Tổng yêu cầu" count={data.total.count} amount={data.total.amount} />
+        <StatCard icon={<Clock3 className="h-5 w-5" />} label="Chờ duyệt" count={pending?.count ?? 0} amount={pending?.amount ?? 0} tone="text-amber-600" iconTone="bg-amber-100 text-amber-700" />
+        <StatCard icon={<Loader2 className="h-5 w-5" />} label="Đang chuyển khoản" count={processing?.count ?? 0} amount={processing?.amount ?? 0} tone="text-violet-600" iconTone="bg-violet-100 text-violet-700" />
+        <StatCard icon={<CheckCircle2 className="h-5 w-5" />} label="Đã chuyển khoản" count={paid?.count ?? 0} amount={paid?.amount ?? 0} tone="text-emerald-700" iconTone="bg-emerald-100 text-emerald-700" />
       </div>
 
-      {/* Table */}
-      <div className="rounded-2xl border bg-white">
-        <div className="overflow-auto">
-          <table className="w-full min-w-[900px] text-sm">
-            <thead className="border-b bg-slate-50">
-              <tr>
-                <th className="p-3 text-left font-semibold">Partner</th>
-                <th className="p-3 text-right font-semibold">Số tiền</th>
-                <th className="p-3 text-left font-semibold">Ngân hàng</th>
-                <th className="p-3 text-left font-semibold">Tài khoản</th>
-                <th className="p-3 text-center font-semibold">Trạng thái</th>
-                <th className="p-3 text-right font-semibold">Ngày tạo</th>
-                <th className="p-3 text-center font-semibold">Hành động</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.items.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="p-8 text-center text-slate-500">Chưa có yêu cầu rút tiền nào</td>
-                </tr>
-              ) : (
-                data.items.map(w => (
-                  <tr key={w.id} className="border-t hover:bg-slate-50">
-                    <td className="p-3">
-                      <p className="font-medium">{w.partnerName}</p>
-                      <p className="text-xs text-slate-500">{w.ownerName}</p>
-                    </td>
-                    <td className="p-3 text-right font-semibold text-emerald-600">{formatCurrency(w.amount)}</td>
-                    <td className="p-3">{w.bankName}</td>
-                    <td className="p-3">
-                      <p className="font-medium">{w.bankAccountName}</p>
-                      <p className="font-mono text-xs text-slate-500">{w.bankAccountNumber}</p>
-                    </td>
-                    <td className="p-3 text-center"><WithdrawalStatusBadge status={w.status} /></td>
-                    <td className="p-3 text-right text-slate-500">{new Date(w.createdAt).toLocaleDateString("vi-VN")}</td>
-                    <td className="p-3">
-                      <div className="flex items-center justify-center gap-2">
-                        {w.status === "PENDING" && (
-                          <>
-                            <Button variant="secondary" onClick={() => approveMutation.mutate(w.id)} className="px-3 py-1 text-xs">Duyệt</Button>
-                            <Button variant="danger" onClick={() => rejectMutation.mutate(w.id)} className="px-3 py-1 text-xs">Từ chối</Button>
-                          </>
-                        )}
-                        {w.status === "APPROVED" && (
-                          <Button className="bg-emerald-600 px-3 py-1 text-xs hover:bg-emerald-700" onClick={() => paidMutation.mutate(w.id)}>
-                            Xác nhận thanh toán
-                          </Button>
-                        )}
-                        {w.status === "REJECTED" && <span className="text-xs text-slate-500">Đã từ chối</span>}
-                        {w.status === "PAID" && <span className="text-xs text-emerald-600">Hoàn tất</span>}
-                      </div>
-                    </td>
+      <section className="overflow-hidden rounded-2xl border border-line bg-white shadow-sm">
+        {withdrawals.isLoading ? (
+          <LoadingState />
+        ) : withdrawals.isError ? (
+          <ErrorState message={withdrawals.error.message} />
+        ) : (withdrawals.data?.items ?? []).length === 0 ? (
+          <div className="p-6">
+            <EmptyState title="Không có yêu cầu rút tiền nào" description="Các yêu cầu rút tiền của partner sẽ xuất hiện ở đây." />
+          </div>
+        ) : (
+          <>
+            <div className="overflow-auto">
+              <table className="w-full min-w-[1100px] text-sm">
+                <THead>
+                  <tr>
+                    <SortableTh label="Ngày tạo" field="createdAt" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                    <SortableTh label="Partner" field="partnerName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                    <SortableTh label="Số tiền" field="amount" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} className="text-right" />
+                    <Th>Ngân hàng</Th>
+                    <SortableTh label="Trạng thái" field="status" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                    <Th>Người xử lý</Th>
+                    <Th className="text-right">Thao tác</Th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-        {data.meta.total > 20 && (
-          <div className="border-t p-4 text-center text-sm text-slate-500">
-            Hiển thị {data.items.length} / {data.meta.total} kết quả
-          </div>
+                </THead>
+                <TBody>
+                  {(withdrawals.data?.items ?? []).map((item) => (
+                    <Tr key={item.id}>
+                      <Td className="whitespace-nowrap text-slate-500">{new Date(item.createdAt).toLocaleString("vi-VN")}</Td>
+                      <Td>
+                        <div className="flex items-center gap-2.5">
+                          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-100 text-xs font-black text-slate-600">
+                            {(item.partner?.businessName ?? "?").trim().charAt(0).toUpperCase()}
+                          </span>
+                          <span className="font-semibold text-slate-800">{item.partner?.businessName ?? item.partnerId}</span>
+                        </div>
+                      </Td>
+                      <Td className="text-right font-black text-slate-900">{money(item.amount)}</Td>
+                      <Td>
+                        <div className="flex items-start gap-1.5 text-xs">
+                          <Landmark className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
+                          <div>
+                            <p className="font-semibold text-slate-700">{item.bankName ?? "—"}</p>
+                            <p className="font-mono text-slate-500">{item.bankAccountNumber ?? "—"}</p>
+                            <p className="text-slate-400">{item.bankAccountName ?? "—"}</p>
+                          </div>
+                        </div>
+                      </Td>
+                      <Td><WithdrawalStatusBadge status={item.status} /></Td>
+                      <Td className="text-slate-500">{item.processor?.fullName ?? "—"}</Td>
+                      <Td className="text-right">
+                        {item.status === "PENDING" ? (
+                          <div className="flex justify-end gap-2">
+                            <Button disabled={approve.isPending} onClick={() => approve.mutate(item.id)}>
+                              <CheckCircle2 className="h-4 w-4" />
+                              Duyệt
+                            </Button>
+                            <Button variant="danger" onClick={() => setRejecting(item)}>
+                              <XCircle className="h-4 w-4" />
+                              Từ chối
+                            </Button>
+                          </div>
+                        ) : item.status === "APPROVED" ? (
+                          <div className="flex justify-end gap-2">
+                            <Button disabled={pay.isPending} onClick={() => pay.mutate(item.id)}>
+                              <Send className="h-4 w-4" />
+                              Đã chuyển khoản
+                            </Button>
+                            <Button variant="danger" onClick={() => setRejecting(item)}>
+                              <XCircle className="h-4 w-4" />
+                              Từ chối
+                            </Button>
+                          </div>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </Td>
+                    </Tr>
+                  ))}
+                </TBody>
+              </table>
+            </div>
+            <div className="border-t border-line p-4">
+              <Pager page={page} total={withdrawals.data?.meta.totalPages ?? 1} setPage={setPage} />
+            </div>
+          </>
         )}
+      </section>
+
+      <AdminReasonModal
+        open={rejecting !== null}
+        title={`Từ chối yêu cầu rút ${money(rejecting?.amount)}?`}
+        required
+        onClose={() => setRejecting(null)}
+        onConfirm={(reason) => rejecting && reject.mutate({ id: rejecting.id, note: reason })}
+      />
+    </div>
+  );
+}
+
+function StatCard({
+  icon,
+  label,
+  count,
+  amount,
+  tone = "text-slate-900",
+  iconTone = "bg-slate-100 text-slate-600"
+}: {
+  icon: ReactNode;
+  label: string;
+  count: number;
+  amount: number;
+  tone?: string;
+  iconTone?: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-line bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-2.5">
+        <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${iconTone}`}>{icon}</span>
+        <p className="text-sm font-semibold text-slate-500">{label}</p>
       </div>
+      <p className={`mt-3 text-2xl font-black ${tone}`}>{money(amount)}</p>
+      <p className="mt-0.5 text-xs font-semibold text-slate-400">{count} yêu cầu</p>
+    </div>
+  );
+}
+
+function Pager({ page, total, setPage }: { page: number; total: number; setPage: (value: number) => void }) {
+  return (
+    <div className="flex items-center justify-end gap-3">
+      <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+        <ChevronLeft className="h-4 w-4" />
+        Trước
+      </Button>
+      <span className="text-sm font-semibold text-slate-500">
+        Trang {page}/{Math.max(total, 1)}
+      </span>
+      <Button variant="secondary" disabled={page >= total} onClick={() => setPage(page + 1)}>
+        Sau
+        <ChevronRight className="h-4 w-4" />
+      </Button>
     </div>
   );
 }

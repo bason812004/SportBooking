@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { CalendarDays, Clock3, WalletCards, type LucideIcon } from "lucide-react";
+import { CalendarDays, Clock3, Trash2, WalletCards, X, type LucideIcon } from "lucide-react";
 import type { WeeklyScheduleSlot } from "../../../types/api";
 
 export function bookingSelectionPath(
@@ -18,11 +18,15 @@ export function bookingSelectionPath(
 export function CourtDetailBookingSidePanel({
   courtId,
   selectedDate,
-  selectedSlots
+  selectedSlots,
+  onRemoveSlot,
+  onClearSlots
 }: {
   courtId: string;
   selectedDate: string;
   selectedSlots: WeeklyScheduleSlot[];
+  onRemoveSlot?: (slot: WeeklyScheduleSlot) => void;
+  onClearSlots?: () => void;
 }) {
   const subtotal = selectedSlots.reduce(
     (sum, slot) => sum + (slot.finalPrice || slot.basePrice || 0),
@@ -75,37 +79,60 @@ export function CourtDetailBookingSidePanel({
         </div>
 
         {hours > 0 ? (
-          <ul className="mt-4 space-y-3 rounded-2xl bg-slate-50 p-3 text-xs">
-            {slotsByDate.map(([date, daySlots]) => {
-              const daySubtotal = daySlots.reduce(
-                (s, slot) => s + (slot.finalPrice || slot.basePrice || 0),
-                0
-              );
-              return (
-                <li key={date} className="space-y-1.5">
-                  <li className="flex justify-between font-black text-emerald-700">
-                    <span>{formatDateDisplay(date)}</span>
-                    <span>{formatVnd(daySubtotal)}</span>
+          <div className="mt-4">
+            <ul className="space-y-3 rounded-2xl bg-slate-50 p-3 text-xs">
+              {slotsByDate.map(([date, daySlots]) => {
+                const daySubtotal = daySlots.reduce(
+                  (s, slot) => s + (slot.finalPrice || slot.basePrice || 0),
+                  0
+                );
+                return (
+                  <li key={date} className="space-y-1.5">
+                    <div className="flex justify-between font-black text-emerald-700">
+                      <span>{formatDateDisplay(date)}</span>
+                      <span>{formatVnd(daySubtotal)}</span>
+                    </div>
+                    {daySlots.map((slot) => (
+                      <div
+                        key={`${slot.date}-${slot.startTime}`}
+                        className="flex items-center justify-between pl-2 font-semibold text-slate-600"
+                      >
+                        <span className="flex items-center gap-1.5">
+                          {slot.startTime} – {slot.endTime}
+                          {onRemoveSlot && (
+                            <button
+                              type="button"
+                              onClick={() => onRemoveSlot(slot)}
+                              className="inline-flex h-5 w-5 items-center justify-center rounded-full text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition"
+                              title="Xóa khung giờ này"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </span>
+                        <span>{formatVnd(slot.finalPrice || slot.basePrice || 0)}</span>
+                      </div>
+                    ))}
                   </li>
-                  {daySlots.map((slot) => (
-                    <li
-                      key={`${slot.date}-${slot.startTime}`}
-                      className="flex justify-between pl-2 font-semibold text-slate-600"
-                    >
-                      <span>
-                        {slot.startTime} – {slot.endTime}
-                      </span>
-                      <span>{formatVnd(slot.finalPrice || slot.basePrice || 0)}</span>
-                    </li>
-                  ))}
-                </li>
-              );
-            })}
-            <li className="flex justify-between border-t border-slate-200 pt-2 text-sm font-black text-slate-900">
-              <span>Tạm tính</span>
-              <span>{formatVnd(subtotal)}</span>
-            </li>
-          </ul>
+                );
+              })}
+              <li className="flex justify-between border-t border-slate-200 pt-2 text-sm font-black text-slate-900">
+                <span>Tạm tính</span>
+                <span>{formatVnd(subtotal)}</span>
+              </li>
+            </ul>
+
+            {onClearSlots && (
+              <button
+                type="button"
+                onClick={onClearSlots}
+                className="mt-2.5 inline-flex items-center gap-1.5 text-xs font-bold text-rose-600 hover:text-rose-700"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Bỏ chọn tất cả
+              </button>
+            )}
+          </div>
         ) : (
           <p className="mt-4 rounded-2xl bg-slate-50 p-3 text-xs text-slate-500">
             Bấm vào ô giờ trên lịch tuần để chọn. Có thể chọn nhiều giờ liên tiếp trong cùng một ngày hoặc nhiều ngày khác nhau.

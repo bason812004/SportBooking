@@ -48,9 +48,8 @@ export const paymentController = {
       const bookingDate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
       const result = await bookingService.checkout(user.id, {
         courtId: court.id,
-        bookingDate,
-        slots: [
-          { startTime: "08:00", endTime: "09:00" }
+        days: [
+          { bookingDate, slots: [{ startTime: "08:00", endTime: "09:00" }] }
         ],
         paymentType: "DEPOSIT",
         note: "Debug checkout endpoint"

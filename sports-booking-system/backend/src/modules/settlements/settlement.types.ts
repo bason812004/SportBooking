@@ -1,39 +1,16 @@
-export type SettlementStatus = "PENDING" | "PROCESSING" | "SETTLED" | "FAILED" | "CANCELLED";
+import type { Prisma } from "@prisma/client";
+import { prisma } from "../../config/db.js";
 
-export type SettlementWithDetails = {
-  id: string;
-  bookingId: string;
-  partnerId: string;
-  paymentId: string | null;
-  grossAmount: number;
-  voucherDiscount: number;
-  platformDiscount: number;
-  partnerDiscount: number;
-  commissionAmount: number;
-  serviceFee: number;
-  netAmount: number;
-  status: SettlementStatus;
-  settledAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-  booking?: {
-    bookingCode: string;
-    bookingDate: string;
-    court: { name: string };
-  };
-  payment?: {
-    amount: number;
-    status: string;
-  };
-};
+export type DbClient = Prisma.TransactionClient | typeof prisma;
 
-export type SettlementBreakdown = {
-  grossAmount: number;
-  voucherDiscount: number;
-  platformDiscount: number;
-  partnerDiscount: number;
-  commissionAmount: number;
-  serviceFee: number;
-  netAmount: number;
-  commissionRate: number;
+export const SETTLEMENT_STATUSES = ["PENDING", "PROCESSING", "SETTLED", "FAILED", "CANCELLED"] as const;
+export type SettlementStatus = (typeof SETTLEMENT_STATUSES)[number];
+
+export type SettlementListQuery = {
+  page?: string;
+  limit?: string;
+  status?: SettlementStatus;
+  partnerId?: string;
+  fromDate?: string;
+  toDate?: string;
 };

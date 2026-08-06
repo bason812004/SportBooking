@@ -194,13 +194,5 @@ export const tournamentRepository = {
 
   registrationByPartner(id: string, partnerId: string) {
     return prisma.tournamentRegistration.findFirst({ where: { id, tournament: { partnerId } } });
-  },
-
-  listPendingAdmin() {
-    return prisma.tournament.findMany({ where: { status: "PENDING" }, include: { court: true, partner: true }, orderBy: { createdAt: "desc" } });
-  },
-
-  setAdminStatus(id: string, status: "APPROVED" | "REJECTED") {
-    return prisma.tournament.update({ where: { id }, data: { status } });
   }
 };

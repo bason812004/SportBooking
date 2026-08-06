@@ -1,313 +1,252 @@
-import type { Prisma } from "@prisma/client";
+import type { Booking, PartnerProfile } from "@prisma/client";
 import { prisma } from "../../config/db.js";
-import { ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
-import { realtimeEvents } from "../realtime/realtime.events.js";
-import { realtimeService } from "../realtime/realtime.service.js";
+import { NotFoundError, ForbiddenError, ValidationError } from "../../shared/errors/AppError.js";
+import { paginationMeta } from "../../shared/utils/response.js";
+import { parseLimit, parsePage } from "../../shared/utils/time.js";
+import { toDbDate } from "../../shared/utils/time.js";
 import { commissionService } from "../commission/commission.service.js";
 import { recordAdminAction } from "../admin/admin.audit.js";
+import { realtimeEvents } from "../realtime/realtime.events.js";
+import { realtimeService } from "../realtime/realtime.service.js";
+import { walletRepository } from "../wallets/wallet.repository.js";
+import { getPartnerProfileByUser } from "../wallets/wallet.service.js";
 import { settlementRepository } from "./settlement.repository.js";
-import type { SettlementBreakdown } from "./settlement.types.js";
+import type { DbClient, SettlementListQuery, SettlementStatus } from "./settlement.types.js";
 
-function round2(n: number) {
-  return Math.round(n * 100) / 100;
+function asNumber(value: unknown) {
+  return Number(value ?? 0);
 }
 
-function toNum(v: unknown): number {
-  return Number(v ?? 0);
+function round2(value: number) {
+  return Math.round(value * 100) / 100;
 }
 
-async function ensureWallet(partnerId: string, tx: Prisma.TransactionClient) {
-  const existing = await tx.partnerWallet.findUnique({ where: { partnerId } });
-  if (existing) return existing;
-  return tx.partnerWallet.create({
-    data: { partnerId, availableBalance: 0, pendingBalance: 0, totalEarned: 0, totalWithdrawn: 0, currency: "VND" }
-  });
+function toDto(settlement: {
+  grossAmount: unknown;
+  voucherDiscount: unknown;
+  platformDiscount: unknown;
+  partnerDiscount: unknown;
+  commissionRate: unknown;
+  commissionAmount: unknown;
+  serviceFee: unknown;
+  netAmount: unknown;
+  [key: string]: unknown;
+}) {
+  return {
+    ...settlement,
+    grossAmount: asNumber(settlement.grossAmount),
+    voucherDiscount: asNumber(settlement.voucherDiscount),
+    platformDiscount: asNumber(settlement.platformDiscount),
+    partnerDiscount: asNumber(settlement.partnerDiscount),
+    commissionRate: asNumber(settlement.commissionRate),
+    commissionAmount: asNumber(settlement.commissionAmount),
+    serviceFee: asNumber(settlement.serviceFee),
+    netAmount: asNumber(settlement.netAmount)
+  };
+}
+
+function parseFilters(query: SettlementListQuery, partnerId?: string) {
+  return {
+    partnerId: partnerId ?? query.partnerId?.trim() ?? undefined,
+    status: query.status,
+    fromDate: query.fromDate ? toDbDate(query.fromDate) : undefined,
+    toDate: query.toDate ? new Date(toDbDate(query.toDate).getTime() + 24 * 60 * 60 * 1000) : undefined
+  };
+}
+
+function emitSettlementUpdated(settlement: { partnerId: string } & Record<string, unknown>) {
+  realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
+  realtimeService.toAdmin(realtimeEvents.settlementUpdated, settlement);
+  realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+  realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+}
+
+async function summarize(filters: { partnerId?: string; fromDate?: Date; toDate?: Date }) {
+  const groups = await settlementRepository.summary(filters);
+  const byStatus: Record<string, { count: number; grossAmount: number; commissionAmount: number; netAmount: number }> = {};
+  const total = { count: 0, grossAmount: 0, commissionAmount: 0, netAmount: 0 };
+  for (const group of groups) {
+    const row = {
+      count: group._count._all,
+      grossAmount: asNumber(group._sum.grossAmount),
+      commissionAmount: asNumber(group._sum.commissionAmount),
+      netAmount: asNumber(group._sum.netAmount)
+    };
+    byStatus[group.status] = row;
+    total.count += row.count;
+    total.grossAmount += row.grossAmount;
+    total.commissionAmount += row.commissionAmount;
+    total.netAmount += row.netAmount;
+  }
+  return { total, byStatus };
 }
 
 export const settlementService = {
   /**
-   * Tính breakdown cho 1 booking để tạo settlement.
-   * Quy tắc:
-   * gross_amount  = subtotal (tổng giá gốc court + services, KHÔNG trừ voucher)
-   * voucher_discount = tổng voucher đã áp dụng
-   * platform_discount = giá trị Platform Voucher (hiện tại = 0 vì chưa có Platform voucher)
-   * partner_discount = voucher của Partner (voucherDiscountAmount)
-   * commission_amount = gross_amount * commission_rate%
-   * net_amount = gross_amount - commission_amount
+   * Tao settlement PENDING khi thanh toan online PAID.
+   * Idempotent theo bookingId. Goi ben trong transaction cua payment webhook.
    */
-  async calculateBreakdown(bookingId: string): Promise<SettlementBreakdown> {
-    const booking = await prisma.booking.findUnique({
-      where: { id: bookingId },
-      include: {
-        court: { include: { partner: true } },
-        bookingServices: { include: { service: true } },
-        bookingVoucher: { include: { voucher: true } },
-        bookingSlots: true
-      }
-    });
-    if (!booking) throw new NotFoundError("Booking not found");
+  async createFromPaidBooking(
+    booking: Booking & { court: { partner: Pick<PartnerProfile, "id" | "commissionRate"> } },
+    paymentId: string | null,
+    tx: DbClient
+  ) {
+    const existing = await settlementRepository.byBookingId(booking.id, tx);
+    if (existing) return null;
 
-    const partnerId = booking.court.partnerId;
-    const commissionRate = await commissionService.effectiveRate(booking.court.partner, prisma);
-
-    const slotTotal = booking.bookingSlots.reduce((sum, slot) => sum + Number(slot.slotPrice), 0);
-    const serviceTotal = booking.bookingServices.reduce((sum, bs) => sum + Number(bs.price) * bs.quantity, 0);
-    const grossAmount = round2(slotTotal + serviceTotal);
-
-    const voucherDiscount = toNum(booking.voucherDiscountAmount);
-
-    const platformDiscount = 0;
-    const partnerDiscount = voucherDiscount;
-
+    const partnerId = booking.court.partner.id;
+    const grossAmount = asNumber(booking.totalPrice);
+    const voucherDiscount = asNumber(booking.voucherDiscountAmount);
+    const commissionRate = await commissionService.effectiveRate(booking.court.partner, tx);
     const commissionAmount = round2(grossAmount * (commissionRate / 100));
-    const serviceFee = 0;
     const netAmount = round2(grossAmount - commissionAmount);
 
-    return {
-      grossAmount,
-      voucherDiscount,
-      platformDiscount,
-      partnerDiscount,
-      commissionAmount,
-      serviceFee,
-      netAmount,
-      commissionRate
-    };
-  },
-
-  /**
-   * Tạo settlement khi payment webhook xác nhận PAID.
-   * Hook vào payment.service.ts applyWebhook → gọi hàm này.
-   */
-  async createSettlementFromPayment(
-    bookingId: string,
-    paymentId: string,
-    tx: Prisma.TransactionClient
-  ) {
-    const existing = await tx.settlement.findUnique({ where: { bookingId } });
-    if (existing) return existing;
-
-    const booking = await tx.booking.findUnique({
-      where: { id: bookingId },
-      include: {
-        court: { include: { partner: true } },
-        bookingServices: { include: { service: true } },
-        bookingVoucher: { include: { voucher: true } },
-        bookingSlots: true
-      }
-    });
-    if (!booking) throw new NotFoundError("Booking not found");
-    if (booking.paymentStatus !== "PAID") {
-      throw new ValidationError("Booking chua duoc thanh toan");
-    }
-
-    const partnerId = booking.court.partnerId;
-    const commissionRate = await commissionService.effectiveRate(booking.court.partner, tx);
-
-    const slotTotal = booking.bookingSlots.reduce((sum, slot) => sum + Number(slot.slotPrice), 0);
-    const serviceTotal = booking.bookingServices.reduce((sum, bs) => sum + Number(bs.price) * bs.quantity, 0);
-    const grossAmount = round2(slotTotal + serviceTotal);
-
-    // Tinh voucher discount theo funded_by:
-    //  - PLATFORM: platform chi tra -> khong tru doanh thu partner
-    //  - PARTNER: partner chi tra -> tru doanh thu partner
-    //  - SHARED: chia theo ty le partner_funding_percent / platform_funding_percent
-    const voucherDiscount = toNum(booking.voucherDiscountAmount);
-    let platformDiscount = 0;
-    let partnerDiscount = 0;
-    if (booking.bookingVoucher?.voucher) {
-      const v = booking.bookingVoucher.voucher;
-      const fundedBy = v.fundedBy ?? "PARTNER";
-      const partnerPct = Number(v.partnerFundingPercent ?? 100);
-      const platformPct = Number(v.platformFundingPercent ?? 0);
-      if (fundedBy === "PLATFORM") {
-        platformDiscount = voucherDiscount;
-        partnerDiscount = 0;
-      } else if (fundedBy === "PARTNER") {
-        platformDiscount = 0;
-        partnerDiscount = voucherDiscount;
-      } else {
-        // SHARED
-        platformDiscount = round2(voucherDiscount * (platformPct / 100));
-        partnerDiscount = round2(voucherDiscount * (partnerPct / 100));
-      }
-    } else {
-      partnerDiscount = voucherDiscount;
-    }
-
-    const commissionAmount = round2(grossAmount * (commissionRate / 100));
-    // Net cho partner = gross - commission - partner-funded voucher discount
-    const netAmount = round2(Math.max(0, grossAmount - commissionAmount - partnerDiscount));
-
-    await ensureWallet(partnerId, tx);
-
-    const settlement = await tx.settlement.create({
-      data: {
-        bookingId,
+    const settlement = await settlementRepository.create(
+      {
+        bookingId: booking.id,
         partnerId,
         paymentId,
         grossAmount,
         voucherDiscount,
-        platformDiscount,
-        partnerDiscount,
+        platformDiscount: 0,
+        partnerDiscount: voucherDiscount,
+        commissionRate,
         commissionAmount,
         serviceFee: 0,
-        netAmount,
-        status: "PENDING"
-      }
-    });
-
-    await tx.partnerWallet.update({
-      where: { partnerId },
-      data: {
-        pendingBalance: { increment: netAmount },
-        totalEarned: { increment: netAmount }
-      }
-    });
-
+        netAmount
+      },
+      tx
+    );
+    await walletRepository.creditPending(partnerId, netAmount, tx);
     return settlement;
   },
 
   /**
-   * Settlement COMPLETED khi booking COMPLETED hoặc đã qua thời gian refund.
-   * Chuyển tiền từ pending_balance → available_balance.
+   * Booking hoan thanh -> settlement PENDING chuyen SETTLED, pending -> available.
+   * No-op khi booking khong co settlement (vd thanh toan tien mat) hoac da xu ly.
    */
-  async settle(settlementId: string, actorId: string) {
-    const settlement = await settlementRepository.findById(settlementId);
-    if (!settlement) throw new NotFoundError("Settlement not found");
-    if (settlement.status !== "PENDING") {
-      throw new ValidationError(`Settlement da ${settlement.status === "SETTLED" ? "duoc quyet toan" : "bi huy"}`);
+  async settleForBooking(bookingId: string, tx: DbClient) {
+    const settlement = await settlementRepository.byBookingId(bookingId, tx);
+    if (!settlement || settlement.status !== "PENDING") return null;
+
+    const count = await settlementRepository.transitionById(
+      settlement.id,
+      ["PENDING"],
+      { status: "SETTLED", settledAt: new Date() },
+      tx
+    );
+    if (count === 0) return null;
+
+    const moved = await walletRepository.settlePending(settlement.partnerId, asNumber(settlement.netAmount), tx);
+    if (moved === 0) {
+      throw new ValidationError("So du cho quyet toan cua vi khong khop voi settlement");
     }
-
-    const updated = await prisma.$transaction(async (tx) => {
-      const settled = await tx.settlement.update({
-        where: { id: settlementId },
-        data: { status: "SETTLED", settledAt: new Date() },
-        include: { partner: true }
-      });
-
-      await tx.partnerWallet.update({
-        where: { partnerId: settlement.partnerId },
-        data: {
-          pendingBalance: { decrement: settlement.netAmount },
-          availableBalance: { increment: settlement.netAmount }
-        }
-      });
-
-      await recordAdminAction(actorId, "SETTLEMENT_COMPLETED", "SETTLEMENT", settlementId, {
-        bookingId: settlement.bookingId,
-        netAmount: settlement.netAmount,
-        partnerId: settlement.partnerId
-      });
-
-      return settled;
-    });
-
-    realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, updated);
-    realtimeService.toAdmin(realtimeEvents.settlementUpdated, updated);
-    return updated;
+    return { ...settlement, status: "SETTLED" as SettlementStatus, settledAt: new Date() };
   },
 
   /**
-   * Huỷ settlement (booking cancelled, refund, etc.)
+   * Booking bi huy khi settlement con PENDING -> rollback pending, settlement CANCELLED.
+   * No-op khi khong co settlement hoac settlement da SETTLED.
    */
-  async cancel(settlementId: string, actorId: string, reason?: string) {
-    const settlement = await settlementRepository.findById(settlementId);
-    if (!settlement) throw new NotFoundError("Settlement not found");
-    if (settlement.status === "SETTLED") {
-      throw new ValidationError("Khong the huy settlement da quyet toan");
+  async cancelForBooking(bookingId: string, tx: DbClient) {
+    const settlement = await settlementRepository.byBookingId(bookingId, tx);
+    if (!settlement || settlement.status !== "PENDING") return null;
+
+    const count = await settlementRepository.transitionById(settlement.id, ["PENDING"], { status: "CANCELLED" }, tx);
+    if (count === 0) return null;
+
+    const rolled = await walletRepository.rollbackPending(settlement.partnerId, asNumber(settlement.netAmount), tx);
+    if (rolled === 0) {
+      throw new ValidationError("So du cho quyet toan cua vi khong khop voi settlement");
+    }
+    return { ...settlement, status: "CANCELLED" as SettlementStatus };
+  },
+
+  async adminSettle(actorId: string, id: string) {
+    const settlement = await settlementRepository.byId(id);
+    if (!settlement) throw new NotFoundError("Khong tim thay settlement");
+    if (settlement.status !== "PENDING") {
+      throw new ValidationError("Chi co the quyet toan settlement dang cho xu ly");
     }
 
-    const cancelled = await prisma.$transaction(async (tx) => {
-      const updated = await tx.settlement.update({
-        where: { id: settlementId },
-        data: { status: "CANCELLED" }
-      });
+    await prisma.$transaction(async (tx) => {
+      const count = await settlementRepository.transitionById(id, ["PENDING"], { status: "SETTLED", settledAt: new Date() }, tx);
+      if (count === 0) throw new ValidationError("Settlement da duoc xu ly boi thao tac khac");
+      const moved = await walletRepository.settlePending(settlement.partnerId, asNumber(settlement.netAmount), tx);
+      if (moved === 0) throw new ValidationError("So du cho quyet toan cua vi khong du");
+    });
 
-      if (settlement.status === "PENDING") {
-        await tx.partnerWallet.update({
-          where: { partnerId: settlement.partnerId },
-          data: { pendingBalance: { decrement: settlement.netAmount } }
-        });
+    await recordAdminAction(actorId, "SETTLEMENT_COMPLETED", "SETTLEMENT", id, {
+      bookingId: settlement.bookingId,
+      partnerId: settlement.partnerId,
+      netAmount: asNumber(settlement.netAmount)
+    });
+    const updated = await settlementRepository.byId(id);
+    emitSettlementUpdated(updated!);
+    return toDto(updated!);
+  },
+
+  async adminCancel(actorId: string, id: string) {
+    const settlement = await settlementRepository.byId(id);
+    if (!settlement) throw new NotFoundError("Khong tim thay settlement");
+    if (settlement.status !== "PENDING" && settlement.status !== "SETTLED") {
+      throw new ValidationError("Chi co the huy settlement dang cho xu ly hoac da quyet toan");
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const fromStatus = settlement.status as SettlementStatus;
+      const count = await settlementRepository.transitionById(id, [fromStatus], { status: "CANCELLED" }, tx);
+      if (count === 0) throw new ValidationError("Settlement da duoc xu ly boi thao tac khac");
+      const netAmount = asNumber(settlement.netAmount);
+      const reverted =
+        fromStatus === "PENDING"
+          ? await walletRepository.rollbackPending(settlement.partnerId, netAmount, tx)
+          : await walletRepository.debitAvailable(settlement.partnerId, netAmount, tx);
+      if (reverted === 0) {
+        throw new ValidationError("So du vi khong du de hoan tra settlement nay");
       }
-
-      await recordAdminAction(actorId, "SETTLEMENT_CANCELLED", "SETTLEMENT", settlementId, {
-        bookingId: settlement.bookingId,
-        reason,
-        netAmount: settlement.netAmount
-      });
-
-      return updated;
     });
 
-    realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, cancelled);
-    return cancelled;
-  },
-
-  async getById(id: string) {
-    const s = await settlementRepository.findById(id);
-    if (!s) throw new NotFoundError("Settlement not found");
-    return {
-      ...s,
-      grossAmount: toNum(s.grossAmount),
-      voucherDiscount: toNum(s.voucherDiscount),
-      platformDiscount: toNum(s.platformDiscount),
-      partnerDiscount: toNum(s.partnerDiscount),
-      commissionAmount: toNum(s.commissionAmount),
-      serviceFee: toNum(s.serviceFee),
-      netAmount: toNum(s.netAmount)
-    };
-  },
-
-  async listForPartner(partnerId: string, page: number, limit: number) {
-    const { items, total } = await settlementRepository.listByPartner(partnerId, page, limit);
-    return {
-      items: items.map((s) => ({
-        ...s,
-        grossAmount: toNum(s.grossAmount),
-        voucherDiscount: toNum(s.voucherDiscount),
-        platformDiscount: toNum(s.platformDiscount),
-        partnerDiscount: toNum(s.partnerDiscount),
-        commissionAmount: toNum(s.commissionAmount),
-        serviceFee: toNum(s.serviceFee),
-        netAmount: toNum(s.netAmount)
-      })),
-      total
-    };
-  },
-
-  async listAll(filters: {
-    page: number;
-    limit: number;
-    partnerId?: string;
-    status?: string;
-    fromDate?: string;
-    toDate?: string;
-  }) {
-    const { items, total } = await settlementRepository.listAll({
-      page: filters.page,
-      limit: filters.limit,
-      partnerId: filters.partnerId,
-      status: filters.status,
-      fromDate: filters.fromDate ? new Date(filters.fromDate) : undefined,
-      toDate: filters.toDate ? new Date(filters.toDate) : undefined
+    await recordAdminAction(actorId, "SETTLEMENT_CANCELLED", "SETTLEMENT", id, {
+      bookingId: settlement.bookingId,
+      partnerId: settlement.partnerId,
+      previousStatus: settlement.status,
+      netAmount: asNumber(settlement.netAmount)
     });
-    return {
-      items: items.map((s: any) => ({
-        ...s,
-        grossAmount: toNum(s.grossAmount),
-        voucherDiscount: toNum(s.voucherDiscount),
-        platformDiscount: toNum(s.platformDiscount),
-        partnerDiscount: toNum(s.partnerDiscount),
-        commissionAmount: toNum(s.commissionAmount),
-        serviceFee: toNum(s.serviceFee),
-        netAmount: toNum(s.netAmount)
-      })),
-      total
-    };
+    const updated = await settlementRepository.byId(id);
+    emitSettlementUpdated(updated!);
+    return toDto(updated!);
   },
 
-  async summaryForAdmin(filters: { partnerId?: string; status?: string }) {
-    return settlementRepository.summary(filters);
+  async listMine(userId: string, query: SettlementListQuery) {
+    const profile = await getPartnerProfileByUser(userId);
+    const page = parsePage(query.page);
+    const limit = parseLimit(query.limit);
+    const { items, total } = await settlementRepository.list(parseFilters(query, profile.id), page, limit);
+    return { items: items.map(toDto), meta: paginationMeta(page, limit, total) };
+  },
+
+  async detailMine(userId: string, id: string) {
+    const profile = await getPartnerProfileByUser(userId);
+    const settlement = await settlementRepository.byId(id);
+    if (!settlement) throw new NotFoundError("Khong tim thay settlement");
+    if (settlement.partnerId !== profile.id) throw new ForbiddenError("Ban khong co quyen xem settlement nay");
+    return toDto(settlement);
+  },
+
+  async summaryMine(userId: string, query: SettlementListQuery) {
+    const profile = await getPartnerProfileByUser(userId);
+    return summarize(parseFilters(query, profile.id));
+  },
+
+  async adminList(query: SettlementListQuery) {
+    const page = parsePage(query.page);
+    const limit = parseLimit(query.limit);
+    const { items, total } = await settlementRepository.list(parseFilters(query), page, limit);
+    return { items: items.map(toDto), meta: paginationMeta(page, limit, total) };
+  },
+
+  async adminSummary(query: SettlementListQuery) {
+    return summarize(parseFilters(query));
   }
 };

@@ -8,7 +8,10 @@ import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { ErrorState, LoadingState } from "../../components/common/States";
+import { PageHero } from "../../components/common/PageHero";
 import { SortableTh } from "../../components/common/SortableTh";
+import { StatusBadge } from "../../components/common/StatusBadge";
+import { Table as SharedTable, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { useUrlSort } from "../../hooks/useUrlSort";
 
 const approvalLabels: Record<string, string> = {
@@ -19,6 +22,15 @@ const approvalLabels: Record<string, string> = {
 const activeLabels: Record<string, string> = {
   ACTIVE: "Đang hoạt động",
   INACTIVE: "Đã khóa"
+};
+const approvalToneClasses: Record<string, string> = {
+  PENDING: "bg-amber-100 text-amber-800",
+  APPROVED: "bg-emerald-100 text-emerald-800",
+  REJECTED: "bg-rose-100 text-rose-800"
+};
+const activeToneClasses: Record<string, string> = {
+  ACTIVE: "bg-emerald-100 text-emerald-800",
+  INACTIVE: "bg-slate-200 text-slate-700"
 };
 
 const emptyFilters = {
@@ -71,15 +83,16 @@ export function AdminCourtsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold">Tất cả sân</h1>
-          <p className="text-sm text-slate-600">Quản lý sân đã duyệt, khóa/mở hoạt động, verified, featured và yêu cầu đối tác cập nhật.</p>
-        </div>
-        <Button variant="secondary" onClick={() => { setPage(1); setFilters(emptyFilters); }}>
-          Xóa lọc
-        </Button>
-      </div>
+      <PageHero
+        eyebrow="Vận hành"
+        title="Tất cả sân"
+        subtitle="Quản lý sân đã duyệt, khóa/mở hoạt động, verified, featured và yêu cầu đối tác cập nhật."
+        actions={
+          <Button className="bg-white/20 text-white ring-1 ring-white/30 hover:bg-white/30" onClick={() => { setPage(1); setFilters(emptyFilters); }}>
+            Xóa lọc
+          </Button>
+        }
+      />
 
       <div className="grid gap-3 rounded-lg border bg-white p-4 md:grid-cols-2 xl:grid-cols-4">
         <Input label="Tìm kiếm" value={filters.search} onChange={(event) => updateFilter(setPage, setFilters, "search", event.target.value)} placeholder="Tên sân, địa chỉ, đối tác" />
@@ -92,58 +105,56 @@ export function AdminCourtsPage() {
         <Select label="Featured" value={filters.featured} onChange={(event) => updateFilter(setPage, setFilters, "featured", event.target.value)} options={booleanOptions} />
       </div>
 
-      <div className="overflow-auto rounded-lg border bg-white">
-        <table className="w-full min-w-[1120px] text-sm">
-          <thead>
-            <tr className="bg-slate-50 text-left">
-              <SortableTh className="p-3" label="Sân" field="name" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <SortableTh label="Đối tác" field="businessName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <SortableTh label="Địa điểm" field="city" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <SortableTh label="Giá từ" field="minPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <SortableTh label="Duyệt" field="approvalStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <SortableTh label="Hoạt động" field="activeStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <th>Nhãn</th>
-              <SortableTh label="Yêu cầu cập nhật" field="updateRequestedAt" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {courts.data?.items.map((court) => (
-              <tr key={court.id} className="border-t align-top">
-                <td className="p-3">
-                  <div className="flex items-center gap-3">
-                    <img className="h-14 w-20 rounded-md object-cover" src={court.imageUrl || fallbackCourtImage} alt={court.name} />
-                    <div>
-                      <p className="font-bold">{court.name}</p>
-                      <p className="text-xs text-slate-500">{court.id}</p>
-                    </div>
+      <SharedTable minWidth="1120px">
+        <THead>
+          <tr>
+            <SortableTh label="Sân" field="name" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh label="Đối tác" field="businessName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh label="Địa điểm" field="city" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh label="Giá từ" field="minPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh label="Duyệt" field="approvalStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh label="Hoạt động" field="activeStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <Th>Nhãn</Th>
+            <SortableTh label="Yêu cầu cập nhật" field="updateRequestedAt" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <Th></Th>
+          </tr>
+        </THead>
+        <TBody>
+          {courts.data?.items.map((court) => (
+            <Tr key={court.id} className="align-top">
+              <Td>
+                <div className="flex items-center gap-3">
+                  <img className="h-14 w-20 rounded-md object-cover" src={court.imageUrl || fallbackCourtImage} alt={court.name} />
+                  <div>
+                    <p className="font-bold">{court.name}</p>
+                    <p className="text-xs text-slate-500">{court.id}</p>
                   </div>
-                </td>
-                <td>{court.partner.businessName}<br /><span className="text-xs text-slate-500">{court.partner.user.email}</span></td>
-                <td>{court.district}, {court.city}<br /><span className="text-xs text-slate-500">{court.address}</span></td>
-                <td>{formatMoney(court.minPrice ?? 0)}</td>
-                <td><StatusBadge value={court.approvalStatus} labels={approvalLabels} /></td>
-                <td><StatusBadge value={court.activeStatus} labels={activeLabels} /></td>
-                <td>
-                  <div className="flex flex-wrap gap-1">
-                    {court.verified && <SmallBadge>Verified</SmallBadge>}
-                    {court.featured && <SmallBadge>Featured</SmallBadge>}
-                    {!court.verified && !court.featured && <span className="text-xs text-slate-500">Chưa gắn</span>}
-                  </div>
-                </td>
-                <td>{court.updateRequestedAt ? new Date(court.updateRequestedAt).toLocaleString("vi-VN") : "-"}</td>
-                <td className="p-3 text-right">
-                  <Button variant="secondary" onClick={() => setSelected(court.id)}>
-                    <Eye className="h-4 w-4" />
-                    Chi tiết
-                  </Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {!courts.data?.items.length && <p className="p-6 text-center text-slate-500">Không có sân phù hợp</p>}
-      </div>
+                </div>
+              </Td>
+              <Td>{court.partner.businessName}<br /><span className="text-xs text-slate-500">{court.partner.user.email}</span></Td>
+              <Td>{court.district}, {court.city}<br /><span className="text-xs text-slate-500">{court.address}</span></Td>
+              <Td>{formatMoney(court.minPrice ?? 0)}</Td>
+              <Td><StatusBadge value={court.approvalStatus} tones={approvalToneClasses} labels={approvalLabels} /></Td>
+              <Td><StatusBadge value={court.activeStatus} tones={activeToneClasses} labels={activeLabels} /></Td>
+              <Td>
+                <div className="flex flex-wrap gap-1">
+                  {court.verified && <SmallBadge>Verified</SmallBadge>}
+                  {court.featured && <SmallBadge>Featured</SmallBadge>}
+                  {!court.verified && !court.featured && <span className="text-xs text-slate-500">Chưa gắn</span>}
+                </div>
+              </Td>
+              <Td>{court.updateRequestedAt ? new Date(court.updateRequestedAt).toLocaleString("vi-VN") : "-"}</Td>
+              <Td className="text-right">
+                <Button variant="secondary" onClick={() => setSelected(court.id)}>
+                  <Eye className="h-4 w-4" />
+                  Chi tiết
+                </Button>
+              </Td>
+            </Tr>
+          ))}
+        </TBody>
+      </SharedTable>
+      {!courts.data?.items.length && <p className="p-6 text-center text-slate-500">Không có sân phù hợp</p>}
 
       <Pager page={page} total={courts.data?.meta.totalPages ?? 1} setPage={setPage} />
 
@@ -219,55 +230,55 @@ function CourtDetail({ court, onUpdated }: { court: AdminCourt; onUpdated: () =>
           ))}
         </div>
 
-        <Table title="Bảng giá" empty="Chưa có bảng giá">
-          <thead>
-            <tr className="bg-slate-50 text-left">
-              <th className="p-3">Loại ngày</th>
-              <th>Khung giờ</th>
-              <th>Giá</th>
-              <th>Ghi chú</th>
+        <SimpleTable title="Bảng giá" empty="Chưa có bảng giá">
+          <THead>
+            <tr>
+              <Th>Loại ngày</Th>
+              <Th>Khung giờ</Th>
+              <Th>Giá</Th>
+              <Th>Ghi chú</Th>
             </tr>
-          </thead>
-          <tbody>
+          </THead>
+          <TBody>
             {court.prices?.map((price) => (
-              <tr key={price.id} className="border-t">
-                <td className="p-3">{price.dayType}</td>
-                <td>{formatTime(price.startTime)} - {formatTime(price.endTime)}</td>
-                <td>{formatMoney(price.price)}</td>
-                <td>{price.note || "-"}</td>
-              </tr>
+              <Tr key={price.id}>
+                <Td>{price.dayType}</Td>
+                <Td>{formatTime(price.startTime)} - {formatTime(price.endTime)}</Td>
+                <Td>{formatMoney(price.price)}</Td>
+                <Td>{price.note || "-"}</Td>
+              </Tr>
             ))}
-          </tbody>
-        </Table>
+          </TBody>
+        </SimpleTable>
 
-        <Table title="Dịch vụ" empty="Chưa có dịch vụ">
-          <thead>
-            <tr className="bg-slate-50 text-left">
-              <th className="p-3">Dịch vụ</th>
-              <th>Mô tả</th>
-              <th>Giá</th>
-              <th>Trạng thái</th>
+        <SimpleTable title="Dịch vụ" empty="Chưa có dịch vụ">
+          <THead>
+            <tr>
+              <Th>Dịch vụ</Th>
+              <Th>Mô tả</Th>
+              <Th>Giá</Th>
+              <Th>Trạng thái</Th>
             </tr>
-          </thead>
-          <tbody>
+          </THead>
+          <TBody>
             {court.services?.map((service) => (
-              <tr key={service.id} className="border-t">
-                <td className="p-3 font-medium">{service.name}</td>
-                <td>{service.description || "-"}</td>
-                <td>{formatMoney(service.price)}</td>
-                <td>{service.status}</td>
-              </tr>
+              <Tr key={service.id}>
+                <Td className="font-medium">{service.name}</Td>
+                <Td>{service.description || "-"}</Td>
+                <Td>{formatMoney(service.price)}</Td>
+                <Td>{service.status}</Td>
+              </Tr>
             ))}
-          </tbody>
-        </Table>
+          </TBody>
+        </SimpleTable>
       </section>
 
       <aside className="space-y-4">
         <div className="rounded-lg border bg-slate-50 p-4">
           <h3 className="font-bold">Trạng thái</h3>
           <div className="mt-3 grid gap-2">
-            <StatusBadge value={court.approvalStatus} labels={approvalLabels} />
-            <StatusBadge value={court.activeStatus} labels={activeLabels} />
+            <StatusBadge value={court.approvalStatus} tones={approvalToneClasses} labels={approvalLabels} />
+            <StatusBadge value={court.activeStatus} tones={activeToneClasses} labels={activeLabels} />
             {court.verified && <SmallBadge>Verified</SmallBadge>}
             {court.featured && <SmallBadge>Featured</SmallBadge>}
           </div>
@@ -321,20 +332,14 @@ function Info({ title, lines }: { title: string; lines: Array<string | number | 
   );
 }
 
-function Table({ title, empty, children }: { title: string; empty: string; children: ReactNode }) {
+function SimpleTable({ title, empty, children }: { title: string; empty: string; children: ReactNode }) {
   return (
     <div>
       <h3 className="mb-2 font-bold">{title}</h3>
-      <div className="overflow-auto rounded-lg border">
-        <table className="w-full min-w-[720px] text-sm">{children}</table>
-      </div>
+      <SharedTable minWidth="720px">{children}</SharedTable>
       <p className="sr-only">{empty}</p>
     </div>
   );
-}
-
-function StatusBadge({ value, labels }: { value: string; labels: Record<string, string> }) {
-  return <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{labels[value] ?? value}</span>;
 }
 
 function SmallBadge({ children }: { children: ReactNode }) {

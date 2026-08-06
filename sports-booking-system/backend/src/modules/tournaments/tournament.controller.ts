@@ -13,8 +13,5 @@ export const tournamentController = {
   partnerDelete: asyncHandler(async (req, res) => sendSuccess(res, await tournamentService.deletePartner(req.user!.id, req.params.id))),
   partnerRegistrations: asyncHandler(async (req, res) => sendSuccess(res, await tournamentService.registrations(req.user!.id, req.params.id))),
   approveRegistration: asyncHandler(async (req, res) => sendSuccess(res, await tournamentService.updateRegistration(req.user!.id, req.params.id, "APPROVED"))),
-  rejectRegistration: asyncHandler(async (req, res) => sendSuccess(res, await tournamentService.updateRegistration(req.user!.id, req.params.id, "REJECTED"))),
-  adminPending: asyncHandler(async (_req, res) => sendSuccess(res, await tournamentService.pendingAdmin())),
-  adminApprove: asyncHandler(async (req, res) => sendSuccess(res, await tournamentService.approveAdmin(req.params.id))),
-  adminReject: asyncHandler(async (req, res) => sendSuccess(res, await tournamentService.rejectAdmin(req.params.id)))
+  rejectRegistration: asyncHandler(async (req, res) => sendSuccess(res, await tournamentService.updateRegistration(req.user!.id, req.params.id, "REJECTED")))
 };

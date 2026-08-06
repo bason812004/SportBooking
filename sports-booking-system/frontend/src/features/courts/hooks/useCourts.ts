@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { courtApi, type CourtFilters } from "../api/courtApi";
 
 export function useCourts(filters: CourtFilters) {
-  return useQuery({ queryKey: ["courts", filters], queryFn: () => courtApi.list(filters), refetchInterval: 8000, refetchOnWindowFocus: true });
+  return useQuery({ queryKey: ["courts", filters], queryFn: () => courtApi.list(filters), refetchInterval: 45000, refetchOnWindowFocus: true });
 }
 
 export function useCourt(id?: string) {

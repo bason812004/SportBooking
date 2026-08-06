@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+import { settlementService } from "../settlements/settlement.service.js";
 
 const columnExistsCache = new Map<string, boolean>();
 
@@ -470,7 +471,31 @@ export const adminRepository = {
         }
       }
 
-      return updated;
+      if (input.bookingStatus === "COMPLETED" && before.bookingStatus !== "COMPLETED") {
+        await settlePendingSettlement(tx, id);
+      }
+      if (input.bookingStatus === "CANCELLED" && before.bookingStatus !== "CANCELLED") {
+        const settlement = await tx.settlement.findUnique({ where: { bookingId: id } });
+        if (settlement && settlement.status === "PENDING") {
+          await tx.partnerWallet.update({
+            where: { partnerId: settlement.partnerId },
+            data: { pendingBalance: { decrement: settlement.netAmount } }
+          });
+          await tx.settlement.update({
+            where: { id: settlement.id },
+            data: { status: "CANCELLED" }
+          });
+        }
+      }
+
+      let settlement = null;
+      if (input.bookingStatus === "COMPLETED" || input.bookingStatus === "NO_SHOW") {
+        settlement = await settlementService.settleForBooking(id, tx);
+      } else if (input.bookingStatus === "CANCELLED") {
+        settlement = await settlementService.cancelForBooking(id, tx);
+      }
+
+      return { ...updated, settlement };
     });
   },
 
@@ -959,7 +984,7 @@ export const adminRepository = {
         targetType: input.targetType
       }));
 
-      return campaign;
+      return { campaign, recipientIds: recipientRows.map((item) => item.id) };
     });
   },
 
@@ -1016,12 +1041,18 @@ export const adminRepository = {
     return prisma.partnerProfile.update({ where: { id }, data: { approvalStatus } });
   },
 
-  pendingCourts() {
-    return prisma.court.findMany({
-      where: { approvalStatus: "PENDING" },
-      include: { category: true, partner: { include: { user: { select: { fullName: true, email: true } } } }, images: true },
-      orderBy: { createdAt: "desc" }
-    });
+  pendingCourts(page: number, limit: number) {
+    const where: Prisma.CourtWhereInput = { approvalStatus: "PENDING" };
+    return prisma.$transaction([
+      prisma.court.findMany({
+        where,
+        include: { category: true, partner: { include: { user: { select: { fullName: true, email: true } } } }, images: true },
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit
+      }),
+      prisma.court.count({ where })
+    ]);
   },
 
   setCourtApproval(id: string, approvalStatus: "APPROVED" | "REJECTED", rejectionReason?: string) {
@@ -1041,11 +1072,16 @@ export const adminRepository = {
     return prisma.courtCategory.update({ where: { id }, data: { status: "INACTIVE" } });
   },
 
-  reviews() {
-    return prisma.review.findMany({
-      include: { user: { select: { fullName: true, email: true } }, court: { select: { name: true } } },
-      orderBy: { createdAt: "desc" }
-    });
+  reviews(page: number, limit: number) {
+    return prisma.$transaction([
+      prisma.review.findMany({
+        include: { user: { select: { fullName: true, email: true } }, court: { select: { name: true } } },
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit
+      }),
+      prisma.review.count()
+    ]);
   },
   setReviewDisplay(id: string, displayStatus: "VISIBLE" | "HIDDEN") {
     return prisma.review.update({ where: { id }, data: { displayStatus } });
@@ -1054,11 +1090,16 @@ export const adminRepository = {
     return prisma.review.delete({ where: { id } });
   },
 
-  reports() {
-    return prisma.report.findMany({
-      include: { user: { select: { fullName: true, email: true } }, court: { select: { name: true } } },
-      orderBy: { createdAt: "desc" }
-    });
+  reports(page: number, limit: number) {
+    return prisma.$transaction([
+      prisma.report.findMany({
+        include: { user: { select: { fullName: true, email: true } }, court: { select: { name: true } } },
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit
+      }),
+      prisma.report.count()
+    ]);
   },
   setReportStatus(id: string, status: "RESOLVED" | "REJECTED") {
     return prisma.report.update({ where: { id }, data: { status, resolvedAt: new Date() } });
@@ -1104,17 +1145,18 @@ export const adminRepository = {
     return prisma.$transaction([
       prisma.$queryRaw<any[]>`
         select v.id, v.code, v.title, v.discount_type::text as "discountType",
-          v.discount_value::float as "discountValue", v.used_count as "usedCount",
+          v.discount_value::float as "discountValue", v.min_booking_amount::float as "minBookingAmount",
+          v.used_count as "usedCount",
           v.usage_limit as "usageLimit", v.start_date as "startDate", v.end_date as "endDate",
-          v.status::text, p.business_name as "businessName", c.name as "courtName"
-        from vouchers v join partner_profiles p on p.id = v.partner_id
+          v.status::text, p.business_name as "businessName", c.name as "courtName", v.created_at as "createdAt"
+        from vouchers v left join partner_profiles p on p.id = v.partner_id
         left join courts c on c.id = v.court_id
         where (${filters.status ?? null}::text is null or v.status::text = ${filters.status ?? null})
           and (${search}::text is null or v.code ilike ${search} or v.title ilike ${search} or p.business_name ilike ${search})
         order by v.created_at desc offset ${(page - 1) * limit} limit ${limit}
       `,
       prisma.$queryRaw<Array<{ count: bigint }>>`
-        select count(*)::bigint as count from vouchers v join partner_profiles p on p.id = v.partner_id
+        select count(*)::bigint as count from vouchers v left join partner_profiles p on p.id = v.partner_id
         where (${filters.status ?? null}::text is null or v.status::text = ${filters.status ?? null})
           and (${search}::text is null or v.code ilike ${search} or v.title ilike ${search} or p.business_name ilike ${search})
       `
@@ -1125,7 +1167,74 @@ export const adminRepository = {
     return prisma.$executeRaw`update vouchers set status = ${status}::voucher_status, updated_at = now() where id = ${id}`;
   },
 
-  async pendingBlogs(page: number, limit: number, filters: { search?: string; status?: string }) {
+  async voucherDetail(id: string) {
+    const [row] = await prisma.$queryRaw<any[]>`
+      select v.id, v.code, v.title, v.description, v.discount_type::text as "discountType",
+        v.discount_value::float as "discountValue", v.max_discount_amount::float as "maxDiscountAmount",
+        v.min_booking_amount::float as "minBookingAmount", v.used_count as "usedCount",
+        v.usage_limit as "usageLimit", v.start_date as "startDate", v.end_date as "endDate",
+        v.status::text, v.partner_id as "partnerId", v.court_id as "courtId",
+        p.business_name as "businessName"
+      from vouchers v
+      left join partner_profiles p on p.id = v.partner_id
+      where v.id = ${id}
+    `;
+    return row ?? null;
+  },
+
+  async createVoucher(input: {
+    code: string; title: string; description?: string;
+    discountType: string; discountValue: number;
+    maxDiscountAmount?: number | null; minBookingAmount: number;
+    usageLimit?: number | null; startDate: string; endDate: string;
+  }) {
+    const [row] = await prisma.$queryRaw<Array<{ id: string }>>`
+      insert into vouchers (
+        code, title, description, discount_type,
+        discount_value, max_discount_amount, min_booking_amount,
+        usage_limit, start_date, end_date, status
+      ) values (
+        ${input.code},
+        ${input.title},
+        ${input.description ?? null},
+        ${input.discountType}::voucher_discount_type,
+        ${input.discountValue},
+        ${input.maxDiscountAmount ?? null},
+        ${input.minBookingAmount},
+        ${input.usageLimit ?? null},
+        ${new Date(input.startDate)},
+        ${new Date(input.endDate)},
+        'DRAFT'::voucher_status
+      )
+      returning id
+    `;
+    return row;
+  },
+
+  async updateVoucher(id: string, input: {
+    code: string; title: string; description?: string;
+    discountType: string; discountValue: number;
+    maxDiscountAmount?: number | null; minBookingAmount: number;
+    usageLimit?: number | null; startDate: string; endDate: string;
+  }) {
+    return prisma.$executeRaw`
+      update vouchers set
+        code = ${input.code},
+        title = ${input.title},
+        description = ${input.description ?? null},
+        discount_type = ${input.discountType}::voucher_discount_type,
+        discount_value = ${input.discountValue},
+        max_discount_amount = ${input.maxDiscountAmount ?? null},
+        min_booking_amount = ${input.minBookingAmount},
+        usage_limit = ${input.usageLimit ?? null},
+        start_date = ${new Date(input.startDate)},
+        end_date = ${new Date(input.endDate)},
+        updated_at = now()
+      where id = ${id}
+    `;
+  },
+
+  async pendingBlogs(page: number, limit: number, filters: { search?: string; status?: string; authorRole?: string }) {
     const pattern = filters.search ? `%${filters.search}%` : null;
     const allowCommentsSelect = await columnExists("blog_posts", "allow_comments")
       ? Prisma.sql`coalesce(b.allow_comments, true)`
@@ -1134,21 +1243,34 @@ export const adminRepository = {
     const statusClause = filters.status && validStatuses.includes(filters.status)
       ? Prisma.sql`b.status = ${filters.status}::blog_post_status`
       : Prisma.sql`b.status != 'DRAFT'::blog_post_status`;
+    const validRoles = ["USER", "PARTNER", "ADMIN"];
+    const roleClause = filters.authorRole && validRoles.includes(filters.authorRole)
+      ? Prisma.sql`u.role = ${filters.authorRole}::user_role`
+      : Prisma.sql`true`;
 
     return prisma.$transaction([
       prisma.$queryRaw<any[]>(Prisma.sql`
         select b.id, b.title, b.excerpt, b.content, b.cover_image_url as "coverImageUrl",
           b.status::text, b.visibility::text, ${allowCommentsSelect} as "allowComments",
           b.created_at as "createdAt", u.full_name as "authorName", u.email as "authorEmail",
-          u.role::text as "authorRole"
-        from blog_posts b join users u on u.id = b.author_id
+          u.role::text as "authorRole",
+          reject_reason.reason as "rejectionReason"
+        from blog_posts b
+        join users u on u.id = b.author_id
+        left join lateral (
+          select mh.reason from moderation_history mh
+          where mh.entity_type = 'BLOG' and mh.entity_id = b.id and mh.action = 'REJECTED'
+          order by mh.created_at desc limit 1
+        ) reject_reason on true
         where ${statusClause}
+          and ${roleClause}
           and (${pattern}::text is null or b.title ilike ${pattern} or u.full_name ilike ${pattern})
         order by b.created_at desc offset ${(page - 1) * limit} limit ${limit}
       `),
       prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
         select count(*)::bigint as count from blog_posts b join users u on u.id = b.author_id
         where ${statusClause}
+          and ${roleClause}
           and (${pattern}::text is null or b.title ilike ${pattern} or u.full_name ilike ${pattern})
       `)
     ]);
@@ -1158,7 +1280,18 @@ export const adminRepository = {
     return prisma.$executeRaw`
       update blog_posts set status = ${status}::blog_post_status,
         published_at = case when ${status} = 'PUBLISHED' then now() else published_at end, updated_at = now()
-      where id = ${id} and status = 'PENDING'::blog_post_status
+      where id = ${id}
+        and (
+          (${status} = 'PUBLISHED' and status in ('PENDING'::blog_post_status, 'REJECTED'::blog_post_status))
+          or (${status} = 'REJECTED' and status = 'PENDING'::blog_post_status)
+        )
+    `;
+  },
+
+  hideBlog(id: string) {
+    return prisma.$executeRaw`
+      update blog_posts set status = 'HIDDEN'::blog_post_status, updated_at = now()
+      where id = ${id} and status = 'PUBLISHED'::blog_post_status
     `;
   },
 
@@ -1185,7 +1318,16 @@ export const adminRepository = {
   moderateTournament(id: string, status: "APPROVED" | "REJECTED") {
     return prisma.$executeRaw`
       update tournaments set status = ${status}::tournament_status, updated_at = now()
-      where id = ${id}::uuid and status = 'PENDING'::tournament_status
+      where id = ${id} and status = 'PENDING'::tournament_status
+    `;
+  },
+
+  tournamentPartnerUser(id: string) {
+    return prisma.$queryRaw<Array<{ title: string; userId: string }>>`
+      select t.title, p.user_id as "userId"
+      from tournaments t join partner_profiles p on p.id = t.partner_id
+      where t.id = ${id}
+      limit 1
     `;
   },
 

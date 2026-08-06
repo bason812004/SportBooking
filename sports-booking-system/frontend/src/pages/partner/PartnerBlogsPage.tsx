@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MessageCircle, MessageCircleOff, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "../../components/ui/Button";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
+import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { partnerApi } from "../../features/partner/api/partnerApi";
 
 const statusLabel: Record<string, string> = {
@@ -17,10 +19,12 @@ const statusLabel: Record<string, string> = {
 export function PartnerBlogsPage() {
   const queryClient = useQueryClient();
   const blogs = useQuery({ queryKey: ["partner-blogs"], queryFn: partnerApi.blogs });
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const action = useMutation({
     mutationFn: ({ id, type }: { id: string; type: "submit" | "delete" }) => type === "submit" ? partnerApi.submitBlog(id) : partnerApi.deleteBlog(id),
     onSuccess: async () => {
       toast.success("Đã cập nhật bài viết");
+      setDeleteTarget(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["partner-blogs"] }),
         queryClient.invalidateQueries({ queryKey: ["public-blogs"] }),
@@ -89,7 +93,7 @@ export function PartnerBlogsPage() {
                   <>
                     <Link to={`/partner/blogs/${blog.id}/edit`}><Button variant="secondary">Sửa</Button></Link>
                     <Button disabled={action.isPending} onClick={() => action.mutate({ id: blog.id, type: "submit" })}>Gửi duyệt</Button>
-                    <Button disabled={action.isPending} variant="danger" onClick={() => action.mutate({ id: blog.id, type: "delete" })}>Xóa</Button>
+                    <Button disabled={action.isPending} variant="danger" onClick={() => setDeleteTarget(blog.id)}>Xóa</Button>
                   </>
                 )}
               </div>
@@ -97,6 +101,14 @@ export function PartnerBlogsPage() {
           );
         })}
       </div>
+
+      <ConfirmModal
+        open={Boolean(deleteTarget)}
+        title="Xác nhận xoá bài viết"
+        message="Bài viết nháp này sẽ bị xoá vĩnh viễn và không thể hoàn tác."
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => deleteTarget && action.mutate({ id: deleteTarget, type: "delete" })}
+      />
     </div>
   );
 }

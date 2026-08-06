@@ -79,15 +79,7 @@ export const teamPostService = {
   async messages(id: string, userId: string) {
     const isMember = await teamPostRepository.isMember(id, userId);
     if (!isMember) throw new ForbiddenError("Ban can tham gia nhom de xem tin nhan");
-    const messages = await teamPostRepository.listMessages(id);
-    const reactions = await teamPostRepository.listReactionsForMessages(messages.map((m) => m.id));
-    const grouped = new Map<string, Array<{ reaction: string; userId: string; createdAt: Date }>>();
-    for (const reaction of reactions) {
-      const list = grouped.get(reaction.messageId) ?? [];
-      list.push({ reaction: reaction.reaction, userId: reaction.userId, createdAt: reaction.createdAt });
-      grouped.set(reaction.messageId, list);
-    }
-    return messages.map((m) => ({ ...m, reactions: grouped.get(m.id) ?? [] }));
+    return teamPostRepository.listMessages(id);
   },
 
   async createMessage(

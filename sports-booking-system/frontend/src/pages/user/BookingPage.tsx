@@ -41,6 +41,7 @@ export function BookingPage() {
     toggleSlot,
     removeSlot,
     clearSlots,
+    restoreSlots,
     setWeekStart: ctxSetWeekStart,
     setFocusedDate: ctxSetFocusedDate,
     setCourt: ctxSetCourt,
@@ -66,11 +67,10 @@ export function BookingPage() {
     note
   } = bookingState;
 
-  // ── Calendar week state (local — shared via context weekStart) ───────────────
-  const initialDateFromUrl = searchParams.get("week") ?? undefined;
-  const [weekStartDate, setWeekStartDate] = useState<Date>(
-    () => startOfWeek(initialDateFromUrl ? new Date(`${initialDateFromUrl}T00:00:00`) : new Date())
-  );
+  // ── Sync calendar week state with global context ───────────────────────────
+  const weekStartDate = bookingState.weekStart;
+  const setWeekStartDate = ctxSetWeekStart;
+
   const [focusedDate, setFocusedDate] = useState<Date>(() => {
     const fromUrl = searchParams.get("date") ?? undefined;
     return fromUrl ? new Date(`${fromUrl}T00:00:00`) : new Date();
@@ -89,18 +89,63 @@ export function BookingPage() {
     }
   }, [court.data?.id, court.data?.name, ctxSetCourt]);
 
-  // ── Warn if selected slots become unavailable ───────────────────
+  // ── Restore multi-week slots from URL params if context is empty ──────────────
+  useEffect(() => {
+    if (selectedSlots.length > 0) return;
+    const dateParams = searchParams.getAll("date");
+    const slotParams = searchParams.getAll("slot");
+    if (dateParams.length === 0 || slotParams.length === 0) return;
+
+    const restored: WeeklyScheduleSlot[] = [];
+    dateParams.forEach((dateStr, idx) => {
+      const slotTimeStr = slotParams[idx];
+      if (!dateStr || !slotTimeStr) return;
+      const [startTime, endTime] = slotTimeStr.split("-");
+      if (!startTime || !endTime) return;
+
+      const day = response?.days.find((d) => d.date === dateStr);
+      const foundSlot = day?.slots.find((s) => s.startTime === startTime && s.endTime === endTime);
+      if (foundSlot) {
+        restored.push(foundSlot);
+      } else {
+        restored.push({
+          id: `${dateStr}-${startTime}`,
+          courtId: courtId!,
+          date: dateStr,
+          startTime,
+          endTime,
+          basePrice: court.data?.minPrice ?? 0,
+          finalPrice: court.data?.minPrice ?? 0,
+          ruleNames: [],
+          status: "AVAILABLE"
+        });
+      }
+    });
+
+    if (restored.length > 0) {
+      restoreSlots(restored);
+    }
+  }, [response, searchParams, selectedSlots.length, courtId, court.data?.minPrice, restoreSlots]);
+
+  // ── Warn if selected slots in currently loaded week become unavailable ────────
   useEffect(() => {
     if (!response || selectedSlots.length === 0) return;
-    const unavailable = selectedSlots.filter((s) => s.status !== "AVAILABLE");
-    if (unavailable.length > 0) {
+    const loadedDates = new Set(response.days.map((d) => d.date));
+    const slotsInLoadedWeek = selectedSlots.filter((s) => loadedDates.has(s.date));
+
+    const unavailableInLoadedWeek = slotsInLoadedWeek.filter((s) => {
+      const day = response.days.find((d) => d.date === s.date);
+      const serverSlot = day?.slots.find((st) => st.startTime === s.startTime && st.endTime === s.endTime);
+      return serverSlot ? serverSlot.status !== "AVAILABLE" : false;
+    });
+
+    if (unavailableInLoadedWeek.length > 0) {
       toast.warning(
         language === "vi"
           ? "Một số khung giờ bạn đã chọn không còn khả dụng."
           : "Some slots you selected are no longer available."
       );
-      // Remove unavailable slots from context
-      unavailable.forEach((s) => removeSlot(s));
+      unavailableInLoadedWeek.forEach((s) => removeSlot(s));
     }
   }, [response, selectedSlots, language, removeSlot]);
 
@@ -158,17 +203,28 @@ export function BookingPage() {
         return dc !== 0 ? dc : a.startTime.localeCompare(b.startTime);
       });
 
-      const earliestDate = sorted[0].date;
-      const slotsPayload = sorted.map((s) => ({
-        date: s.date,
-        startTime: s.startTime,
-        endTime: s.endTime
+      // Group selected slots by date for the days array expected by backend schema
+      const daysMap = new Map<string, Array<{ startTime: string; endTime: string }>>();
+      for (const s of sorted) {
+        const dateStr = s.date;
+        const list = daysMap.get(dateStr) ?? [];
+        const start = s.startTime.length > 5 ? s.startTime.slice(0, 5) : s.startTime;
+        const end = s.endTime.length > 5 ? s.endTime.slice(0, 5) : s.endTime;
+        list.push({
+          startTime: start,
+          endTime: end
+        });
+        daysMap.set(dateStr, list);
+      }
+
+      const days = Array.from(daysMap.entries()).map(([bookingDate, slots]) => ({
+        bookingDate,
+        slots
       }));
 
       const payload: BookingCheckoutPayload = {
         courtId,
-        bookingDate: earliestDate,
-        slots: slotsPayload,
+        days,
         paymentType,
         voucherCode: appliedVoucher?.code,
         note: note || undefined

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
+import { ErrorState, LoadingState } from "../../components/common/States";
 import { useCategories } from "../../features/courts/hooks/useCourts";
 import { partnerApi } from "../../features/partner/api/partnerApi";
 
@@ -74,7 +75,8 @@ export function PartnerCourtFormPage() {
     onError: (error) => toast.error(error.message)
   });
 
-  if (editing && court.isLoading) return <p>Đang tải...</p>;
+  if (editing && court.isLoading) return <LoadingState />;
+  if (editing && court.isError) return <ErrorState message={court.error.message} />;
 
   return (
     <form className="rounded-2xl border border-line bg-white p-6" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>

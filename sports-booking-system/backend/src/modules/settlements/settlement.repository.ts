@@ -1,126 +1,103 @@
 import { prisma } from "../../config/db.js";
+import type { DbClient, SettlementStatus } from "./settlement.types.js";
 
-function toNum(v: unknown): number {
-  return Number(v ?? 0);
-}
+const listInclude = {
+  booking: {
+    select: {
+      id: true,
+      bookingCode: true,
+      bookingDate: true,
+      bookingStatus: true,
+      court: { select: { id: true, name: true } }
+    }
+  },
+  partner: { select: { id: true, businessName: true } }
+} as const;
 
 export const settlementRepository = {
-  findById(id: string) {
-    return prisma.settlement.findUnique({
-      where: { id },
-      include: {
-        booking: {
-          select: {
-            bookingCode: true,
-            bookingDate: true,
-            court: { select: { name: true } }
-          }
-        }
-      }
+  create(
+    data: {
+      bookingId: string;
+      partnerId: string;
+      paymentId: string | null;
+      grossAmount: number;
+      voucherDiscount: number;
+      platformDiscount: number;
+      partnerDiscount: number;
+      commissionRate: number;
+      commissionAmount: number;
+      serviceFee: number;
+      netAmount: number;
+    },
+    db: DbClient
+  ) {
+    return db.settlement.create({ data });
+  },
+
+  byBookingId(bookingId: string, db: DbClient = prisma) {
+    return db.settlement.findUnique({ where: { bookingId } });
+  },
+
+  byId(id: string, db: DbClient = prisma) {
+    return db.settlement.findUnique({ where: { id }, include: listInclude });
+  },
+
+  async transitionById(
+    id: string,
+    fromStatuses: SettlementStatus[],
+    data: { status: SettlementStatus; settledAt?: Date | null },
+    db: DbClient
+  ) {
+    const result = await db.settlement.updateMany({
+      where: { id, status: { in: fromStatuses } },
+      data
     });
+    return result.count;
   },
 
-  findByBookingId(bookingId: string) {
-    return prisma.settlement.findUnique({ where: { bookingId } });
-  },
-
-  async listByPartner(partnerId: string, page: number, limit: number) {
-    const [items, total] = await prisma.$transaction([
+  async list(
+    filters: {
+      partnerId?: string;
+      status?: SettlementStatus;
+      fromDate?: Date;
+      toDate?: Date;
+    },
+    page: number,
+    limit: number
+  ) {
+    const where = {
+      partnerId: filters.partnerId,
+      status: filters.status,
+      createdAt:
+        filters.fromDate || filters.toDate
+          ? { gte: filters.fromDate, lt: filters.toDate }
+          : undefined
+    };
+    const [items, total] = await Promise.all([
       prisma.settlement.findMany({
-        where: { partnerId },
-        include: {
-          booking: {
-            select: {
-              bookingCode: true,
-              bookingDate: true,
-              court: { select: { name: true } }
-            }
-          }
-        },
+        where,
+        include: listInclude,
         orderBy: { createdAt: "desc" },
         skip: (page - 1) * limit,
         take: limit
-      }),
-      prisma.settlement.count({ where: { partnerId } })
-    ]);
-    return { items, total };
-  },
-
-  async listAll(filters: {
-    page: number;
-    limit: number;
-    partnerId?: string;
-    status?: string;
-    fromDate?: Date;
-    toDate?: Date;
-  }) {
-    const where: Record<string, unknown> = {};
-    if (filters.partnerId) where.partnerId = filters.partnerId;
-    if (filters.status) where.status = filters.status;
-    if (filters.fromDate || filters.toDate) {
-      where.createdAt = {};
-      if (filters.fromDate) (where.createdAt as Record<string, Date>).gte = filters.fromDate;
-      if (filters.toDate) (where.createdAt as Record<string, Date>).lte = filters.toDate;
-    }
-
-    const [items, total] = await prisma.$transaction([
-      prisma.settlement.findMany({
-        where,
-        include: {
-          booking: {
-            select: {
-              bookingCode: true,
-              bookingDate: true,
-              court: {
-                select: {
-                  name: true,
-                  partner: { select: { id: true, businessName: true } }
-                }
-              }
-            }
-          },
-          partner: { select: { id: true, businessName: true } }
-        },
-        orderBy: { createdAt: "desc" },
-        skip: (filters.page - 1) * filters.limit,
-        take: filters.limit
       }),
       prisma.settlement.count({ where })
     ]);
     return { items, total };
   },
 
-  async summary(filters: { partnerId?: string; status?: string }) {
-    const where: Record<string, unknown> = {};
-    if (filters.partnerId) where.partnerId = filters.partnerId;
-    if (filters.status) where.status = filters.status;
-    const [rows, pendingRows] = await Promise.all([
-      prisma.settlement.aggregate({
-        where,
-        _sum: {
-          grossAmount: true,
-          platformDiscount: true,
-          partnerDiscount: true,
-          commissionAmount: true,
-          netAmount: true
-        },
-        _count: true
-      }),
-      prisma.settlement.aggregate({
-        where: { ...where, status: "PENDING" },
-        _sum: { netAmount: true },
-        _count: true
-      })
-    ]);
-    return {
-      grossAmount: toNum(rows._sum.grossAmount),
-      platformDiscount: toNum(rows._sum.platformDiscount),
-      partnerDiscount: toNum(rows._sum.partnerDiscount),
-      commissionAmount: toNum(rows._sum.commissionAmount),
-      netAmount: toNum(rows._sum.netAmount),
-      totalCount: rows._count,
-      pendingCount: pendingRows._count,
-      pendingAmount: toNum(pendingRows._sum.netAmount)
-    };
+  async summary(filters: { partnerId?: string; fromDate?: Date; toDate?: Date }) {
+    return prisma.settlement.groupBy({
+      by: ["status"],
+      where: {
+        partnerId: filters.partnerId,
+        createdAt:
+          filters.fromDate || filters.toDate
+            ? { gte: filters.fromDate, lt: filters.toDate }
+            : undefined
+      },
+      _sum: { grossAmount: true, commissionAmount: true, netAmount: true },
+      _count: { _all: true }
+    });
   }
 };

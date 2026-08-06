@@ -1,3 +1,4 @@
+import compression from "compression";
 import cors from "cors";
 import express from "express";
 import rateLimit from "express-rate-limit";
@@ -20,14 +21,15 @@ import { partnerRoutes } from "./modules/partner/partner.routes.js";
 import { recipientRoutes } from "./modules/recipient/recipient.routes.js";
 import { notificationRoutes } from "./modules/notifications/notification.routes.js";
 import { paymentRoutes } from "./modules/payments/payment.routes.js";
+import { payoutRoutes } from "./modules/payouts/payout.routes.js";
 import { reportRoutes } from "./modules/reports/report.routes.js";
 import { reviewRoutes } from "./modules/reviews/review.routes.js";
 import { teamPostRoutes } from "./modules/team-posts/teamPost.routes.js";
-import { adminTournamentRoutes, partnerTournamentRoutes } from "./modules/tournaments/tournamentPrivate.routes.js";
+import { partnerTournamentRoutes } from "./modules/tournaments/tournamentPrivate.routes.js";
 import { tournamentRoutes } from "./modules/tournaments/tournament.routes.js";
 import { sportTypeRoutes } from "./modules/sport-types/sportType.routes.js";
 import { userRoutes } from "./modules/users/user.routes.js";
-import { adminVoucherRoutes, bookingVoucherRoutes, partnerVoucherRoutes, userVoucherRoutes } from "./modules/vouchers/voucherPrivate.routes.js";
+import { bookingVoucherRoutes, partnerVoucherRoutes, userVoucherRoutes } from "./modules/vouchers/voucherPrivate.routes.js";
 import { voucherRoutes } from "./modules/vouchers/voucher.routes.js";
 import { weeklyScheduleRoutes } from "./modules/weekly-schedule/weeklySchedule.routes.js";
 import { partnerWalletRoutes, adminWalletRoutes } from "./modules/wallets/wallet.routes.js";
@@ -41,6 +43,7 @@ const allowedOrigins = new Set([
     "http://127.0.0.1:5173"
 ]);
 app.use(helmet());
+app.use(compression());
 app.use(cors({
     origin(origin, callback) {
         if (!origin || allowedOrigins.has(origin))
@@ -63,6 +66,7 @@ app.use("/api/courts/:courtId/weekly-schedule", weeklyScheduleRoutes);
 app.use("/api/sport-types", sportTypeRoutes);
 app.use("/api/courts", courtRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/payouts", payoutRoutes);
 app.use("/api/vouchers", voucherRoutes);
 app.use("/api/blogs", blogRoutes);
 app.use("/api/tournaments", tournamentRoutes);
@@ -80,17 +84,15 @@ app.use("/api/partner/demand-prediction", partnerDemandPredictionRoutes);
 app.use("/api/partner/vouchers", partnerVoucherRoutes);
 app.use("/api/partner/tournaments", partnerTournamentRoutes);
 app.use("/api/partner/analytics", partnerAnalyticsRoutes);
+app.use("/api/partner/wallet", partnerWalletRoutes);
+app.use("/api/partner/settlements", partnerSettlementRoutes);
+app.use("/api/partner/withdrawals", partnerWithdrawalRoutes);
 app.use("/api/partner", partnerRoutes);
 app.use("/api/recipient", recipientRoutes);
-app.use("/api/admin/vouchers", adminVoucherRoutes);
-app.use("/api/admin/tournaments", adminTournamentRoutes);
 app.use("/api/admin/analytics", adminAnalyticsRoutes);
 app.use("/api/admin/wallets", adminWalletRoutes);
 app.use("/api/admin/settlements", adminSettlementRoutes);
 app.use("/api/admin/withdrawals", adminWithdrawalRoutes);
 app.use("/api/admin", adminRoutes);
-app.use("/api/partner/wallet", partnerWalletRoutes);
-app.use("/api/partner/settlements", partnerSettlementRoutes);
-app.use("/api/partner/withdrawals", partnerWithdrawalRoutes);
 app.use("/api/uploads", uploadRoutes);
 app.use(errorMiddleware);

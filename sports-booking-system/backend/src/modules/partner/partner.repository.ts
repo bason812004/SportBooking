@@ -1,25 +1,49 @@
 import { Prisma, type ApprovalStatus, type BookingStatus } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 
-const columnExistsCache = new Map<string, boolean>();
+const columnExistsCache = new Map<string, boolean>([
+  ["blog_posts.allow_comments", true],
+  ["courts.deposit_percent", true]
+]);
 
 async function columnExists(tableName: string, columnName: string) {
   const cacheKey = `${tableName}.${columnName}`;
   const cached = columnExistsCache.get(cacheKey);
   if (cached !== undefined) return cached;
 
-  const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
-    select exists(
-      select 1
-      from information_schema.columns
-      where table_schema = 'public'
-        and table_name = ${tableName}
-        and column_name = ${columnName}
-    ) as "exists"
-  `;
-  const exists = Boolean(row?.exists);
-  columnExistsCache.set(cacheKey, exists);
-  return exists;
+  try {
+    const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+      select exists(
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = ${tableName}
+          and column_name = ${columnName}
+      ) as "exists"
+    `;
+    const exists = Boolean(row?.exists);
+    columnExistsCache.set(cacheKey, exists);
+    return exists;
+  } catch (err) {
+    columnExistsCache.set(cacheKey, true);
+    return true;
+  }
+}
+
+function bookingOrderBy(sortBy?: string, sortOrder?: string): Prisma.BookingOrderByWithRelationInput[] {
+  const order: "asc" | "desc" = sortOrder === "asc" ? "asc" : "desc";
+  switch (sortBy) {
+    case "customerName":
+      return [{ user: { fullName: order } }, { createdAt: "desc" }];
+    case "totalPrice":
+      return [{ totalPrice: order }, { createdAt: "desc" }];
+    case "bookingStatus":
+      return [{ bookingStatus: order }, { createdAt: "desc" }];
+    case "paymentStatus":
+      return [{ paymentStatus: order }, { createdAt: "desc" }];
+    default:
+      return [{ bookingDate: order }, { startTime: order }, { createdAt: "desc" }];
+  }
 }
 
 async function ensureAllowCommentsColumn() {
@@ -69,6 +93,33 @@ async function attachCourtDeposits<T extends { id: string }>(courts: T[]) {
   `;
   const deposits = new Map(rows.map((row) => [row.id, row.depositPercent ?? null]));
   return courts.map((court) => ({ ...court, depositPercent: deposits.get(court.id) ?? null }));
+}
+
+async function ensureCourtSurfaces<T extends { id: string; courtCount: number; surfaces: Array<{ code: string; sortOrder: number }> }>(court: T): Promise<T> {
+  const target = court.courtCount ?? 1;
+  const existing = court.surfaces ?? [];
+  if (existing.length >= target) return court;
+
+  const existingCodes = new Set(existing.map((surface) => surface.code));
+  const nextSortOrder = existing.reduce((max, surface) => Math.max(max, surface.sortOrder), -1) + 1;
+  const rowsToCreate: Prisma.CourtSurfaceUncheckedCreateInput[] = [];
+  let candidate = existing.length + 1;
+  while (rowsToCreate.length < target - existing.length) {
+    const code = String(candidate).padStart(2, "0");
+    if (!existingCodes.has(code)) {
+      rowsToCreate.push({
+        courtId: court.id,
+        code,
+        name: `Sân ${candidate}`,
+        sortOrder: nextSortOrder + rowsToCreate.length
+      });
+      existingCodes.add(code);
+    }
+    candidate += 1;
+  }
+
+  const created = await prisma.$transaction(rowsToCreate.map((data) => prisma.courtSurface.create({ data })));
+  return { ...court, surfaces: [...existing, ...created] };
 }
 
 export const partnerRepository = {
@@ -136,7 +187,7 @@ export const partnerRepository = {
   async listCourts(partnerId: string) {
     const courts = await prisma.court.findMany({
       where: { partnerId },
-      include: { category: true, images: true, prices: true, services: true },
+      include: { category: true, images: true, prices: true, services: true, _count: { select: { surfaces: true } } },
       orderBy: { createdAt: "desc" }
     });
     return attachCourtDeposits(courts);
@@ -145,9 +196,10 @@ export const partnerRepository = {
   async courtByPartner(courtId: string, partnerId: string) {
     const court = await prisma.court.findFirst({
       where: { id: courtId, partnerId },
-      include: { category: true, images: true, prices: true, services: true }
+      include: { category: true, images: true, prices: true, services: true, surfaces: { orderBy: [{ sortOrder: "asc" }, { code: "asc" }] } }
     });
-    return attachCourtDeposit(court);
+    if (!court) return null;
+    return attachCourtDeposit(await ensureCourtSurfaces(court));
   },
 
   async createCourt(data: Prisma.CourtUncheckedCreateInput, depositPercent?: number | null) {
@@ -224,31 +276,57 @@ export const partnerRepository = {
     return prisma.courtService.update({ where: { id: serviceId }, data: { status: "INACTIVE" } });
   },
 
-  bookings(
+  bookingWhere(
     partnerId: string,
-    page: number,
-    limit: number,
-    filters: { courtId?: string; status?: BookingStatus; fromDate?: Date; toDate?: Date }
-  ) {
-    const where: Prisma.BookingWhereInput = {
+    filters: { courtId?: string; status?: BookingStatus; search?: string; fromDate?: Date; toDate?: Date }
+  ): Prisma.BookingWhereInput {
+    return {
       court: { partnerId },
       courtId: filters.courtId,
       bookingStatus: filters.status,
       bookingDate:
         filters.fromDate || filters.toDate
           ? { gte: filters.fromDate, lte: filters.toDate }
-          : undefined
+          : undefined,
+      OR: filters.search
+        ? [
+            { bookingCode: { contains: filters.search, mode: "insensitive" } },
+            { user: { fullName: { contains: filters.search, mode: "insensitive" } } },
+            { user: { phone: { contains: filters.search, mode: "insensitive" } } }
+          ]
+        : undefined
     };
-    return prisma.$transaction([
-      prisma.booking.findMany({
-        where,
-        include: { user: { select: { id: true, fullName: true, email: true, phone: true } }, court: true },
-        orderBy: [{ bookingDate: "desc" }, { startTime: "asc" }],
-        skip: (page - 1) * limit,
-        take: limit
-      }),
-      prisma.booking.count({ where })
-    ]);
+  },
+
+  bookingMatchingRows(where: Prisma.BookingWhereInput, sortBy?: string, sortOrder?: string) {
+    return prisma.booking.findMany({
+      where,
+      orderBy: bookingOrderBy(sortBy, sortOrder),
+      select: { id: true, bookingOrderId: true }
+    });
+  },
+
+  bookingsByOrderIds(partnerId: string, orderIds: string[]) {
+    return prisma.booking.findMany({
+      where: { court: { partnerId }, bookingOrderId: { in: orderIds } },
+      include: {
+        user: { select: { id: true, fullName: true, email: true, phone: true } },
+        court: true,
+        courtSurface: { select: { id: true, name: true, code: true } }
+      },
+      orderBy: [{ bookingDate: "asc" }, { startTime: "asc" }]
+    });
+  },
+
+  bookingsByIds(partnerId: string, ids: string[]) {
+    return prisma.booking.findMany({
+      where: { court: { partnerId }, id: { in: ids } },
+      include: {
+        user: { select: { id: true, fullName: true, email: true, phone: true } },
+        court: true,
+        courtSurface: { select: { id: true, name: true, code: true } }
+      }
+    });
   },
 
   bookingByPartner(bookingId: string, partnerId: string) {
@@ -258,20 +336,106 @@ export const partnerRepository = {
     });
   },
 
-  calendar(partnerId: string, fromDate: Date, toDate: Date, courtId?: string) {
+  calendar(partnerId: string, fromDate: Date, toDate: Date, courtId: string) {
     return prisma.booking.findMany({
       where: {
         court: { partnerId },
         courtId,
-        bookingDate: { gte: fromDate, lte: toDate },
-        bookingStatus: { not: "CANCELLED" }
+        bookingDate: { gte: fromDate, lte: toDate }
       },
       include: {
         user: { select: { fullName: true, phone: true } },
-        court: { select: { id: true, name: true } }
+        court: { select: { id: true, name: true } },
+        courtSurface: { select: { id: true, name: true, code: true } }
       },
       orderBy: [{ bookingDate: "asc" }, { startTime: "asc" }]
     });
+  },
+
+  courtSurfaces(courtId: string) {
+    return prisma.courtSurface.findMany({
+      where: { courtId },
+      orderBy: [{ sortOrder: "asc" }, { code: "asc" }]
+    });
+  },
+
+  courtSurfaceByPartner(surfaceId: string, courtId: string, partnerId: string) {
+    return prisma.courtSurface.findFirst({
+      where: { id: surfaceId, courtId, court: { partnerId } }
+    });
+  },
+
+  updateCourtSurfaceStatus(surfaceId: string, status: "ACTIVE" | "INACTIVE") {
+    return prisma.courtSurface.update({ where: { id: surfaceId }, data: { status } });
+  },
+
+  updateCourtSurface(surfaceId: string, data: { openingTime?: Date | null; closingTime?: Date | null }) {
+    return prisma.courtSurface.update({ where: { id: surfaceId }, data });
+  },
+
+  courtBlocks(courtId: string) {
+    return prisma.courtAvailabilityBlock.findMany({
+      where: { courtId, status: "ACTIVE" },
+      include: { courtSurface: { select: { id: true, name: true, code: true } } },
+      orderBy: [{ blockDate: "asc" }, { startTime: "asc" }]
+    });
+  },
+
+  courtDayBookings(courtId: string, date: Date) {
+    return prisma.booking.findMany({
+      where: {
+        courtId,
+        bookingDate: date,
+        bookingStatus: { notIn: ["CANCELLED", "NO_SHOW"] }
+      },
+      select: { id: true, startTime: true, endTime: true, bookingStatus: true, courtSurfaceId: true, payments: { select: { expiresAt: true, status: true } } },
+      orderBy: { startTime: "asc" }
+    });
+  },
+
+  courtDayBookingSlots(courtId: string, date: Date) {
+    return prisma.bookingSlot.findMany({
+      where: {
+        courtId,
+        bookingDate: date,
+        booking: { bookingStatus: { notIn: ["CANCELLED", "NO_SHOW"] } }
+      },
+      select: {
+        id: true,
+        bookingId: true,
+        startTime: true,
+        endTime: true,
+        court_surface_id: true,
+        booking: { select: { bookingStatus: true, payments: { select: { expiresAt: true, status: true } } } }
+      },
+      orderBy: { startTime: "asc" }
+    });
+  },
+
+  courtDayBlocks(courtId: string, date: Date) {
+    return prisma.courtAvailabilityBlock.findMany({
+      where: { courtId, blockDate: date, status: "ACTIVE" },
+      select: { id: true, startTime: true, endTime: true, reason: true, courtSurfaceId: true },
+      orderBy: { startTime: "asc" }
+    });
+  },
+
+  createCourtBlock(data: Prisma.CourtAvailabilityBlockUncheckedCreateInput) {
+    return prisma.courtAvailabilityBlock.create({ data });
+  },
+
+  createCourtBlocks(data: Prisma.CourtAvailabilityBlockCreateManyInput[]) {
+    return prisma.courtAvailabilityBlock.createMany({ data });
+  },
+
+  blockByCourtAndPartner(blockId: string, courtId: string, partnerId: string) {
+    return prisma.courtAvailabilityBlock.findFirst({
+      where: { id: blockId, courtId, court: { partnerId } }
+    });
+  },
+
+  cancelCourtBlock(blockId: string) {
+    return prisma.courtAvailabilityBlock.update({ where: { id: blockId }, data: { status: "INACTIVE" } });
   },
 
   updateBookingStatus(bookingId: string, status: BookingStatus) {
@@ -384,79 +548,6 @@ export const partnerRepository = {
     return prisma.$executeRaw`
       delete from blog_posts where id = ${id} and author_id = ${userId}
         and status = 'DRAFT'::blog_post_status
-    `;
-  },
-
-  listTournaments(partnerId: string) {
-    return prisma.$queryRaw<any[]>`
-      select t.id, t.court_id as "courtId", t.title, t.slug, t.description,
-        t.sport_type as "sportType", t.cover_image_url as "coverImageUrl",
-        t.start_date as "startDate", t.end_date as "endDate",
-        t.registration_deadline as "registrationDeadline", t.max_participants as "maxParticipants",
-
-
-        t.current_participants as "currentParticipants", t.entry_fee::float as "entryFee",
-        t.prize_description as "prizeDescription", t.status::text,
-        t.created_at as "createdAt", c.name as "courtName"
-      from tournaments t join courts c on c.id = t.court_id
-      where t.partner_id = ${partnerId}::uuid order by t.created_at desc
-    `;
-  },
-
-  findTournament(id: string, partnerId: string) {
-    return prisma.$queryRaw<any[]>`
-      select t.id, t.court_id as "courtId", t.title, t.slug, t.description,
-        t.sport_type as "sportType", t.cover_image_url as "coverImageUrl",
-        t.start_date as "startDate", t.end_date as "endDate",
-        t.registration_deadline as "registrationDeadline", t.max_participants as "maxParticipants",
-        t.current_participants as "currentParticipants", t.entry_fee::float as "entryFee",
-        t.prize_description as "prizeDescription", t.status::text,
-        t.created_at as "createdAt", c.name as "courtName"
-      from tournaments t join courts c on c.id = t.court_id
-      where t.id = ${id}::uuid and t.partner_id = ${partnerId}::uuid limit 1
-    `;
-  },
-
-  createTournament(partnerId: string, input: any) {
-    return prisma.$queryRaw<any[]>`
-      insert into tournaments (
-        partner_id, court_id, title, slug, description, sport_type, cover_image_url,
-        start_date, end_date, registration_deadline, max_participants, entry_fee,
-        prize_description, status
-      ) values (
-        ${partnerId}::uuid, ${input.courtId}::uuid, ${input.title}, ${input.slug},
-        ${input.description ?? null}, ${input.sportType}, ${input.coverImageUrl || null},
-        ${input.startDate}::timestamptz, ${input.endDate}::timestamptz,
-        ${input.registrationDeadline}::timestamptz, ${input.maxParticipants},
-        ${input.entryFee}, ${input.prizeDescription ?? null}, 'DRAFT'::tournament_status
-      ) returning id
-    `;
-  },
-
-  updateTournament(id: string, partnerId: string, input: any) {
-    return prisma.$executeRaw`
-      update tournaments set court_id = ${input.courtId}::uuid, title = ${input.title},
-        slug = ${input.slug}, description = ${input.description ?? null},
-        sport_type = ${input.sportType}, cover_image_url = ${input.coverImageUrl || null},
-        start_date = ${input.startDate}::timestamptz, end_date = ${input.endDate}::timestamptz,
-        registration_deadline = ${input.registrationDeadline}::timestamptz,
-        max_participants = ${input.maxParticipants}, entry_fee = ${input.entryFee},
-        prize_description = ${input.prizeDescription ?? null}, updated_at = now()
-      where id = ${id}::uuid and partner_id = ${partnerId}::uuid and status = 'DRAFT'::tournament_status
-    `;
-  },
-
-  submitTournament(id: string, partnerId: string) {
-    return prisma.$executeRaw`
-      update tournaments set status = 'PENDING'::tournament_status, updated_at = now()
-      where id = ${id}::uuid and partner_id = ${partnerId}::uuid and status = 'DRAFT'::tournament_status
-    `;
-  },
-
-  deleteTournament(id: string, partnerId: string) {
-    return prisma.$executeRaw`
-      delete from tournaments where id = ${id}::uuid and partner_id = ${partnerId}::uuid
-        and status = 'DRAFT'::tournament_status
     `;
   },
 

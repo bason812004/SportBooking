@@ -1,86 +1,113 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+import type { DbClient, WithdrawalStatus } from "./withdrawal.types.js";
 
-function toNum(v: unknown): number {
-  return Number(v ?? 0);
+function withdrawalOrderBy(sortBy?: string, sortOrder?: string): Prisma.WithdrawalRequestOrderByWithRelationInput {
+  const direction = sortOrder === "asc" ? "asc" : "desc";
+  switch (sortBy) {
+    case "amount":
+      return { amount: direction };
+    case "status":
+      return { status: direction };
+    case "partnerName":
+      return { partner: { businessName: direction } };
+    default:
+      return { createdAt: direction };
+  }
 }
 
+const listInclude = {
+  partner: {
+    select: {
+      id: true,
+      businessName: true,
+      user: { select: { id: true, fullName: true, email: true } }
+    }
+  },
+  processor: { select: { id: true, fullName: true } }
+} as const;
+
 export const withdrawalRepository = {
-  async findById(id: string) {
-    return prisma.withdrawalRequest.findUnique({
-      where: { id },
-      include: {
-        partner: { select: { id: true, businessName: true } },
-        processor: { select: { id: true, fullName: true } }
-      }
+  create(
+    data: {
+      partnerId: string;
+      amount: number;
+      bankName: string | null;
+      bankAccountNumber: string | null;
+      bankAccountName: string | null;
+    },
+    db: DbClient
+  ) {
+    return db.withdrawalRequest.create({ data, include: listInclude });
+  },
+
+  byId(id: string, db: DbClient = prisma) {
+    return db.withdrawalRequest.findUnique({ where: { id }, include: listInclude });
+  },
+
+  async transition(
+    id: string,
+    fromStatuses: WithdrawalStatus[],
+    data: {
+      status: WithdrawalStatus;
+      processedBy?: string;
+      processedAt?: Date;
+      note?: string | null;
+      providerName?: string;
+      providerTransactionId?: string;
+      providerResponse?: Prisma.InputJsonValue;
+    },
+    db: DbClient
+  ) {
+    const result = await db.withdrawalRequest.updateMany({
+      where: { id, status: { in: fromStatuses } },
+      data
     });
+    return result.count;
   },
 
-  async listByPartner(partnerId: string, page: number, limit: number) {
-    const [items, total] = await prisma.$transaction([
-      prisma.withdrawalRequest.findMany({
-        where: { partnerId },
-        orderBy: { createdAt: "desc" },
-        skip: (page - 1) * limit,
-        take: limit
-      }),
-      prisma.withdrawalRequest.count({ where: { partnerId } })
-    ]);
-    return { items, total };
-  },
-
-  async listAll(filters: {
-    page: number;
-    limit: number;
-    partnerId?: string;
-    status?: string;
-  }) {
-    const where: Record<string, unknown> = {};
-    if (filters.partnerId) where.partnerId = filters.partnerId;
-    if (filters.status) where.status = filters.status;
-
-    const [items, total] = await prisma.$transaction([
+  async list(
+    filters: {
+      partnerId?: string;
+      status?: WithdrawalStatus;
+      sortBy?: string;
+      sortOrder?: string;
+      fromDate?: string;
+      toDate?: string;
+    },
+    page: number,
+    limit: number
+  ) {
+    const where: Prisma.WithdrawalRequestWhereInput = {
+      partnerId: filters.partnerId,
+      status: filters.status,
+      createdAt:
+        filters.fromDate || filters.toDate
+          ? {
+              gte: filters.fromDate ? new Date(`${filters.fromDate}T00:00:00`) : undefined,
+              lte: filters.toDate ? new Date(`${filters.toDate}T23:59:59.999`) : undefined
+            }
+          : undefined
+    };
+    const [items, total] = await Promise.all([
       prisma.withdrawalRequest.findMany({
         where,
-        include: {
-          partner: { select: { id: true, businessName: true, user: { select: { fullName: true } } } },
-          processor: { select: { id: true, fullName: true } }
-        },
-        orderBy: { createdAt: "desc" },
-        skip: (filters.page - 1) * filters.limit,
-        take: filters.limit
+        include: listInclude,
+        orderBy: withdrawalOrderBy(filters.sortBy, filters.sortOrder),
+        skip: (page - 1) * limit,
+        take: limit
       }),
       prisma.withdrawalRequest.count({ where })
     ]);
     return { items, total };
   },
 
-  async summary(filters: { partnerId?: string }) {
-    const where: Record<string, unknown> = {};
-    if (filters.partnerId) where.partnerId = filters.partnerId;
-    const [allRows, pendingRows, paidRows] = await Promise.all([
-      prisma.withdrawalRequest.aggregate({
-        where,
-        _sum: { amount: true },
-        _count: true
-      }),
-      prisma.withdrawalRequest.aggregate({
-        where: { ...where, status: "PENDING" },
-        _sum: { amount: true },
-        _count: true
-      }),
-      prisma.withdrawalRequest.aggregate({
-        where: { ...where, status: "PAID" },
-        _sum: { amount: true },
-        _count: true
-      })
-    ]);
-    return {
-      totalCount: allRows._count,
-      totalAmount: toNum(allRows._sum.amount),
-      pendingCount: pendingRows._count,
-      pendingAmount: toNum(pendingRows._sum.amount),
-      paidCount: paidRows._count,
-      paidAmount: toNum(paidRows._sum.amount)
-    };
+  summary(partnerId?: string) {
+    return prisma.withdrawalRequest.groupBy({
+      by: ["status"],
+      where: { partnerId },
+      _sum: { amount: true },
+      _count: { _all: true }
+    });
   }
 };

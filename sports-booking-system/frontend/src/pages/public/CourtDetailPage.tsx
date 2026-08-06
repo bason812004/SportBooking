@@ -62,6 +62,8 @@ export function CourtDetailPage() {
   const {
     state: bookingState,
     toggleSlot,
+    removeSlot,
+    clearSlots,
     setWeekStart: ctxSetWeekStart,
     setFocusedDate: ctxSetFocusedDate,
     goToNextWeek,
@@ -229,6 +231,8 @@ export function CourtDetailPage() {
                       courtId={view.id}
                       selectedDate={selectedDate}
                       selectedSlots={bookingState.selectedSlots}
+                      onRemoveSlot={removeSlot}
+                      onClearSlots={clearSlots}
                     />
                   }
                 />

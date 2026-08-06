@@ -84,7 +84,6 @@ export function TeamGroupChatPage() {
     if (!id || !token) return;
 
     const socket = getSocket(token);
-    const refreshMessages = () => queryClient.invalidateQueries({ queryKey: ["team-post-messages", id] });
     const refreshPost = () => {
       queryClient.invalidateQueries({ queryKey: ["team-post", id] });
       queryClient.invalidateQueries({ queryKey: ["joined-team-posts"] });
@@ -92,7 +91,53 @@ export function TeamGroupChatPage() {
     const refreshMembers = () => contentApi.teamPostMembers(id).then(setMembers).catch(() => undefined);
 
     socket.emit("team-post:subscribe", id);
-    socket.on("team-post:message:new", refreshMessages);
+
+    const handleNewMessage = (newMsg: TeamPostMessageWithReactions) => {
+      if (!newMsg || !newMsg.id) return;
+      queryClient.setQueryData<TeamPostMessageWithReactions[]>(
+        ["team-post-messages", id],
+        (old) => {
+          if (!old) return [newMsg];
+          if (old.some((m) => m.id === newMsg.id)) return old;
+          return [...old, newMsg];
+        }
+      );
+    };
+
+    const handleNewReaction = (data: { messageId: string; userId: string; reaction: string }) => {
+      if (!data?.messageId) return;
+      queryClient.setQueryData<TeamPostMessageWithReactions[]>(
+        ["team-post-messages", id],
+        (old) => {
+          if (!old) return old;
+          return old.map((msg) => {
+            if (msg.id !== data.messageId) return msg;
+            const currentReactions = (msg.reactions ?? []).filter((r) => r.userId !== data.userId);
+            currentReactions.push({ reaction: data.reaction, userId: data.userId });
+            return { ...msg, reactions: currentReactions };
+          });
+        }
+      );
+    };
+
+    const handleRemoveReaction = (data: { messageId: string; userId: string }) => {
+      if (!data?.messageId) return;
+      queryClient.setQueryData<TeamPostMessageWithReactions[]>(
+        ["team-post-messages", id],
+        (old) => {
+          if (!old) return old;
+          return old.map((msg) => {
+            if (msg.id !== data.messageId) return msg;
+            const currentReactions = (msg.reactions ?? []).filter((r) => r.userId !== data.userId);
+            return { ...msg, reactions: currentReactions };
+          });
+        }
+      );
+    };
+
+    socket.on("team-post:message:new", handleNewMessage);
+    socket.on("team-post:reaction:new", handleNewReaction);
+    socket.on("team-post:reaction:removed", handleRemoveReaction);
     socket.on("team-post:member-joined", () => {
       refreshPost();
       refreshMembers();
@@ -100,18 +145,16 @@ export function TeamGroupChatPage() {
     socket.on("team-post:member-left", refreshMembers);
     socket.on("team-post:member-removed", refreshMembers);
     socket.on("team-post:admin-transferred", refreshMembers);
-    socket.on("team-post:reaction:new", refreshMessages);
-    socket.on("team-post:reaction:removed", refreshMessages);
 
     return () => {
       socket.emit("team-post:unsubscribe", id);
-      socket.off("team-post:message:new", refreshMessages);
+      socket.off("team-post:message:new", handleNewMessage);
+      socket.off("team-post:reaction:new", handleNewReaction);
+      socket.off("team-post:reaction:removed", handleRemoveReaction);
       socket.off("team-post:member-joined", refreshPost);
       socket.off("team-post:member-left", refreshMembers);
       socket.off("team-post:member-removed", refreshMembers);
       socket.off("team-post:admin-transferred", refreshMembers);
-      socket.off("team-post:reaction:new", refreshMessages);
-      socket.off("team-post:reaction:removed", refreshMessages);
     };
   }, [id, queryClient, token]);
 
@@ -151,6 +194,37 @@ export function TeamGroupChatPage() {
     if (!id) return;
     if (!content && !pendingMedia) return;
 
+    setMessage("");
+    const currentPendingMedia = pendingMedia;
+    const previewUrl = currentPendingMedia?.previewUrl;
+    if (currentPendingMedia) {
+      setPendingMedia(null);
+    }
+
+    // Optimistic temporary message for text-only messages
+    const tempId = `temp-${Date.now()}`;
+    if (!currentPendingMedia && user) {
+      const tempMsg: TeamPostMessageWithReactions = {
+        id: tempId,
+        postId: id,
+        content,
+        messageType: "TEXT",
+        attachmentUrl: null,
+        attachmentName: null,
+        attachmentSize: null,
+        thumbnailUrl: null,
+        mimeType: null,
+        createdAt: new Date().toISOString() as unknown as Date,
+        updatedAt: new Date().toISOString() as unknown as Date,
+        sender: { id: user.id, fullName: user.fullName || "Tôi", avatarUrl: user.avatarUrl || null },
+        reactions: []
+      };
+      queryClient.setQueryData<TeamPostMessageWithReactions[]>(
+        ["team-post-messages", id],
+        (old) => (old ? [...old, tempMsg] : [tempMsg])
+      );
+    }
+
     setSending(true);
     let attachmentUrl: string | undefined;
     let attachmentName: string | undefined;
@@ -158,24 +232,23 @@ export function TeamGroupChatPage() {
     let thumbnailUrl: string | undefined;
     let mimeType: string | undefined;
     let messageType: "TEXT" | "IMAGE" | "VIDEO" = "TEXT";
-    const previewUrl = pendingMedia?.previewUrl;
 
     try {
-      if (pendingMedia) {
+      if (currentPendingMedia) {
         setUploadingMedia(true);
         setUploadProgress(null);
-        const uploaded = pendingMedia.type === "IMAGE"
-          ? await uploadApi.uploadTeamChatImage(id, pendingMedia.file, {
+        const uploaded = currentPendingMedia.type === "IMAGE"
+          ? await uploadApi.uploadTeamChatImage(id, currentPendingMedia.file, {
               onProgress: (p) => setUploadProgress(p)
             })
-          : await uploadApi.uploadTeamChatVideo(id, pendingMedia.file, {
+          : await uploadApi.uploadTeamChatVideo(id, currentPendingMedia.file, {
               onProgress: (p) => setUploadProgress(p)
             });
         attachmentUrl = uploaded.url;
-        attachmentName = pendingMedia.file.name;
-        attachmentSize = pendingMedia.file.size;
-        mimeType = pendingMedia.file.type;
-        messageType = pendingMedia.type;
+        attachmentName = currentPendingMedia.file.name;
+        attachmentSize = currentPendingMedia.file.size;
+        mimeType = currentPendingMedia.file.type;
+        messageType = currentPendingMedia.type;
         setUploadProgress(null);
         setUploadingMedia(false);
       }
@@ -190,24 +263,29 @@ export function TeamGroupChatPage() {
         mimeType
       });
 
-      // Optimistic update — append new message safely if returned
       if (created?.id) {
-        queryClient.setQueryData<TeamPostMessage[]>(
+        queryClient.setQueryData<TeamPostMessageWithReactions[]>(
           ["team-post-messages", id],
           (old) => {
             if (!old) return [created];
-            if (old.some((m) => m?.id === created.id)) return old;
-            return [...old, created];
+            const filtered = old.filter((m) => m.id !== tempId);
+            if (filtered.some((m) => m.id === created.id)) return filtered;
+            return [...filtered, created];
           }
         );
       }
 
-      setMessage("");
-      if (pendingMedia) {
-        URL.revokeObjectURL(previewUrl!);
-        setPendingMedia(null);
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
       }
     } catch (error) {
+      // Revert optimistic temp message on failure
+      if (!currentPendingMedia) {
+        queryClient.setQueryData<TeamPostMessageWithReactions[]>(
+          ["team-post-messages", id],
+          (old) => (old ? old.filter((m) => m.id !== tempId) : [])
+        );
+      }
       toast.error(error instanceof Error ? error.message : "Không thể gửi tin nhắn.");
     } finally {
       setSending(false);
@@ -216,24 +294,48 @@ export function TeamGroupChatPage() {
   }
 
   async function reactToMessage(messageId: string, reaction: string) {
-    if (!id) return;
+    if (!id || !user) return;
+    setShowReactionFor(null);
+    // Optimistically update reactions cache
+    queryClient.setQueryData<TeamPostMessageWithReactions[]>(
+      ["team-post-messages", id],
+      (old) => {
+        if (!old) return old;
+        return old.map((msg) => {
+          if (msg.id !== messageId) return msg;
+          const currentReactions = (msg.reactions ?? []).filter((r) => r.userId !== user.id);
+          currentReactions.push({ reaction, userId: user.id });
+          return { ...msg, reactions: currentReactions };
+        });
+      }
+    );
     try {
       await contentApi.reactToMessage(id, { messageId, reaction });
-      await queryClient.invalidateQueries({ queryKey: ["team-post-messages", id] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không thể reaction.");
-    } finally {
-      setShowReactionFor(null);
+      queryClient.invalidateQueries({ queryKey: ["team-post-messages", id] });
     }
   }
 
   async function removeReaction(messageId: string) {
-    if (!id) return;
+    if (!id || !user) return;
+    // Optimistically remove reaction from cache
+    queryClient.setQueryData<TeamPostMessageWithReactions[]>(
+      ["team-post-messages", id],
+      (old) => {
+        if (!old) return old;
+        return old.map((msg) => {
+          if (msg.id !== messageId) return msg;
+          const currentReactions = (msg.reactions ?? []).filter((r) => r.userId !== user.id);
+          return { ...msg, reactions: currentReactions };
+        });
+      }
+    );
     try {
       await contentApi.removeReaction(id, messageId);
-      await queryClient.invalidateQueries({ queryKey: ["team-post-messages", id] });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Không thể xoa reaction.");
+      toast.error(error instanceof Error ? error.message : "Không thể xóa reaction.");
+      queryClient.invalidateQueries({ queryKey: ["team-post-messages", id] });
     }
   }
 

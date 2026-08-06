@@ -15,9 +15,23 @@ import {
   type VoucherLike
 } from "./voucher.eligibility.js";
 
+let activeVouchersCache: VoucherRow[] | null = null;
+let activeVouchersCacheTime = 0;
+
 export const voucherService = {
-  list() {
-    return voucherRepository.listActive();
+  async list() {
+    const now = Date.now();
+    if (activeVouchersCache && now - activeVouchersCacheTime < 30000) {
+      return activeVouchersCache;
+    }
+    const data = await voucherRepository.listActive();
+    activeVouchersCache = data;
+    activeVouchersCacheTime = now;
+    return data;
+  },
+
+  invalidateListCache() {
+    activeVouchersCache = null;
   },
 
   async detail(id: string) {
@@ -542,14 +556,6 @@ export const voucherService = {
     const profile = await voucherRepository.partnerProfile(userId);
     if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
     return status === "ACTIVE" ? this.activateForPartner(profile.id, id) : this.disableForPartner(profile.id, id);
-  },
-
-  listAdmin() {
-    return voucherRepository.listAdmin();
-  },
-
-  disableAdmin(id: string) {
-    return voucherRepository.disableAdmin(id);
   }
 };
 

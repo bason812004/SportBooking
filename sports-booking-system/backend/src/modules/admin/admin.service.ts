@@ -3,6 +3,7 @@ import { paginationMeta } from "../../shared/utils/response.js";
 import { parseLimit, parsePage } from "../../shared/utils/time.js";
 import { slugify } from "../../shared/utils/slug.js";
 import { commissionService, monthRange } from "../commission/commission.service.js";
+import { notificationService } from "../notifications/notification.service.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { voucherRepository } from "../vouchers/voucher.repository.js";
@@ -131,6 +132,13 @@ export const adminService = {
       refundAmount: input.refundAmount,
       platformRetainedAmount: input.platformRetainedAmount
     });
+    if (result.settlement) {
+      const settlement = result.settlement;
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toAdmin(realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+      realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+    }
     return result;
   },
 
@@ -330,14 +338,21 @@ export const adminService = {
       input.targetRole = undefined;
       input.targetUserId = undefined;
     }
-    const campaign = await adminRepository.createNotificationCampaign(actorId, input);
-    if (!campaign) throw new ValidationError("Khong tim thay nguoi nhan phu hop");
+    const result = await adminRepository.createNotificationCampaign(actorId, input);
+    if (!result) throw new ValidationError("Khong tim thay nguoi nhan phu hop");
+    const { campaign, recipientIds } = result;
     await recordAdminAction(actorId, "NOTIFICATION_CAMPAIGN_SENT", "NOTIFICATION_CAMPAIGN", campaign.id, {
       targetType: input.targetType,
       targetRole: input.targetRole,
       targetUserId: input.targetUserId,
       targetPartnerId: input.targetPartnerId,
       recipientCount: campaign.recipientCount
+    });
+    realtimeService.toUsers(recipientIds, realtimeEvents.notificationNew, {
+      campaignId: campaign.id,
+      title: campaign.title,
+      content: campaign.content,
+      type: campaign.type
     });
     return campaign;
   },
@@ -387,7 +402,12 @@ export const adminService = {
     return result;
   },
 
-  pendingCourts() { return adminRepository.pendingCourts(); },
+  async pendingCourts(query: any) {
+    const page = parsePage(query.page);
+    const limit = parseLimit(query.limit);
+    const [items, total] = await adminRepository.pendingCourts(page, limit);
+    return { items, meta: paginationMeta(page, limit, total) };
+  },
   async approveCourt(actorId: string, id: string) {
     const result = await adminRepository.setCourtApproval(id, "APPROVED", undefined);
     await adminRepository.addModerationHistory({ entityType: "COURT", entityId: id, action: "APPROVED", actorId });
@@ -418,12 +438,22 @@ export const adminService = {
     return result;
   },
 
-  reviews() { return adminRepository.reviews(); },
+  async reviews(query: any) {
+    const page = parsePage(query.page);
+    const limit = parseLimit(query.limit);
+    const [items, total] = await adminRepository.reviews(page, limit);
+    return { items, meta: paginationMeta(page, limit, total) };
+  },
   async hideReview(actorId: string, id: string) { const result = await adminRepository.setReviewDisplay(id, "HIDDEN"); await recordAdminAction(actorId, "REVIEW_HIDDEN", "REVIEW", id); return result; },
   async showReview(actorId: string, id: string) { const result = await adminRepository.setReviewDisplay(id, "VISIBLE"); await recordAdminAction(actorId, "REVIEW_SHOWN", "REVIEW", id); return result; },
   async deleteReview(actorId: string, id: string) { const result = await adminRepository.deleteReview(id); await recordAdminAction(actorId, "REVIEW_DELETED", "REVIEW", id); return result; },
 
-  reports() { return adminRepository.reports(); },
+  async reports(query: any) {
+    const page = parsePage(query.page);
+    const limit = parseLimit(query.limit);
+    const [items, total] = await adminRepository.reports(page, limit);
+    return { items, meta: paginationMeta(page, limit, total) };
+  },
   async resolveReport(actorId: string, id: string) { const result = await adminRepository.setReportStatus(id, "RESOLVED"); await recordAdminAction(actorId, "REPORT_RESOLVED", "REPORT", id); return result; },
   async rejectReport(actorId: string, id: string) { const result = await adminRepository.setReportStatus(id, "REJECTED"); await recordAdminAction(actorId, "REPORT_REJECTED", "REPORT", id); return result; },
 
@@ -451,11 +481,28 @@ export const adminService = {
     return { id, status };
   },
 
+  async voucherDetail(id: string) {
+    const voucher = await adminRepository.voucherDetail(id);
+    if (!voucher) throw new NotFoundError("Voucher not found");
+    return voucher;
+  },
+  async createVoucher(actorId: string, input: any) {
+    const result = await adminRepository.createVoucher(input);
+    await recordAdminAction(actorId, "VOUCHER_CREATED", "VOUCHER", result.id, { code: input.code });
+    return result;
+  },
+  async updateVoucher(actorId: string, id: string, input: any) {
+    await adminRepository.updateVoucher(id, input);
+    await recordAdminAction(actorId, "VOUCHER_UPDATED", "VOUCHER", id, { code: input.code });
+    return { id };
+  },
+
   async pendingBlogs(query: any) {
     const page = parsePage(query.page), limit = parseLimit(query.limit);
     const [items, count] = await adminRepository.pendingBlogs(page, limit, {
       search: query.search || undefined,
-      status: query.status || "PENDING"
+      status: query.status || "PENDING",
+      authorRole: query.authorRole || undefined
     });
     return paginatedRaw(items, count, page, limit);
   },
@@ -464,6 +511,12 @@ export const adminService = {
     await adminRepository.addModerationHistory({ entityType: "BLOG", entityId: id, action: status, reason, actorId });
     await recordAdminAction(actorId, `BLOG_${status}`, "BLOG", id, { reason });
     return { id, status };
+  },
+  async hideBlog(actorId: string, id: string, reason?: string) {
+    if (!(await adminRepository.hideBlog(id))) throw new ValidationError("Bai viet khong the an (chi an bai da xuat ban)");
+    await adminRepository.addModerationHistory({ entityType: "BLOG", entityId: id, action: "HIDDEN", reason, actorId });
+    await recordAdminAction(actorId, "BLOG_HIDDEN", "BLOG", id, { reason });
+    return { id, status: "HIDDEN" };
   },
 
   async pendingTournaments(query: any) {
@@ -475,6 +528,18 @@ export const adminService = {
     if (!(await adminRepository.moderateTournament(id, status))) throw new ValidationError("Giai dau khong con cho duyet");
     await adminRepository.addModerationHistory({ entityType: "TOURNAMENT", entityId: id, action: status, reason, actorId });
     await recordAdminAction(actorId, `TOURNAMENT_${status}`, "TOURNAMENT", id, { reason });
+    const [target] = await adminRepository.tournamentPartnerUser(id);
+    if (target) {
+      await notificationService.create({
+        userId: target.userId,
+        title: status === "APPROVED" ? "Giải đấu đã được duyệt" : "Giải đấu bị từ chối",
+        content: status === "APPROVED"
+          ? `Giải đấu "${target.title}" đã được duyệt và hiển thị công khai.`
+          : `Giải đấu "${target.title}" đã bị từ chối.${reason ? ` Lý do: ${reason}` : ""}`,
+        type: status === "APPROVED" ? "TOURNAMENT_APPROVED" : "TOURNAMENT_REJECTED",
+        metadata: { tournamentId: id }
+      });
+    }
     return { id, status };
   },
 

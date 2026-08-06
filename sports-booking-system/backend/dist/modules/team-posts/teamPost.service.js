@@ -16,7 +16,7 @@ function normalizeInput(userId, body) {
 }
 const ALLOWED_REACTIONS = new Set(["like", "love", "laugh", "wow", "sad", "clap", "fire"]);
 function ensurePostCreator(post, userId) {
-    if (post.userId === userId)
+    if (post?.createdBy?.id && post.createdBy.id === userId)
         return "OWNER";
     return null;
 }

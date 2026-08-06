@@ -22,25 +22,33 @@ const selectComment = `
   join users u on u.id = c.user_id
 `;
 
-const columnExistsCache = new Map<string, boolean>();
+const columnExistsCache = new Map<string, boolean>([
+  ["blog_comments.is_edited", true],
+  ["blog_posts.allow_comments", true]
+]);
 
 async function columnExists(tableName: string, columnName: string) {
   const cacheKey = `${tableName}.${columnName}`;
   const cached = columnExistsCache.get(cacheKey);
   if (cached !== undefined) return cached;
 
-  const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
-    select exists(
-      select 1
-      from information_schema.columns
-      where table_schema = 'public'
-        and table_name = ${tableName}
-        and column_name = ${columnName}
-    ) as "exists"
-  `;
-  const exists = Boolean(row?.exists);
-  columnExistsCache.set(cacheKey, exists);
-  return exists;
+  try {
+    const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+      select exists(
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = ${tableName}
+          and column_name = ${columnName}
+      ) as "exists"
+    `;
+    const exists = Boolean(row?.exists);
+    columnExistsCache.set(cacheKey, exists);
+    return exists;
+  } catch (err) {
+    columnExistsCache.set(cacheKey, true);
+    return true;
+  }
 }
 
 async function ensureIsEditedColumn() {

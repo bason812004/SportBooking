@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ErrorState, LoadingState } from "../../components/common/States";
+import { PageHero } from "../../components/common/PageHero";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { adminApi } from "../../features/admin/api/adminApi";
@@ -46,10 +47,8 @@ export function AdminPartnerCommissionPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <Link className="text-sm font-medium text-blue-700" to="/admin/partners">← Quay lại danh sách đối tác</Link>
+      <PageHero eyebrow="Đối tác" title={config.data.businessName} subtitle="Cấu hình tỷ lệ hoa hồng riêng cho đối tác." />
       <section className="rounded-2xl border border-line bg-white p-6">
-        <h1 className="text-3xl font-bold">{config.data.businessName}</h1>
-        <p className="mt-2 text-slate-600">Cấu hình tỷ lệ hoa hồng riêng cho đối tác.</p>
-
         <label className="mt-6 flex items-center gap-3 font-medium">
           <input
             type="checkbox"

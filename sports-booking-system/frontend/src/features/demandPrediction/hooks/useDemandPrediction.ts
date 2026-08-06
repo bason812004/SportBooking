@@ -8,3 +8,15 @@ export function useDemandPrediction(params: DemandPredictionParams | null) {
     enabled: Boolean(params?.courtId && params.date && params.startTime && params.endTime)
   });
 }
+
+export function usePartnerDemandOverview() {
+  return useQuery({ queryKey: ["partner-demand-overview"], queryFn: demandPredictionApi.overview });
+}
+
+export function usePartnerCourtOverview(courtId?: string) {
+  return useQuery({
+    queryKey: ["partner-demand-court-overview", courtId],
+    queryFn: () => demandPredictionApi.courtOverview(courtId!),
+    enabled: Boolean(courtId)
+  });
+}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Plus, Trash2, Edit2, ShieldAlert } from "lucide-react";
@@ -8,12 +8,24 @@ import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
+import { SortableTh } from "../../components/common/SortableTh";
+import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
+import { useUrlSort } from "../../hooks/useUrlSort";
+
+type SortField = "fullName" | "email" | "phone" | "managedCourt";
+
+const SORT_FIELDS: SortField[] = ["fullName", "email", "phone", "managedCourt"];
 
 export function PartnerStaffPage() {
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
   const [editStaff, setEditStaff] = useState<any | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const { sortField, sortOrder, handleSort } = useUrlSort<SortField>({
+    fields: SORT_FIELDS,
+    default: { field: "fullName", order: "asc" }
+  });
 
   // Form states
   const [fullName, setFullName] = useState("");
@@ -55,6 +67,20 @@ export function PartnerStaffPage() {
     },
     onError: (error: any) => toast.error(error.response?.data?.message || error.message || "Không thể xóa nhân viên")
   });
+
+  const visibleStaff = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    const filtered = (staffQuery.data ?? []).filter((staff: any) => {
+      if (!term) return true;
+      return [staff.fullName, staff.email, staff.phone, staff.managedCourt?.name].some((value) => String(value ?? "").toLowerCase().includes(term));
+    });
+    const direction = sortOrder === "asc" ? 1 : -1;
+    const valueOf = (staff: any) => {
+      if (sortField === "managedCourt") return staff.managedCourt?.name ?? "";
+      return staff[sortField ?? "fullName"] ?? "";
+    };
+    return [...filtered].sort((a, b) => String(valueOf(a)).localeCompare(String(valueOf(b))) * direction);
+  }, [staffQuery.data, search, sortField, sortOrder]);
 
   if (staffQuery.isLoading || courtsQuery.isLoading || profileQuery.isLoading) return <LoadingState />;
   if (staffQuery.isError) return <ErrorState message={staffQuery.error.message} />;
@@ -130,53 +156,53 @@ export function PartnerStaffPage() {
         </Button>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <table className="w-full text-sm text-left">
-          <thead className="bg-slate-50 border-b">
+      <Input label="Tìm kiếm" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tên, email, SĐT hoặc sân quản lý" />
+
+      <Table>
+        <THead>
+          <tr>
+            <SortableTh label="Họ và tên" field="fullName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh label="Email đăng nhập" field="email" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh label="Số điện thoại" field="phone" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh label="Sân quản lý" field="managedCourt" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <Th>Trạng thái</Th>
+            <Th></Th>
+          </tr>
+        </THead>
+        <TBody>
+          {visibleStaff.length === 0 ? (
             <tr>
-              <th className="p-4 font-semibold text-slate-600">Họ và tên</th>
-              <th className="p-4 font-semibold text-slate-600">Email đăng nhập</th>
-              <th className="p-4 font-semibold text-slate-600">Số điện thoại</th>
-              <th className="p-4 font-semibold text-slate-600">Sân quản lý</th>
-              <th className="p-4 font-semibold text-slate-600">Trạng thái</th>
-              <th className="p-4"></th>
+              <Td colSpan={6} className="p-8 text-center text-slate-500">
+                {staffQuery.data?.length === 0 ? "Chưa có tài khoản nhân viên nào được tạo." : "Không tìm thấy nhân viên phù hợp."}
+              </Td>
             </tr>
-          </thead>
-          <tbody>
-            {staffQuery.data?.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="p-8 text-center text-slate-500">
-                  Chưa có tài khoản nhân viên nào được tạo.
-                </td>
-              </tr>
-            ) : (
-              staffQuery.data?.map((staff) => (
-                <tr key={staff.id} className="border-b hover:bg-slate-50">
-                  <td className="p-4 font-bold text-slate-800">{staff.fullName}</td>
-                  <td className="p-4 font-mono text-slate-600">{staff.email}</td>
-                  <td className="p-4 text-slate-600">{staff.phone || "Chưa cung cấp"}</td>
-                  <td className="p-4 font-semibold text-emerald-800">{staff.managedCourt?.name || "Chưa phân công"}</td>
-                  <td className="p-4">
-                    <span className="bg-green-100 text-green-800 px-2.5 py-0.5 rounded-full text-xs font-semibold">
-                      Hoạt động
-                    </span>
-                  </td>
-                  <td className="p-4">
-                    <div className="flex gap-2 justify-end">
-                      <Button variant="secondary" onClick={() => openEditModal(staff)}>
-                        <Edit2 className="h-4 w-4" />
-                      </Button>
-                      <Button variant="danger" onClick={() => setDeleteConfirm(staff.id)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+          ) : (
+            visibleStaff.map((staff) => (
+              <Tr key={staff.id}>
+                <Td className="font-bold text-slate-800">{staff.fullName}</Td>
+                <Td className="font-mono text-slate-600">{staff.email}</Td>
+                <Td className="text-slate-600">{staff.phone || "Chưa cung cấp"}</Td>
+                <Td className="font-semibold text-emerald-800">{staff.managedCourt?.name || "Chưa phân công"}</Td>
+                <Td>
+                  <span className="bg-green-100 text-green-800 px-2.5 py-0.5 rounded-full text-xs font-semibold">
+                    Hoạt động
+                  </span>
+                </Td>
+                <Td>
+                  <div className="flex gap-2 justify-end">
+                    <Button variant="secondary" onClick={() => openEditModal(staff)}>
+                      <Edit2 className="h-4 w-4" />
+                    </Button>
+                    <Button variant="danger" onClick={() => setDeleteConfirm(staff.id)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </Td>
+              </Tr>
+            ))
+          )}
+        </TBody>
+      </Table>
 
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">

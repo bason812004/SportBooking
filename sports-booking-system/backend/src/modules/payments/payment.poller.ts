@@ -7,14 +7,21 @@ import { realtimeEvents } from "../realtime/realtime.events.js";
 async function pollPayments() {
   try {
     const provider = env.PAYMENT_PROVIDER;
-    if (provider !== "PAYOS" && provider !== "SEPAY") {
+    const providerConfigured = Boolean(env.PAYMENT_API_KEY && env.PAYMENT_SECRET_KEY);
+    if ((provider !== "PAYOS" && provider !== "SEPAY") || !providerConfigured) {
       return;
     }
 
-    const pendingPayments = await prisma.payment.findMany({
-      where: { status: "PENDING" },
-      include: { booking: true }
-    });
+    let pendingPayments;
+    try {
+      pendingPayments = await prisma.payment.findMany({
+        where: { status: "PENDING" },
+        include: { booking: true }
+      });
+    } catch (dbErr: any) {
+      console.warn(`[Poller] Database temporary unreachable (${dbErr?.code || dbErr?.message?.slice(0, 60)})`);
+      return;
+    }
 
     if (pendingPayments.length === 0) return;
 

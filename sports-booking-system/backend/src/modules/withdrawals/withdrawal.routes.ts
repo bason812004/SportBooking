@@ -4,24 +4,17 @@ import { authMiddleware } from "../../middlewares/auth.middleware.js";
 import { requireRole } from "../../middlewares/role.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
 import { withdrawalController } from "./withdrawal.controller.js";
-import {
-  createWithdrawalSchema,
-  withdrawalQuerySchema,
-  withdrawalActionSchema
-} from "./withdrawal.validation.js";
+import { createWithdrawalSchema, withdrawalActionSchema, withdrawalQuerySchema } from "./withdrawal.validation.js";
 
-const partnerRoutes = Router();
-const adminRoutes = Router();
+export const partnerWithdrawalRoutes = Router();
+partnerWithdrawalRoutes.use(authMiddleware, requireRole(UserRole.PARTNER));
+partnerWithdrawalRoutes.post("/", validate(createWithdrawalSchema), withdrawalController.create);
+partnerWithdrawalRoutes.get("/", validate(withdrawalQuerySchema), withdrawalController.listMine);
 
-partnerRoutes.use(authMiddleware, requireRole(UserRole.PARTNER));
-partnerRoutes.post("/withdrawals", validate(createWithdrawalSchema), withdrawalController.create);
-partnerRoutes.get("/withdrawals", validate(withdrawalQuerySchema), withdrawalController.listForPartner);
-
-adminRoutes.use(authMiddleware, requireRole(UserRole.ADMIN));
-adminRoutes.get("/withdrawals", validate(withdrawalQuerySchema), withdrawalController.listForAdmin);
-adminRoutes.get("/withdrawals/summary", withdrawalController.summaryForAdminRoute);
-adminRoutes.put("/withdrawals/:id/approve", withdrawalController.approve);
-adminRoutes.put("/withdrawals/:id/reject", validate(withdrawalActionSchema), withdrawalController.reject);
-adminRoutes.put("/withdrawals/:id/paid", withdrawalController.markPaid);
-
-export { partnerRoutes as partnerWithdrawalRoutes, adminRoutes as adminWithdrawalRoutes };
+export const adminWithdrawalRoutes = Router();
+adminWithdrawalRoutes.use(authMiddleware, requireRole(UserRole.ADMIN));
+adminWithdrawalRoutes.get("/", validate(withdrawalQuerySchema), withdrawalController.adminList);
+adminWithdrawalRoutes.get("/summary", withdrawalController.adminSummary);
+adminWithdrawalRoutes.put("/:id/approve", validate(withdrawalActionSchema), withdrawalController.approve);
+adminWithdrawalRoutes.put("/:id/reject", validate(withdrawalActionSchema), withdrawalController.reject);
+adminWithdrawalRoutes.put("/:id/paid", validate(withdrawalActionSchema), withdrawalController.markPaid);

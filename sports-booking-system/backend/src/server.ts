@@ -4,13 +4,26 @@ import { env } from "./config/env.js";
 import { prisma } from "./config/db.js";
 import { initRealtime } from "./modules/realtime/realtime.server.js";
 import { startPaymentPoller } from "./modules/payments/payment.poller.js";
+import { ensureTeamChatTables } from "./modules/team-posts/teamPost.repository.js";
+import { ensureReviewTables } from "./modules/reviews/review.repository.js";
+import { ensureBookingTables } from "./modules/bookings/booking.repository.js";
 
 const server = http.createServer(app);
 initRealtime(server);
 
-server.listen(env.PORT, () => {
+server.listen(env.PORT, async () => {
   console.log(`API listening on http://localhost:${env.PORT}`);
   startPaymentPoller();
+  try {
+    await Promise.all([
+      ensureTeamChatTables(),
+      ensureReviewTables(),
+      ensureBookingTables()
+    ]);
+    console.log("Database schema helpers ready");
+  } catch (err) {
+    console.error("Failed to initialize database tables:", err);
+  }
 });
 
 process.on("SIGINT", async () => {

@@ -23,10 +23,12 @@ export type DayViewProps = {
   onToggle: (slot: WeeklyScheduleSlot) => void;
   onBackToWeek: () => void;
   language: Language;
+  manageable?: boolean;
+  onManage?: (slot: WeeklyScheduleSlot) => void;
 };
 
 export function DayView(props: DayViewProps) {
-  const { response, date, onChangeDate, selected, onToggle, onBackToWeek, language } = props;
+  const { response, date, onChangeDate, selected, onToggle, onBackToWeek, language, manageable, onManage } = props;
   const dateKey = formatYmd(date);
   const day = useMemo(() => findDay(response, dateKey), [response, dateKey]);
   const hours = useMemo(
@@ -135,6 +137,7 @@ export function DayView(props: DayViewProps) {
               slot.status === "HELD" && "bg-yellow-50 text-yellow-700"
             );
             const interactive = isSlotSelectable(slot);
+            const manageableStatus = manageable && Boolean(onManage) && (slot.status === "BOOKED" || slot.status === "BLOCKED");
             return (
               <li
                 key={selectedKey}
@@ -170,27 +173,47 @@ export function DayView(props: DayViewProps) {
                   <span className="text-sm font-black text-slate-800">
                     {formatPrice(slot.finalPrice)}
                   </span>
-                  <button
-                    type="button"
-                    disabled={!interactive}
-                    onClick={() => onToggle(slot)}
-                    className={clsx(
-                      "rounded-lg px-3 py-1.5 text-[11px] font-black uppercase tracking-wide transition",
-                      isSelected
-                        ? "bg-emerald-600 text-white"
-                        : interactive
-                          ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                          : "bg-slate-100 text-slate-400"
-                    )}
-                  >
-                    {isSelected
-                      ? language === "en"
-                        ? "Selected"
-                        : "Đã chọn"
-                      : language === "en"
-                        ? "Pick"
-                        : "Chọn"}
-                  </button>
+                  {manageableStatus ? (
+                    <button
+                      type="button"
+                      onClick={() => onManage!(slot)}
+                      className="rounded-lg bg-slate-800 px-3 py-1.5 text-[11px] font-black uppercase tracking-wide text-white transition hover:bg-slate-900"
+                    >
+                      {language === "en" ? "Manage" : "Quản lý"}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={!interactive}
+                      onClick={() => onToggle(slot)}
+                      className={clsx(
+                        "rounded-lg px-3 py-1.5 text-[11px] font-black uppercase tracking-wide transition",
+                        isSelected
+                          ? "bg-emerald-600 text-white"
+                          : interactive
+                            ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                            : "bg-slate-100 text-slate-400"
+                      )}
+                    >
+                      {isSelected
+                        ? language === "en"
+                          ? "Selected"
+                          : "Đã chọn"
+                        : language === "en"
+                          ? "Pick"
+                          : "Chọn"}
+                    </button>
+                  )}
+                  {manageable && onManage && slot.status === "AVAILABLE" && (
+                    <button
+                      type="button"
+                      onClick={() => onManage(slot)}
+                      className="rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] font-black uppercase tracking-wide text-slate-500 transition hover:border-emerald-300 hover:text-emerald-700"
+                      title={language === "en" ? "Lock this slot" : "Khoá khung giờ"}
+                    >
+                      {language === "en" ? "Lock" : "Khoá"}
+                    </button>
+                  )}
                 </div>
               </li>
             );

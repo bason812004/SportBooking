@@ -1,28 +1,19 @@
 import { z } from "zod";
+import { SETTLEMENT_STATUSES } from "./settlement.types.js";
 
-const optionalQuery = <T extends z.ZodTypeAny>(schema: T) =>
-  z.preprocess((v) => v === "" ? undefined : v, schema.optional());
+const dateString = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional();
 
-export const settlementPartnerQuerySchema = z.object({
-  query: z.object({
-    page: z.string().optional(),
-    limit: z.string().optional()
-  })
-});
-
-export const settlementAdminQuerySchema = z.object({
+export const settlementQuerySchema = z.object({
   query: z.object({
     page: z.string().optional(),
     limit: z.string().optional(),
-    partnerId: optionalQuery(z.string()),
-    status: optionalQuery(z.enum(["PENDING", "PROCESSING", "SETTLED", "FAILED", "CANCELLED"])),
-    fromDate: optionalQuery(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
-    toDate: optionalQuery(z.string().regex(/^\d{4}-\d{2}-\d{2}$/))
+    status: z.enum(SETTLEMENT_STATUSES).optional(),
+    partnerId: z.string().trim().min(1).max(40).optional(),
+    fromDate: dateString,
+    toDate: dateString
   })
 });
 
-export const settlementActionSchema = z.object({
-  body: z.object({
-    reason: z.string().max(500).optional()
-  })
+export const settlementIdParamsSchema = z.object({
+  params: z.object({ id: z.string().trim().min(1).max(40) })
 });

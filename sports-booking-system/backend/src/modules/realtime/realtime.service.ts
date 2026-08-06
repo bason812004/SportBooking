@@ -24,6 +24,10 @@ export const realtimeService = {
   toUser(userId: string, event: string, payload: unknown) {
     emit(`user:${userId}`, event, payload);
   },
+  toUsers(userIds: string[], event: string, payload: unknown) {
+    if (!userIds.length) return;
+    io?.to(userIds.map((id) => `user:${id}`)).emit(event, payload);
+  },
   toPartner(partnerId: string, event: string, payload: unknown) {
     emit(`partner:${partnerId}`, event, payload);
   },

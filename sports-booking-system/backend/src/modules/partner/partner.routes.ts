@@ -6,6 +6,13 @@ import { requireRole } from "../../middlewares/role.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
 import {
   courtWriteSchema,
+  courtStatusSchema,
+  courtSurfaceStatusSchema,
+  courtSurfaceUpdateSchema,
+  courtBlockWriteSchema,
+  courtBlockParamsSchema,
+  courtBlockBulkWriteSchema,
+  courtAvailabilityGridQuerySchema,
   bookingQuerySchema,
   blogCommentsToggleSchema,
   blogWriteSchema,
@@ -15,7 +22,6 @@ import {
   priceWriteSchema,
   profileUpdateSchema,
   serviceWriteSchema,
-  tournamentWriteSchema,
   voucherWriteSchema,
   recipientWriteSchema,
   recipientUpdateSchema
@@ -32,8 +38,17 @@ partnerRoutes.put("/profile", validate(profileUpdateSchema), partnerController.u
 partnerRoutes.get("/courts", partnerController.courts);
 partnerRoutes.post("/courts", validate(courtWriteSchema), partnerController.createCourt);
 partnerRoutes.get("/courts/:id", partnerController.courtDetail);
+partnerRoutes.get("/courts/:id/surfaces", partnerController.courtSurfaces);
+partnerRoutes.put("/courts/:id/surfaces/:surfaceId/status", validate(courtSurfaceStatusSchema), partnerController.updateCourtSurfaceStatus);
+partnerRoutes.put("/courts/:id/surfaces/:surfaceId", validate(courtSurfaceUpdateSchema), partnerController.updateCourtSurface);
 partnerRoutes.put("/courts/:id", validate(courtWriteSchema.partial()), partnerController.updateCourt);
 partnerRoutes.delete("/courts/:id", partnerController.deactivateCourt);
+partnerRoutes.put("/courts/:id/status", validate(courtStatusSchema), partnerController.updateCourtStatus);
+partnerRoutes.get("/courts/:id/availability-grid", validate(courtAvailabilityGridQuerySchema), partnerController.courtAvailabilityGrid);
+partnerRoutes.get("/courts/:id/blocks", partnerController.courtBlocks);
+partnerRoutes.post("/courts/:id/blocks", validate(courtBlockWriteSchema), partnerController.createCourtBlock);
+partnerRoutes.post("/courts/:id/blocks/bulk", validate(courtBlockBulkWriteSchema), partnerController.createCourtBlockBulk);
+partnerRoutes.delete("/courts/:id/blocks/:blockId", validate(courtBlockParamsSchema), partnerController.cancelCourtBlock);
 partnerRoutes.post("/courts/:id/images", upload.single("image"), validate(imageSchema), partnerController.addImage);
 partnerRoutes.delete("/images/:imageId", partnerController.deleteImage);
 partnerRoutes.put("/courts/:id/images/order", validate(imageOrderSchema), partnerController.reorderImages);
@@ -64,12 +79,6 @@ partnerRoutes.put("/blogs/:id", validate(blogWriteSchema), partnerController.upd
 partnerRoutes.patch("/blogs/:id/comments", validate(blogCommentsToggleSchema), partnerController.updateBlogComments);
 partnerRoutes.put("/blogs/:id/submit", partnerController.submitBlog);
 partnerRoutes.delete("/blogs/:id", partnerController.deleteBlog);
-partnerRoutes.get("/tournaments", partnerController.tournaments);
-partnerRoutes.post("/tournaments", validate(tournamentWriteSchema), partnerController.createTournament);
-partnerRoutes.get("/tournaments/:id", partnerController.tournamentDetail);
-partnerRoutes.put("/tournaments/:id", validate(tournamentWriteSchema), partnerController.updateTournament);
-partnerRoutes.put("/tournaments/:id/submit", partnerController.submitTournament);
-partnerRoutes.delete("/tournaments/:id", partnerController.deleteTournament);
 
 partnerRoutes.get("/recipients", partnerController.listRecipients);
 partnerRoutes.post("/recipients", validate(recipientWriteSchema), partnerController.createRecipient);

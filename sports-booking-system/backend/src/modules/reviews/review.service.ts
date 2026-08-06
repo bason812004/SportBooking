@@ -1,5 +1,7 @@
+import { prisma } from "../../config/db.js";
 import { NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { courtRepository } from "../courts/court.repository.js";
+import { notificationService } from "../notifications/notification.service.js";
 import { reviewRepository } from "./review.repository.js";
 
 type CreateReviewBody = {
@@ -8,6 +10,11 @@ type CreateReviewBody = {
   rating: number;
   comment?: string | null;
 };
+
+async function customerContact(userId: string) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } });
+  return user?.fullName ?? "Khach hang";
+}
 
 export const reviewService = {
   listByCourt(courtId: string) {
@@ -26,6 +33,16 @@ export const reviewService = {
       comment: input.comment || null
     });
     if (!created) throw new NotFoundError("Khong the tao danh gia");
+
+    const fullName = await customerContact(userId);
+    const commentPreview = input.comment && input.comment.trim() ? `: "${input.comment.trim().slice(0, 100)}"` : ".";
+    await notificationService.notifyCourtStaff(input.courtId, {
+      title: `Đánh giá mới - ${court.name}`,
+      content: `${fullName} danh gia ${input.rating} sao${commentPreview}`,
+      type: "REVIEW_CREATED",
+      metadata: { reviewId: created.id, courtId: input.courtId, rating: input.rating }
+    });
+
     return created;
   },
 

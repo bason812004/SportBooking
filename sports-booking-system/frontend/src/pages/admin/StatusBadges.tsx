@@ -1,43 +1,45 @@
-function SettlementStatusBadge({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    PENDING: "bg-amber-100 text-amber-800",
-    PROCESSING: "bg-blue-100 text-blue-800",
-    SETTLED: "bg-emerald-100 text-emerald-800",
-    FAILED: "bg-red-100 text-red-800",
-    CANCELLED: "bg-slate-100 text-slate-600"
-  };
-  const labels: Record<string, string> = {
-    PENDING: "Chờ quyết toán",
-    PROCESSING: "Đang xử lý",
-    SETTLED: "Đã quyết toán",
-    FAILED: "Thất bại",
-    CANCELLED: "Đã hủy"
-  };
-  return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${styles[status] ?? "bg-slate-100 text-slate-600"}`}>
-      {labels[status] ?? status}
-    </span>
-  );
+const settlementLabels: Record<string, string> = {
+  PENDING: "Chờ quyết toán",
+  PROCESSING: "Đang xử lý",
+  SETTLED: "Đã quyết toán",
+  FAILED: "Thất bại",
+  CANCELLED: "Đã hủy"
+};
+
+const settlementTones: Record<string, string> = {
+  PENDING: "bg-amber-100 text-amber-700",
+  PROCESSING: "bg-sky-100 text-sky-700",
+  SETTLED: "bg-emerald-100 text-emerald-700",
+  FAILED: "bg-red-100 text-red-700",
+  CANCELLED: "bg-slate-100 text-slate-600"
+};
+
+const withdrawalLabels: Record<string, string> = {
+  PENDING: "Chờ duyệt",
+  APPROVED: "Đã duyệt",
+  PROCESSING: "Đang chuyển khoản",
+  REJECTED: "Từ chối",
+  FAILED: "Chuyển khoản thất bại",
+  PAID: "Đã chuyển khoản"
+};
+
+const withdrawalTones: Record<string, string> = {
+  PENDING: "bg-amber-100 text-amber-700",
+  APPROVED: "bg-sky-100 text-sky-700",
+  PROCESSING: "bg-violet-100 text-violet-700",
+  REJECTED: "bg-red-100 text-red-700",
+  FAILED: "bg-red-100 text-red-700",
+  PAID: "bg-emerald-100 text-emerald-700"
+};
+
+function Badge({ label, tone }: { label: string; tone: string }) {
+  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${tone}`}>{label}</span>;
 }
 
-function WithdrawalStatusBadge({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    PENDING: "bg-amber-100 text-amber-800",
-    APPROVED: "bg-blue-100 text-blue-800",
-    REJECTED: "bg-red-100 text-red-800",
-    PAID: "bg-emerald-100 text-emerald-800"
-  };
-  const labels: Record<string, string> = {
-    PENDING: "Chờ duyệt",
-    APPROVED: "Đã duyệt",
-    REJECTED: "Từ chối",
-    PAID: "Đã thanh toán"
-  };
-  return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${styles[status] ?? "bg-slate-100 text-slate-600"}`}>
-      {labels[status] ?? status}
-    </span>
-  );
+export function SettlementStatusBadge({ status }: { status: string }) {
+  return <Badge label={settlementLabels[status] ?? status} tone={settlementTones[status] ?? "bg-slate-100 text-slate-600"} />;
 }
 
-export { SettlementStatusBadge, WithdrawalStatusBadge };
+export function WithdrawalStatusBadge({ status }: { status: string }) {
+  return <Badge label={withdrawalLabels[status] ?? status} tone={withdrawalTones[status] ?? "bg-slate-100 text-slate-600"} />;
+}
