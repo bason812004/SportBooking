@@ -70,17 +70,33 @@ export const bookingService = {
       for (const slot of day.slots) {
         const startMin = timeToMinutes(slot.startTime);
         const endMin = timeToMinutes(slot.endTime);
-        const matchingPrice = court.prices.find(
-          (price) =>
-            price.dayType === dayType &&
-            timeToMinutes(price.startTime.toISOString().slice(11, 16)) <= startMin &&
-            timeToMinutes(price.endTime.toISOString().slice(11, 16)) >= endMin
+        const allPrices = court.prices.map((p) => ({
+          dayType: p.dayType,
+          startMin: timeToMinutes(p.startTime.toISOString().slice(11, 16)),
+          endMin: timeToMinutes(p.endTime.toISOString().slice(11, 16)),
+          price: Number(p.price)
+        }));
+
+        let matchingPrice = allPrices.find(
+          (p) => p.dayType === dayType && p.startMin <= startMin && p.endMin >= endMin
         );
+        if (!matchingPrice) {
+          matchingPrice = allPrices.find(
+            (p) => p.dayType === dayType && p.startMin < endMin && p.endMin > startMin
+          );
+        }
+        if (!matchingPrice) {
+          matchingPrice = allPrices.find((p) => p.dayType === dayType);
+        }
+        if (!matchingPrice && allPrices.length > 0) {
+          matchingPrice = allPrices[0];
+        }
+
         if (!matchingPrice) {
           throw new ValidationError(`Khung giờ ${slot.startTime} - ${slot.endTime} ngày ${day.bookingDate} chưa có bảng giá`);
         }
         const hours = durationHours(slot.startTime, slot.endTime);
-        const slotPrice = Number(matchingPrice.price) * hours;
+        const slotPrice = matchingPrice.price * hours;
         dayCourtSubtotal += slotPrice;
         slotsWithPrice.push({ ...slot, price: slotPrice });
       }
@@ -361,14 +377,32 @@ export const bookingService = {
     if (!court) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
 
     const dayType = dayTypeFor(input.bookingDate);
-    const matchingPrice = court.prices.find(
-      (price) =>
-        price.dayType === dayType &&
-        timeToMinutes(price.startTime.toISOString().slice(11, 16)) <= timeToMinutes(input.startTime) &&
-        timeToMinutes(price.endTime.toISOString().slice(11, 16)) >= timeToMinutes(input.endTime)
-    );
+    const startMin = timeToMinutes(input.startTime);
+    const endMin = timeToMinutes(input.endTime);
 
-    if (!matchingPrice) throw new ValidationError("Khung gio nay chua co bang gia");
+    const allPrices = court.prices.map((p) => ({
+      dayType: p.dayType,
+      startMin: timeToMinutes(p.startTime.toISOString().slice(11, 16)),
+      endMin: timeToMinutes(p.endTime.toISOString().slice(11, 16)),
+      price: Number(p.price)
+    }));
+
+    let matchingPrice = allPrices.find(
+      (p) => p.dayType === dayType && p.startMin <= startMin && p.endMin >= endMin
+    );
+    if (!matchingPrice) {
+      matchingPrice = allPrices.find(
+        (p) => p.dayType === dayType && p.startMin < endMin && p.endMin > startMin
+      );
+    }
+    if (!matchingPrice) {
+      matchingPrice = allPrices.find((p) => p.dayType === dayType);
+    }
+    if (!matchingPrice && allPrices.length > 0) {
+      matchingPrice = allPrices[0];
+    }
+
+    if (!matchingPrice) throw new ValidationError("Khung giờ này chưa có bảng giá. Vui lòng thiết lập bảng giá cho sân.");
 
     const serviceIds = input.services.map((service) => service.serviceId);
     const services = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
@@ -379,7 +413,7 @@ export const bookingService = {
       return { serviceId: line.serviceId, quantity: line.quantity, price: Number(service.price) };
     });
 
-    const courtTotal = Number(matchingPrice.price) * durationHours(input.startTime, input.endTime);
+    const courtTotal = matchingPrice.price * durationHours(input.startTime, input.endTime);
     const serviceTotal = serviceLines.reduce((sum, line) => sum + line.price * line.quantity, 0);
 
     return bookingRepository.createWithServices({
