@@ -83,7 +83,7 @@ export const bookingService = {
         const slotPrice = Number(matchingPrice.price) * hours;
         dayCourtSubtotal += slotPrice;
         slotsWithPrice.push({ ...slot, price: slotPrice });
-      }
+      }ô
 
       courtSubtotal += dayCourtSubtotal;
       daysResult.push({
