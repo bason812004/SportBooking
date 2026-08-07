@@ -56,12 +56,11 @@ function textSearchCondition(fields: Array<"name" | "description" | "address" | 
 
 export const courtRepository = {
   async list(query: CourtListQuery, page: number, limit: number) {
-    const categoryFilter: Prisma.CourtCategoryWhereInput = { status: "ACTIVE" };
+    const categoryFilter: Prisma.CourtCategoryWhereInput = {};
     const andConditions: Prisma.CourtWhereInput[] = [];
     const where: Prisma.CourtWhereInput = {
       approvalStatus: "APPROVED",
-      activeStatus: "ACTIVE",
-      category: categoryFilter
+      activeStatus: "ACTIVE"
     };
 
     const keyword = query.keyword ?? query.q;
@@ -82,6 +81,10 @@ export const courtRepository = {
         { name: { contains: sportType.replace(/_/g, " "), mode: "insensitive" } }
       ];
     }
+    if (Object.keys(categoryFilter).length > 0) {
+      where.category = categoryFilter;
+    }
+
     const minPrice = Number(query.minPrice);
     const maxPrice = Number(query.maxPrice);
     if (Number.isFinite(minPrice) || Number.isFinite(maxPrice)) {
@@ -97,9 +100,12 @@ export const courtRepository = {
 
     const latitude = Number(query.latitude);
     const longitude = Number(query.longitude);
-    const radiusKm = Number(query.radiusKm || 25);
+    const radiusKmInput = query.radiusKm ? Number(query.radiusKm) : undefined;
+    const hasRadiusFilter = Number.isFinite(radiusKmInput) && (radiusKmInput as number) > 0;
+    const radiusKm = hasRadiusFilter ? (radiusKmInput as number) : undefined;
     const hasLocation = Number.isFinite(latitude) && Number.isFinite(longitude);
-    if (hasLocation) {
+
+    if (hasLocation && hasRadiusFilter && radiusKm) {
       const latitudeDelta = radiusKm / 111;
       const longitudeDelta = radiusKm / (111 * Math.cos((latitude * Math.PI) / 180));
       where.latitude = { not: null, gte: latitude - latitudeDelta, lte: latitude + latitudeDelta };
@@ -109,7 +115,7 @@ export const courtRepository = {
     const orderBy: Prisma.CourtOrderByWithRelationInput =
       query.sortBy === "name" ? { name: query.sortOrder ?? "asc" } : query.sort === "newest" || !query.sort ? { createdAt: "desc" } : { name: "asc" };
 
-    if (hasLocation || query.sortBy === "distance") {
+    if (hasLocation || query.sortBy === "distance" || hasRadiusFilter) {
       const candidates = await prisma.court.findMany({
         where,
         include: courtInclude,
