@@ -24,40 +24,23 @@ const selectReview = `
   join users u on u.id = r.user_id
 `;
 
-const columnExistsCache = new Map<string, boolean>();
+let reviewTablesReady = false;
 
-async function columnExists(tableName: string, columnName: string) {
-  const cacheKey = `${tableName}.${columnName}`;
-  const cached = columnExistsCache.get(cacheKey);
-  if (cached !== undefined) return cached;
-
-  const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
-    select exists(
-      select 1
-      from information_schema.columns
-      where table_schema = 'public'
-        and table_name = ${tableName}
-        and column_name = ${columnName}
-    ) as "exists"
-  `;
-  const exists = Boolean(row?.exists);
-  columnExistsCache.set(cacheKey, exists);
-  return exists;
-}
-
-async function ensureIsEditedColumn() {
-  if (await columnExists("reviews", "is_edited")) return;
-
-  await prisma.$executeRaw`
-    alter table reviews
-    add column if not exists is_edited boolean not null default false
-  `;
-  columnExistsCache.set("reviews.is_edited", true);
+export async function ensureReviewTables() {
+  if (reviewTablesReady) return;
+  try {
+    await prisma.$executeRaw`
+      alter table reviews
+      add column if not exists is_edited boolean not null default false
+    `;
+    reviewTablesReady = true;
+  } catch (err) {
+    console.warn("Failed to ensure review tables:", err);
+  }
 }
 
 export const reviewRepository = {
   async byCourt(courtId: string) {
-    await ensureIsEditedColumn();
     return prisma.$queryRawUnsafe<ReviewRow[]>(
       `
         ${selectReview}
@@ -67,6 +50,39 @@ export const reviewRepository = {
       `,
       courtId
     );
+  },
+
+  async byCourts(courtIds: string[]) {
+    if (!courtIds.length) return new Map<string, ReviewRow[]>();
+    const rows = await prisma.$queryRawUnsafe<Array<ReviewRow & { courtId: string }>>(
+      `
+        select
+          r.id,
+          r.court_id as "courtId",
+          r.rating,
+          r.comment,
+          r.is_edited as "isEdited",
+          r.display_status::text as "displayStatus",
+          r.created_at as "createdAt",
+          r.updated_at as "updatedAt",
+          json_build_object('id', u.id, 'fullName', u.full_name, 'avatarUrl', u.avatar_url) as "user"
+        from reviews r
+        join users u on u.id = r.user_id
+        where r.court_id = any($1::text[])
+          and r.display_status = 'VISIBLE'::review_display_status
+        order by r.updated_at desc, r.created_at desc
+      `,
+      courtIds
+    );
+
+    const map = new Map<string, ReviewRow[]>();
+    for (const id of courtIds) map.set(id, []);
+    for (const row of rows) {
+      const list = map.get(row.courtId) ?? [];
+      list.push(row);
+      map.set(row.courtId, list);
+    }
+    return map;
   },
 
   async latestByUserCourt(userId: string, courtId: string) {

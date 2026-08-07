@@ -18,12 +18,12 @@ const courtDetailInclude = {
 };
 
 const accentMap: Record<string, string> = {
-  à: "a", á: "a", ạ: "a", ả: "a", ã: "a", â: "a",ầ: "a",ấ: "a",ậ: "a",ẩ: "a",ẫ: "a",ă: "a",ằ: "a",ắ: "a",ặ: "a",ẳ: "a",ẵ: "a",
-  è: "e", é: "e", ẹ: "e", ẻ: "e", ẽ: "e", ê: "e",ề: "e",ế: "e",ệ: "e",ể: "e",ễ: "e",
+  à: "a", á: "a", ạ: "a", ả: "a", ã: "a", â: "a", ầ: "a", ấ: "a", ậ: "a", ẩ: "a", ẫ: "a", ă: "a", ằ: "a", ắ: "a", ặ: "a", ẳ: "a", ẵ: "a",
+  è: "e", é: "e", ẹ: "e", ẻ: "e", ẽ: "e", ê: "e", ề: "e", ế: "e", ệ: "e", ể: "e", ễ: "e",
   ì: "i", í: "i", ị: "i", ỉ: "i", ĩ: "i",
-  ò: "o", ó: "o", ọ: "o", ỏ: "o", õ: "o", ô: "o",ồ: "o",ố: "o",ộ: "o",ổ: "o",ỗ: "o",ơ: "o",ờ: "o",ớ: "o",ợ: "o",ở: "o",ỡ: "o",
-  ù: "u", ú: "u", ụ: "u", ủ: "u", ũ: "u", ư: "u",ừ: "u",ứ: "u",ự: "u",ử: "u",ữ: "u",
-  ỳ: "y", ý: "y",ỵ: "y",ỷ: "y",ỹ: "y",
+  ò: "o", ó: "o", ọ: "o", ỏ: "o", õ: "o", ô: "o", ồ: "o", ố: "o", ộ: "o", ổ: "o", ỗ: "o", ơ: "o", ờ: "o", ớ: "o", ợ: "o", ở: "o", ỡ: "o",
+  ù: "u", ú: "u", ụ: "u", ủ: "u", ũ: "u", ư: "u", ừ: "u", ứ: "u", ự: "u", ử: "u", ữ: "u",
+  ỳ: "y", ý: "y", ỵ: "y", ỷ: "y", ỹ: "y",
   đ: "d"
 };
 
@@ -110,17 +110,12 @@ export const courtRepository = {
       query.sortBy === "name" ? { name: query.sortOrder ?? "asc" } : query.sort === "newest" || !query.sort ? { createdAt: "desc" } : { name: "asc" };
 
     if (hasLocation || query.sortBy === "distance") {
-      const candidateCap = Math.max(limit * 20, 200);
-      const [candidates, total] = await Promise.all([
-        prisma.court.findMany({
-          where,
-          include: courtInclude,
-          orderBy,
-          take: candidateCap
-        }),
-        prisma.court.count({ where })
-      ]);
-      return { items: candidates, total };
+      const candidates = await prisma.court.findMany({
+        where,
+        include: courtInclude,
+        orderBy
+      });
+      return { items: candidates, total: candidates.length };
     }
 
     const [items, total] = await prisma.$transaction([
@@ -168,31 +163,25 @@ export const courtRepository = {
     });
   },
 
-  availability(courtId: string, date: string) {
+  availability(courtId: string, date: string | string[]) {
+    const dates = Array.isArray(date) ? date.map((d) => toDbDate(d)) : toDbDate(date);
     return prisma.booking.findMany({
       where: {
         courtId,
-        bookingDate: toDbDate(date),
+        bookingDate: Array.isArray(dates) ? { in: dates } : dates,
         bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] }
       },
-      select: {
-        id: true,
-        bookingCode: true,
-        startTime: true,
-        endTime: true,
-        bookingStatus: true,
-        payments: { select: { expiresAt: true, status: true } },
-        bookingOrder: { select: { payment: { select: { expiresAt: true, status: true } } } }
-      },
+      select: { id: true, bookingCode: true, bookingDate: true, startTime: true, endTime: true, bookingStatus: true, payments: { select: { expiresAt: true, status: true } } },
       orderBy: { startTime: "asc" }
     });
   },
 
-  bookingSlots(courtId: string, date: string) {
+  bookingSlots(courtId: string, date: string | string[]) {
+    const dates = Array.isArray(date) ? date.map((d) => toDbDate(d)) : toDbDate(date);
     return prisma.bookingSlot.findMany({
       where: {
         courtId,
-        bookingDate: toDbDate(date),
+        bookingDate: Array.isArray(dates) ? { in: dates } : dates,
         booking: {
           bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] }
         }
@@ -200,25 +189,21 @@ export const courtRepository = {
       select: {
         id: true,
         bookingId: true,
+        bookingDate: true,
         startTime: true,
         endTime: true,
         slotPrice: true,
-        booking: {
-          select: {
-            bookingStatus: true,
-            payments: { select: { expiresAt: true, status: true } },
-            bookingOrder: { select: { payment: { select: { expiresAt: true, status: true } } } }
-          }
-        }
+        booking: { select: { bookingStatus: true, payments: { select: { expiresAt: true, status: true } } } }
       },
       orderBy: { startTime: "asc" }
     });
   },
 
-  availabilityBlocks(courtId: string, date: string) {
+  availabilityBlocks(courtId: string, date: string | string[]) {
+    const dates = Array.isArray(date) ? date.map((d) => toDbDate(d)) : toDbDate(date);
     return prisma.courtAvailabilityBlock.findMany({
-      where: { courtId, blockDate: toDbDate(date), status: "ACTIVE" },
-      select: { id: true, startTime: true, endTime: true, reason: true, status: true },
+      where: { courtId, blockDate: Array.isArray(dates) ? { in: dates } : dates, status: "ACTIVE" },
+      select: { id: true, blockDate: true, startTime: true, endTime: true, reason: true, status: true },
       orderBy: { startTime: "asc" }
     });
   },

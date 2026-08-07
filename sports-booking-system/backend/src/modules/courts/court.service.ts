@@ -14,7 +14,13 @@ async function attachReviews<T extends { id: string }>(court: T): Promise<CourtW
 }
 
 async function attachReviewsList<T extends { id: string }>(courts: T[]): Promise<Array<CourtWithReviews<T>>> {
-  return Promise.all(courts.map((court) => attachReviews(court)));
+  if (courts.length === 0) return [];
+  const courtIds = courts.map((c) => c.id);
+  const reviewsMap = await reviewRepository.byCourts(courtIds);
+  return courts.map((court) => ({
+    ...court,
+    reviews: reviewsMap.get(court.id) ?? []
+  }));
 }
 
 function summarizeCourt<T extends { latitude?: unknown; longitude?: unknown; reviews?: { rating: number }[]; prices: { price: unknown }[] }>(

@@ -37,8 +37,8 @@ export function BlogDetailPage() {
   const relatedPosts = (related.data ?? [])
     .filter((candidate) => candidate.slug !== item.slug)
     .sort((left, right) => {
-      const sameCategoryLeft = left.category?.id && left.category.id === item.category?.id ? 1 : 0;
-      const sameCategoryRight = right.category?.id && right.category.id === item.category?.id ? 1 : 0;
+      const sameCategoryLeft = left.category?.id && left.category?.id === item.category?.id ? 1 : 0;
+      const sameCategoryRight = right.category?.id && right.category?.id === item.category?.id ? 1 : 0;
       if (sameCategoryLeft !== sameCategoryRight) return sameCategoryRight - sameCategoryLeft;
       return (right.viewCount ?? 0) - (left.viewCount ?? 0);
     })
@@ -237,7 +237,7 @@ export function BlogDetailPage() {
                   ) : (
                     <p className="mt-3 leading-7 text-slate-700 whitespace-pre-wrap">{entry.content}</p>
                   )}
-                  {isAuthenticated && (user?.id === entry.user.id || user?.role === "ADMIN" || item.author.id === user?.id) && editingId !== entry.id && (
+                  {isAuthenticated && (user?.id === entry.user.id || user?.role === "ADMIN" || item.author?.id === user?.id) && editingId !== entry.id && (
                     <div className="mt-2 flex gap-3 text-xs font-bold text-slate-500 justify-end">
                       {user?.id === entry.user.id && (
                         <button className="hover:text-emerald-700 transition" onClick={() => { setEditingId(entry.id); setEditText(entry.content); }}>Sửa</button>

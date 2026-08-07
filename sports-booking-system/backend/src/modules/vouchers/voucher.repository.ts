@@ -48,28 +48,42 @@ export type UserVoucherRow = VoucherRow & {
 };
 
 // ============================================================
-// Column-existence cache so SQL queries work on legacy/migrated
-// databases without the new fields.
+// Column-existence cache pre-populated to avoid DB schema queries
 // ============================================================
-const columnExistsCache = new Map<string, boolean>();
+const columnExistsCache = new Map<string, boolean>([
+  ["vouchers.applicable_days", true],
+  ["vouchers.start_time", true],
+  ["vouchers.end_time", true],
+  ["vouchers.holiday_only", true],
+  ["vouchers.holiday_dates", true],
+  ["vouchers.applicable_start_date", true],
+  ["vouchers.applicable_end_date", true],
+  ["vouchers.click_count", true],
+  ["vouchers.funded_by", true]
+]);
 
 export async function columnExists(tableName: string, columnName: string) {
   const cacheKey = `${tableName}.${columnName}`;
   const cached = columnExistsCache.get(cacheKey);
   if (cached !== undefined) return cached;
 
-  const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
-    select exists(
-      select 1
-      from information_schema.columns
-      where table_schema = 'public'
-        and table_name = ${tableName}
-        and column_name = ${columnName}
-    ) as "exists"
-  `;
-  const exists = Boolean(row?.exists);
-  columnExistsCache.set(cacheKey, exists);
-  return exists;
+  try {
+    const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+      select exists(
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = ${tableName}
+          and column_name = ${columnName}
+      ) as "exists"
+    `;
+    const exists = Boolean(row?.exists);
+    columnExistsCache.set(cacheKey, exists);
+    return exists;
+  } catch (err) {
+    columnExistsCache.set(cacheKey, true);
+    return true;
+  }
 }
 
 // ============================================================
@@ -454,14 +468,38 @@ export const voucherRepository = {
     return rows[0] ?? null;
   },
 
+  async getUserClaimedVoucherIds(userId: string): Promise<Set<string>> {
+    const rows = await prisma.$queryRaw<Array<{ voucher_id: string }>>`
+      select voucher_id
+      from user_vouchers
+      where user_id = ${userId}
+    `;
+    return new Set(rows.map((r) => r.voucher_id));
+  },
+
+  async claimBatch(userId: string, voucherIds: string[]) {
+    if (!voucherIds.length) return [];
+    const values = voucherIds.map(
+      (vId) => Prisma.sql`(${userId}, ${vId}, 'CLAIMED'::user_voucher_status, NOW())`
+    );
+    const rows = await prisma.$queryRaw<Array<{ id: string; voucher_id: string }>>(Prisma.sql`
+      INSERT INTO user_vouchers (user_id, voucher_id, status, claimed_at)
+      VALUES ${Prisma.join(values, ", ")}
+      ON CONFLICT (user_id, voucher_id) DO NOTHING
+      RETURNING id, voucher_id
+    `);
+    return rows;
+  },
+
   async claim(userId: string, voucherId: string) {
     const rows = await prisma.$queryRaw<Array<{ id: string; user_id: string; voucher_id: string; status: string; claimed_at: Date }>>`
       INSERT INTO user_vouchers (user_id, voucher_id, status, claimed_at)
       VALUES (${userId}, ${voucherId}, 'CLAIMED'::user_voucher_status, NOW())
+      ON CONFLICT (user_id, voucher_id) DO NOTHING
       RETURNING id, user_id, voucher_id, status, claimed_at
     `;
     const row = rows[0];
-    if (!row) throw new Error("Claim voucher that bai");
+    if (!row) return { id: "", userId, voucherId, status: "CLAIMED", claimedAt: new Date() };
     return {
       id: row.id,
       userId: row.user_id,

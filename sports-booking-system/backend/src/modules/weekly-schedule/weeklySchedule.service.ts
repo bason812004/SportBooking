@@ -1,6 +1,8 @@
+import { Prisma } from "@prisma/client";
 import { NotFoundError } from "../../shared/errors/AppError.js";
 import { calculateDemandScore, calculateDynamicPrice } from "../../shared/utils/businessRules.js";
 import { dayTypeFor, timeToMinutes } from "../../shared/utils/time.js";
+import { prisma } from "../../config/db.js";
 import {
   WEEKLY_DEFAULT_CLOSE,
   WEEKLY_DEFAULT_OPEN,
@@ -73,16 +75,53 @@ export function invalidateWeeklyScheduleCache(courtId?: string, weekStart?: stri
 }
 
 
-function isPendingButExpired(booking: {
-  bookingStatus: string;
-  payments?: Array<{ expiresAt: Date | null; status: string } | null> | null;
-}) {
-  const isPending = booking.bookingStatus === "PENDING" || booking.bookingStatus === "PENDING_PAYMENT";
-  if (!isPending) return false;
-  const payments = (booking.payments ?? []).filter(Boolean) as Array<{ expiresAt: Date | null; status: string }>;
-  const activePayment = payments.find((p) => p.status === "PENDING" || p.status === "UNPAID");
-  if (!activePayment) return false;
-  return !activePayment.expiresAt || activePayment.expiresAt.getTime() > Date.now();
+/**
+ * Batch-fetch all pending booking payments in ONE query instead of N queries
+ * (one per pending booking/booking-slot).  Result is keyed by bookingId.
+ */
+async function fetchPendingPayments(bookingIds: string[]): Promise<Map<string, { expiresAt: Date | null; status: string }[]>> {
+  if (bookingIds.length === 0) return new Map();
+  const rows = await prisma.payment.findMany({
+    where: {
+      bookingId: { in: bookingIds },
+      status: { in: ["PENDING", "UNPAID"] }
+    },
+    select: { bookingId: true, expiresAt: true, status: true }
+  });
+  const map = new Map<string, { expiresAt: Date | null; status: string }[]>();
+  for (const row of rows) {
+    const list = map.get(row.bookingId) ?? [];
+    list.push({ expiresAt: row.expiresAt, status: row.status });
+    map.set(row.bookingId, list);
+  }
+  return map;
+}
+
+/**
+ * Check if a booking blocks the slot on the calendar.
+ * CONFIRMED and COMPLETED bookings ALWAYS block.
+ * PENDING or PENDING_PAYMENT bookings block as long as their payment is active / not expired.
+ */
+function hasActivePayment(
+  bookingId: string,
+  bookingStatus: string,
+  paymentMap: Map<string, { expiresAt: Date | null; status: string }[]>
+): boolean {
+  if (bookingStatus === "CONFIRMED" || bookingStatus === "COMPLETED") {
+    return true;
+  }
+  if (bookingStatus === "PENDING" || bookingStatus === "PENDING_PAYMENT") {
+    const payments = paymentMap.get(bookingId);
+    if (!payments || payments.length === 0) {
+      return true;
+    }
+    const activePayment = payments.find((p) => p.status === "PENDING" || p.status === "UNPAID");
+    if (!activePayment) {
+      return true;
+    }
+    return !activePayment.expiresAt || activePayment.expiresAt.getTime() > Date.now();
+  }
+  return false;
 }
 
 function toIsoTime(value: Date | string | null | undefined) {
@@ -332,6 +371,18 @@ export const weeklyScheduleService = {
       loadDemandBundle(courtId, monday, sunday)
     ]);
 
+    // Batch-fetch payments for all pending bookings in ONE query.
+    // This eliminates N+1: previously each pending booking triggered a nested SELECT.
+    const pendingBookingIds = [
+      ...bookings
+        .filter((b) => b.bookingStatus === "PENDING" || b.bookingStatus === "PENDING_PAYMENT")
+        .map((b) => b.id),
+      ...bookingSlots
+        .filter((bs) => bs.booking.bookingStatus === "PENDING" || bs.booking.bookingStatus === "PENDING_PAYMENT")
+        .map((bs) => bs.bookingId)
+    ];
+    const paymentMap = await fetchPendingPayments([...new Set(pendingBookingIds)]);
+
     function applyToMatchingSlots(
       dateKey: string,
       startKey: string,
@@ -352,7 +403,7 @@ export const weeklyScheduleService = {
       const startKey = toIsoTime(booking.startTime);
       const endKey = toIsoTime(booking.endTime);
       if (!startKey || !endKey) continue;
-      const blocksSlot = isPendingButExpired(booking);
+      const blocksSlot = hasActivePayment(booking.id, booking.bookingStatus, paymentMap);
       applyToMatchingSlots(dateKey, startKey, endKey, (slot) => {
         if (blocksSlot) {
           slot.status = "BOOKED";
@@ -371,7 +422,7 @@ export const weeklyScheduleService = {
       const startKey = toIsoTime(bs.startTime);
       const endKey = toIsoTime(bs.endTime);
       if (!startKey || !endKey) continue;
-      const blocksSlot = isPendingButExpired(bs.booking);
+      const blocksSlot = hasActivePayment(bs.bookingId, bs.booking.bookingStatus, paymentMap);
       applyToMatchingSlots(dateKey, startKey, endKey, (slot) => {
         if (blocksSlot) {
           slot.status = "BOOKED";
@@ -477,7 +528,7 @@ export const weeklyScheduleService = {
 
     // Build flat booking list (only those that currently block).
     const bookingEntries: WeeklyBookingEntry[] = bookings
-      .filter((b) => isPendingButExpired(b))
+      .filter((b) => hasActivePayment(b.id, b.bookingStatus, paymentMap))
       .map((b) => ({
         id: b.id,
         bookingCode: b.bookingCode,

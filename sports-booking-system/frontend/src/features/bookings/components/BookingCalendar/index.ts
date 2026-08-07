@@ -9,8 +9,8 @@ export { WeekHeader } from "./WeekHeader";
 export { BookingBlock } from "./BookingBlock";
 export {
   BookingSummary,
-  type AppliedVoucher,
-  type BookingSummaryProps
+  BookingSummarySlotList,
+  type BookingSummaryStandaloneProps
 } from "./BookingSummary";
 export { WeeklyCalendarSection, type WeeklyCalendarSectionProps } from "./WeeklyCalendarSection";
 export { useCalendarNavigation, type CalendarView, type CalendarNavigationOptions, type CalendarNavigationResult } from "./useCalendarNavigation";

@@ -670,6 +670,8 @@ model Booking {
   @@index([paymentStatus], map: "idx_bookings_payment_status")
   @@index([courtId, bookingDate, startTime, endTime, bookingStatus], map: "idx_bookings_schedule_conflict")
   @@index([courtSurfaceId, bookingDate, startTime, endTime, bookingStatus], map: "idx_bookings_surface_schedule_conflict")
+  @@index([userId, createdAt(sort: Desc)], map: "idx_bookings_user_created_at")
+  @@index([courtId, bookingDate, bookingStatus], map: "idx_bookings_court_date_status")
   @@map("bookings")
 }
 

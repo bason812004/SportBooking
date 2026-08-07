@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -10,9 +10,10 @@ import { useAuth } from "../../features/auth/hooks/useAuth";
 import { formatCurrency, timeText } from "../../lib/format";
 import { usePrefetchAdjacentWeeks, useWeeklySchedule } from "../../features/bookings/hooks/useBookingSchedule";
 import { bookingApi, type BookingCheckoutPayload, type BookingCheckoutResult } from "../../features/bookings/api/bookingApi";
-import { BookingSummary, WeeklyCalendarSection, startOfWeek, formatYmd, compareTime } from "../../features/bookings/components/BookingCalendar";
+import { BookingSummary, WeeklyCalendarSection, startOfWeek, formatYmd } from "../../features/bookings/components/BookingCalendar";
 import type { WeeklyScheduleSlot, WeeklyScheduleVoucher } from "../../types/api";
 import { getSocket } from "../../lib/socket";
+import { useBookingContext } from "../../context/BookingContext";
 
 function isVoucherApplicableToSlot(voucher: WeeklyScheduleVoucher, subtotal: number) {
   if (subtotal < voucher.minBookingAmount) return { applicable: false, estimatedDiscount: 0 };
@@ -33,26 +34,47 @@ export function BookingPage() {
   const queryClient = useQueryClient();
   const court = useCourt(courtId);
 
-  // ── Calendar state ──────────────────────────────────────────────
-  // Determine initial week from URL or default to today
-  const initialDateFromUrl = searchParams.get("week") ?? undefined;
-  const [weekStartDate, setWeekStartDate] = useState<Date>(
-    () => startOfWeek(initialDateFromUrl ? new Date(`${initialDateFromUrl}T00:00:00`) : new Date())
-  );
+  // ── Global booking context — single source of truth for ALL booking state ──
+  // Slots, week navigation, court info, voucher, payment type are shared with CourtDetailPage.
+  const {
+    state: bookingState,
+    toggleSlot,
+    removeSlot,
+    clearSlots,
+    restoreSlots,
+    setWeekStart: ctxSetWeekStart,
+    setFocusedDate: ctxSetFocusedDate,
+    setCourt: ctxSetCourt,
+    setVoucherInput,
+    applyVoucher,
+    removeVoucher,
+    setPaymentType,
+    setAgreedToPolicies,
+    setNote: ctxSetNote,
+    subtotal: contextSubtotal,
+    finalTotal: contextFinalTotal,
+    weekGroups
+  } = useBookingContext();
+
+  const subtotal = contextSubtotal;
+
+  const {
+    selectedSlots,
+    appliedVoucher,
+    voucherInput,
+    paymentType,
+    agreedToPolicies,
+    note
+  } = bookingState;
+
+  // ── Sync calendar week state with global context ───────────────────────────
+  const weekStartDate = bookingState.weekStart;
+  const setWeekStartDate = ctxSetWeekStart;
 
   const [focusedDate, setFocusedDate] = useState<Date>(() => {
     const fromUrl = searchParams.get("date") ?? undefined;
     return fromUrl ? new Date(`${fromUrl}T00:00:00`) : new Date();
   });
-
-  // selected slots — NOT reset when week changes; restored from URL deep-link
-  const [selected, setSelected] = useState<WeeklyScheduleSlot[]>([]);
-
-  const [voucherInput, setVoucherInput] = useState("");
-  const [appliedVoucher, setAppliedVoucher] = useState<AppliedVoucher | null>(null);
-  const [paymentType, setPaymentType] = useState<"DEPOSIT" | "FULL_PAYMENT" | "PAY_AT_COURT">("PAY_AT_COURT");
-  const [agreed, setAgreed] = useState(false);
-  const [note, setNote] = useState("");
 
   const weekStart = formatYmd(weekStartDate);
   const schedule = useWeeklySchedule(courtId, weekStart);
@@ -60,59 +82,92 @@ export function BookingPage() {
 
   usePrefetchAdjacentWeeks(courtId, weekStart);
 
-  // Honour deep-link ?date=&slot= (repeated, paired by index for multi-day) — apply only
-  // once, otherwise every background refetch of `response` (15s poll, week switch back to
-  // the linked date, realtime invalidation...) would stomp any slots the user picked
-  // afterwards back down to just this original URL selection.
-  const deepLinkAppliedRef = useRef(false);
+  // ── Sync court info to global context when court data loads ──────────────────
   useEffect(() => {
-    if (deepLinkAppliedRef.current) return;
-    const dates = searchParams.getAll("date");
-    const slots = searchParams.getAll("slot");
-    if (dates.length === 0 || slots.length === 0 || !response) return;
-    deepLinkAppliedRef.current = true;
-    const parsed: WeeklyScheduleSlot[] = [];
-    for (let i = 0; i < Math.min(dates.length, slots.length); i++) {
-      const dateStr = dates[i];
-      const [startTime, endTime] = slots[i].split("-");
-      if (!startTime || !endTime) continue;
-      const day = response.days.find((d) => d.date === dateStr);
-      const slot = day?.slots.find((s) => s.startTime === startTime && s.endTime === endTime);
-      if (slot) parsed.push(slot);
+    if (court.data?.id && court.data?.name) {
+      ctxSetCourt(court.data.id, court.data.name);
     }
-    if (parsed.length > 0) {
-      const sorted = [...parsed].sort((a, b) => (a.date === b.date ? compareTime(a.startTime, b.startTime) : a.date.localeCompare(b.date)));
-      setSelected(sorted);
-      const earliest = sorted[0];
-      const earliestDate = new Date(`${earliest.date}T00:00:00`);
-      setWeekStartDate(startOfWeek(earliestDate));
-      setFocusedDate(earliestDate);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [response]);
+  }, [court.data?.id, court.data?.name, ctxSetCourt]);
 
-  // ── Warn if selected slots become unavailable ───────────────────
+  // ── Restore multi-week slots from URL params if context is empty ──────────────
   useEffect(() => {
-    if (!response || selected.length === 0) return;
-    const unavailable = selected.filter((s) => s.status !== "AVAILABLE");
-    if (unavailable.length > 0) {
+    if (selectedSlots.length > 0) return;
+    const dateParams = searchParams.getAll("date");
+    const slotParams = searchParams.getAll("slot");
+    if (dateParams.length === 0 || slotParams.length === 0) return;
+
+    const restored: WeeklyScheduleSlot[] = [];
+    dateParams.forEach((dateStr, idx) => {
+      const slotTimeStr = slotParams[idx];
+      if (!dateStr || !slotTimeStr) return;
+      const [startTime, endTime] = slotTimeStr.split("-");
+      if (!startTime || !endTime) return;
+
+      const day = response?.days.find((d) => d.date === dateStr);
+      const foundSlot = day?.slots.find((s) => s.startTime === startTime && s.endTime === endTime);
+      if (foundSlot) {
+        restored.push(foundSlot);
+      } else {
+        restored.push({
+          id: `${dateStr}-${startTime}`,
+          courtId: courtId!,
+          date: dateStr,
+          startTime,
+          endTime,
+          basePrice: court.data?.minPrice ?? 0,
+          finalPrice: court.data?.minPrice ?? 0,
+          ruleNames: [],
+          status: "AVAILABLE"
+        });
+      }
+    });
+
+    if (restored.length > 0) {
+      restoreSlots(restored);
+    }
+  }, [response, searchParams, selectedSlots.length, courtId, court.data?.minPrice, restoreSlots]);
+
+  // ── Warn if selected slots in currently loaded week become unavailable ────────
+  useEffect(() => {
+    if (!response || selectedSlots.length === 0) return;
+    const loadedDates = new Set(response.days.map((d) => d.date));
+    const slotsInLoadedWeek = selectedSlots.filter((s) => loadedDates.has(s.date));
+
+    const unavailableInLoadedWeek = slotsInLoadedWeek.filter((s) => {
+      const day = response.days.find((d) => d.date === s.date);
+      const serverSlot = day?.slots.find((st) => st.startTime === s.startTime && st.endTime === s.endTime);
+      return serverSlot ? serverSlot.status !== "AVAILABLE" : false;
+    });
+
+    if (unavailableInLoadedWeek.length > 0) {
       toast.warning(
         language === "vi"
           ? "Một số khung giờ bạn đã chọn không còn khả dụng."
           : "Some slots you selected are no longer available."
       );
-      // Remove unavailable slots
-      const available = selected.filter((s) => s.status === "AVAILABLE");
-      setSelected(available);
+      unavailableInLoadedWeek.forEach((s) => removeSlot(s));
     }
-  }, [response, selected, language]);
+  }, [response, selectedSlots, language, removeSlot]);
+
+  // ── Auto-remove applied voucher if subtotal drops below minBookingAmount ──────
+  useEffect(() => {
+    if (!appliedVoucher) return;
+    const min = appliedVoucher.minBookingAmount ?? 0;
+    if (min > 0 && subtotal < min) {
+      removeVoucher();
+      toast.warning(
+        language === "en"
+          ? `Voucher ${appliedVoucher.code} was removed because order total (${formatCurrency(subtotal)}) is below minimum required (${formatCurrency(min)}).`
+          : `Voucher ${appliedVoucher.code} đã tự động bỏ do tổng tiền đơn hàng (${formatCurrency(subtotal)}) không đủ giá trị tối thiểu (${formatCurrency(min)}).`
+      );
+    }
+  }, [appliedVoucher, subtotal, language, removeVoucher]);
 
   // ── Update URL when week changes ───────────────────────────────
   useEffect(() => {
     const params = new URLSearchParams(searchParams);
     params.set("week", formatYmd(weekStartDate));
-    // Don't clear slot params — we need to preserve deep-linked slots across week navigation
-    // so that multi-week selections stay in the BookingSummary.
+    // Don't clear slot params — multi-week selections persist in context, not URL
     const newUrl = `${location.pathname}?${params.toString()}`;
     window.history.replaceState(null, "", newUrl);
   }, [weekStartDate]);
@@ -137,21 +192,36 @@ export function BookingPage() {
     };
   }, [courtId, queryClient, token]);
 
-  // ── Checkout ────────────────────────────────────────────────────
+  // ── Checkout ───────────────────────────────────────────────────
   const checkout = useMutation<BookingCheckoutResult, Error>({
     mutationFn: async () => {
       if (!courtId) throw new Error("Không tìm thấy sân.");
-      if (selected.length === 0) throw new Error("Vui lòng chọn ít nhất một khung giờ.");
-      const byDay = new Map<string, WeeklyScheduleSlot[]>();
-      for (const slot of selected) {
-        const list = byDay.get(slot.date) ?? [];
-        list.push(slot);
-        byDay.set(slot.date, list);
+      if (selectedSlots.length === 0) throw new Error("Vui lòng chọn ít nhất một khung giờ.");
+
+      const sorted = [...selectedSlots].sort((a, b) => {
+        const dc = a.date.localeCompare(b.date);
+        return dc !== 0 ? dc : a.startTime.localeCompare(b.startTime);
+      });
+
+      // Group selected slots by date for the days array expected by backend schema
+      const daysMap = new Map<string, Array<{ startTime: string; endTime: string }>>();
+      for (const s of sorted) {
+        const dateStr = s.date;
+        const list = daysMap.get(dateStr) ?? [];
+        const start = s.startTime.length > 5 ? s.startTime.slice(0, 5) : s.startTime;
+        const end = s.endTime.length > 5 ? s.endTime.slice(0, 5) : s.endTime;
+        list.push({
+          startTime: start,
+          endTime: end
+        });
+        daysMap.set(dateStr, list);
       }
-      const days = Array.from(byDay.entries()).map(([bookingDate, slots]) => ({
+
+      const days = Array.from(daysMap.entries()).map(([bookingDate, slots]) => ({
         bookingDate,
-        slots: [...slots].sort((a, b) => compareTime(a.startTime, b.startTime)).map((s) => ({ startTime: s.startTime, endTime: s.endTime }))
+        slots
       }));
+
       const payload: BookingCheckoutPayload = {
         courtId,
         days,
@@ -159,28 +229,21 @@ export function BookingPage() {
         voucherCode: appliedVoucher?.code,
         note: note || undefined
       };
+
       return bookingApi.checkout(payload);
     },
     onSuccess: (result) => {
-      const dayCount = result.bookings?.length ?? 1;
-      toast.success(
-        dayCount > 1
-          ? `Đặt sân thành công cho ${dayCount} ngày. Tổng: ${formatCurrency(result.totalAmount)}.`
-          : `Đặt sân thành công. Tổng: ${formatCurrency(result.totalAmount)}.`
-      );
-      setSelected([]);
-      setAppliedVoucher(null);
-      setVoucherInput("");
+      toast.success(`Đặt sân thành công. Tổng: ${formatCurrency(result.totalAmount)}.`);
+      clearSlots(); // Clear global context after successful booking
       if (result.paymentId) navigate(`/payment/${result.paymentId}`);
-      else navigate(`/user/bookings/${result.bookingId}`);
+      else if (result.bookingId) navigate(`/user/bookings/${result.bookingId}`);
+      else navigate("/user/bookings");
     },
     onError: (error) => toast.error(error.message || "Không thể tạo đơn đặt sân.")
   });
 
   function clearSelection() {
-    setSelected([]);
-    setAppliedVoucher(null);
-    setVoucherInput("");
+    clearSlots();
   }
 
   // ── Derived ─────────────────────────────────────────────────────
@@ -193,11 +256,6 @@ export function BookingPage() {
   const openingTime = timeText(c.openingTime) || response?.openingTime || "05:00";
   const closingTime = timeText(c.closingTime) || response?.closingTime || "23:00";
   const firstImage = c.images?.[0]?.imageUrl;
-
-  const subtotal = useMemo(
-    () => selected.reduce((sum, slot) => sum + (slot.finalPrice || slot.basePrice || 0), 0),
-    [selected]
-  );
 
   const highestDemandSlot = useMemo<WeeklyScheduleSlot | null>(() => {
     if (!response) return null;
@@ -218,20 +276,37 @@ export function BookingPage() {
 
   const summaryPanel = response ? (
     <BookingSummary
-      slots={selected}
+      slots={selectedSlots}
       courtName={response.court.name}
-      selectedDate={focusedDate}
       appliedVoucher={appliedVoucher}
       voucherInput={voucherInput}
       onChangeVoucherInput={setVoucherInput}
       onApplyVoucher={() => {
-        if (!voucherInput.trim()) return;
-        setAppliedVoucher({ code: voucherInput.trim(), discountAmount: 0 });
+        const code = voucherInput.trim().toUpperCase();
+        if (!code) return;
+        const found = response?.availableVouchers?.find((v) => v.code.toUpperCase() === code);
+        if (found && subtotal < found.minBookingAmount) {
+          toast.error(
+            language === "en"
+              ? `Minimum order amount of ${formatCurrency(found.minBookingAmount)} not reached.`
+              : `Chưa đạt giá trị đơn hàng tối thiểu (${formatCurrency(found.minBookingAmount)}).`
+          );
+          return;
+        }
+        applyVoucher({ code, discountAmount: 0, minBookingAmount: found?.minBookingAmount });
         toast.success("Đã áp dụng mã. Backend sẽ xác nhận khi tạo đơn.");
       }}
       onApplyFromList={(voucher) => {
+        if (subtotal < voucher.minBookingAmount) {
+          toast.error(
+            language === "en"
+              ? `Minimum order amount of ${formatCurrency(voucher.minBookingAmount)} not reached.`
+              : `Chưa đạt giá trị đơn hàng tối thiểu (${formatCurrency(voucher.minBookingAmount)}).`
+          );
+          return;
+        }
         const { estimatedDiscount } = isVoucherApplicableToSlot(voucher, subtotal);
-        setAppliedVoucher({
+        applyVoucher({
           id: voucher.id,
           code: voucher.code,
           title: voucher.title,
@@ -247,16 +322,16 @@ export function BookingPage() {
         );
       }}
       onRemoveVoucher={() => {
-        setAppliedVoucher(null);
-        setVoucherInput("");
+        removeVoucher();
       }}
       onClearSelection={clearSelection}
+      onRemoveSlot={removeSlot}
       paymentType={paymentType}
       onChangePaymentType={setPaymentType}
       requiresDeposit={Boolean(c.depositPercent && c.depositPercent > 0)}
       depositPercent={c.depositPercent ?? 0}
-      agreedToPolicies={agreed}
-      onToggleAgreed={setAgreed}
+      agreedToPolicies={agreedToPolicies}
+      onToggleAgreed={setAgreedToPolicies}
       onCheckout={() => checkout.mutate()}
       pending={checkout.isPending}
       language={language}
@@ -326,11 +401,20 @@ export function BookingPage() {
             error={schedule.error as Error | null}
             onRetry={() => schedule.refetch()}
             weekStart={weekStartDate}
-            onWeekStartChange={setWeekStartDate}
+            onWeekStartChange={(date) => {
+              setWeekStartDate(date);
+              ctxSetWeekStart(date);
+            }}
             focusedDate={focusedDate}
-            onFocusedDateChange={setFocusedDate}
-            selected={selected}
-            onSelectedChange={setSelected}
+            onFocusedDateChange={(date) => {
+              setFocusedDate(date);
+              ctxSetFocusedDate(date);
+            }}
+            selected={selectedSlots}
+            onSelectedChange={() => {
+              // Slots are managed via onToggleSlot (global context)
+            }}
+            onToggleSlot={toggleSlot}
             language={language}
             forceDayOnCompact
             rightSlot={
@@ -343,7 +427,7 @@ export function BookingPage() {
                     </label>
                     <textarea
                       value={note}
-                      onChange={(e) => setNote(e.target.value)}
+                      onChange={(e) => ctxSetNote(e.target.value)}
                       rows={2}
                       placeholder={language === "en" ? "Optional note…" : "Ví dụ: mình đến trước 10 phút…"}
                       className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
@@ -365,12 +449,3 @@ export function BookingPage() {
     </div>
   );
 }
-
-type AppliedVoucher = {
-  id?: string;
-  code: string;
-  title?: string;
-  description?: string;
-  discountAmount: number;
-  minBookingAmount?: number;
-};

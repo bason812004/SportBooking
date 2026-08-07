@@ -8,7 +8,7 @@ import { contentApi, type BlogWriteInput } from "../../features/content/api/cont
 import { useTeamPost, useTeamPostMessages } from "../../features/content/hooks/useContent";
 import { useAuth } from "../../features/auth/hooks/useAuth";
 import { getSocket } from "../../lib/socket";
-import { uploadApi } from "../../features/uploads/api/uploadApi";
+import { uploadApi, type UploadProgress } from "../../features/uploads/api/uploadApi";
 import type { TeamPostMessage } from "../../types/api";
 
 const dateFormat = new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -51,6 +51,7 @@ export function TeamGroupChatPage() {
   const [sending, setSending] = useState(false);
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [members, setMembers] = useState<GroupMember[]>([]);
   const [showReactionFor, setShowReactionFor] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -83,7 +84,6 @@ export function TeamGroupChatPage() {
     if (!id || !token) return;
 
     const socket = getSocket(token);
-    const refreshMessages = () => queryClient.invalidateQueries({ queryKey: ["team-post-messages", id] });
     const refreshPost = () => {
       queryClient.invalidateQueries({ queryKey: ["team-post", id] });
       queryClient.invalidateQueries({ queryKey: ["joined-team-posts"] });
@@ -91,7 +91,53 @@ export function TeamGroupChatPage() {
     const refreshMembers = () => contentApi.teamPostMembers(id).then(setMembers).catch(() => undefined);
 
     socket.emit("team-post:subscribe", id);
-    socket.on("team-post:message:new", refreshMessages);
+
+    const handleNewMessage = (newMsg: TeamPostMessageWithReactions) => {
+      if (!newMsg || !newMsg.id) return;
+      queryClient.setQueryData<TeamPostMessageWithReactions[]>(
+        ["team-post-messages", id],
+        (old) => {
+          if (!old) return [newMsg];
+          if (old.some((m) => m.id === newMsg.id)) return old;
+          return [...old, newMsg];
+        }
+      );
+    };
+
+    const handleNewReaction = (data: { messageId: string; userId: string; reaction: string }) => {
+      if (!data?.messageId) return;
+      queryClient.setQueryData<TeamPostMessageWithReactions[]>(
+        ["team-post-messages", id],
+        (old) => {
+          if (!old) return old;
+          return old.map((msg) => {
+            if (msg.id !== data.messageId) return msg;
+            const currentReactions = (msg.reactions ?? []).filter((r) => r.userId !== data.userId);
+            currentReactions.push({ reaction: data.reaction, userId: data.userId });
+            return { ...msg, reactions: currentReactions };
+          });
+        }
+      );
+    };
+
+    const handleRemoveReaction = (data: { messageId: string; userId: string }) => {
+      if (!data?.messageId) return;
+      queryClient.setQueryData<TeamPostMessageWithReactions[]>(
+        ["team-post-messages", id],
+        (old) => {
+          if (!old) return old;
+          return old.map((msg) => {
+            if (msg.id !== data.messageId) return msg;
+            const currentReactions = (msg.reactions ?? []).filter((r) => r.userId !== data.userId);
+            return { ...msg, reactions: currentReactions };
+          });
+        }
+      );
+    };
+
+    socket.on("team-post:message:new", handleNewMessage);
+    socket.on("team-post:reaction:new", handleNewReaction);
+    socket.on("team-post:reaction:removed", handleRemoveReaction);
     socket.on("team-post:member-joined", () => {
       refreshPost();
       refreshMembers();
@@ -99,18 +145,16 @@ export function TeamGroupChatPage() {
     socket.on("team-post:member-left", refreshMembers);
     socket.on("team-post:member-removed", refreshMembers);
     socket.on("team-post:admin-transferred", refreshMembers);
-    socket.on("team-post:reaction:new", refreshMessages);
-    socket.on("team-post:reaction:removed", refreshMessages);
 
     return () => {
       socket.emit("team-post:unsubscribe", id);
-      socket.off("team-post:message:new", refreshMessages);
+      socket.off("team-post:message:new", handleNewMessage);
+      socket.off("team-post:reaction:new", handleNewReaction);
+      socket.off("team-post:reaction:removed", handleRemoveReaction);
       socket.off("team-post:member-joined", refreshPost);
       socket.off("team-post:member-left", refreshMembers);
       socket.off("team-post:member-removed", refreshMembers);
       socket.off("team-post:admin-transferred", refreshMembers);
-      socket.off("team-post:reaction:new", refreshMessages);
-      socket.off("team-post:reaction:removed", refreshMessages);
     };
   }, [id, queryClient, token]);
 
@@ -130,9 +174,15 @@ export function TeamGroupChatPage() {
     }
   }
 
+  const ALLOWED_VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
+
   function handlePickMedia(file: File, kind: "IMAGE" | "VIDEO") {
     if (file.size > (kind === "IMAGE" ? 5 : 25) * 1024 * 1024) {
-      toast.error(`File toi da ${kind === "IMAGE" ? "5MB" : "25MB"}`);
+      toast.error(`File tối đa ${kind === "IMAGE" ? "5MB" : "25MB"}`);
+      return;
+    }
+    if (kind === "VIDEO" && !ALLOWED_VIDEO_TYPES.has(file.type)) {
+      toast.error("Chỉ chấp nhận video MP4, WebM hoặc MOV");
       return;
     }
     setPendingMedia({ file, type: kind, previewUrl: URL.createObjectURL(file) });
@@ -144,6 +194,37 @@ export function TeamGroupChatPage() {
     if (!id) return;
     if (!content && !pendingMedia) return;
 
+    setMessage("");
+    const currentPendingMedia = pendingMedia;
+    const previewUrl = currentPendingMedia?.previewUrl;
+    if (currentPendingMedia) {
+      setPendingMedia(null);
+    }
+
+    // Optimistic temporary message for text-only messages
+    const tempId = `temp-${Date.now()}`;
+    if (!currentPendingMedia && user) {
+      const tempMsg: TeamPostMessageWithReactions = {
+        id: tempId,
+        postId: id,
+        content,
+        messageType: "TEXT",
+        attachmentUrl: null,
+        attachmentName: null,
+        attachmentSize: null,
+        thumbnailUrl: null,
+        mimeType: null,
+        createdAt: new Date().toISOString() as unknown as Date,
+        updatedAt: new Date().toISOString() as unknown as Date,
+        sender: { id: user.id, fullName: user.fullName || "Tôi", avatarUrl: user.avatarUrl || null },
+        reactions: []
+      };
+      queryClient.setQueryData<TeamPostMessageWithReactions[]>(
+        ["team-post-messages", id],
+        (old) => (old ? [...old, tempMsg] : [tempMsg])
+      );
+    }
+
     setSending(true);
     let attachmentUrl: string | undefined;
     let attachmentName: string | undefined;
@@ -151,19 +232,24 @@ export function TeamGroupChatPage() {
     let thumbnailUrl: string | undefined;
     let mimeType: string | undefined;
     let messageType: "TEXT" | "IMAGE" | "VIDEO" = "TEXT";
-    const previewUrl = pendingMedia?.previewUrl;
 
     try {
-      if (pendingMedia) {
+      if (currentPendingMedia) {
         setUploadingMedia(true);
-        const uploaded = pendingMedia.type === "IMAGE"
-          ? await uploadApi.uploadTeamChatImage(id, pendingMedia.file)
-          : await uploadApi.uploadTeamChatVideo(id, pendingMedia.file);
+        setUploadProgress(null);
+        const uploaded = currentPendingMedia.type === "IMAGE"
+          ? await uploadApi.uploadTeamChatImage(id, currentPendingMedia.file, {
+              onProgress: (p) => setUploadProgress(p)
+            })
+          : await uploadApi.uploadTeamChatVideo(id, currentPendingMedia.file, {
+              onProgress: (p) => setUploadProgress(p)
+            });
         attachmentUrl = uploaded.url;
-        attachmentName = pendingMedia.file.name;
-        attachmentSize = pendingMedia.file.size;
-        mimeType = pendingMedia.file.type;
-        messageType = pendingMedia.type;
+        attachmentName = currentPendingMedia.file.name;
+        attachmentSize = currentPendingMedia.file.size;
+        mimeType = currentPendingMedia.file.type;
+        messageType = currentPendingMedia.type;
+        setUploadProgress(null);
         setUploadingMedia(false);
       }
 
@@ -177,22 +263,29 @@ export function TeamGroupChatPage() {
         mimeType
       });
 
-      // Optimistic update — append new message immediately, no race
-      queryClient.setQueryData<TeamPostMessage[]>(
-        ["team-post-messages", id],
-        (old) => {
-          if (!old) return [created];
-          if (old.some((m) => m.id === created.id)) return old;
-          return [...old, created];
-        }
-      );
+      if (created?.id) {
+        queryClient.setQueryData<TeamPostMessageWithReactions[]>(
+          ["team-post-messages", id],
+          (old) => {
+            if (!old) return [created];
+            const filtered = old.filter((m) => m.id !== tempId);
+            if (filtered.some((m) => m.id === created.id)) return filtered;
+            return [...filtered, created];
+          }
+        );
+      }
 
-      setMessage("");
-      if (pendingMedia) {
-        URL.revokeObjectURL(previewUrl!);
-        setPendingMedia(null);
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
       }
     } catch (error) {
+      // Revert optimistic temp message on failure
+      if (!currentPendingMedia) {
+        queryClient.setQueryData<TeamPostMessageWithReactions[]>(
+          ["team-post-messages", id],
+          (old) => (old ? old.filter((m) => m.id !== tempId) : [])
+        );
+      }
       toast.error(error instanceof Error ? error.message : "Không thể gửi tin nhắn.");
     } finally {
       setSending(false);
@@ -201,44 +294,72 @@ export function TeamGroupChatPage() {
   }
 
   async function reactToMessage(messageId: string, reaction: string) {
-    if (!id) return;
+    if (!id || !user) return;
+    setShowReactionFor(null);
+    // Optimistically update reactions cache
+    queryClient.setQueryData<TeamPostMessageWithReactions[]>(
+      ["team-post-messages", id],
+      (old) => {
+        if (!old) return old;
+        return old.map((msg) => {
+          if (msg.id !== messageId) return msg;
+          const currentReactions = (msg.reactions ?? []).filter((r) => r.userId !== user.id);
+          currentReactions.push({ reaction, userId: user.id });
+          return { ...msg, reactions: currentReactions };
+        });
+      }
+    );
     try {
       await contentApi.reactToMessage(id, { messageId, reaction });
-      await queryClient.invalidateQueries({ queryKey: ["team-post-messages", id] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không thể reaction.");
-    } finally {
-      setShowReactionFor(null);
+      queryClient.invalidateQueries({ queryKey: ["team-post-messages", id] });
     }
   }
 
   async function removeReaction(messageId: string) {
-    if (!id) return;
+    if (!id || !user) return;
+    // Optimistically remove reaction from cache
+    queryClient.setQueryData<TeamPostMessageWithReactions[]>(
+      ["team-post-messages", id],
+      (old) => {
+        if (!old) return old;
+        return old.map((msg) => {
+          if (msg.id !== messageId) return msg;
+          const currentReactions = (msg.reactions ?? []).filter((r) => r.userId !== user.id);
+          return { ...msg, reactions: currentReactions };
+        });
+      }
+    );
     try {
       await contentApi.removeReaction(id, messageId);
-      await queryClient.invalidateQueries({ queryKey: ["team-post-messages", id] });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Không thể xoa reaction.");
+      toast.error(error instanceof Error ? error.message : "Không thể xóa reaction.");
+      queryClient.invalidateQueries({ queryKey: ["team-post-messages", id] });
     }
   }
 
   async function leaveGroup() {
     if (!id) return;
-    if (!confirm("Ban co chac muon roi nhom?")) return;
+    const confirmMsg = isPostOwner
+      ? "Bạn có chắc chắn muốn rời / giải tán nhóm này?"
+      : "Bạn có chắc chắn muốn rời nhóm?";
+    if (!confirm(confirmMsg)) return;
     try {
       await contentApi.leaveGroup(id);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["team-post", id] }),
         queryClient.invalidateQueries({ queryKey: ["team-post-messages", id] }),
         queryClient.invalidateQueries({ queryKey: ["joined-team-posts"] }),
-        contentApi.teamPostMembers(id).then((list) => setMembers(list)).catch(() => undefined)
+        queryClient.invalidateQueries({ queryKey: ["team-posts"] }),
+        queryClient.invalidateQueries({ queryKey: ["my-team-posts"] })
       ]);
       const socket = getSocket(token ?? "");
       socket.emit("team-post:unsubscribe", id);
-      toast.success("Đã rời nhóm.");
+      toast.success(isPostOwner ? "Đã rời / giải tán nhóm." : "Đã rời nhóm.");
       navigate("/user/team-groups");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Khong the roi nhom.");
+      toast.error(error instanceof Error ? error.message : "Không thể rời nhóm.");
     }
   }
 
@@ -276,26 +397,26 @@ export function TeamGroupChatPage() {
             <h1 className="mt-4 text-2xl font-black leading-tight">{group.title}</h1>
             <div className="mt-4 space-y-3 text-sm font-semibold text-slate-600">
               <p className="flex gap-2"><MapPin className="h-4 w-4 shrink-0 text-emerald-700" />{group.courtName} - {group.address}</p>
-              <p className="flex gap-2"><CalendarDays className="h-4 w-4 shrink-0 text-emerald-700" />{group.playingDate ? dateFormat.format(new Date(group.playingDate)) : "Linh hoạt"} · {group.startTime.slice(0, 5)} - {group.endTime.slice(0, 5)}</p>
+              <p className="flex gap-2"><CalendarDays className="h-4 w-4 shrink-0 text-emerald-700" />{group.playingDate ? dateFormat.format(new Date(group.playingDate)) : "Linh hoạt"} · {(group.startTime ?? "").slice(0, 5)} - {(group.endTime ?? "").slice(0, 5)}</p>
               <p className="flex gap-2"><UsersRound className="h-4 w-4 shrink-0 text-emerald-700" />{group.currentPlayers}/{group.maxPlayers} người</p>
             </div>
             <Link to={`/teammates/${group.id}`} className="mt-5 inline-flex w-full items-center justify-center rounded-xl border border-slate-200 px-4 py-3 text-sm font-black text-slate-700 hover:bg-slate-50">
               Xem chi tiết bài đăng
             </Link>
-            {isMember && !isPostOwner && (
+            {isMember && (
               <button
-                onClick={leaveGroup}
+                onClick={() => void leaveGroup()}
                 className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 px-4 py-3 text-sm font-black text-rose-600 hover:bg-rose-50"
               >
                 <LogOut className="h-4 w-4" />
-                Rời nhóm
+                {isPostOwner ? "Giải tán / Rời nhóm" : "Rời nhóm"}
               </button>
             )}
           </section>
 
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-base font-black">Thành viên ({members.length})</h2>
-            <ul className="mt-3 space-y-2">
+            <ul className="mt-3 max-h-[300px] overflow-y-auto space-y-2 pr-1">
               {members.map((m) => (
                 <li key={m.userId} className="flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2">
                   <div className="flex items-center gap-2">
@@ -325,7 +446,7 @@ export function TeamGroupChatPage() {
           </section>
         </aside>
 
-        <section className="flex min-h-[72vh] flex-col rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <section className="flex h-[78vh] min-h-[520px] max-h-[820px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 px-5 py-4">
             <h2 className="text-xl font-black">Chat nhóm</h2>
             <p className="text-sm font-semibold text-slate-500">Tin nhắn realtime cho nhóm chơi thể thao này.</p>
@@ -354,9 +475,28 @@ export function TeamGroupChatPage() {
           ) : (
             <>
               <div className="flex flex-1 flex-col gap-3 overflow-y-auto bg-slate-50 p-4">
-                {(messages.data as TeamPostMessageWithReactions[] | undefined)?.length ? (
-                  (messages.data as TeamPostMessageWithReactions[]).map((chat) => {
-                    const mine = chat.sender.id === user?.id;
+                {(() => {
+                  const raw = (messages.data as TeamPostMessageWithReactions[] | undefined) ?? [];
+                  const seen = new Set<string>();
+                  const unique = raw.filter((m) => {
+                    if (!m?.id || seen.has(m.id)) return false;
+                    seen.add(m.id);
+                    return true;
+                  });
+
+                  if (!unique.length) {
+                    return (
+                      <div className="m-auto rounded-2xl bg-white p-5 text-center text-sm font-semibold text-slate-500 ring-1 ring-slate-200">
+                        Chưa có tin nhắn nào. Hãy bắt đầu trao đổi lịch chơi.
+                      </div>
+                    );
+                  }
+
+                  return unique.map((chat) => {
+                    const senderId = chat.sender?.id;
+                    const senderName = chat.sender?.fullName ?? "Thành viên";
+                    const senderAvatar = chat.sender?.avatarUrl ?? null;
+                    const mine = Boolean(senderId && user?.id && senderId === user.id);
                     const reactionsByEmoji = new Map<string, number>();
                     (chat.reactions ?? []).forEach((r) => {
                       reactionsByEmoji.set(r.reaction, (reactionsByEmoji.get(r.reaction) ?? 0) + 1);
@@ -380,10 +520,10 @@ export function TeamGroupChatPage() {
                         onTouchStart={handleTouchStart}
                         onTouchEnd={handleTouchEnd}
                       >
-                        {!mine && <Avatar name={chat.sender.fullName} src={chat.sender.avatarUrl} />}
+                        {!mine && <Avatar name={senderName} src={senderAvatar} />}
                         <div className="relative max-w-[78%]">
                           <div className={`rounded-2xl px-3 py-2 text-sm ${mine ? "bg-emerald-700 text-white" : "bg-white text-slate-800 ring-1 ring-slate-200"}`}>
-                            {!mine && <p className="mb-1 text-xs font-black text-emerald-700">{chat.sender.fullName}</p>}
+                            {!mine && <p className="mb-1 text-xs font-black text-emerald-700">{senderName}</p>}
                             <MessageBody chat={chat} mine={mine} />
                             <p className={`mt-1 text-[11px] ${mine ? "text-emerald-50/80" : "text-slate-400"}`}>{messageTimeFormat.format(new Date(chat.createdAt))}</p>
                           </div>
@@ -422,15 +562,11 @@ export function TeamGroupChatPage() {
                             </div>
                           )}
                         </div>
-                        {mine && <Avatar name={chat.sender.fullName} src={chat.sender.avatarUrl} />}
+                        {mine && <Avatar name={senderName} src={senderAvatar} />}
                       </div>
                     );
-                  })
-                ) : (
-                  <div className="m-auto rounded-2xl bg-white p-5 text-center text-sm font-semibold text-slate-500 ring-1 ring-slate-200">
-                    Chưa có tin nhắn nào. Hãy bắt đầu trao đổi lịch chơi.
-                  </div>
-                )}
+                  });
+                })()}
                 <div ref={messagesEndRef} />
               </div>
 
@@ -444,11 +580,25 @@ export function TeamGroupChatPage() {
                     )}
                     <button
                       type="button"
-                      onClick={() => { URL.revokeObjectURL(pendingMedia.previewUrl); setPendingMedia(null); }}
-                      className="absolute -right-2 -top-2 rounded-full bg-rose-600 p-1 text-white shadow"
+                      onClick={() => { URL.revokeObjectURL(pendingMedia.previewUrl); setPendingMedia(null); setUploadProgress(null); }}
+                      disabled={uploadingMedia}
+                      className="absolute -right-2 -top-2 rounded-full bg-rose-600 p-1 text-white shadow disabled:opacity-50"
                     >
                       <X className="h-3 w-3" />
                     </button>
+                    {uploadingMedia && uploadProgress && (
+                      <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/50">
+                        <div className="text-center">
+                          <p className="text-xs font-black text-white">{uploadProgress.percent}%</p>
+                          <div className="mt-1 h-1.5 w-16 overflow-hidden rounded-full bg-white/30">
+                            <div
+                              className="h-full bg-emerald-400 transition-all"
+                              style={{ width: `${uploadProgress.percent}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

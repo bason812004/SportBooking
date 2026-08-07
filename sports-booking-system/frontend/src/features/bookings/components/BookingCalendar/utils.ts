@@ -36,8 +36,8 @@ export function buildWeekDates(weekStart: Date) {
   return Array.from({ length: 7 }).map((_, index) => addDays(weekStart, index));
 }
 
-export function slotKey(slot: { date: string; startTime: string }) {
-  return `${slot.date}#${slot.startTime}`;
+export function slotKey(slot: { date: string; startTime: string; endTime?: string }) {
+  return slot.endTime ? `${slot.date}|${slot.startTime}|${slot.endTime}` : `${slot.date}|${slot.startTime}`;
 }
 
 export function compareTime(a: string, b: string) {

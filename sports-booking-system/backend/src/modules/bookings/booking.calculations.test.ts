@@ -46,3 +46,15 @@ test("selected slots must have valid time ranges", () => {
   assert.equal(validateSelectedSlots([{ startTime: "19:00", endTime: "18:00" }]), false);
 });
 
+test("calculates multiple slot totals accurately with voucher discount", () => {
+  const slots = [
+    { startTime: "06:00", endTime: "07:00", price: 130000 },
+    { startTime: "06:00", endTime: "07:00", price: 130000 },
+    { startTime: "06:00", endTime: "07:00", price: 210000 }
+  ];
+  const quote = calculateBookingQuote(slots, 50000);
+  assert.equal(quote.subtotal, 470000);
+  assert.equal(quote.voucherDiscountAmount, 50000);
+  assert.equal(quote.totalAmount, 420000);
+});
+

@@ -122,7 +122,13 @@ export const weeklyScheduleRepository = {
         startTime: true,
         endTime: true,
         slotPrice: true,
-        booking: { select: { bookingStatus: true, payments: { select: { expiresAt: true, status: true } } } }
+        // Flatten booking payment status — no nested select, no extra join
+        booking: {
+          select: {
+            bookingStatus: true
+            // payments are fetched in bulk below
+          }
+        }
       },
       orderBy: { startTime: "asc" }
     });

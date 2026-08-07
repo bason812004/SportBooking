@@ -19,6 +19,9 @@ export type WeeklyCalendarSectionProps = {
   onFocusedDateChange: (next: Date) => void;
   selected: WeeklyScheduleSlot[];
   onSelectedChange: (next: WeeklyScheduleSlot[]) => void;
+  /** When provided, slot toggling uses this global handler (e.g. from BookingContext).
+   *  Navigation (prev/next/today) will NOT reset selected slots. */
+  onToggleSlot?: (slot: WeeklyScheduleSlot) => void;
   language: Language;
   /** Auto-switch to Day view on compact screens (mobile). Default: true. */
   forceDayOnCompact?: boolean;
@@ -50,6 +53,7 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
     onFocusedDateChange,
     selected,
     onSelectedChange,
+    onToggleSlot,
     language,
     forceDayOnCompact = true,
     rightSlot,
@@ -80,10 +84,17 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
   const toggleSlot = useCallback(
     (slot: WeeklyScheduleSlot) => {
       if (!isSlotSelectable(slot)) return;
-
-      const exists = selected.some((s) => slotKey(s) === slotKey(slot));
+      // If a global toggle handler is provided (e.g. from BookingContext), delegate to it.
+      // This preserves multi-week slot state across week navigation.
+      if (onToggleSlot) {
+        onToggleSlot(slot);
+        return;
+      }
+      // Fallback: local selection management.
+      const key = slotKey(slot);
+      const exists = selected.some((s) => slotKey(s) === key);
       if (exists) {
-        onSelectedChange(selected.filter((s) => slotKey(s) !== slotKey(slot)));
+        onSelectedChange(selected.filter((s) => slotKey(s) !== key));
         return;
       }
 
@@ -105,7 +116,7 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
 
       onSelectedChange([...selected, slot].sort((a, b) => `${a.date}${a.startTime}`.localeCompare(`${b.date}${b.startTime}`)));
     },
-    [selected, onSelectedChange, language, selectionMode]
+    [selected, onSelectedChange, onToggleSlot, language, selectionMode]
   );
 
   // ── Navigation ────────────────────────────────────────────────
@@ -113,9 +124,12 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
     const today = new Date();
     onWeekStartChange(startOfWeek(today));
     onFocusedDateChange(today);
+    if (!onToggleSlot) {
+      onSelectedChange([]);
+    }
     setUserOverride(false);
     setView(forceDayOnCompact && isCompact ? "DAY" : "WEEK");
-  }, [onWeekStartChange, onFocusedDateChange, forceDayOnCompact, isCompact]);
+  }, [onWeekStartChange, onFocusedDateChange, onSelectedChange, onToggleSlot, forceDayOnCompact, isCompact]);
 
   const shiftWeek = useCallback(
     (offset: number) => {
