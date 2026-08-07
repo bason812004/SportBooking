@@ -26,7 +26,7 @@ export function CourtsPage() {
   const [sportType, setSportType] = useState(searchParams.get("sportType") ?? "");
   const [minPrice, setMinPrice] = useState(searchParams.get("minPrice") ?? "");
   const [maxPrice, setMaxPrice] = useState(searchParams.get("maxPrice") ?? "");
-  const [radiusKm, setRadiusKm] = useState(10);
+  const [radiusKm, setRadiusKm] = useState<number | undefined>(undefined);
   const [sortBy, setSortBy] = useState("newest");
   const sportTypes = useSportTypes();
   const userLocation = useUserLocation({ autoRequest: true });
@@ -68,7 +68,7 @@ export function CourtsPage() {
     sportType: sportType || undefined,
     minPrice: minPrice || undefined,
     maxPrice: maxPrice || undefined,
-    radiusKm,
+    radiusKm: radiusKm && radiusKm > 0 ? radiusKm : undefined,
     latitude: userLocation.location?.latitude,
     longitude: userLocation.location?.longitude,
     sortBy: sortField,
@@ -112,6 +112,7 @@ export function CourtsPage() {
     setSportType("");
     setMinPrice("");
     setMaxPrice("");
+    setRadiusKm(undefined);
     setSortBy("newest");
     setPage(1);
     userLocation.clearLocation();
@@ -142,7 +143,7 @@ export function CourtsPage() {
           onSportTypeChange={setSportType}
           onMinPriceChange={setMinPrice}
           onMaxPriceChange={setMaxPrice}
-          onRadiusChange={setRadiusKm}
+          onRadiusChange={(val) => setRadiusKm(val > 0 ? val : undefined)}
           onClear={clearFilters}
         />
         <main className="space-y-5">
@@ -150,7 +151,11 @@ export function CourtsPage() {
           <ResultStats
             total={total}
             averagePrice={averagePrice}
-            averageDistance={userLocation.location ? `Trong ${radiusKm} km` : "Đang tự xin vị trí"}
+            averageDistance={
+              userLocation.location
+                ? (radiusKm && radiusKm > 0 ? `Trong ${radiusKm} km` : "Tất cả khoảng cách")
+                : "Đang tự xin vị trí"
+            }
             averageRating={averageRating}
           />
           <CourtList courts={courts} loading={courtsQuery.isLoading} onHover={setActiveCourtId} />
@@ -176,7 +181,7 @@ export function CourtsPage() {
               onSportTypeChange={setSportType}
               onMinPriceChange={setMinPrice}
               onMaxPriceChange={setMaxPrice}
-              onRadiusChange={setRadiusKm}
+              onRadiusChange={(val) => setRadiusKm(val > 0 ? val : undefined)}
               onClear={clearFilters}
             />
           </div>

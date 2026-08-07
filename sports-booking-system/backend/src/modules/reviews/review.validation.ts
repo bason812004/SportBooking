@@ -18,5 +18,5 @@ export const updateReviewSchema = z.object({
 });
 
 export const deleteReviewSchema = z.object({
-  params: z.object({ id: z.string().uuid() })
+  params: z.object({ id: z.string().trim().min(1) })
 });

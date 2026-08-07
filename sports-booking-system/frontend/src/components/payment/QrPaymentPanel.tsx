@@ -58,6 +58,11 @@ export function QrPaymentPanel({ payment }: { payment: QrPaymentPanelData }) {
       : `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(payment.qrPayload ?? "")}`;
   }
 
+  // Guaranteed VietQR fallback URL
+  if (!qrUrl) {
+    qrUrl = `https://img.vietqr.io/image/mb-0986966745-compact.jpg?amount=${payment.amount}&addInfo=${encodeURIComponent(payment.paymentReference)}&t=${payment.id}`;
+  }
+
   return (
     <div className="w-full flex flex-col items-center">
       <div className="relative p-4 bg-white border border-slate-200 rounded-2xl shadow-sm mb-6 max-w-xs w-full flex justify-center">

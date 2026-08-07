@@ -39,6 +39,8 @@ export async function ensureReviewTables() {
   }
 }
 
+export const ensureIsEditedColumn = ensureReviewTables;
+
 export const reviewRepository = {
   async byCourt(courtId: string) {
     return prisma.$queryRawUnsafe<ReviewRow[]>(

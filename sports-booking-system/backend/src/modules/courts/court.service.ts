@@ -57,18 +57,35 @@ export const courtService = {
     const limit = parseLimit(query.limit);
     const latitude = Number(query.latitude);
     const longitude = Number(query.longitude);
-    const radiusKm = Number(query.radiusKm || 25);
+    const radiusKmInput = query.radiusKm ? Number(query.radiusKm) : undefined;
+    const hasRadiusFilter = Number.isFinite(radiusKmInput) && (radiusKmInput as number) > 0;
+    const radiusKm = hasRadiusFilter ? (radiusKmInput as number) : undefined;
+
     const userLocation = Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude, longitude } : undefined;
     const { items, total } = await courtRepository.list(query, page, limit);
-    const itemsWithReviews = await attachReviewsList(items);
-    let summarized = itemsWithReviews.map((item) => summarizeCourt(item, userLocation));
-    if (userLocation) summarized = summarized.filter((item) => item.distanceKm === null || item.distanceKm <= radiusKm);
+
+    // Lightweight in-memory distance calculation and summary
+    let summarized = items.map((item) => summarizeCourt(item, userLocation));
+
+    // Only filter by distance radius IF explicitly passed by user
+    if (userLocation && hasRadiusFilter && radiusKm) {
+      summarized = summarized.filter((item) => item.distanceKm === null || item.distanceKm <= radiusKm);
+    }
+
     if (query.sortBy === "distance" && userLocation) {
       summarized.sort((left, right) => (left.distanceKm ?? Number.MAX_SAFE_INTEGER) - (right.distanceKm ?? Number.MAX_SAFE_INTEGER));
     }
+
+    const needsCustomPagination = Boolean(userLocation || query.sortBy === "distance" || hasRadiusFilter);
+    const effectiveTotal = needsCustomPagination ? summarized.length : total;
     const start = (page - 1) * limit;
-    const paged = userLocation || query.sortBy === "distance" ? summarized.slice(start, start + limit) : summarized;
-    return { items: paged, meta: paginationMeta(page, limit, userLocation || query.sortBy === "distance" ? summarized.length : total) };
+    const pagedCandidates = needsCustomPagination ? summarized.slice(start, start + limit) : summarized;
+
+    // Attach reviews ONLY to the paged items (dramatically faster!)
+    const itemsWithReviews = await attachReviewsList(pagedCandidates);
+    const paged = itemsWithReviews.map((item) => summarizeCourt(item, userLocation));
+
+    return { items: paged, meta: paginationMeta(page, limit, effectiveTotal) };
   },
 
   async detail(id: string) {

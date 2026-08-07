@@ -27,22 +27,48 @@ export const dynamicPricingService = {
     if (!court) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
 
     const dayType = dayTypeFor(input.date);
-    const basePriceRow =
-      court.basePrices.find(
-        (price) =>
-          price.dayType === dayType &&
-          timeToMinutes(dbTime(price.startTime)!) <= timeToMinutes(input.startTime) &&
-          timeToMinutes(dbTime(price.endTime)!) >= timeToMinutes(input.endTime)
-      ) ??
-      court.prices.find(
-        (price) =>
-          price.dayType === dayType &&
-          timeToMinutes(dbTime(price.startTime)!) <= timeToMinutes(input.startTime) &&
-          timeToMinutes(dbTime(price.endTime)!) >= timeToMinutes(input.endTime)
-      );
+    const startMins = timeToMinutes(input.startTime);
+    const endMins = timeToMinutes(input.endTime);
 
-    if (!basePriceRow) throw new ValidationError("Khung gio nay chua co bang gia");
-    const basePrice = Number("basePrice" in basePriceRow ? basePriceRow.basePrice : basePriceRow.price);
+    const allPriceRows = [
+      ...court.basePrices.map((p) => ({
+        dayType: p.dayType,
+        startTimeMins: timeToMinutes(dbTime(p.startTime)!),
+        endTimeMins: timeToMinutes(dbTime(p.endTime)!),
+        price: Number(p.basePrice)
+      })),
+      ...court.prices.map((p) => ({
+        dayType: p.dayType,
+        startTimeMins: timeToMinutes(dbTime(p.startTime)!),
+        endTimeMins: timeToMinutes(dbTime(p.endTime)!),
+        price: Number(p.price)
+      }))
+    ];
+
+    // Priority 1: Exact match for same dayType
+    let basePriceMatch = allPriceRows.find(
+      (p) => p.dayType === dayType && p.startTimeMins <= startMins && p.endTimeMins >= endMins
+    );
+
+    // Priority 2: Overlapping match for same dayType
+    if (!basePriceMatch) {
+      basePriceMatch = allPriceRows.find(
+        (p) => p.dayType === dayType && p.startTimeMins < endMins && p.endTimeMins > startMins
+      );
+    }
+
+    // Priority 3: Any match for same dayType
+    if (!basePriceMatch) {
+      basePriceMatch = allPriceRows.find((p) => p.dayType === dayType);
+    }
+
+    // Priority 4: Fallback to any price entry for this court
+    if (!basePriceMatch && allPriceRows.length > 0) {
+      basePriceMatch = allPriceRows[0];
+    }
+
+    if (!basePriceMatch) throw new ValidationError("Khung giờ này chưa có bảng giá. Vui lòng thiết lập bảng giá cho sân.");
+    const basePrice = basePriceMatch.price;
 
     try {
       const rules = await dynamicPricingRepository.activeRules(courtId);

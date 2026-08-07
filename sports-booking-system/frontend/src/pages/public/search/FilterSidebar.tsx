@@ -10,7 +10,7 @@ export function FilterSidebar({
   radiusKm,
   onSportTypeChange,
   onMinPriceChange,
-  onMaxPriceChange, 
+  onMaxPriceChange,
   onRadiusChange,
   onClear
 }: {
@@ -19,7 +19,7 @@ export function FilterSidebar({
   sportType: string;
   minPrice: string;
   maxPrice: string;
-  radiusKm: number;
+  radiusKm?: number;
   onSportTypeChange: (value: string) => void;
   onMinPriceChange: (value: string) => void;
   onMaxPriceChange: (value: string) => void;
@@ -58,9 +58,32 @@ export function FilterSidebar({
       </div>
 
       <div className="border-t border-slate-100 py-5">
-        <h3 className="font-black">Khoảng cách</h3>
-        <input type="range" min={1} max={50} value={radiusKm} onChange={(event) => onRadiusChange(Number(event.target.value))} className="mt-5 w-full accent-[#0f766e]" />
-        <p className="mt-2 text-sm font-bold text-slate-500">Trong bán kính {radiusKm} km</p>
+        <div className="flex items-center justify-between">
+          <h3 className="font-black">Khoảng cách</h3>
+          {radiusKm && radiusKm > 0 ? (
+            <button
+              type="button"
+              onClick={() => onRadiusChange(0)}
+              className="text-xs font-semibold text-teal-700 hover:underline"
+            >
+              Bỏ lọc bán kính
+            </button>
+          ) : null}
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={50}
+          step={1}
+          value={radiusKm ?? 0}
+          onChange={(event) => onRadiusChange(Number(event.target.value))}
+          className="mt-4 w-full accent-[#0f766e]"
+        />
+        {radiusKm && radiusKm > 0 ? (
+          <p className="mt-2 text-sm font-bold text-[#0f766e]">Trong bán kính {radiusKm} km</p>
+        ) : (
+          <p className="mt-2 text-sm font-bold text-slate-500">Tất cả khoảng cách (Không giới hạn)</p>
+        )}
       </div>
 
       <button type="button" onClick={onClear} className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 font-bold">
