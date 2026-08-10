@@ -23,6 +23,11 @@ import {
   Users,
   Wallet,
   WalletCards,
+  ShoppingBag,
+  Boxes,
+  Truck,
+  Receipt,
+  CreditCard,
   type LucideIcon
 } from "lucide-react";
 import { useAuth } from "../../features/auth/hooks/useAuth";
@@ -41,8 +46,13 @@ type MenuItem = {
 const menus = {
   PARTNER: [
     { to: "/partner/dashboard", label: "Bảng điều khiển", icon: Grid2X2, group: "Tổng quan" },
+    { to: "/partner/cashier", label: "Thu ngân (POS)", icon: Receipt, group: "Vận hành" },
     { to: "/partner/courts", label: "Quản lý sân", icon: UserRoundCheck, group: "Vận hành" },
     { to: "/partner/bookings", label: "Đơn đặt", icon: CalendarDays, group: "Vận hành" },
+    { to: "/partner/services", label: "Dịch vụ & Món", icon: ShoppingBag, group: "Tồn kho & Dịch vụ" },
+    { to: "/partner/inventory", label: "Tồn kho hàng hóa", icon: Boxes, group: "Tồn kho & Dịch vụ" },
+    { to: "/partner/purchases", label: "Nhập hàng & NCC", icon: Truck, group: "Tồn kho & Dịch vụ" },
+    { to: "/partner/checkouts", label: "Lịch sử Checkout", icon: CreditCard, group: "Tài chính" },
     { to: "/partner/staff", label: "Nhân viên", icon: Users, group: "Vận hành" },
     { to: "/partner/dynamic-pricing", label: "Định giá động", icon: Percent, group: "Vận hành" },
     { to: "/partner/demand-prediction", label: "Dự đoán nhu cầu", icon: TrendingUp, group: "Vận hành" },
@@ -77,7 +87,12 @@ const menus = {
   ],
   RECIPIENT: [
     { to: "/recipient/dashboard", label: "Bảng điều khiển", icon: Grid2X2, group: "Tổng quan" },
+    { to: "/recipient/cashier", label: "Thu ngân (POS)", icon: Receipt, group: "Vận hành" },
     { to: "/recipient/bookings", label: "Đơn đặt sân", icon: CalendarCheck, group: "Vận hành" },
+    { to: "/recipient/services", label: "Dịch vụ & Món", icon: ShoppingBag, group: "Tồn kho & Dịch vụ" },
+    { to: "/recipient/inventory", label: "Tồn kho hàng hóa", icon: Boxes, group: "Tồn kho & Dịch vụ" },
+    { to: "/recipient/purchases", label: "Nhập hàng & NCC", icon: Truck, group: "Tồn kho & Dịch vụ" },
+    { to: "/recipient/checkouts", label: "Lịch sử Checkout", icon: CreditCard, group: "Tài chính" },
     { to: "/recipient/court-surfaces", label: "Quản lý sân", icon: UserRoundCheck, group: "Vận hành" }
   ]
 } satisfies Record<"PARTNER" | "ADMIN" | "RECIPIENT", MenuItem[]>;

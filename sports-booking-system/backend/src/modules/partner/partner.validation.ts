@@ -19,8 +19,8 @@ export const courtWriteSchema = z.object({
     latitude: z.number().optional(),
     longitude: z.number().optional(),
     openingTime: time,
-    closingTime: time,
-    depositPercent: z.coerce.number().min(0).max(49.99).optional().nullable()
+    depositPercent: z.coerce.number().min(0).max(100).optional().nullable(),
+    requireDeposit: z.boolean().optional()
   })
 });
 

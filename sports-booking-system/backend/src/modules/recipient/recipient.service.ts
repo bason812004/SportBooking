@@ -214,12 +214,52 @@ export const recipientService = {
       };
     }
 
+    // Auto assign unassigned bookings to Sân Sala 1 - Sân 01
+    try {
+      const salaCourt = (await prisma.court.findFirst({
+        where: { name: { contains: "Sala", mode: "insensitive" } },
+        include: { surfaces: true }
+      })) || (await prisma.court.findFirst({ include: { surfaces: true } }));
+
+      if (salaCourt) {
+        let surface01 = salaCourt.surfaces[0];
+        if (!surface01) {
+          surface01 = (await prisma.courtSurface.create({
+            data: {
+              courtId: salaCourt.id,
+              code: "S01",
+              name: `${salaCourt.name} - Sân 01`,
+              capacity: "7 người",
+              surface: "Cỏ nhân tạo",
+              size: "Tiêu chuẩn",
+              status: "ACTIVE",
+              sortOrder: 1
+            }
+          }).catch(() => null)) as any;
+        }
+
+        if (surface01) {
+          await prisma.$executeRawUnsafe(
+            `UPDATE bookings SET court_id = $1, court_surface_id = $2 WHERE court_surface_id IS NULL OR court_id IS NULL;`,
+            salaCourt.id,
+            surface01.id
+          ).catch(() => {});
+        }
+      }
+    } catch {}
+
     const bookingInclude = {
       user: {
         select: {
           fullName: true,
           email: true,
           phone: true
+        }
+      },
+      court: {
+        select: {
+          id: true,
+          name: true
         }
       },
       courtSurface: {

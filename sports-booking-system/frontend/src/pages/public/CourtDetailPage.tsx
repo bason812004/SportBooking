@@ -1,6 +1,7 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import { LayoutGrid } from "lucide-react";
 import { LoadingState, ErrorState, EmptyState } from "../../components/common/States";
 import { useCourt } from "../../features/courts/hooks/useCourts";
 import { useUserLocation } from "../../features/courts/hooks/useUserLocation";
@@ -55,6 +56,7 @@ export function CourtDetailPage() {
   const { token } = useAuth();
   const queryClient = useQueryClient();
   const { location: userLoc } = useUserLocation({ autoRequest: true });
+  const [selectedSurfaceId, setSelectedSurfaceId] = useState<string | null>(null);
 
   // ── Global booking context ──────────────────────────────────────────────────
   // This is the single source of truth for all booking state.
@@ -181,6 +183,54 @@ export function CourtDetailPage() {
           distance={distanceText}
         />
 
+        {court.data?.surfaces && court.data.surfaces.length > 0 && (
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-base font-black text-[#0b1220] flex items-center gap-2">
+                  <LayoutGrid className="h-5 w-5 text-[#02712a]" />
+                  Danh Sách Sân Con Trực Thuộc ({court.data.surfaces.length} Sân Con)
+                </h3>
+                <p className="text-xs text-slate-500 font-semibold mt-0.5">
+                  Quý khách có thể chọn cụ thể 1 trong các sân con bên dưới để đặt lịch thi đấu
+                </p>
+              </div>
+              <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-[#02712a]">
+                Hệ Thống Sân Thật Trong Database
+              </span>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-3">
+              {court.data.surfaces.map((sf: any) => {
+                const isSelected = selectedSurfaceId === sf.id;
+                return (
+                  <button
+                    key={sf.id}
+                    type="button"
+                    onClick={() => setSelectedSurfaceId(isSelected ? null : sf.id)}
+                    className={`rounded-2xl border p-4 text-left transition flex items-start justify-between ${
+                      isSelected
+                        ? "border-[#02712a] bg-emerald-50/70 shadow-md ring-2 ring-[#02712a]/30"
+                        : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-slate-50"
+                    }`}
+                  >
+                    <div>
+                      <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[11px] font-black text-[#02712a]">
+                        Mã: {sf.code}
+                      </span>
+                      <h4 className="mt-1 font-black text-slate-900 text-sm">{sf.name}</h4>
+                      <p className="text-xs text-slate-500 font-semibold mt-1">{sf.surface || "Mặt sân tiêu chuẩn"} • {sf.capacity || "7 người"}</p>
+                    </div>
+                    <span className={`h-5 w-5 rounded-full border-2 flex items-center justify-center transition ${isSelected ? "border-[#02712a] bg-[#02712a]" : "border-slate-300"}`}>
+                      {isSelected && <div className="h-2 w-2 rounded-full bg-white" />}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="sticky top-20 z-30 xl:hidden">
           <CourtSectionNav />
         </div>
@@ -207,6 +257,33 @@ export function CourtDetailPage() {
                 title="Lịch đặt sân trong tuần"
                 description="Chọn một hoặc nhiều khung giờ còn trống. Giá, dynamic pricing và demand prediction được lấy trực tiếp từ backend."
               >
+                {/* Sub-Court (Sân con) Selector */}
+                {court.data?.surfaces && court.data.surfaces.length > 0 && (
+                  <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-black uppercase tracking-wider text-emerald-900 flex items-center gap-1.5 mr-2">
+                        <LayoutGrid className="h-4 w-4 text-emerald-600" />
+                        Chọn Sân Con:
+                      </span>
+                      {court.data.surfaces.map((s) => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => setSelectedSurfaceId(s.id)}
+                          className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-black transition border ${
+                            (selectedSurfaceId ?? court.data.surfaces[0]?.id) === s.id
+                              ? "bg-[#02712a] text-white border-[#02712a] shadow-md scale-105"
+                              : "bg-white text-slate-700 border-slate-200 hover:bg-emerald-100/60"
+                          }`}
+                        >
+                          <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                          {s.name} ({s.code})
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <WeeklyCalendarSection
                   response={schedule.data}
                   isLoading={schedule.isLoading}

@@ -1,8 +1,9 @@
 import { useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CalendarDays, ChevronLeft, ChevronRight, Clock, Filter, LayoutGrid, PhoneCall, Table2, User, Wallet } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Clock, Filter, LayoutGrid, PhoneCall, Table2, User, Wallet, ShoppingBag } from "lucide-react";
+import { QuickCashierModal } from "../../components/booking/QuickCashierModal";
 import { recipientApi, type RecipientBookingGroup, type RecipientCalendarBooking } from "../../features/recipient/api/recipientApi";
 import {
   addDays,
@@ -89,12 +90,15 @@ const paymentStatusMeta: Record<string, { label: string; className: string }> = 
 };
 
 export function RecipientBookingsPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const viewMode = searchParams.get("view") === "calendar" ? "calendar" : "table";
 
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState(() => searchParams.get("status") ?? "");
+  const [servingOnly, setServingOnly] = useState(false);
+  const [cashierBookingId, setCashierBookingId] = useState<string | null>(null);
   const [rangeMode, setRangeMode] = useState<RangeMode>("day");
   const [periodAnchor, setPeriodAnchor] = useState(() => new Date());
   const [customFrom, setCustomFrom] = useState(() => currentYearRange().fromDate);
@@ -191,6 +195,16 @@ export function RecipientBookingsPage() {
     enabled: viewMode === "table"
   });
 
+  const displayGroups = useMemo(() => {
+    const rawGroups = bookings.data?.items ?? [];
+    if (!servingOnly) return rawGroups;
+    return rawGroups.filter((group) => {
+      const primary = group.bookings[0];
+      if (!primary) return false;
+      return ["CONFIRMED", "IN_PROGRESS", "DEPOSIT_PAID", "CHECKOUT_PENDING", "PENDING"].includes(primary.bookingStatus);
+    });
+  }, [bookings.data?.items, servingOnly]);
+
   const calendarQuery = useQuery({
     queryKey: ["recipient-calendar", calendarDate],
     queryFn: () => recipientApi.calendar({ fromDate: calendarDate, toDate: calendarDate }),
@@ -260,11 +274,21 @@ export function RecipientBookingsPage() {
           : "Chưa gán sân"
         : `${distinctSurfaceIds.size} sân`;
 
+    const bookedTimeLabel = primary.startTime && primary.endTime
+      ? `${primary.startTime.slice(11, 16) || primary.startTime.slice(0, 5)} - ${primary.endTime.slice(11, 16) || primary.endTime.slice(0, 5)}`
+      : "Chưa chọn giờ";
+
     return (
       <Tr key={rowKey} className={isGroup ? "bg-emerald-50/40" : undefined}>
         <Td className="font-medium text-slate-800">{primary.user?.fullName}</Td>
         <Td className="text-slate-600">{primary.user?.phone || "Chưa cung cấp"}</Td>
-        <Td className="text-slate-600">{surfaceLabel}</Td>
+        <Td>
+          <span className="font-bold text-slate-800">{surfaceLabel}</span>
+          <br />
+          <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-[#02712a] bg-emerald-50 px-2 py-0.5 rounded-md mt-1 border border-emerald-200">
+            <Clock className="h-3 w-3 text-[#02712a]" /> Giờ phục vụ: {bookedTimeLabel}
+          </span>
+        </Td>
         <Td className="text-slate-600">{group.bookings.length} khung giờ</Td>
         <Td>
           {allSamePayment ? (
@@ -294,7 +318,16 @@ export function RecipientBookingsPage() {
         </Td>
         <Td className="text-right font-semibold text-slate-800">{totalPrice.toLocaleString("vi-VN")} đ</Td>
         <Td>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {["CONFIRMED", "IN_PROGRESS", "DEPOSIT_PAID", "CHECKOUT_PENDING"].includes(primary.bookingStatus) && (
+              <Button
+                size="sm"
+                className="bg-[#02712a] text-white hover:bg-[#1fa955] font-bold text-xs shadow-sm"
+                onClick={() => navigate(`/recipient/pos/${primary.id}`)}
+              >
+                <ShoppingBag className="mr-1 h-3.5 w-3.5" /> Dịch vụ (POS)
+              </Button>
+            )}
             {!isGroup &&
               actionsForStatus(primary.bookingStatus).map((action) => (
                 <Button
@@ -356,6 +389,7 @@ export function RecipientBookingsPage() {
               onChange={(e) => {
                 setPage(1);
                 setStatus(e.target.value);
+                setServingOnly(false);
               }}
               options={[
                 { value: "", label: "Tất cả trạng thái" },
@@ -365,6 +399,23 @@ export function RecipientBookingsPage() {
                 }))
               ]}
             />
+            <button
+              type="button"
+              onClick={() => {
+                const next = !servingOnly;
+                setServingOnly(next);
+                setPage(1);
+                if (next) setStatus("");
+              }}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-black transition border ${
+                servingOnly
+                  ? "bg-[#02712a] text-white border-[#02712a] shadow-md"
+                  : "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
+              }`}
+            >
+              <ShoppingBag className="h-3.5 w-3.5" />
+              Sân đang phục vụ
+            </button>
             <div className="flex overflow-hidden rounded-lg border border-emerald-200 text-xs font-bold">
               {(["day", "week", "month", "custom"] as const).map((mode) => (
                 <button
@@ -484,7 +535,7 @@ export function RecipientBookingsPage() {
                   <Th></Th>
                 </tr>
               </THead>
-              <TBody>{bookings.data?.items.map((group) => renderBookingRow(group))}</TBody>
+              <TBody>{displayGroups.map((group) => renderBookingRow(group))}</TBody>
             </Table>
 
             {bookings.data && bookings.data.meta.totalPages > 1 && (
@@ -713,6 +764,11 @@ export function RecipientBookingsPage() {
           />
         </Overlay>
       ) : null}
+      <QuickCashierModal
+        isOpen={Boolean(cashierBookingId)}
+        onClose={() => setCashierBookingId(null)}
+        bookingId={cashierBookingId}
+      />
     </div>
   );
 }
