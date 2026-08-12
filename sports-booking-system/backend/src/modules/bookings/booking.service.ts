@@ -99,7 +99,7 @@ export const bookingService = {
         const slotPrice = matchingPrice.price * hours;
         dayCourtSubtotal += slotPrice;
         slotsWithPrice.push({ ...slot, price: slotPrice });
-      }ô
+      }
 
       courtSubtotal += dayCourtSubtotal;
       daysResult.push({
@@ -265,7 +265,7 @@ export const bookingService = {
         bookingId: result.booking!.id,
         paymentId: result.payment!.id,
         bookingStatus: result.booking!.bookingStatus,
-        paymentStatus: result.payment!.paymentStatus,
+        paymentStatus: result.payment!.status,
         paymentType: input.paymentType,
         totalAmount: quoteData.totalAmount,
         paymentAmount,
