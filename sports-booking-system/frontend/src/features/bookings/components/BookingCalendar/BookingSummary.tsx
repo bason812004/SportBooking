@@ -666,12 +666,38 @@ export function BookingSummary(props: BookingSummaryStandaloneProps) {
               type="checkbox"
               checked={agreedToPolicies}
               onChange={(e) => onToggleAgreed(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 shrink-0"
             />
             <span>
-              {language === "en"
-                ? "I agree to the booking and cancellation policy."
-                : "Tôi đồng ý với chính sách đặt & huỷ sân."}
+              {language === "en" ? (
+                <>
+                  I agree to the{" "}
+                  <a
+                    href="/policies?tab=refund"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-bold text-emerald-700 underline hover:text-emerald-800"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    booking and cancellation policy
+                  </a>
+                  .
+                </>
+              ) : (
+                <>
+                  Tôi đồng ý với{" "}
+                  <a
+                    href="/policies?tab=refund"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-bold text-emerald-700 underline hover:text-emerald-800"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    chính sách đặt & huỷ sân
+                  </a>
+                  .
+                </>
+              )}
             </span>
           </label>
 

@@ -196,8 +196,14 @@ export const bookingRepository = {
     return Number(row?.depositPercent ?? 0);
   },
 
-  services(ids: string[]) {
-    return prisma.courtService.findMany({ where: { id: { in: ids }, status: "ACTIVE" } });
+  async services(ids: string[]) {
+    await ensureServiceTables();
+    const courtSvcs = await prisma.courtService.findMany({ where: { id: { in: ids }, status: "ACTIVE" } });
+    const directSvcs = await prisma.service.findMany({ where: { id: { in: ids } } });
+    const map = new Map<string, { id: string; name: string; price: any }>();
+    courtSvcs.forEach((s) => map.set(s.id, { id: s.id, name: s.name, price: s.price }));
+    directSvcs.forEach((s) => map.set(s.id, { id: s.id, name: s.name, price: s.price }));
+    return Array.from(map.values());
   },
 
   createWithServices(input: {

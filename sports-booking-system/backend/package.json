@@ -11,6 +11,7 @@
     "prisma:generate": "prisma generate",
     "prisma:pull": "prisma db pull",
     "prisma:seed": "tsx prisma/seed.ts",
+    "seed:services": "tsx src/scripts/seed_all_services.ts",
     "db:migrate": "node migrate_db.cjs"
   },
   "prisma": {

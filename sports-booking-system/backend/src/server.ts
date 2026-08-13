@@ -7,6 +7,7 @@ import { startPaymentPoller } from "./modules/payments/payment.poller.js";
 import { ensureTeamChatTables } from "./modules/team-posts/teamPost.repository.js";
 import { ensureReviewTables } from "./modules/reviews/review.repository.js";
 import { ensureBookingTables } from "./modules/bookings/booking.repository.js";
+import { ensureServiceTables } from "./modules/services/service.repository.js";
 
 const server = http.createServer(app);
 initRealtime(server);
@@ -18,7 +19,8 @@ server.listen(env.PORT, async () => {
     await Promise.all([
       ensureTeamChatTables(),
       ensureReviewTables(),
-      ensureBookingTables()
+      ensureBookingTables(),
+      ensureServiceTables()
     ]);
     console.log("Database schema helpers ready");
   } catch (err) {
@@ -30,3 +32,34 @@ process.on("SIGINT", async () => {
   await prisma.$disconnect();
   server.close(() => process.exit(0));
 });
+
+// Trigger reload for resilient raw SQL getActiveBookings implementation
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
