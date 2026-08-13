@@ -14,7 +14,7 @@ serviceRoutes.get("/detail/:id", asyncHandler(serviceController.getServiceById))
 
 // Partner / Recipient routes
 serviceRoutes.get("/partner", authMiddleware, requireRole(UserRole.PARTNER, UserRole.RECIPIENT), asyncHandler(serviceController.listPartnerServices));
-serviceRoutes.post("/partner", authMiddleware, requireRole(UserRole.PARTNER, UserRole.RECIPIENT), asyncHandler(serviceController.createService));
-serviceRoutes.patch("/partner/:id", authMiddleware, requireRole(UserRole.PARTNER, UserRole.RECIPIENT), asyncHandler(serviceController.updateService));
-serviceRoutes.delete("/partner/:id", authMiddleware, requireRole(UserRole.PARTNER, UserRole.RECIPIENT), asyncHandler(serviceController.deleteService));
-serviceRoutes.post("/categories", authMiddleware, requireRole(UserRole.PARTNER, UserRole.RECIPIENT, UserRole.ADMIN), asyncHandler(serviceController.createCategory));
+serviceRoutes.post("/partner", authMiddleware, requireRole(UserRole.PARTNER), asyncHandler(serviceController.createService));
+serviceRoutes.patch("/partner/:id", authMiddleware, requireRole(UserRole.PARTNER), asyncHandler(serviceController.updateService));
+serviceRoutes.delete("/partner/:id", authMiddleware, requireRole(UserRole.PARTNER), asyncHandler(serviceController.deleteService));
+serviceRoutes.post("/categories", authMiddleware, requireRole(UserRole.PARTNER, UserRole.ADMIN), asyncHandler(serviceController.createCategory));

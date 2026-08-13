@@ -14,6 +14,7 @@ import { voucherService } from "../vouchers/voucher.service.js";
 import { userRepository } from "../users/user.repository.js";
 import { partnerRepository } from "./partner.repository.js";
 import { hashPassword } from "../auth/auth.security.js";
+import { cashierRepository } from "../cashier/cashier.repository.js";
 
 async function getProfile(userId: string) {
   const profile = await partnerRepository.profileByUser(userId);
@@ -363,6 +364,12 @@ export const partnerService = {
       }
       return { updated: updatedBooking, settlement: updatedSettlement };
     });
+
+    if (status === BookingStatus.CANCELLED || status === BookingStatus.NO_SHOW) {
+      await cashierRepository
+        .releaseBookingServices(booking.id, status === BookingStatus.CANCELLED ? "Tự động trả do đơn bị huỷ" : "Tự động trả do khách không đến")
+        .catch(() => {});
+    }
 
     if (settlement) {
       realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);

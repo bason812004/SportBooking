@@ -32,7 +32,7 @@ export const serviceController = {
 
   async createCategory(req: Request, res: Response) {
     const body = createServiceCategorySchema.parse(req.body);
-    const category = await serviceService.createCategory(body);
+    const category = await serviceService.createCategory({ ...body, description: body.description ?? undefined });
     return sendSuccess(res, category, 201, "Tạo danh mục dịch vụ thành công");
   },
 
@@ -65,7 +65,13 @@ export const serviceController = {
   async createService(req: Request, res: Response) {
     const partnerId = await getPartnerId(req.user!.id);
     const body = createServiceSchema.parse(req.body);
-    const service = await serviceService.createService(partnerId, body);
+    const service = await serviceService.createService(partnerId, {
+      ...body,
+      description: body.description ?? undefined,
+      categoryId: body.categoryId ?? undefined,
+      sportType: body.sportType ?? undefined,
+      imageUrl: body.imageUrl ?? undefined
+    });
     return sendSuccess(res, service, 201, "Tạo dịch vụ thành công");
   },
 

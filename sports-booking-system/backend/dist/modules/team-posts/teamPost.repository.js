@@ -38,12 +38,20 @@ const selectMessage = `
     msg.mime_type as "mimeType",
     msg.created_at as "createdAt",
     msg.updated_at as "updatedAt",
-    json_build_object('id', u.id, 'fullName', u.full_name, 'avatarUrl', u.avatar_url) as "sender"
+    json_build_object('id', u.id, 'fullName', u.full_name, 'avatarUrl', u.avatar_url) as "sender",
+    coalesce(
+      (
+        select json_agg(json_build_object('reaction', r.reaction, 'userId', r.user_id, 'createdAt', r.created_at))
+        from team_post_message_reactions r
+        where r.message_id = msg.id
+      ),
+      '[]'::json
+    ) as "reactions"
   from team_post_messages msg
   join users u on u.id = msg.user_id
 `;
 let chatTablesReady = false;
-async function ensureTeamChatTables() {
+export async function ensureTeamChatTables() {
     if (chatTablesReady)
         return;
     const statements = [
@@ -59,9 +67,11 @@ async function ensureTeamChatTables() {
       status varchar(20) not null default 'ACTIVE',
       joined_at timestamptz not null default now(),
       left_at timestamptz,
+      updated_at timestamptz default now(),
       unique(post_id, user_id)
     )
     `,
+        "alter table team_post_members add column if not exists updated_at timestamptz default now()",
         `
     create table if not exists team_post_messages (
       id varchar(20) primary key default ('tmsg' || lpad(nextval('seq_team_post_messages')::text, 4, '0')),
@@ -268,6 +278,15 @@ export const teamPostRepository = {
         limit 200
       `, postId);
     },
+    async findMessageById(messageId) {
+        await ensureTeamChatTables();
+        const rows = await prisma.$queryRawUnsafe(`
+        ${selectMessage}
+        where msg.id = $1
+        limit 1
+      `, messageId);
+        return rows[0] ?? null;
+    },
     async createMessage(postId, userId, payload) {
         await ensureTeamChatTables();
         const contentVal = payload.content ?? null;
@@ -277,8 +296,8 @@ export const teamPostRepository = {
        values ($1, $2, $3, $4::team_post_message_type, $5, $6, $7, $8, $9)
        returning id`, postId, userId, contentVal, msgType, payload.attachmentUrl ?? null, payload.attachmentName ?? null, payload.attachmentSize ?? null, payload.thumbnailUrl ?? null, payload.mimeType ?? null);
         if (!inserted?.id)
-            return [];
-        return this.listMessages(postId);
+            return null;
+        return this.findMessageById(inserted.id);
     },
     async getMember(postId, userId) {
         await ensureTeamChatTables();
@@ -315,25 +334,67 @@ export const teamPostRepository = {
     },
     async leaveGroup(postId, userId) {
         await ensureTeamChatTables();
-        return prisma.$executeRaw `
+        await prisma.$executeRaw `
       update team_post_members
-      set status = 'LEFT', left_at = now(), updated_at = now()
+      set status = 'LEFT', left_at = now()
       where post_id = ${postId} and user_id = ${userId} and status = 'ACTIVE'
     `;
+        await prisma.$executeRaw `
+      update team_recruitment_posts
+      set
+        current_players = (
+          select count(*)::int
+          from team_post_members
+          where post_id = ${postId} and status = 'ACTIVE'
+        ),
+        status = case
+          when (
+            select count(*)::int
+            from team_post_members
+            where post_id = ${postId} and status = 'ACTIVE'
+          ) < max_players and status = 'FULL'::team_recruitment_status
+          then 'OPEN'::team_recruitment_status
+          else status
+        end,
+        updated_at = now()
+      where id = ${postId}
+    `;
+        return { left: true };
     },
     async removeMember(postId, userId) {
         await ensureTeamChatTables();
-        return prisma.$executeRaw `
+        await prisma.$executeRaw `
       update team_post_members
-      set status = 'REMOVED', left_at = now(), updated_at = now()
+      set status = 'REMOVED', left_at = now()
       where post_id = ${postId} and user_id = ${userId} and status = 'ACTIVE'
     `;
+        await prisma.$executeRaw `
+      update team_recruitment_posts
+      set
+        current_players = (
+          select count(*)::int
+          from team_post_members
+          where post_id = ${postId} and status = 'ACTIVE'
+        ),
+        status = case
+          when (
+            select count(*)::int
+            from team_post_members
+            where post_id = ${postId} and status = 'ACTIVE'
+          ) < max_players and status = 'FULL'::team_recruitment_status
+          then 'OPEN'::team_recruitment_status
+          else status
+        end,
+        updated_at = now()
+      where id = ${postId}
+    `;
+        return { removed: true };
     },
     async updateMemberRole(postId, userId, role) {
         await ensureTeamChatTables();
         return prisma.$executeRaw `
       update team_post_members
-      set role = ${role}, updated_at = now()
+      set role = ${role}
       where post_id = ${postId} and user_id = ${userId} and status = 'ACTIVE'
     `;
     },

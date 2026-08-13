@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, type ServiceType } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
@@ -10,7 +10,7 @@ async function main() {
     { name: "Đồ uống", slug: "do-uong", description: "Các loại nước giải khát, nước suối, nước tăng lực, bù khoáng" },
     { name: "Đồ ăn", slug: "do-an", description: "Bánh mì, bánh ngọt, đồ ăn nhẹ, mì cốc" },
     { name: "Trái cây", slug: "trai-cay", description: "Trái cây tươi đóng hộp ướp lạnh" },
-    { name: "Dụng cụ thể thao", slug: "dung-cu-the-thao", description: "Bóng, cầu lông, vớ, khăn tập, băng trán" },
+    { name: "Phụ kiện thể thao", slug: "dung-cu-the-thao", description: "Bóng, cầu lông, vớ, khăn tập, băng trán" },
     { name: "Cho thuê dụng cụ", slug: "cho-thue-dung-cu", description: "Cho thuê vợt Tennis, Cầu lông, Pickleball" },
     { name: "Combo thể thao", slug: "combo-the-thao", description: "Các gói Combo tiết kiệm cho cá nhân và nhóm/đội" },
     { name: "Dịch vụ khác", slug: "dich-vu-khac", description: "Các dịch vụ tiện ích bổ sung tại sân" }
@@ -115,7 +115,7 @@ async function main() {
             partnerId: pid,
             categoryId: svc.categoryId ?? null,
             name: svc.name,
-            type: svc.type,
+            type: svc.type as ServiceType,
             price: svc.price,
             costPrice: svc.costPrice,
             unit: svc.unit,
@@ -138,7 +138,7 @@ async function main() {
       where: {
         OR: [
           { id: "bkbbmgy6aemsncwt86" },
-          { courtId: null },
+          { courtId: null as unknown as string },
           { courtSurfaceId: null }
         ]
       },

@@ -21,6 +21,7 @@ import { paymentProvider } from "../payments/providers/index.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { settlementService } from "../settlements/settlement.service.js";
+import { cashierRepository } from "../cashier/cashier.repository.js";
 
 function dbTime(value: Date) {
   return value.toISOString().slice(11, 16);
@@ -427,6 +428,12 @@ export const recipientService = {
       }
       return { updated: updatedBooking, settlement: updatedSettlement };
     });
+
+    if (status === BookingStatus.CANCELLED || status === BookingStatus.NO_SHOW) {
+      await cashierRepository
+        .releaseBookingServices(booking.id, status === BookingStatus.CANCELLED ? "Tự động trả do đơn bị huỷ" : "Tự động trả do khách không đến")
+        .catch(() => {});
+    }
 
     if (settlement) {
       realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);

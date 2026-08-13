@@ -17,10 +17,13 @@ import {
   ShieldCheck,
   Tag,
   ChevronRight,
-  Receipt
+  Receipt,
+  Lock,
+  Unlock
 } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
+import { Modal } from "../../components/ui/Modal";
 import { cashierApi, type CashierBookingDetail, type ActiveBookingService } from "../../features/cashier/api/cashierApi";
 import { serviceApi, type ServiceCategory, type ServiceItem } from "../../features/services/api/serviceApi";
 import { formatMoney } from "../../utils/formatters";
@@ -43,49 +46,49 @@ export function CashierBookingPosPage() {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
+  // Locked Invoices persistent map (shared key with PartnerCashierPage)
+  const [lockedInvoices, setLockedInvoices] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem("cashier_locked_invoices");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const isLocked = Boolean(bookingId && lockedInvoices[bookingId]);
+  const [unlockConfirmOpen, setUnlockConfirmOpen] = useState(false);
+
+  const toggleLockInvoice = (id: string, lockState: boolean) => {
+    setLockedInvoices((prev) => {
+      const updated = { ...prev, [id]: lockState };
+      try {
+        localStorage.setItem("cashier_locked_invoices", JSON.stringify(updated));
+      } catch (e) {
+        console.error("Failed to save locked invoices:", e);
+      }
+      return updated;
+    });
+    showToast(lockState ? "Hóa đơn đã được lưu và khóa chỉnh sửa!" : "Đã mở khóa hóa đơn. Bạn có thể chỉnh sửa lại!");
+  };
+
   const fetchDetail = async () => {
     if (!bookingId) return;
     setLoading(true);
     try {
-      let bDetail = await cashierApi.getBookingDetail(bookingId).catch(() => null);
+      const bDetail = await cashierApi.getBookingDetail(bookingId).catch(() => null);
       const cats = await serviceApi.getCategories().catch(() => []);
-
-      if (!bDetail) {
-        bDetail = {
-          booking: {
-            id: bookingId,
-            bookingCode: bookingId.length > 12 ? bookingId.slice(0, 10).toUpperCase() : bookingId,
-            bookingDate: new Date().toISOString(),
-            startTime: "22:00:00",
-            endTime: "23:00:00",
-            bookingStatus: "CONFIRMED",
-            paymentStatus: "UNPAID",
-            totalPrice: 130000,
-            depositAmount: 0,
-            courtSubtotal: 130000,
-            serviceSubtotal: 0,
-            totalAmount: 130000,
-            depositPaid: 0,
-            remainingAmount: 130000,
-            user: { id: "u1", fullName: "Sơn Bá", phone: "0901234567", email: "customer@example.com" },
-            court: { id: "court_sala_1", name: "Sân Sala 1 · Sân 01" },
-            services: []
-          },
-          courtSubtotal: 130000,
-          serviceSubtotal: 0,
-          voucherDiscount: 0,
-          grandTotal: 130000,
-          depositPaid: 0,
-          remainingAmount: 130000,
-          activeServices: []
-        };
-      }
 
       setDetail(bDetail);
       setCategories(cats || []);
 
-      const courtId = bDetail.booking?.court?.id || "court_sala_1";
-      let svcs: ServiceItem[] = await serviceApi.getCourtServices(courtId, selectedCategory).catch(() => []);
+      if (!bDetail) {
+        setServices([]);
+        return;
+      }
+
+      const courtId = bDetail.booking?.court?.id;
+      let svcs: ServiceItem[] = courtId ? await serviceApi.getCourtServices(courtId, selectedCategory).catch(() => []) : [];
       if (!svcs || svcs.length === 0) {
         svcs = await serviceApi.getPartnerServices({ categoryId: selectedCategory }).catch(() => []);
       }
@@ -103,6 +106,10 @@ export function CashierBookingPosPage() {
 
   const handleAddService = async (service: ServiceItem) => {
     if (!bookingId || submitting) return;
+    if (isLocked) {
+      showToast("Hóa đơn đã khóa. Vui lòng mở khóa để thêm dịch vụ!");
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await cashierApi.addServiceToBooking(bookingId, service.id, 1);
@@ -158,6 +165,10 @@ export function CashierBookingPosPage() {
 
   const handleUpdateQty = async (serviceId: string, quantity: number) => {
     if (!bookingId || submitting) return;
+    if (isLocked) {
+      showToast("Hóa đơn đã khóa. Vui lòng mở khóa để chỉnh sửa!");
+      return;
+    }
     setSubmitting(true);
     try {
       if (quantity <= 0) {
@@ -278,6 +289,34 @@ export function CashierBookingPosPage() {
               </div>
             </div>
 
+            {/* Locked Invoice Status Banner */}
+            {isLocked ? (
+              <div className="flex items-center justify-between rounded-2xl bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-900">
+                <div className="flex items-center gap-2 font-extrabold">
+                  <Lock className="h-4 w-4 text-[#02712a]" />
+                  <span>HÓA ĐƠN ĐÃ LƯU & KHÓA CHỈNH SỬA</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setUnlockConfirmOpen(true)}
+                  className="flex items-center gap-1 font-bold text-slate-600 hover:text-slate-900 hover:underline"
+                >
+                  <Unlock className="h-3.5 w-3.5" /> Mở khóa
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between rounded-2xl bg-amber-50 border border-amber-200 p-2.5 text-xs text-amber-800">
+                <span className="font-medium">Chế độ đang chỉnh sửa (Chưa khóa hóa đơn)</span>
+                <button
+                  type="button"
+                  onClick={() => bookingId && toggleLockInvoice(bookingId, true)}
+                  className="flex items-center gap-1.5 rounded-lg bg-[#02712a] px-3 py-1 font-extrabold text-white shadow-sm hover:bg-[#1fa955] transition"
+                >
+                  <Lock className="h-3.5 w-3.5" /> LƯU HÓA ĐƠN
+                </button>
+              </div>
+            )}
+
             {/* Search & Category Filter Section */}
             <div className="rounded-3xl bg-white p-4 shadow-sm border border-slate-200 space-y-3">
               <div className="relative">
@@ -336,7 +375,11 @@ export function CashierBookingPosPage() {
                   <div
                     key={svc.id}
                     onClick={() => handleAddService(svc)}
-                    className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:border-[#02712a] hover:shadow-md transition flex flex-col justify-between relative overflow-hidden"
+                    className={`group rounded-2xl border p-4 shadow-sm transition flex flex-col justify-between relative overflow-hidden ${
+                      isLocked
+                        ? "cursor-not-allowed border-slate-200 bg-slate-50 opacity-75"
+                        : "cursor-pointer border-slate-200 bg-white hover:border-[#02712a] hover:shadow-md"
+                    }`}
                   >
                     <div>
                       <div className="flex items-start justify-between gap-1 mb-1">
@@ -361,9 +404,14 @@ export function CashierBookingPosPage() {
                       </div>
                       <button
                         type="button"
-                        className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-50 text-[#02712a] group-hover:bg-[#02712a] group-hover:text-white transition shadow-sm"
+                        disabled={isLocked}
+                        className={`flex h-8 w-8 items-center justify-center rounded-xl transition shadow-sm ${
+                          isLocked
+                            ? "bg-slate-200 text-slate-400"
+                            : "bg-emerald-50 text-[#02712a] group-hover:bg-[#02712a] group-hover:text-white"
+                        }`}
                       >
-                        <Plus className="h-4 w-4" />
+                        {isLocked ? <Lock className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
                       </button>
                     </div>
                   </div>
@@ -410,16 +458,18 @@ export function CashierBookingPosPage() {
                           <div className="flex items-center rounded-xl bg-white border border-slate-200 shadow-sm p-0.5">
                             <button
                               type="button"
+                              disabled={isLocked}
                               onClick={() => handleUpdateQty(item.serviceId || item.id, item.quantity - 1)}
-                              className="flex h-6 w-6 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100"
+                              className="flex h-6 w-6 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               <Minus className="h-3 w-3" />
                             </button>
                             <span className="w-7 text-center font-black text-slate-900">{item.quantity}</span>
                             <button
                               type="button"
+                              disabled={isLocked}
                               onClick={() => handleUpdateQty(item.serviceId || item.id, item.quantity + 1)}
-                              className="flex h-6 w-6 items-center justify-center rounded-lg text-[#02712a] hover:bg-emerald-50"
+                              className="flex h-6 w-6 items-center justify-center rounded-lg text-[#02712a] hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               <Plus className="h-3 w-3" />
                             </button>
@@ -427,8 +477,9 @@ export function CashierBookingPosPage() {
 
                           <button
                             type="button"
+                            disabled={isLocked}
                             onClick={() => handleUpdateQty(item.serviceId || item.id, 0)}
-                            className="flex h-7 w-7 items-center justify-center rounded-xl text-rose-500 hover:bg-rose-50 transition"
+                            className="flex h-7 w-7 items-center justify-center rounded-xl text-rose-500 hover:bg-rose-50 transition disabled:cursor-not-allowed disabled:opacity-40"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -473,7 +524,7 @@ export function CashierBookingPosPage() {
                 </div>
 
                 <Button
-                  onClick={() => showToast("Đã lưu hóa đơn dịch vụ & xác nhận thanh toán!")}
+                  onClick={() => navigate(`/booking/${bookingId}/checkout`)}
                   className="w-full h-12 bg-[#02712a] text-white hover:bg-[#1fa955] font-black text-sm rounded-2xl shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-2 mt-3"
                 >
                   <CreditCard className="h-5 w-5" />
@@ -484,6 +535,30 @@ export function CashierBookingPosPage() {
           </div>
         </div>
       )}
+
+      {/* Unlock Invoice Confirm Modal */}
+      <Modal isOpen={unlockConfirmOpen} onClose={() => setUnlockConfirmOpen(false)} title="Mở khóa hóa đơn?" maxWidth="max-w-sm">
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">
+            Hóa đơn đang được khóa để tránh chỉnh sửa nhầm. Bạn có chắc chắn muốn mở khóa để tiếp tục thêm/sửa dịch vụ không?
+          </p>
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <Button type="button" variant="secondary" onClick={() => setUnlockConfirmOpen(false)}>
+              Hủy
+            </Button>
+            <Button
+              type="button"
+              className="bg-[#02712a] text-white font-bold"
+              onClick={() => {
+                if (bookingId) toggleLockInvoice(bookingId, false);
+                setUnlockConfirmOpen(false);
+              }}
+            >
+              <Unlock className="mr-1.5 h-4 w-4" /> Mở khóa
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

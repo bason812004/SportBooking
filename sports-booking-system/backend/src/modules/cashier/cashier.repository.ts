@@ -4,25 +4,38 @@ import { NotFoundError, ValidationError } from "../../shared/errors/AppError.js"
 import { ensureServiceTables, serviceRepository } from "../services/service.repository.js";
 import type { AddServiceToBookingInput, ReturnRentalItemInput } from "./cashier.types.js";
 
+function dbTime(value: any) {
+  if (value instanceof Date) return value.toISOString().slice(11, 16);
+  if (typeof value === "string") return value.slice(0, 5);
+  return value;
+}
+
+function hasCustomerArrived(bookingDate: any, startTime: any) {
+  const datePart = new Date(bookingDate).toISOString().slice(0, 10);
+  const timePart = typeof startTime === "string" ? startTime.slice(0, 5) : new Date(startTime).toISOString().slice(11, 16);
+  const startsAt = new Date(`${datePart}T${timePart}:00`);
+  return new Date() >= startsAt;
+}
+
 export const cashierRepository = {
   async getActiveBookings(partnerId: string, courtId?: string) {
     await ensureServiceTables();
 
     // 1. Fetch Courts
-    const courts: any[] = await prisma.$queryRawUnsafe(
+    const courts: any[] = (await prisma.$queryRawUnsafe(
       `SELECT c.id, c.name, cc.name as "categoryName"
        FROM courts c
        LEFT JOIN court_categories cc ON c.category_id = cc.id
        WHERE c.partner_id = $1::text ${courtId ? `OR c.id = '${courtId}'` : ""};`,
       partnerId
-    ).catch(() => []);
+    ).catch(() => [])) as any[];
 
     const courtMap = new Map(courts.map((c) => [c.id, c]));
     const courtIds = Array.from(courtMap.keys());
     if (courtIds.length === 0) return [];
 
     // 2. Fetch Active Bookings
-    const bRows: any[] = await prisma.$queryRawUnsafe(
+    const bRows: any[] = (await prisma.$queryRawUnsafe(
       `SELECT b.id, b.booking_code as "bookingCode", b.court_id as "courtId", b.user_id as "userId",
               b.booking_date as "bookingDate", b.start_time as "startTime", b.end_time as "endTime",
               b.total_price as "totalPrice", b.deposit_amount as "depositAmount", b.booking_status as "bookingStatus",
@@ -31,17 +44,20 @@ export const cashierRepository = {
        FROM bookings b
        LEFT JOIN users u ON b.user_id = u.id
        WHERE b.court_id = ANY($1::text[])
-         AND b.booking_status NOT IN ('COMPLETED', 'CANCELLED', 'REJECTED', 'EXPIRED', 'NO_SHOW')
+         AND b.booking_status IN ('CONFIRMED', 'DEPOSIT_PAID', 'IN_PROGRESS', 'CHECKOUT_PENDING')
        ORDER BY b.start_time ASC;`,
       courtIds
-    ).catch(() => []);
+    ).catch(() => [])) as any[];
 
     if (!Array.isArray(bRows) || bRows.length === 0) return [];
 
-    const bookingIds = bRows.map((b) => b.id);
+    const arrivedRows = bRows.filter((b) => hasCustomerArrived(b.bookingDate, b.startTime));
+    if (arrivedRows.length === 0) return [];
+
+    const bookingIds = arrivedRows.map((b) => b.id);
 
     // 3. Fetch Booking Services
-    const bsRows: any[] = await prisma.$queryRawUnsafe(
+    const bsRows: any[] = (await prisma.$queryRawUnsafe(
       `SELECT bs.id, bs.booking_id as "bookingId", bs.service_id as "serviceId", bs.court_service_id as "courtServiceId",
               bs.quantity, bs.price, bs.unit_price as "unitPrice", bs.total_price as "totalPrice", bs.status,
               COALESCE(s.name, cs.name, 'Dịch vụ') as "name",
@@ -52,7 +68,7 @@ export const cashierRepository = {
        LEFT JOIN court_services cs ON bs.court_service_id::text = cs.id::text OR bs.service_id::text = cs.id::text
        WHERE bs.booking_id = ANY($1::text[]) AND (bs.status = 'ACTIVE' OR bs.status IS NULL);`,
       bookingIds
-    ).catch(() => []);
+    ).catch(() => [])) as any[];
 
     const bsGrouped = new Map<string, any[]>();
     if (Array.isArray(bsRows)) {
@@ -82,7 +98,7 @@ export const cashierRepository = {
     }
 
     // 4. Construct Response
-    return bRows.map((b) => {
+    return arrivedRows.map((b) => {
       const courtSubtotal = Number(b.totalPrice) || 0;
       const activeServices = bsGrouped.get(b.id) || [];
       const serviceSubtotal = activeServices.reduce((sum, item) => sum + Number(item.totalPrice || item.price || 0), 0);
@@ -98,8 +114,8 @@ export const cashierRepository = {
         courtId: b.courtId,
         userId: b.userId,
         bookingDate: b.bookingDate,
-        startTime: b.startTime,
-        endTime: b.endTime,
+        startTime: dbTime(b.startTime),
+        endTime: dbTime(b.endTime),
         totalPrice: b.totalPrice,
         depositAmount: b.depositAmount,
         bookingStatus: b.bookingStatus,
@@ -130,7 +146,7 @@ export const cashierRepository = {
     await ensureServiceTables();
 
     // 1. Fetch Booking
-    const bRows: any[] = await prisma.$queryRawUnsafe(
+    const bRows: any[] = (await prisma.$queryRawUnsafe(
       `SELECT b.id, b.booking_code as "bookingCode", b.court_id as "courtId", b.user_id as "userId",
               b.booking_date as "bookingDate", b.start_time as "startTime", b.end_time as "endTime",
               b.total_price as "totalPrice", b.deposit_amount as "depositAmount", b.booking_status as "bookingStatus",
@@ -143,7 +159,7 @@ export const cashierRepository = {
        WHERE b.id::text = $1::text OR b.booking_code::text = $1::text OR b.booking_order_id::text = $1::text
        LIMIT 1;`,
       bookingId
-    ).catch(() => []);
+    ).catch(() => [])) as any[];
 
     if (!Array.isArray(bRows) || bRows.length === 0) {
       throw new NotFoundError("Booking không tồn tại");
@@ -158,7 +174,7 @@ export const cashierRepository = {
     }
 
     // 2. Fetch Booking Services
-    const bsRows: any[] = await prisma.$queryRawUnsafe(
+    const bsRows: any[] = (await prisma.$queryRawUnsafe(
       `SELECT bs.id, bs.booking_id as "bookingId", bs.service_id as "serviceId", bs.court_service_id as "courtServiceId",
               bs.quantity, bs.price, bs.unit_price as "unitPrice", bs.total_price as "totalPrice", bs.status,
               COALESCE(s.name, cs.name, 'Dịch vụ') as "name",
@@ -169,7 +185,7 @@ export const cashierRepository = {
        LEFT JOIN court_services cs ON bs.court_service_id::text = cs.id::text OR bs.service_id::text = cs.id::text
        WHERE bs.booking_id::text = $1::text AND (bs.status = 'ACTIVE' OR bs.status IS NULL);`,
       b.id
-    ).catch(() => []);
+    ).catch(() => [])) as any[];
 
     const activeServices = Array.isArray(bsRows)
       ? bsRows.map((bs) => ({
@@ -209,6 +225,8 @@ export const cashierRepository = {
     return {
       booking: {
         ...b,
+        startTime: dbTime(b.startTime),
+        endTime: dbTime(b.endTime),
         court: courtFallback,
         user: {
           id: b.userId,
@@ -234,7 +252,7 @@ export const cashierRepository = {
 
     // 1. Get booking
     const bRows: any = await prisma.$queryRawUnsafe(
-      `SELECT b.id, b.court_id as "courtId", b.booking_code as "bookingCode" FROM bookings b WHERE b.id::text = $1::text LIMIT 1;`,
+      `SELECT b.id, b.court_id as "courtId", b.booking_code as "bookingCode", b.booking_date as "bookingDate", b.start_time as "startTime" FROM bookings b WHERE b.id::text = $1::text LIMIT 1;`,
       bookingId
     ).catch(() => []);
     if (!Array.isArray(bRows) || bRows.length === 0) throw new NotFoundError("Booking không tồn tại");
@@ -254,6 +272,10 @@ export const cashierRepository = {
     service.price = Number(service.price);
     if (service.status !== "ACTIVE") {
       throw new ValidationError("Dịch vụ hiện không hoạt động");
+    }
+
+    if (service.type !== "RENTAL_SERVICE" && !hasCustomerArrived(booking.bookingDate, booking.startTime)) {
+      throw new ValidationError("Khách chưa đến sân, chưa thể bán dịch vụ");
     }
 
     // 3. Check inventory if PRODUCT
@@ -445,5 +467,45 @@ export const cashierRepository = {
 
       return updated;
     });
+  },
+
+  async releaseBookingServices(bookingId: string, reason: string) {
+    await ensureServiceTables();
+
+    const bsRows: any[] = (await prisma.$queryRawUnsafe(
+      `SELECT bs.id, bs.service_id as "serviceId", bs.quantity, s.type, s.track_inventory as "trackInventory"
+       FROM booking_services bs
+       LEFT JOIN services s ON bs.service_id::text = s.id::text
+       WHERE bs.booking_id::text = $1::text AND (bs.status = 'ACTIVE' OR bs.status IS NULL);`,
+      bookingId
+    ).catch(() => [])) as any[];
+
+    for (const bs of bsRows) {
+      await prisma.$executeRawUnsafe(
+        `UPDATE booking_services SET status = 'CANCELLED', updated_at = NOW() WHERE id::text = $1::text;`,
+        bs.id
+      ).catch(() => {});
+
+      if (bs.serviceId && bs.trackInventory && bs.type === "PRODUCT") {
+        await prisma.$executeRawUnsafe(
+          `UPDATE service_inventories SET quantity = quantity + $1, updated_at = NOW() WHERE service_id::text = $2::text;`,
+          Number(bs.quantity), bs.serviceId
+        ).catch(() => {});
+
+        await prisma.$executeRawUnsafe(
+          `INSERT INTO inventory_transactions (id, service_id, type, quantity, unit_cost, reference_type, reference_id, note, created_at)
+           VALUES (gen_random_uuid(), $1::uuid, 'ADJUSTMENT', $2, 0, 'BOOKING_SERVICE', $3, $4, NOW());`,
+          bs.serviceId, Number(bs.quantity), bookingId, reason
+        ).catch(() => {});
+      }
+
+      if (bs.type === "RENTAL_SERVICE") {
+        await prisma.$executeRawUnsafe(
+          `UPDATE rental_items SET status = 'RETURNED', returned_at = NOW(), notes = $1
+           WHERE booking_service_id::text = $2::text AND status = 'RENTED';`,
+          reason, bs.id
+        ).catch(() => {});
+      }
+    }
   }
 };

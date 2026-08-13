@@ -81,7 +81,7 @@ export async function forceSeedAllServicesToDb() {
       { name: "Đồ uống", slug: "do-uong", description: "Các loại nước giải khát, nước suối, nước tăng lực, bù khoáng" },
       { name: "Đồ ăn", slug: "do-an", description: "Bánh mì, bánh ngọt, đồ ăn nhẹ, mì cốc" },
       { name: "Trái cây", slug: "trai-cay", description: "Trái cây tươi đóng hộp ướp lạnh" },
-      { name: "Dụng cụ thể thao", slug: "dung-cu-the-thao", description: "Bóng, cầu lông, vớ, khăn tập, băng trán" },
+      { name: "Phụ kiện thể thao", slug: "dung-cu-the-thao", description: "Bóng, cầu lông, vớ, khăn tập, băng trán" },
       { name: "Cho thuê dụng cụ", slug: "cho-thue-dung-cu", description: "Cho thuê vợt Tennis, Cầu lông, Pickleball" },
       { name: "Combo thể thao", slug: "combo-the-thao", description: "Các gói Combo tiết kiệm cho cá nhân và nhóm/đội" },
       { name: "Dịch vụ khác", slug: "dich-vu-khac", description: "Các dịch vụ tiện ích bổ sung tại sân" }
@@ -257,7 +257,7 @@ export const serviceRepository = {
         { name: "Đồ uống", slug: "do-uong", description: "Các loại nước giải khát, nước suối, nước tăng lực, bù khoáng" },
         { name: "Đồ ăn", slug: "do-an", description: "Bánh mì, bánh ngọt, đồ ăn nhẹ, mì cốc" },
         { name: "Trái cây", slug: "trai-cay", description: "Trái cây tươi đóng hộp ướp lạnh" },
-        { name: "Dụng cụ thể thao", slug: "dung-cu-the-thao", description: "Bóng, cầu lông, vớ, khăn tập, băng trán" },
+        { name: "Phụ kiện thể thao", slug: "dung-cu-the-thao", description: "Bóng, cầu lông, vớ, khăn tập, băng trán" },
         { name: "Cho thuê dụng cụ", slug: "cho-thue-dung-cu", description: "Cho thuê vợt Tennis, Cầu lông, Pickleball" },
         { name: "Combo thể thao", slug: "combo-the-thao", description: "Các gói Combo tiết kiệm cho cá nhân và nhóm/đội" },
         { name: "Dịch vụ khác", slug: "dich-vu-khac", description: "Các dịch vụ tiện ích bổ sung tại sân" }
@@ -273,8 +273,6 @@ export const serviceRepository = {
       const fresh: any = await prisma.$queryRawUnsafe(
         `SELECT id, name, slug, description FROM service_categories ORDER BY name ASC;`
       ).catch(() => []);
-
-      autoSeedSalaServicesAndAssignBooking().catch(() => {});
 
       return Array.isArray(fresh) ? fresh : [];
     } catch (err) {
@@ -444,8 +442,15 @@ export const serviceRepository = {
     try {
       await ensureServiceTables();
 
+      const courtRows: any = await prisma.$queryRawUnsafe(
+        `SELECT partner_id as "partnerId" FROM courts WHERE id = $1 LIMIT 1;`,
+        courtId
+      ).catch(() => []);
+      const partnerId = Array.isArray(courtRows) && courtRows.length > 0 ? courtRows[0].partnerId : null;
+      if (!partnerId) return [];
+
       let rows: any = await prisma.$queryRawUnsafe(`
-        SELECT 
+        SELECT
           s.id,
           s.court_id as "courtId",
           s.partner_id as "partnerId",
@@ -457,28 +462,59 @@ export const serviceRepository = {
           s.cost_price as "costPrice",
           s.unit,
           s.status,
+          s.track_inventory as "trackInventory",
           sc.name as "categoryName",
-          sc.slug as "categorySlug"
+          sc.slug as "categorySlug",
+          si.id as "inventoryId",
+          si.quantity as "inventoryQuantity",
+          si.reserved_quantity as "inventoryReservedQuantity",
+          si.minimum_stock as "inventoryMinimumStock",
+          si.unit as "inventoryUnit",
+          si.last_purchase_price as "inventoryLastPurchasePrice"
         FROM services s
         LEFT JOIN service_categories sc ON s.category_id = sc.id
-        WHERE (s.court_id = $1 OR s.court_id IS NULL) AND s.status = 'ACTIVE';
-      `, courtId).catch(() => []);
+        LEFT JOIN service_inventories si ON si.service_id = s.id
+        WHERE (s.court_id = $1 OR s.court_id IS NULL) AND s.partner_id = $2 AND s.status = 'ACTIVE';
+      `, courtId, partnerId).catch(() => []);
 
       if (Array.isArray(rows) && rows.length > 0) {
         if (categoryId) {
           rows = rows.filter((r: any) => r.categoryId === categoryId);
         }
         return rows.map((r: any) => ({
-          ...r,
+          id: r.id,
+          courtId: r.courtId,
+          partnerId: r.partnerId,
+          categoryId: r.categoryId,
+          name: r.name,
+          description: r.description,
+          type: r.type,
           price: Number(r.price),
-          originalPrice: Number(r.price)
+          originalPrice: Number(r.price),
+          costPrice: Number(r.costPrice || 0),
+          unit: r.unit,
+          status: r.status,
+          trackInventory: r.trackInventory,
+          categoryName: r.categoryName,
+          categorySlug: r.categorySlug,
+          inventory: r.inventoryId
+            ? {
+                id: r.inventoryId,
+                serviceId: r.id,
+                quantity: r.inventoryQuantity,
+                reservedQuantity: r.inventoryReservedQuantity,
+                minimumStock: r.inventoryMinimumStock,
+                unit: r.inventoryUnit,
+                lastPurchasePrice: Number(r.inventoryLastPurchasePrice)
+              }
+            : null
         }));
       }
 
       // Fallback if empty
       const allSvc: any = await prisma.service.findMany({
-        where: { ...(categoryId ? { categoryId } : {}) },
-        include: { category: true }
+        where: { partnerId, ...(categoryId ? { categoryId } : {}) },
+        include: { category: true, inventory: true }
       }).catch(() => []);
 
       return (allSvc || []).map((s: any) => ({
@@ -489,6 +525,18 @@ export const serviceRepository = {
         price: Number(s.price),
         categoryId: s.categoryId,
         category: s.category,
+        trackInventory: s.trackInventory,
+        inventory: s.inventory
+          ? {
+              id: s.inventory.id,
+              serviceId: s.inventory.serviceId,
+              quantity: s.inventory.quantity,
+              reservedQuantity: s.inventory.reservedQuantity,
+              minimumStock: s.inventory.minimumStock,
+              unit: s.inventory.unit,
+              lastPurchasePrice: Number(s.inventory.lastPurchasePrice)
+            }
+          : null,
         isAvailable: true
       }));
     } catch (err) {

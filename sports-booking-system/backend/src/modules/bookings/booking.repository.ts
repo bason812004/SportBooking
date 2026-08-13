@@ -2,6 +2,7 @@ import type { PaymentMethod, PaymentType, PaymentStatus, Prisma } from "@prisma/
 import { prisma } from "../../config/db.js";
 import { ValidationError } from "../../shared/errors/AppError.js";
 import { timeToDate, toDbDate } from "../../shared/utils/time.js";
+import { ensureServiceTables } from "../services/service.repository.js";
 
 function generateShortId(prefix: string): string {
   const rand = Math.random().toString(36).slice(2, 10);

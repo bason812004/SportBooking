@@ -233,7 +233,7 @@ export function RecipientCourtSurfacesPage() {
     <div className="space-y-5">
       <PageHero
         eyebrow="Vận hành"
-        title="Quản lý sân"
+        title="Đặt sân tại quầy"
         subtitle={`Theo dõi khách đang sử dụng từng sân con của ${data.court.name} - cập nhật lúc ${data.nowTime} ngày ${new Date(data.date).toLocaleDateString("vi-VN")}.`}
         actions={
           <Button variant="secondary" onClick={() => refresh()}>
