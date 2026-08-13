@@ -3,8 +3,8 @@ import { inventoryRepository } from "./inventory.repository.js";
 import type { AdjustStockInput, CreatePurchaseOrderInput, CreateSupplierInput } from "./inventory.types.js";
 
 export const inventoryService = {
-  async getInventorySummary(partnerId: string) {
-    return inventoryRepository.getInventorySummary(partnerId);
+  async getInventorySummary(partnerId: string, courtId?: string) {
+    return inventoryRepository.getInventorySummary(partnerId, courtId);
   },
 
   async adjustStock(partnerId: string, data: AdjustStockInput) {

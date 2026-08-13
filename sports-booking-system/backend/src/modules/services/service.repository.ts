@@ -6,77 +6,83 @@ let tablesReady = false;
 let isInitializing = false;
 
 export async function ensureServiceTables() {
-  if (tablesReady || isInitializing) return;
+  if (tablesReady) return;
+  if (isInitializing) return;
   isInitializing = true;
 
-  setTimeout(async () => {
-    try {
-      const statements = [
-        `CREATE EXTENSION IF NOT EXISTS "pgcrypto";`,
-        `ALTER TABLE courts ADD COLUMN IF NOT EXISTS require_deposit BOOLEAN DEFAULT FALSE;`,
-        `ALTER TABLE services ADD COLUMN IF NOT EXISTS court_id VARCHAR(50);`,
-        `CREATE TABLE IF NOT EXISTS service_categories (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          name VARCHAR(100) NOT NULL,
-          slug VARCHAR(100) UNIQUE NOT NULL,
-          description TEXT,
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        );`,
-        `CREATE TABLE IF NOT EXISTS services (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          partner_id VARCHAR(50) NOT NULL,
-          category_id UUID REFERENCES service_categories(id) ON DELETE SET NULL,
-          name VARCHAR(255) NOT NULL,
-          description TEXT,
-          type VARCHAR(50) DEFAULT 'PRODUCT',
-          sport_type VARCHAR(50),
-          price DECIMAL(12, 2) NOT NULL DEFAULT 0,
-          original_price DECIMAL(12, 2),
-          cost_price DECIMAL(12, 2) DEFAULT 0,
-          unit VARCHAR(20) DEFAULT 'lon',
-          image_url TEXT,
-          status VARCHAR(20) DEFAULT 'ACTIVE',
-          track_inventory BOOLEAN DEFAULT TRUE,
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        );`,
-        `CREATE TABLE IF NOT EXISTS court_services (
-          id VARCHAR(20) PRIMARY KEY,
-          court_id VARCHAR(20) NOT NULL,
-          service_id UUID REFERENCES services(id) ON DELETE SET NULL,
-          name VARCHAR(255) NOT NULL,
-          price DECIMAL(12, 2) NOT NULL DEFAULT 0,
-          price_override DECIMAL(12, 2),
-          is_available BOOLEAN DEFAULT TRUE,
-          status VARCHAR(20) DEFAULT 'ACTIVE',
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        );`,
-        `ALTER TABLE booking_services ALTER COLUMN service_id TYPE VARCHAR(100);`,
-        `ALTER TABLE booking_services ALTER COLUMN court_service_id TYPE VARCHAR(100);`,
-        `ALTER TABLE booking_services DROP CONSTRAINT IF EXISTS booking_services_service_id_fkey;`
-      ];
+  try {
+    const statements = [
+      `CREATE EXTENSION IF NOT EXISTS "pgcrypto";`,
+      `ALTER TABLE courts ADD COLUMN IF NOT EXISTS require_deposit BOOLEAN DEFAULT FALSE;`,
+      `ALTER TABLE services ADD COLUMN IF NOT EXISTS court_id VARCHAR(50);`,
+      `CREATE TABLE IF NOT EXISTS service_categories (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(100) NOT NULL,
+        slug VARCHAR(100) UNIQUE NOT NULL,
+        description TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );`,
+      `CREATE TABLE IF NOT EXISTS services (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        partner_id VARCHAR(50) NOT NULL,
+        category_id UUID REFERENCES service_categories(id) ON DELETE SET NULL,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        type VARCHAR(50) DEFAULT 'PRODUCT',
+        sport_type VARCHAR(50),
+        price DECIMAL(12, 2) NOT NULL DEFAULT 0,
+        original_price DECIMAL(12, 2),
+        cost_price DECIMAL(12, 2) DEFAULT 0,
+        unit VARCHAR(20) DEFAULT 'lon',
+        image_url TEXT,
+        status VARCHAR(20) DEFAULT 'ACTIVE',
+        track_inventory BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );`,
+      `CREATE TABLE IF NOT EXISTS court_services (
+        id VARCHAR(20) PRIMARY KEY,
+        court_id VARCHAR(20) NOT NULL,
+        service_id UUID REFERENCES services(id) ON DELETE SET NULL,
+        name VARCHAR(255) NOT NULL,
+        price DECIMAL(12, 2) NOT NULL DEFAULT 0,
+        price_override DECIMAL(12, 2),
+        is_available BOOLEAN DEFAULT TRUE,
+        status VARCHAR(20) DEFAULT 'ACTIVE',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );`,
+      `ALTER TABLE booking_services ALTER COLUMN service_id TYPE VARCHAR(100);`,
+      `ALTER TABLE booking_services ALTER COLUMN court_service_id TYPE VARCHAR(100);`,
+      `ALTER TABLE booking_services DROP CONSTRAINT IF EXISTS booking_services_service_id_fkey;`,
+      `CREATE INDEX IF NOT EXISTS idx_services_court_id ON services(court_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_court_services_court_id ON court_services(court_id);`
+    ];
 
-      for (const statement of statements) {
-        await prisma.$executeRawUnsafe(statement).catch(() => {});
-      }
-
-      console.log("[ServiceRepository] Schema & categories checked/initialized.");
-      await forceSeedAllServicesToDb().catch(() => {});
-    } catch (err) {
-      console.error("[ServiceRepository] Table setup warning:", err);
-    } finally {
-      tablesReady = true;
+    for (const statement of statements) {
+      await prisma.$executeRawUnsafe(statement).catch(() => {});
     }
-  }, 100);
-}
 
-import { seedInventoryData } from "../../scripts/seed_inventory_data.js";
+    console.log("[ServiceRepository] Schema & categories checked/initialized.");
+    await forceSeedAllServicesToDb();
+    tablesReady = true;
+  } catch (err) {
+    console.error("[ServiceRepository] Table setup warning:", err);
+  } finally {
+    isInitializing = false;
+  }
+}
 
 export async function forceSeedAllServicesToDb() {
   try {
-    await seedInventoryData().catch(() => {});
+    console.log("[ServiceRepository] Starting clean service redistribution across courts...");
+    
+    // Ensure columns and types match
+    await prisma.$executeRawUnsafe(`ALTER TABLE services ALTER COLUMN type TYPE VARCHAR(50) USING type::text;`).catch(() => {});
+    await prisma.$executeRawUnsafe(`ALTER TABLE services ADD COLUMN IF NOT EXISTS court_id VARCHAR(50);`).catch(() => {});
+
+    // 1. Ensure categories exist
     const categories = [
       { name: "Đồ uống", slug: "do-uong", description: "Các loại nước giải khát, nước suối, nước tăng lực, bù khoáng" },
       { name: "Đồ ăn", slug: "do-an", description: "Bánh mì, bánh ngọt, đồ ăn nhẹ, mì cốc" },
@@ -104,18 +110,8 @@ export async function forceSeedAllServicesToDb() {
       }
     }
 
-    const partnerRows: any = await prisma.$queryRawUnsafe(`
-      SELECT DISTINCT partner_id as pid FROM courts WHERE partner_id IS NOT NULL AND partner_id != ''
-      UNION
-      SELECT id as pid FROM users WHERE role = 'PARTNER'
-      UNION SELECT 'partner_01' as pid UNION SELECT 'p0001' as pid;
-    `).catch(() => [{ pid: "p0001" }]);
-
-    const partnerIds: string[] = Array.isArray(partnerRows)
-      ? partnerRows.map((r: any) => r.pid).filter(Boolean)
-      : ["p0001"];
-
-    const sampleServices = [
+    // Master sample services pool
+    const masterServices = [
       { name: "Nước suối Aquafina 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 10000, costPrice: 4000, unit: "chai" },
       { name: "Coca Cola 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon" },
       { name: "Pepsi Vị Chanh 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon" },
@@ -125,6 +121,7 @@ export async function forceSeedAllServicesToDb() {
       { name: "Redbull (Bò Húc Thái)", categorySlug: "do-uong", type: "PRODUCT", price: 18000, costPrice: 10000, unit: "lon" },
       { name: "Trà Đào Cam Sả Tươi", categorySlug: "do-uong", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "ly" },
       { name: "Nước Dừa Tươi Ướp Lạnh", categorySlug: "do-uong", type: "PRODUCT", price: 25000, costPrice: 15000, unit: "trái" },
+      { name: "Revive Chanh Muối 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "chai" },
 
       { name: "Hộp Dưa Hấu Ướp Lạnh", categorySlug: "trai-cay", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "hộp" },
       { name: "Hộp Xoài Lắc Muối Ớt", categorySlug: "trai-cay", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "hộp" },
@@ -138,6 +135,9 @@ export async function forceSeedAllServicesToDb() {
       { name: "Mì Ly Cung Đình Bò Hầm", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "ly" },
       { name: "Xúc Xích Nướng Đức", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 7000, unit: "cây" },
       { name: "Bánh Bao Nhân Thịt Trứng Cút", categorySlug: "do-an", type: "PRODUCT", price: 18000, costPrice: 10000, unit: "cái" },
+      { name: "Bánh Ngọt Croissant Bơ Tươi", categorySlug: "do-an", type: "PRODUCT", price: 22000, costPrice: 12000, unit: "cái" },
+      { name: "Gói Snack Lay's Vị Tự Nhiên", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 9000, unit: "gói" },
+      { name: "Mì Cốc Hảo Hảo Tôm Chua Cay", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "cốc" },
 
       { name: "Vớ Thể Thao Yonex", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "đôi" },
       { name: "Khăn Lạnh Ướp Hương", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 5000, costPrice: 2000, unit: "cái" },
@@ -146,98 +146,113 @@ export async function forceSeedAllServicesToDb() {
       { name: "Bóng Tennis Wilson (Hộp 3 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 95000, costPrice: 65000, unit: "hộp" },
       { name: "Cầu Lông Ba Sao Đỏ (Ống 12 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 240000, costPrice: 170000, unit: "ống" },
       { name: "Bóng Pickleball Franklin X-40", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 45000, costPrice: 28000, unit: "quả" },
+      { name: "Quả Cầu Lông Thành Công (Hộp 12)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 250000, costPrice: 180000, unit: "hộp" },
+      { name: "Bóng Tennis Wilson US Open", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 110000, costPrice: 75000, unit: "hộp" },
+      { name: "Vớ Thể Thao Cổ Cao Yonex", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 20000, unit: "đôi" },
+      { name: "Khăn Bông Tắm Thể Thao", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 45000, costPrice: 25000, unit: "cái" },
 
       { name: "Thuê Vợt Tennis Wilson Pro", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 80000, costPrice: 0, unit: "lượt" },
       { name: "Thuê Vợt Cầu Lông Yonex Astrox", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 40000, costPrice: 0, unit: "lượt" },
       { name: "Thuê Vợt Pickleball Selkirk", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 60000, costPrice: 0, unit: "lượt" },
+      { name: "Cho Thuê Vợt Tennis Babolat", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 100000, costPrice: 20000, unit: "lượt" },
+      { name: "Cho Thuê Vợt Cầu Lông Cao Cấp", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 50000, costPrice: 10000, unit: "lượt" },
 
       { name: "Combo Đôi Năng Lượng (2 Suối + 1 Dưa Hấu + 2 Khăn)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 45000, costPrice: 22000, unit: "combo" },
       { name: "Combo Team 4 Đập Phá (4 Nước Ngọt + 1 Đĩa Trái Cây + 4 Khăn)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 110000, costPrice: 58000, unit: "combo" },
       { name: "Combo Thể Lực Tốc Độ (1 Pocari + 1 Redbull + 2 Chuối Sứ)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 42000, costPrice: 22000, unit: "combo" }
     ];
 
-    // Bulk check existing services to prevent N queries
-    const existingRows: any = await prisma.$queryRawUnsafe(`SELECT partner_id, name FROM services;`).catch(() => []);
-    const existingSet = new Set<string>();
-    if (Array.isArray(existingRows)) {
-      for (const r of existingRows) {
-        existingSet.add(`${r.partner_id}:${r.name}`);
-      }
+    // Fetch all courts
+    let courts: any = await prisma.$queryRawUnsafe(`SELECT id, partner_id, name FROM courts ORDER BY id;`).catch(() => []);
+    if (!Array.isArray(courts) || courts.length === 0) {
+      courts = [
+        { id: "c0001", partner_id: "p0001", name: "Sân Cầu Lông / Pickleball 01" },
+        { id: "c0002", partner_id: "p0001", name: "Sân Cầu Lông / Pickleball 02" },
+        { id: "c0003", partner_id: "p0001", name: "Sân Cầu Lông / Pickleball 03" },
+        { id: "c0004", partner_id: "p0001", name: "Sân Cầu Lông / Pickleball 04" },
+        { id: "c0005", partner_id: "p0001", name: "Sân Cầu Lông / Pickleball 05" },
+        { id: "c0006", partner_id: "p0001", name: "Sân Cầu Lông / Pickleball 06" }
+      ];
     }
 
-    let totalInserted = 0;
-    for (const pid of partnerIds) {
-      for (const svc of sampleServices) {
-        const key = `${pid}:${svc.name}`;
-        if (!existingSet.has(key)) {
-          const catId = catMap.get(svc.categorySlug) ?? null;
+    // Clean old duplicate records
+    await prisma.$executeRawUnsafe(`DELETE FROM court_services;`).catch(() => {});
+    await prisma.$executeRawUnsafe(`DELETE FROM service_inventories;`).catch(() => {});
+    await prisma.$executeRawUnsafe(`DELETE FROM services;`).catch(() => {});
+
+    let totalServicesSeeded = 0;
+    let totalLinksSeeded = 0;
+
+    // Distribute services evenly among courts
+    for (let cIdx = 0; cIdx < courts.length; cIdx++) {
+      const court = courts[cIdx];
+      const courtId = court.id;
+      const partnerId = court.partner_id || "p0001";
+
+      const assignedServices = masterServices.filter((_, sIdx) => {
+        return (sIdx + cIdx) % 2 === 0 || (sIdx % 3 === cIdx % 3);
+      });
+
+      for (const svc of assignedServices) {
+        const catId = catMap.get(svc.categorySlug) ?? null;
+
+        let serviceId = "";
+        const inserted: any = await prisma.$queryRawUnsafe(
+          `INSERT INTO services (id, court_id, partner_id, category_id, name, type, price, cost_price, unit, status, track_inventory, created_at, updated_at)
+           VALUES (gen_random_uuid(), $1, $2, CASE WHEN $3::text IS NULL OR $3::text = '' THEN NULL ELSE $3::uuid END, $4, $5, $6, $7, $8, 'ACTIVE', TRUE, NOW(), NOW())
+           RETURNING id;`,
+          courtId, partnerId, catId, svc.name, svc.type, svc.price, svc.costPrice, svc.unit
+        ).catch(async (err) => {
+          console.error("[ServiceRepository] Direct insert error:", err);
+          return [];
+        });
+
+        if (Array.isArray(inserted) && inserted.length > 0) {
+          serviceId = inserted[0].id;
+          totalServicesSeeded++;
+        } else {
           await prisma.$executeRawUnsafe(
-            `INSERT INTO services (id, partner_id, category_id, name, type, price, cost_price, unit, status, track_inventory, created_at, updated_at)
-             VALUES (gen_random_uuid(), $1, CASE WHEN $2::text IS NULL OR $2::text = '' THEN NULL ELSE $2::uuid END, $3, $4, $5, $6, $7, 'ACTIVE', TRUE, NOW(), NOW());`,
-            pid, catId, svc.name, svc.type, svc.price, svc.costPrice, svc.unit
+            `INSERT INTO services (id, court_id, partner_id, category_id, name, type, price, cost_price, unit, status, track_inventory, created_at, updated_at)
+             VALUES (gen_random_uuid(), $1, $2, CASE WHEN $3::text IS NULL OR $3::text = '' THEN NULL ELSE $3::uuid END, $4, $5, $6, $7, $8, 'ACTIVE', TRUE, NOW(), NOW());`,
+            courtId, partnerId, catId, svc.name, svc.type, svc.price, svc.costPrice, svc.unit
           ).catch(() => {});
-          existingSet.add(key);
-          totalInserted++;
-        }
-      }
-    }
-    console.log(`[ServiceRepository] Seeded ${totalInserted} new services into services table.`);
 
-    // Bulk check existing court_services
-    const existingCsRows: any = await prisma.$queryRawUnsafe(`SELECT court_id, service_id FROM court_services;`).catch(() => []);
-    const existingCsSet = new Set<string>();
-    if (Array.isArray(existingCsRows)) {
-      for (const r of existingCsRows) {
-        existingCsSet.add(`${r.court_id}:${r.service_id}`);
-      }
-    }
-
-    const courts: any = await prisma.$queryRawUnsafe(`SELECT id, partner_id, name FROM courts;`).catch(() => []);
-    const allServices: any = await prisma.$queryRawUnsafe(`SELECT id, partner_id, name, price FROM services;`).catch(() => []);
-
-    let mappedCount = 0;
-    if (Array.isArray(courts) && Array.isArray(allServices)) {
-      for (const court of courts) {
-        // Seed 3 real sub-courts (Sân 01, Sân 02, Sân 03) into court_surfaces table
-        for (let i = 1; i <= 3; i++) {
-          const code = `S0${i}`;
-          const surfaceName = `${court.name} - Sân 0${i}`;
-          const customId = `csf_${court.id}_0${i}`;
-          await prisma.$executeRawUnsafe(
-            `INSERT INTO court_surfaces (id, court_id, code, name, capacity, surface, size, status, sort_order, created_at)
-             VALUES ($1, $2, $3, $4, '7 người / Tiêu chuẩn', 'Mặt sân tiêu chuẩn', 'Tiêu chuẩn', 'ACTIVE', $5, NOW())
-             ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, status = 'ACTIVE';`,
-            customId, court.id, code, surfaceName, i
-          ).catch(() => {});
-        }
-
-        const courtSvcs = allServices.filter((s: any) => s.partner_id === court.partner_id || !s.partner_id);
-        const svcsToLink = courtSvcs.length > 0 ? courtSvcs : allServices.slice(0, 35);
-
-        for (const s of svcsToLink) {
-          const csKey = `${court.id}:${s.id}`;
-          if (!existingCsSet.has(csKey)) {
-            await prisma.$executeRawUnsafe(
-              `INSERT INTO court_services (id, court_id, service_id, name, price, is_available, status, created_at, updated_at)
-               VALUES ('cs_' || substr(md5(random()::text || clock_timestamp()::text), 1, 16), $1, $2::uuid, $3, $4, TRUE, 'ACTIVE', NOW(), NOW());`,
-              court.id, s.id, s.name, s.price
-            ).catch(() => {});
-            existingCsSet.add(csKey);
-            mappedCount++;
+          const existing: any = await prisma.$queryRawUnsafe(
+            `SELECT id FROM services WHERE court_id = $1 AND name = $2 LIMIT 1;`,
+            courtId, svc.name
+          ).catch(() => []);
+          if (Array.isArray(existing) && existing.length > 0) {
+            serviceId = existing[0].id;
+            totalServicesSeeded++;
           }
         }
+
+        if (serviceId) {
+          const csCustomId = `cs_${courtId}_${serviceId.slice(0, 8)}`;
+          await prisma.$executeRawUnsafe(
+            `INSERT INTO court_services (id, court_id, service_id, name, price, is_available, status, created_at, updated_at)
+             VALUES ($1, $2, $3::uuid, $4, $5, TRUE, 'ACTIVE', NOW(), NOW())
+             ON CONFLICT (id) DO UPDATE SET price = EXCLUDED.price, status = 'ACTIVE';`,
+            csCustomId, courtId, serviceId, svc.name, svc.price
+          ).catch(() => {});
+          totalLinksSeeded++;
+
+          await prisma.$executeRawUnsafe(
+            `INSERT INTO service_inventories (id, service_id, quantity, reserved_quantity, minimum_stock, unit, last_purchase_price, created_at, updated_at)
+             VALUES (gen_random_uuid(), $1::uuid, 50, 0, 5, $2, $3, NOW(), NOW())
+             ON CONFLICT (service_id) DO UPDATE 
+             SET quantity = GREATEST(service_inventories.quantity, 50),
+                 minimum_stock = 5,
+                 unit = EXCLUDED.unit,
+                 last_purchase_price = EXCLUDED.last_purchase_price,
+                 updated_at = NOW();`,
+            serviceId, svc.unit, svc.costPrice
+          ).catch(() => {});
+        }
       }
     }
 
-    await prisma.$executeRawUnsafe(`
-      INSERT INTO service_inventories (id, service_id, quantity, minimum_stock, unit, created_at, updated_at)
-      SELECT gen_random_uuid(), s.id, 50, 5, COALESCE(s.unit, 'cái'), NOW(), NOW()
-      FROM services s
-      WHERE s.type = 'PRODUCT' 
-        AND NOT EXISTS (SELECT 1 FROM service_inventories si WHERE si.service_id = s.id);
-    `).catch(() => {});
-
-    console.log(`[ServiceRepository] Mapped ${mappedCount} service-court links into court_services table!`);
+    console.log(`[ServiceRepository] Redistributed services across ${courts.length} courts: ${totalServicesSeeded} services created, ${totalLinksSeeded} court-service links.`);
   } catch (err) {
     console.error("[ServiceRepository] forceSeedAllServicesToDb warning:", err);
   }
@@ -361,8 +376,9 @@ export const serviceRepository = {
           FROM services s
           LEFT JOIN service_categories c ON s.category_id = c.id
           LEFT JOIN service_inventories si ON s.id = si.service_id
+          WHERE ($1::text IS NULL OR $1::text = '' OR s.partner_id = $1)
           ORDER BY s.created_at DESC;
-        `).catch(() => []);
+        `, partnerId || "").catch(() => []);
 
         if (Array.isArray(rawSvcs) && rawSvcs.length > 0) {
           services = rawSvcs.map((r: any) => ({
@@ -388,55 +404,20 @@ export const serviceRepository = {
         }
       }
 
-      return services;
+      // Deduplicate by name
+      const seenNames = new Set<string>();
+      const uniqueServices: any[] = [];
+      for (const s of services || []) {
+        if (s && s.name && !seenNames.has(s.name)) {
+          seenNames.add(s.name);
+          uniqueServices.push(s);
+        }
+      }
+
+      return uniqueServices;
     } catch (err) {
       console.error("[ServiceRepository] listPartnerServices error:", err);
-      const rawSvcs: any = await prisma.$queryRawUnsafe(`
-        SELECT 
-          s.id,
-          s.partner_id as "partnerId",
-          s.category_id as "categoryId",
-          s.name,
-          s.description,
-          s.type,
-          s.sport_type as "sportType",
-          s.price,
-          s.cost_price as "costPrice",
-          s.unit,
-          s.image_url as "imageUrl",
-          s.status,
-          s.track_inventory as "trackInventory",
-          c.name as "categoryName",
-          COALESCE(si.quantity, 50) as quantity,
-          COALESCE(si.minimum_stock, 5) as "minimumStock"
-        FROM services s
-        LEFT JOIN service_categories c ON s.category_id = c.id
-        LEFT JOIN service_inventories si ON s.id = si.service_id
-        ORDER BY s.created_at DESC;
-      `).catch(() => []);
-
-      return Array.isArray(rawSvcs)
-        ? rawSvcs.map((r: any) => ({
-            id: r.id,
-            partnerId: r.partnerId,
-            categoryId: r.categoryId,
-            name: r.name,
-            description: r.description,
-            type: r.type,
-            sportType: r.sportType,
-            price: Number(r.price),
-            costPrice: Number(r.costPrice || 0),
-            unit: r.unit,
-            imageUrl: r.imageUrl,
-            status: r.status,
-            trackInventory: r.trackInventory,
-            category: r.categoryName ? { id: r.categoryId, name: r.categoryName } : null,
-            inventory: {
-              quantity: Number(r.quantity),
-              minimumStock: Number(r.minimumStock)
-            }
-          }))
-        : [];
+      return [];
     }
   },
 
@@ -445,7 +426,7 @@ export const serviceRepository = {
       await ensureServiceTables();
 
       let rows: any = await prisma.$queryRawUnsafe(`
-        SELECT 
+        SELECT DISTINCT ON (s.name)
           s.id,
           s.court_id as "courtId",
           s.partner_id as "partnerId",
@@ -461,36 +442,67 @@ export const serviceRepository = {
           sc.slug as "categorySlug"
         FROM services s
         LEFT JOIN service_categories sc ON s.category_id = sc.id
-        WHERE (s.court_id = $1 OR s.court_id IS NULL) AND s.status = 'ACTIVE';
+        WHERE s.court_id = $1 AND (s.status = 'ACTIVE' OR s.status IS NULL)
+        ORDER BY s.name, s.created_at DESC;
       `, courtId).catch(() => []);
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        // Fallback: Query services belonging to the court's partner or all active services, deterministically sliced for this court
+        const courtInfo: any = await prisma.$queryRawUnsafe(`SELECT partner_id FROM courts WHERE id = $1 LIMIT 1;`, courtId).catch(() => []);
+        const partnerId = Array.isArray(courtInfo) && courtInfo.length > 0 ? courtInfo[0].partner_id : null;
+
+        const allSvcRows: any = await prisma.$queryRawUnsafe(`
+          SELECT DISTINCT ON (s.name)
+            s.id,
+            s.partner_id as "partnerId",
+            s.category_id as "categoryId",
+            s.name,
+            s.description,
+            s.type,
+            s.price,
+            s.cost_price as "costPrice",
+            s.unit,
+            s.status,
+            sc.name as "categoryName",
+            sc.slug as "categorySlug"
+          FROM services s
+          LEFT JOIN service_categories sc ON s.category_id = sc.id
+          WHERE (s.status = 'ACTIVE' OR s.status IS NULL) ${partnerId ? `AND (s.partner_id = '${partnerId}' OR s.partner_id IS NULL)` : ""}
+          ORDER BY s.name, s.created_at DESC;
+        `).catch(() => []);
+
+        if (Array.isArray(allSvcRows) && allSvcRows.length > 0) {
+          // Calculate court index from courtId for deterministic distribution
+          const cNum = parseInt(courtId.replace(/\D/g, "")) || 1;
+          const assigned = allSvcRows.filter((_: any, sIdx: number) => {
+            return (sIdx + cNum) % 2 === 0 || (sIdx % 3 === cNum % 3);
+          });
+          rows = assigned.length > 0 ? assigned : allSvcRows.slice(0, 15);
+        }
+      }
 
       if (Array.isArray(rows) && rows.length > 0) {
         if (categoryId) {
           rows = rows.filter((r: any) => r.categoryId === categoryId);
         }
-        return rows.map((r: any) => ({
-          ...r,
-          price: Number(r.price),
-          originalPrice: Number(r.price)
-        }));
+        const seenNames = new Set<string>();
+        const uniqueRows: any[] = [];
+        for (const r of rows) {
+          const key = r && r.name ? String(r.name).trim().toLowerCase() : "";
+          if (key && !seenNames.has(key)) {
+            seenNames.add(key);
+            uniqueRows.push({
+              ...r,
+              courtId: courtId,
+              price: Number(r.price),
+              originalPrice: Number(r.price)
+            });
+          }
+        }
+        return uniqueRows;
       }
 
-      // Fallback if empty
-      const allSvc: any = await prisma.service.findMany({
-        where: { ...(categoryId ? { categoryId } : {}) },
-        include: { category: true }
-      }).catch(() => []);
-
-      return (allSvc || []).map((s: any) => ({
-        id: s.id,
-        name: s.name,
-        type: s.type || "PRODUCT",
-        unit: s.unit || "cái",
-        price: Number(s.price),
-        categoryId: s.categoryId,
-        category: s.category,
-        isAvailable: true
-      }));
+      return [];
     } catch (err) {
       console.error("[ServiceRepository] listServicesForCourt error:", err);
       return [];

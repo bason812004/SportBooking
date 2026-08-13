@@ -71,8 +71,8 @@ export interface PurchaseOrder {
 }
 
 export const inventoryApi = {
-  async getSummary() {
-    const res = await api.get<ApiResponse<{ summary: InventorySummary; items: InventoryItem[] }>>("/partner/inventory/summary");
+  async getSummary(courtId?: string) {
+    const res = await api.get<ApiResponse<{ summary: InventorySummary; items: InventoryItem[] }>>("/partner/inventory/summary", { params: { courtId } });
     return res.data.data;
   },
 

@@ -31,8 +31,20 @@ export function PartnerInventoryPage() {
         inventoryApi.getSummary(),
         inventoryApi.getTransactions(50)
       ]);
-      setSummary(invData.summary);
-      setItems(invData.items);
+      const seen = new Set<string>();
+      const uniqueItems: InventoryItem[] = [];
+      for (const item of invData.items || []) {
+        const key = item && item.serviceName ? String(item.serviceName).trim().toLowerCase() : "";
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          uniqueItems.push(item);
+        }
+      }
+      setSummary({
+        ...invData.summary,
+        totalProducts: uniqueItems.length
+      });
+      setItems(uniqueItems);
       setTransactions(txData);
     } catch (err) {
       console.error("Failed to load inventory:", err);

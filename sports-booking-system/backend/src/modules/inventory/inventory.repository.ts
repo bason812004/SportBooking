@@ -8,36 +8,66 @@ function purchaseOrderCode() {
 }
 
 export const inventoryRepository = {
-  async getInventorySummary(partnerId: string) {
+  async getInventorySummary(partnerId: string, courtId?: string) {
     await ensureServiceTables();
     try {
-      let services = await prisma.service.findMany({
-        where: { partnerId, trackInventory: true },
-        include: {
-          category: true,
-          inventory: true
-        }
-      });
+      let rawRows: any[] = [];
 
-      if (!services || services.length === 0) {
-        services = await prisma.service.findMany({
-          where: { trackInventory: true },
-          include: {
-            category: true,
-            inventory: true
-          }
-        });
+      if (courtId && courtId.trim() !== "") {
+        rawRows = await prisma.$queryRawUnsafe(`
+          SELECT DISTINCT ON (s.name)
+            s.id as "serviceId",
+            s.court_id as "courtId",
+            s.name as "serviceName",
+            s.unit,
+            s.price,
+            s.cost_price as "costPrice",
+            c.name as "categoryName",
+            COALESCE(si.quantity, 50) as quantity,
+            COALESCE(si.minimum_stock, 5) as "minimumStock"
+          FROM services s
+          LEFT JOIN service_categories c ON s.category_id = c.id
+          LEFT JOIN service_inventories si ON s.id = si.service_id
+          WHERE s.court_id = $1 AND (s.status = 'ACTIVE' OR s.status IS NULL)
+          ORDER BY s.name, s.created_at DESC;
+        `, courtId).catch(() => []);
+      } else {
+        rawRows = await prisma.$queryRawUnsafe(`
+          SELECT DISTINCT ON (s.name)
+            s.id as "serviceId",
+            s.court_id as "courtId",
+            s.name as "serviceName",
+            s.unit,
+            s.price,
+            s.cost_price as "costPrice",
+            c.name as "categoryName",
+            COALESCE(si.quantity, 50) as quantity,
+            COALESCE(si.minimum_stock, 5) as "minimumStock"
+          FROM services s
+          LEFT JOIN service_categories c ON s.category_id = c.id
+          LEFT JOIN service_inventories si ON s.id = si.service_id
+          WHERE (s.status = 'ACTIVE' OR s.status IS NULL)
+            AND ($1::text IS NULL OR $1::text = '' OR s.partner_id = $1 OR s.court_id IN (SELECT id FROM courts WHERE partner_id = $1))
+          ORDER BY s.name, s.created_at DESC;
+        `, partnerId || "").catch(() => []);
       }
 
+      const seenNames = new Set<string>();
+      const items: any[] = [];
       let totalItems = 0;
       let totalStockValue = 0;
       let lowStockCount = 0;
       let outOfStockCount = 0;
 
-      const items = services.map((svc) => {
-        const qty = svc.inventory?.quantity ?? 50;
-        const minStock = svc.inventory?.minimumStock ?? 5;
-        const cost = Number(svc.costPrice ?? 0);
+      for (const r of rawRows || []) {
+        if (!r || !r.serviceName) continue;
+        const key = String(r.serviceName).trim().toLowerCase();
+        if (!key || seenNames.has(key)) continue;
+        seenNames.add(key);
+
+        const qty = Number(r.quantity ?? 50);
+        const minStock = Number(r.minimumStock ?? 5);
+        const cost = Number(r.costPrice ?? 0);
         const stockVal = qty * cost;
 
         totalItems += qty;
@@ -46,77 +76,20 @@ export const inventoryRepository = {
         if (qty === 0) outOfStockCount++;
         else if (qty <= minStock) lowStockCount++;
 
-        return {
-          serviceId: svc.id,
-          serviceName: svc.name,
-          categoryName: svc.category?.name ?? "Khác",
-          unit: svc.unit,
+        items.push({
+          serviceId: r.serviceId,
+          courtId: r.courtId,
+          serviceName: r.serviceName,
+          categoryName: r.categoryName ?? "Khác",
+          unit: r.unit || "cái",
           quantity: qty,
           minimumStock: minStock,
           costPrice: cost,
-          price: Number(svc.price),
+          price: Number(r.price),
           stockValue: stockVal,
           status: qty === 0 ? "OUT_OF_STOCK" : qty <= minStock ? "LOW_STOCK" : "NORMAL"
-        };
-      });
-
-      return {
-        summary: {
-          totalProducts: services.length,
-          totalItems,
-          totalStockValue,
-          lowStockCount,
-          outOfStockCount
-        },
-        items
-      };
-    } catch (err) {
-      console.error("getInventorySummary error:", err);
-      const rawRows: any = await prisma.$queryRawUnsafe(`
-        SELECT 
-          s.id as "serviceId",
-          s.name as "serviceName",
-          s.unit,
-          s.price,
-          s.cost_price as "costPrice",
-          c.name as "categoryName",
-          COALESCE(si.quantity, 50) as quantity,
-          COALESCE(si.minimum_stock, 5) as "minimumStock"
-        FROM services s
-        LEFT JOIN service_categories c ON s.category_id = c.id
-        LEFT JOIN service_inventories si ON s.id = si.service_id;
-      `).catch(() => []);
-
-      let totalItems = 0;
-      let totalStockValue = 0;
-      let lowStockCount = 0;
-      let outOfStockCount = 0;
-
-      const items = (Array.isArray(rawRows) ? rawRows : []).map((svc: any) => {
-        const qty = Number(svc.quantity ?? 50);
-        const minStock = Number(svc.minimumStock ?? 5);
-        const cost = Number(svc.costPrice ?? 0);
-        const stockVal = qty * cost;
-
-        totalItems += qty;
-        totalStockValue += stockVal;
-
-        if (qty === 0) outOfStockCount++;
-        else if (qty <= minStock) lowStockCount++;
-
-        return {
-          serviceId: svc.serviceId,
-          serviceName: svc.serviceName,
-          categoryName: svc.categoryName ?? "Khác",
-          unit: svc.unit || "cái",
-          quantity: qty,
-          minimumStock: minStock,
-          costPrice: cost,
-          price: Number(svc.price || 0),
-          stockValue: stockVal,
-          status: qty === 0 ? "OUT_OF_STOCK" : qty <= minStock ? "LOW_STOCK" : "NORMAL"
-        };
-      });
+        });
+      }
 
       return {
         summary: {
@@ -127,6 +100,12 @@ export const inventoryRepository = {
           outOfStockCount
         },
         items
+      };
+    } catch (err) {
+      console.error("getInventorySummary error:", err);
+      return {
+        summary: { totalProducts: 0, totalItems: 0, totalStockValue: 0, lowStockCount: 0, outOfStockCount: 0 },
+        items: []
       };
     }
   },

@@ -9,6 +9,7 @@ export const serviceRoutes = Router();
 
 // Public / User routes
 serviceRoutes.get("/categories", asyncHandler(serviceController.listCategories));
+serviceRoutes.get("/redistribute", asyncHandler(serviceController.redistributeServices));
 serviceRoutes.get("/courts/:courtId", asyncHandler(serviceController.listCourtServices));
 serviceRoutes.get("/detail/:id", asyncHandler(serviceController.getServiceById));
 

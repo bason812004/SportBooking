@@ -26,7 +26,8 @@ async function getPartnerId(userId: string): Promise<string> {
 export const inventoryController = {
   async getInventorySummary(req: Request, res: Response) {
     const partnerId = await getPartnerId(req.user!.id);
-    const data = await inventoryService.getInventorySummary(partnerId);
+    const courtId = req.query.courtId as string | undefined;
+    const data = await inventoryService.getInventorySummary(partnerId, courtId);
     return sendSuccess(res, data);
   },
 

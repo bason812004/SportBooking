@@ -12,7 +12,8 @@
     "prisma:pull": "prisma db pull",
     "prisma:seed": "tsx prisma/seed.ts",
     "seed:services": "tsx src/scripts/seed_all_services.ts",
-    "db:migrate": "node migrate_db.cjs"
+    "db:migrate": "node migrate_db.cjs",
+    "db:redistribute": "node run_redistribute.cjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

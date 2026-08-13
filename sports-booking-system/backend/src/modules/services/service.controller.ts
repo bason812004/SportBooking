@@ -3,6 +3,7 @@ import { prisma } from "../../config/db.js";
 import { ForbiddenError } from "../../shared/errors/AppError.js";
 import { sendSuccess } from "../../shared/utils/response.js";
 import { serviceService } from "./service.service.js";
+import { forceSeedAllServicesToDb } from "./service.repository.js";
 import { createServiceCategorySchema, createServiceSchema, updateServiceSchema } from "./service.validation.js";
 
 async function getPartnerId(userId: string): Promise<string> {
@@ -25,6 +26,11 @@ async function getPartnerId(userId: string): Promise<string> {
 }
 
 export const serviceController = {
+  async redistributeServices(_req: Request, res: Response) {
+    await forceSeedAllServicesToDb();
+    return sendSuccess(res, { message: "Redistributed services successfully" });
+  },
+
   async listCategories(_req: Request, res: Response) {
     const categories = await serviceService.listCategories();
     return sendSuccess(res, categories);
