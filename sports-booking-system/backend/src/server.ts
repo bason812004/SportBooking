@@ -32,3 +32,34 @@ process.on("SIGINT", async () => {
   await prisma.$disconnect();
   server.close(() => process.exit(0));
 });
+
+// Trigger reload for resilient raw SQL getActiveBookings implementation
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

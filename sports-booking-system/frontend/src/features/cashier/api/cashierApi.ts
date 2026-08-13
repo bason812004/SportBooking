@@ -99,5 +99,10 @@ export const cashierApi = {
   async returnRentalItem(rentalItemId: string, status: "RETURNED" | "DAMAGED" | "LOST", notes?: string) {
     const res = await api.post<ApiResponse<any>>("/cashier/rentals/return", { rentalItemId, status, notes });
     return res.data.data;
+  },
+
+  async seedTestBookings() {
+    const res = await api.get<ApiResponse<any>>("/cashier/seed-test-bookings");
+    return res.data;
   }
 };

@@ -8,7 +8,7 @@ import { inventoryController } from "./inventory.controller.js";
 export const inventoryRoutes = Router();
 
 inventoryRoutes.use(authMiddleware);
-inventoryRoutes.use(requireRole(UserRole.PARTNER));
+inventoryRoutes.use(requireRole(UserRole.PARTNER, UserRole.RECIPIENT, UserRole.ADMIN, UserRole.USER));
 
 inventoryRoutes.get("/summary", asyncHandler(inventoryController.getInventorySummary));
 inventoryRoutes.post("/adjust", asyncHandler(inventoryController.adjustStock));

@@ -6,7 +6,10 @@ export const createServiceCategorySchema = z.object({
 });
 
 export const createServiceSchema = z.object({
-  categoryId: z.string().optional().nullable(),
+  categoryId: z.preprocess(
+    (val) => (typeof val === "string" && (val.trim() === "" || val === "ALL") ? null : val),
+    z.string().optional().nullable()
+  ),
   name: z.string().min(2, "Tên dịch vụ/sản phẩm ít nhất 2 ký tự"),
   description: z.string().optional().nullable(),
   type: z.enum(["PRODUCT", "RENTAL_SERVICE"]),
@@ -14,9 +17,12 @@ export const createServiceSchema = z.object({
   price: z.coerce.number().min(0, "Giá bán không được âm"),
   costPrice: z.coerce.number().min(0, "Giá nhập không được âm").optional().default(0),
   unit: z.string().optional().default("cái"),
-  imageUrl: z.string().url().optional().nullable().or(z.literal("")),
+  imageUrl: z.preprocess(
+    (val) => (typeof val === "string" && val.trim() === "" ? null : val),
+    z.string().optional().nullable()
+  ),
   trackInventory: z.boolean().optional().default(true),
-  initialStock: z.coerce.number().min(0).optional().default(0),
+  initialStock: z.coerce.number().min(0).optional().default(50),
   minimumStock: z.coerce.number().min(0).optional().default(5)
 });
 

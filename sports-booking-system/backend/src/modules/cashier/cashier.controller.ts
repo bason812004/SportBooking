@@ -1,8 +1,10 @@
 import type { Request, Response } from "express";
+import { BookingStatus } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 import { ForbiddenError } from "../../shared/errors/AppError.js";
 import { sendSuccess } from "../../shared/utils/response.js";
 import { cashierService } from "./cashier.service.js";
+import { resetAndSeed5TestBookings } from "../../scripts/reset_and_seed_test_bookings.js";
 
 async function getPartnerId(userId: string, role: string): Promise<string | null> {
   if (role === "PARTNER") {
@@ -57,5 +59,15 @@ export const cashierController = {
     const { rentalItemId, status, notes } = req.body;
     const data = await cashierService.returnRentalItem({ rentalItemId, status, notes });
     return sendSuccess(res, data, 200, "Xử lý trả thiết bị cho thuê thành công");
+  },
+
+  async seedTestBookings(_req: Request, res: Response) {
+    try {
+      const createdBookings = await resetAndSeed5TestBookings();
+      return sendSuccess(res, createdBookings, 201, `Đã dọn dẹp và tạo lại ${createdBookings.length} đơn mới hôm nay để test!`);
+    } catch (error: any) {
+      console.error("seedTestBookings error:", error);
+      return res.status(200).json({ success: false, error: error.message || String(error) });
+    }
   }
 };

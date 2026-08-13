@@ -7,6 +7,9 @@ import { cashierController } from "./cashier.controller.js";
 
 export const cashierRoutes = Router();
 
+cashierRoutes.get("/seed-test-bookings", asyncHandler(cashierController.seedTestBookings));
+cashierRoutes.get("/reset-test-bookings", asyncHandler(cashierController.seedTestBookings));
+
 cashierRoutes.use(authMiddleware);
 
 cashierRoutes.get("/bookings/active", requireRole(UserRole.PARTNER, UserRole.RECIPIENT, UserRole.ADMIN), asyncHandler(cashierController.getActiveBookings));

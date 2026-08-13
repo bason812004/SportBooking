@@ -52,7 +52,10 @@ export async function ensureServiceTables() {
           status VARCHAR(20) DEFAULT 'ACTIVE',
           created_at TIMESTAMPTZ DEFAULT NOW(),
           updated_at TIMESTAMPTZ DEFAULT NOW()
-        );`
+        );`,
+        `ALTER TABLE booking_services ALTER COLUMN service_id TYPE VARCHAR(100);`,
+        `ALTER TABLE booking_services ALTER COLUMN court_service_id TYPE VARCHAR(100);`,
+        `ALTER TABLE booking_services DROP CONSTRAINT IF EXISTS booking_services_service_id_fkey;`
       ];
 
       for (const statement of statements) {
@@ -69,8 +72,11 @@ export async function ensureServiceTables() {
   }, 100);
 }
 
+import { seedInventoryData } from "../../scripts/seed_inventory_data.js";
+
 export async function forceSeedAllServicesToDb() {
   try {
+    await seedInventoryData().catch(() => {});
     const categories = [
       { name: "Đồ uống", slug: "do-uong", description: "Các loại nước giải khát, nước suối, nước tăng lực, bù khoáng" },
       { name: "Đồ ăn", slug: "do-an", description: "Bánh mì, bánh ngọt, đồ ăn nhẹ, mì cốc" },
@@ -167,7 +173,7 @@ export async function forceSeedAllServicesToDb() {
           const catId = catMap.get(svc.categorySlug) ?? null;
           await prisma.$executeRawUnsafe(
             `INSERT INTO services (id, partner_id, category_id, name, type, price, cost_price, unit, status, track_inventory, created_at, updated_at)
-             VALUES (gen_random_uuid(), $1, $2::uuid, $3, $4, $5, $6, $7, 'ACTIVE', TRUE, NOW(), NOW());`,
+             VALUES (gen_random_uuid(), $1, CASE WHEN $2::text IS NULL OR $2::text = '' THEN NULL ELSE $2::uuid END, $3, $4, $5, $6, $7, 'ACTIVE', TRUE, NOW(), NOW());`,
             pid, catId, svc.name, svc.type, svc.price, svc.costPrice, svc.unit
           ).catch(() => {});
           existingSet.add(key);
@@ -222,6 +228,15 @@ export async function forceSeedAllServicesToDb() {
         }
       }
     }
+
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO service_inventories (id, service_id, quantity, minimum_stock, unit, created_at, updated_at)
+      SELECT gen_random_uuid(), s.id, 50, 5, COALESCE(s.unit, 'cái'), NOW(), NOW()
+      FROM services s
+      WHERE s.type = 'PRODUCT' 
+        AND NOT EXISTS (SELECT 1 FROM service_inventories si WHERE si.service_id = s.id);
+    `).catch(() => {});
+
     console.log(`[ServiceRepository] Mapped ${mappedCount} service-court links into court_services table!`);
   } catch (err) {
     console.error("[ServiceRepository] forceSeedAllServicesToDb warning:", err);
@@ -299,28 +314,129 @@ export const serviceRepository = {
   async listPartnerServices(partnerId: string, categoryId?: string, search?: string) {
     await ensureServiceTables();
     try {
-      return await prisma.service.findMany({
-        where: {
-          partnerId,
-          ...(categoryId ? { categoryId } : {}),
-          ...(search
-            ? {
-                OR: [
-                  { name: { contains: search, mode: "insensitive" } },
-                  { description: { contains: search, mode: "insensitive" } }
-                ]
-              }
-            : {})
-        },
+      const validCategoryId = categoryId && categoryId.trim() !== "" ? categoryId.trim() : undefined;
+      const validSearch = search && search.trim() !== "" ? search.trim() : undefined;
+
+      const where: any = {
+        ...(partnerId ? { partnerId } : {}),
+        ...(validCategoryId ? { categoryId: validCategoryId } : {}),
+        ...(validSearch
+          ? {
+              OR: [
+                { name: { contains: validSearch, mode: "insensitive" } },
+                { description: { contains: validSearch, mode: "insensitive" } }
+              ]
+            }
+          : {})
+      };
+
+      let services = await prisma.service.findMany({
+        where,
         include: {
           category: true,
           inventory: true
         },
         orderBy: { createdAt: "desc" }
       });
+
+      if (!Array.isArray(services) || services.length === 0) {
+        const rawSvcs: any = await prisma.$queryRawUnsafe(`
+          SELECT 
+            s.id,
+            s.partner_id as "partnerId",
+            s.category_id as "categoryId",
+            s.name,
+            s.description,
+            s.type,
+            s.sport_type as "sportType",
+            s.price,
+            s.cost_price as "costPrice",
+            s.unit,
+            s.image_url as "imageUrl",
+            s.status,
+            s.track_inventory as "trackInventory",
+            c.name as "categoryName",
+            COALESCE(si.quantity, 50) as quantity,
+            COALESCE(si.minimum_stock, 5) as "minimumStock"
+          FROM services s
+          LEFT JOIN service_categories c ON s.category_id = c.id
+          LEFT JOIN service_inventories si ON s.id = si.service_id
+          ORDER BY s.created_at DESC;
+        `).catch(() => []);
+
+        if (Array.isArray(rawSvcs) && rawSvcs.length > 0) {
+          services = rawSvcs.map((r: any) => ({
+            id: r.id,
+            partnerId: r.partnerId,
+            categoryId: r.categoryId,
+            name: r.name,
+            description: r.description,
+            type: r.type,
+            sportType: r.sportType,
+            price: Number(r.price),
+            costPrice: Number(r.costPrice || 0),
+            unit: r.unit,
+            imageUrl: r.imageUrl,
+            status: r.status,
+            trackInventory: r.trackInventory,
+            category: r.categoryName ? { id: r.categoryId, name: r.categoryName } : null,
+            inventory: {
+              quantity: Number(r.quantity),
+              minimumStock: Number(r.minimumStock)
+            }
+          })) as any;
+        }
+      }
+
+      return services;
     } catch (err) {
       console.error("[ServiceRepository] listPartnerServices error:", err);
-      return [];
+      const rawSvcs: any = await prisma.$queryRawUnsafe(`
+        SELECT 
+          s.id,
+          s.partner_id as "partnerId",
+          s.category_id as "categoryId",
+          s.name,
+          s.description,
+          s.type,
+          s.sport_type as "sportType",
+          s.price,
+          s.cost_price as "costPrice",
+          s.unit,
+          s.image_url as "imageUrl",
+          s.status,
+          s.track_inventory as "trackInventory",
+          c.name as "categoryName",
+          COALESCE(si.quantity, 50) as quantity,
+          COALESCE(si.minimum_stock, 5) as "minimumStock"
+        FROM services s
+        LEFT JOIN service_categories c ON s.category_id = c.id
+        LEFT JOIN service_inventories si ON s.id = si.service_id
+        ORDER BY s.created_at DESC;
+      `).catch(() => []);
+
+      return Array.isArray(rawSvcs)
+        ? rawSvcs.map((r: any) => ({
+            id: r.id,
+            partnerId: r.partnerId,
+            categoryId: r.categoryId,
+            name: r.name,
+            description: r.description,
+            type: r.type,
+            sportType: r.sportType,
+            price: Number(r.price),
+            costPrice: Number(r.costPrice || 0),
+            unit: r.unit,
+            imageUrl: r.imageUrl,
+            status: r.status,
+            trackInventory: r.trackInventory,
+            category: r.categoryName ? { id: r.categoryId, name: r.categoryName } : null,
+            inventory: {
+              quantity: Number(r.quantity),
+              minimumStock: Number(r.minimumStock)
+            }
+          }))
+        : [];
     }
   },
 
@@ -384,10 +500,13 @@ export const serviceRepository = {
   async createService(partnerId: string, data: CreateServiceInput) {
     await ensureServiceTables();
     return prisma.$transaction(async (tx) => {
+      const cleanCategoryId = data.categoryId && data.categoryId.trim() !== "" && data.categoryId !== "ALL" ? data.categoryId.trim() : null;
+      const cleanImageUrl = data.imageUrl && data.imageUrl.trim() !== "" ? data.imageUrl.trim() : null;
+
       const service = await tx.service.create({
         data: {
           partnerId,
-          categoryId: data.categoryId ?? null,
+          categoryId: cleanCategoryId,
           name: data.name,
           description: data.description ?? null,
           type: data.type,
@@ -395,33 +514,52 @@ export const serviceRepository = {
           price: data.price,
           costPrice: data.costPrice ?? 0,
           unit: data.unit ?? "cái",
-          imageUrl: data.imageUrl ?? null,
+          imageUrl: cleanImageUrl,
           trackInventory: data.trackInventory ?? true
         }
       });
 
+      const initialQty = data.initialStock ?? 50;
       if (data.trackInventory) {
         await tx.serviceInventory.create({
           data: {
             serviceId: service.id,
-            quantity: data.initialStock ?? 0,
+            quantity: initialQty,
             minimumStock: data.minimumStock ?? 5,
             unit: data.unit ?? "cái",
             lastPurchasePrice: data.costPrice ?? 0
           }
         });
 
-        if ((data.initialStock ?? 0) > 0) {
+        if (initialQty > 0) {
           await tx.inventoryTransaction.create({
             data: {
               serviceId: service.id,
               type: "IMPORT",
-              quantity: data.initialStock ?? 0,
+              quantity: initialQty,
               unitCost: data.costPrice ?? 0,
               referenceType: "INITIAL_STOCK",
               note: "Tồn kho khởi tạo ban đầu"
             }
           });
+        }
+      }
+
+      // Map new service to court_services for all courts
+      const courts: any = await tx.$queryRawUnsafe(
+        `SELECT id FROM courts WHERE partner_id = $1 OR partner_id = 'p0001';`,
+        partnerId
+      ).catch(() => []);
+
+      if (Array.isArray(courts) && courts.length > 0) {
+        for (const court of courts) {
+          const customId = `cs_${court.id}_${service.id.slice(0, 8)}`;
+          await tx.$executeRawUnsafe(
+            `INSERT INTO court_services (id, court_id, service_id, name, price, is_available, status, created_at, updated_at)
+             VALUES ($1, $2, $3::uuid, $4, $5, TRUE, 'ACTIVE', NOW(), NOW())
+             ON CONFLICT (id) DO UPDATE SET price = EXCLUDED.price, status = 'ACTIVE';`,
+            customId, court.id, service.id, service.name, service.price
+          ).catch(() => {});
         }
       }
 

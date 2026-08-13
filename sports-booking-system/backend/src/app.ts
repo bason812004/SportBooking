@@ -110,6 +110,7 @@ app.use("/api/partner/settlements", partnerSettlementRoutes);
 app.use("/api/partner/withdrawals", partnerWithdrawalRoutes);
 app.use("/api/services", serviceRoutes);
 app.use("/api/partner/inventory", inventoryRoutes);
+app.use("/api/inventory", inventoryRoutes);
 app.use("/api/cashier", cashierRoutes);
 app.use("/api/checkouts", checkoutRoutes);
 app.use("/api/partner", partnerRoutes);

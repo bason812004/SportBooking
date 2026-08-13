@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Boxes, AlertTriangle, ArrowUpRight, ArrowDownLeft, RefreshCw, History, ShieldAlert, DollarSign } from "lucide-react";
+import { Boxes, AlertTriangle, ArrowUpRight, ArrowDownLeft, RefreshCw, History, ShieldAlert, DollarSign, Edit3 } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Modal } from "../../components/ui/Modal";
@@ -250,13 +250,12 @@ export function PartnerInventoryPage() {
                         )}
                       </td>
                       <td className="p-4 text-right">
-                        <Button
-                          size="sm"
-                          className="bg-slate-100 text-slate-800 hover:bg-slate-200"
+                        <button
                           onClick={() => handleOpenModalAdjust(item)}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-1.5 text-xs font-extrabold text-[#02712a] transition hover:bg-[#02712a] hover:text-white hover:border-[#02712a] shadow-sm active:scale-95"
                         >
-                          Khởi tạo / Điều chỉnh
-                        </Button>
+                          <Edit3 className="h-3.5 w-3.5" /> Điều chỉnh kho
+                        </button>
                       </td>
                     </tr>
                   ))
