@@ -13,6 +13,8 @@ const canView = requireRole(UserRole.PARTNER, UserRole.RECIPIENT);
 const canManage = requireRole(UserRole.PARTNER);
 
 inventoryRoutes.get("/summary", canView, asyncHandler(inventoryController.getInventorySummary));
+inventoryRoutes.get("/alerts", canView, asyncHandler(inventoryController.getLowStockAlerts));
+inventoryRoutes.get("/reorder-suggestions", canView, asyncHandler(inventoryController.getReorderSuggestions));
 inventoryRoutes.post("/adjust", canManage, asyncHandler(inventoryController.adjustStock));
 inventoryRoutes.get("/transactions", canView, asyncHandler(inventoryController.getTransactions));
 inventoryRoutes.get("/suppliers", canView, asyncHandler(inventoryController.listSuppliers));

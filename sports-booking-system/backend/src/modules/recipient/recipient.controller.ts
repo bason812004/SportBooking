@@ -36,7 +36,7 @@ export const recipientController = {
   createRecurringWalkInBooking: asyncHandler(async (req, res) =>
     sendSuccess(res, await recipientService.createRecurringWalkInBooking(req.user!.id, req.body), 201)
   ),
-  earlyCheckInBooking: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.earlyCheckInBooking(req.user!.id, req.params.id))),
+  checkInBooking: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.checkInBooking(req.user!.id, req.params.id))),
   earlyCheckOutBooking: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.earlyCheckOutBooking(req.user!.id, req.params.id))),
   paymentStatus: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.paymentStatus(req.user!.id, req.params.id))),
   confirmWalkInPayment: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.confirmWalkInPayment(req.user!.id, req.params.id)))

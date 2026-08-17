@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ShoppingBag,
@@ -11,6 +11,7 @@ import {
   User,
   ArrowLeft,
   CheckCircle2,
+  AlertCircle,
   Sparkles,
   Phone,
   LayoutGrid,
@@ -36,14 +37,13 @@ export function CashierBookingPosPage() {
   const [categories, setCategories] = useState<ServiceCategory[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+  const showToast = (msg: string, type: "success" | "error" = "success") => {
+    setToast({ message: msg, type });
+    setTimeout(() => setToast(null), 3000);
   };
 
   // Locked Invoices persistent map (shared key with PartnerCashierPage)
@@ -76,8 +76,10 @@ export function CashierBookingPosPage() {
     if (!bookingId) return;
     setLoading(true);
     try {
-      const bDetail = await cashierApi.getBookingDetail(bookingId).catch(() => null);
-      const cats = await serviceApi.getCategories().catch(() => []);
+      const [bDetail, cats] = await Promise.all([
+        cashierApi.getBookingDetail(bookingId).catch(() => null),
+        serviceApi.getCategories().catch(() => [])
+      ]);
 
       setDetail(bDetail);
       setCategories(cats || []);
@@ -104,88 +106,125 @@ export function CashierBookingPosPage() {
     fetchDetail();
   }, [bookingId, selectedCategory]);
 
-  const handleAddService = async (service: ServiceItem) => {
-    if (!bookingId || submitting) return;
-    if (isLocked) {
-      showToast("Hóa đơn đã khóa. Vui lòng mở khóa để thêm dịch vụ!");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const res = await cashierApi.addServiceToBooking(bookingId, service.id, 1);
-      if (res?.totals) {
-        setDetail(res.totals);
-      } else {
-        await fetchDetail();
-      }
-      showToast(`Đã thêm "${service.name}" vào hóa đơn`);
-    } catch (err: any) {
-      // Optimistic update fallback
-      if (detail) {
-        const existingIdx = detail.activeServices.findIndex((s) => s.serviceId === service.id || s.service?.name === service.name);
-        let updatedServices = [...detail.activeServices];
-        if (existingIdx >= 0) {
-          const existing = updatedServices[existingIdx];
-          const newQty = existing.quantity + 1;
-          const newTotal = newQty * Number(service.price);
-          updatedServices[existingIdx] = {
-            ...existing,
+  // Per-service pending state + debounce + sequential send queue, so bursts of rapid clicks
+  // (on the same or different services) collapse into 1 accurate request per service instead
+  // of being silently dropped by a single page-wide "submitting" lock.
+  const pendingDeltaRef = useRef<Record<string, number>>({});
+  const pendingQtyTargetRef = useRef<Record<string, number>>({});
+  const debounceTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const flushQueueRef = useRef<Record<string, Promise<void>>>({});
+
+  const hasPendingWork = (serviceId: string) => Boolean(pendingDeltaRef.current[serviceId]) || serviceId in pendingQtyTargetRef.current;
+
+  // Instant local recompute so the UI never waits on the network to reflect a click.
+  const patchCartQuantity = (serviceId: string, newQty: number, fallbackService?: ServiceItem) => {
+    setDetail((prev) => {
+      if (!prev) return prev;
+      let services: ActiveBookingService[];
+      const idx = prev.activeServices.findIndex((s) => (s.serviceId || s.id) === serviceId);
+      if (newQty <= 0) {
+        services = prev.activeServices.filter((s) => (s.serviceId || s.id) !== serviceId);
+      } else if (idx >= 0) {
+        const existing = prev.activeServices[idx];
+        const unitPrice = Number(existing.unitPrice || existing.price);
+        services = [...prev.activeServices];
+        services[idx] = { ...existing, quantity: newQty, totalPrice: unitPrice * newQty };
+      } else if (fallbackService) {
+        services = [
+          ...prev.activeServices,
+          {
+            id: `temp_${Date.now()}`,
+            bookingId: bookingId!,
+            serviceId: fallbackService.id,
             quantity: newQty,
-            totalPrice: newTotal
-          };
-        } else {
-          updatedServices.push({
-            id: "temp_" + Date.now(),
-            bookingId,
-            serviceId: service.id,
-            quantity: 1,
-            price: Number(service.price),
-            unitPrice: Number(service.price),
-            totalPrice: Number(service.price),
+            price: Number(fallbackService.price),
+            unitPrice: Number(fallbackService.price),
+            totalPrice: Number(fallbackService.price) * newQty,
             status: "ACTIVE",
             addedBy: "CASHIER",
-            service: { id: service.id, name: service.name, type: service.type, unit: service.unit }
-          });
-        }
-        const newServiceSubtotal = updatedServices.reduce((sum, item) => sum + Number(item.totalPrice), 0);
-        const newGrandTotal = detail.courtSubtotal + newServiceSubtotal - detail.voucherDiscount;
-        setDetail({
-          ...detail,
-          serviceSubtotal: newServiceSubtotal,
-          grandTotal: newGrandTotal,
-          remainingAmount: Math.max(0, newGrandTotal - detail.depositPaid),
-          activeServices: updatedServices
-        });
+            service: { id: fallbackService.id, name: fallbackService.name, type: fallbackService.type as any, unit: fallbackService.unit }
+          }
+        ];
+      } else {
+        services = prev.activeServices;
       }
-      showToast(`Đã thêm "${service.name}" vào giỏ hàng`);
-    } finally {
-      setSubmitting(false);
-    }
+      const serviceSubtotal = services.reduce((sum, item) => sum + Number(item.totalPrice), 0);
+      const grandTotal = prev.courtSubtotal + serviceSubtotal - prev.voucherDiscount;
+      return {
+        ...prev,
+        serviceSubtotal,
+        grandTotal,
+        remainingAmount: Math.max(0, grandTotal - prev.depositPaid),
+        activeServices: services
+      };
+    });
   };
 
-  const handleUpdateQty = async (serviceId: string, quantity: number) => {
-    if (!bookingId || submitting) return;
+  const flushAddService = (id: string, service: ServiceItem) => {
+    const qty = pendingDeltaRef.current[service.id];
+    if (!qty) return;
+    pendingDeltaRef.current[service.id] = 0;
+
+    const prevTask = flushQueueRef.current[service.id] || Promise.resolve();
+    flushQueueRef.current[service.id] = prevTask
+      .then(() => cashierApi.addServiceToBooking(id, service.id, qty))
+      .then((res) => {
+        if (res?.totals && !hasPendingWork(service.id)) setDetail(res.totals);
+      })
+      .catch((err: any) => {
+        showToast(err.message || `Không thể thêm "${service.name}"`, "error");
+        fetchDetail();
+      });
+  };
+
+  const handleAddService = (service: ServiceItem) => {
+    if (!bookingId) return;
     if (isLocked) {
-      showToast("Hóa đơn đã khóa. Vui lòng mở khóa để chỉnh sửa!");
+      showToast("Hóa đơn đã khóa. Vui lòng mở khóa để thêm dịch vụ!", "error");
       return;
     }
-    setSubmitting(true);
-    try {
-      if (quantity <= 0) {
-        const res = await cashierApi.removeServiceFromBooking(bookingId, serviceId);
-        if (res?.totals) setDetail(res.totals);
-        else await fetchDetail();
-        showToast("Đã xóa dịch vụ khỏi hóa đơn");
-      } else {
-        const res = await cashierApi.updateServiceQuantity(bookingId, serviceId, quantity);
-        if (res?.totals) setDetail(res.totals);
-        else await fetchDetail();
-      }
-    } catch {
-      await fetchDetail();
-    } finally {
-      setSubmitting(false);
+
+    const currentQty = detail?.activeServices.find((s) => (s.serviceId || s.id) === service.id)?.quantity ?? 0;
+    patchCartQuantity(service.id, currentQty + 1, service);
+
+    const newPending = (pendingDeltaRef.current[service.id] || 0) + 1;
+    pendingDeltaRef.current[service.id] = newPending;
+    showToast(`Đã thêm ${newPending > 1 ? `x${newPending} ` : ""}"${service.name}"`);
+
+    if (debounceTimerRef.current[service.id]) clearTimeout(debounceTimerRef.current[service.id]);
+    debounceTimerRef.current[service.id] = setTimeout(() => flushAddService(bookingId, service), 400);
+  };
+
+  const flushQuantityChange = (id: string, serviceId: string) => {
+    if (!(serviceId in pendingQtyTargetRef.current)) return;
+    const target = pendingQtyTargetRef.current[serviceId];
+    delete pendingQtyTargetRef.current[serviceId];
+
+    const prevTask = flushQueueRef.current[serviceId] || Promise.resolve();
+    flushQueueRef.current[serviceId] = prevTask
+      .then(() => (target <= 0 ? cashierApi.removeServiceFromBooking(id, serviceId) : cashierApi.updateServiceQuantity(id, serviceId, target)))
+      .then((res) => {
+        if (res?.totals && !hasPendingWork(serviceId)) setDetail(res.totals);
+      })
+      .catch((err: any) => {
+        showToast(err.message || "Không thể cập nhật dịch vụ", "error");
+        fetchDetail();
+      });
+  };
+
+  const handleUpdateQty = (serviceId: string, quantity: number) => {
+    if (!bookingId) return;
+    if (isLocked) {
+      showToast("Hóa đơn đã khóa. Vui lòng mở khóa để chỉnh sửa!", "error");
+      return;
     }
+    const newQty = Math.max(0, quantity);
+    patchCartQuantity(serviceId, newQty);
+    if (newQty <= 0) showToast("Đã xóa dịch vụ khỏi hóa đơn");
+
+    pendingQtyTargetRef.current[serviceId] = newQty;
+    if (debounceTimerRef.current[serviceId]) clearTimeout(debounceTimerRef.current[serviceId]);
+    debounceTimerRef.current[serviceId] = setTimeout(() => flushQuantityChange(bookingId, serviceId), 300);
   };
 
   const filteredServices = services.filter((svc) => {
@@ -204,10 +243,14 @@ export function CashierBookingPosPage() {
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-6 font-sans">
       {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed top-5 right-5 z-50 flex items-center gap-2 rounded-2xl bg-[#02712a] px-5 py-3 text-white font-bold shadow-2xl animate-bounce">
-          <CheckCircle2 className="h-5 w-5 text-emerald-200" />
-          <span>{toastMessage}</span>
+      {toast && (
+        <div
+          className={`fixed top-5 right-5 z-50 flex items-center gap-2 rounded-2xl px-5 py-3 text-white font-bold shadow-2xl ${
+            toast.type === "error" ? "bg-rose-600" : "bg-[#02712a] animate-bounce"
+          }`}
+        >
+          {toast.type === "error" ? <AlertCircle className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5 text-emerald-200" />}
+          <span>{toast.message}</span>
         </div>
       )}
 
@@ -288,34 +331,6 @@ export function CashierBookingPosPage() {
                 </div>
               </div>
             </div>
-
-            {/* Locked Invoice Status Banner */}
-            {isLocked ? (
-              <div className="flex items-center justify-between rounded-2xl bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-900">
-                <div className="flex items-center gap-2 font-extrabold">
-                  <Lock className="h-4 w-4 text-[#02712a]" />
-                  <span>HÓA ĐƠN ĐÃ LƯU & KHÓA CHỈNH SỬA</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setUnlockConfirmOpen(true)}
-                  className="flex items-center gap-1 font-bold text-slate-600 hover:text-slate-900 hover:underline"
-                >
-                  <Unlock className="h-3.5 w-3.5" /> Mở khóa
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center justify-between rounded-2xl bg-amber-50 border border-amber-200 p-2.5 text-xs text-amber-800">
-                <span className="font-medium">Chế độ đang chỉnh sửa (Chưa khóa hóa đơn)</span>
-                <button
-                  type="button"
-                  onClick={() => bookingId && toggleLockInvoice(bookingId, true)}
-                  className="flex items-center gap-1.5 rounded-lg bg-[#02712a] px-3 py-1 font-extrabold text-white shadow-sm hover:bg-[#1fa955] transition"
-                >
-                  <Lock className="h-3.5 w-3.5" /> LƯU HÓA ĐƠN
-                </button>
-              </div>
-            )}
 
             {/* Search & Category Filter Section */}
             <div className="rounded-3xl bg-white p-4 shadow-sm border border-slate-200 space-y-3">
@@ -430,6 +445,34 @@ export function CashierBookingPosPage() {
                     Hóa Đơn Dịch Vụ Đã Chọn ({detail.activeServices.length})
                   </h3>
                 </div>
+
+                {/* Locked Invoice Status Banner */}
+                {isLocked ? (
+                  <div className="mb-3 flex items-center justify-between rounded-2xl bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-900">
+                    <div className="flex items-center gap-2 font-extrabold">
+                      <Lock className="h-4 w-4 text-[#02712a]" />
+                      <span>HÓA ĐƠN ĐÃ LƯU & KHÓA CHỈNH SỬA</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setUnlockConfirmOpen(true)}
+                      className="flex items-center gap-1 font-bold text-slate-600 hover:text-slate-900 hover:underline"
+                    >
+                      <Unlock className="h-3.5 w-3.5" /> Mở khóa
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mb-3 flex items-center justify-between rounded-2xl bg-amber-50 border border-amber-200 p-2.5 text-xs text-amber-800">
+                    <span className="font-medium">Chế độ đang chỉnh sửa (Chưa khóa hóa đơn)</span>
+                    <button
+                      type="button"
+                      onClick={() => bookingId && toggleLockInvoice(bookingId, true)}
+                      className="flex items-center gap-1.5 rounded-lg bg-[#02712a] px-3 py-1 font-extrabold text-white shadow-sm hover:bg-[#1fa955] transition"
+                    >
+                      <Lock className="h-3.5 w-3.5" /> LƯU HÓA ĐƠN
+                    </button>
+                  </div>
+                )}
 
                 {/* Selected Services List */}
                 <div className="max-h-[320px] overflow-y-auto space-y-2 pr-1">

@@ -50,7 +50,7 @@ recipientRoutes.post(
   validate(recurringWalkInBookingSchema),
   recipientController.createRecurringWalkInBooking
 );
-recipientRoutes.post("/bookings/:id/early-check-in", recipientController.earlyCheckInBooking);
+recipientRoutes.post("/bookings/:id/check-in", recipientController.checkInBooking);
 recipientRoutes.post("/bookings/:id/early-check-out", recipientController.earlyCheckOutBooking);
 recipientRoutes.get("/payments/:id/status", validate(paymentIdParamSchema), recipientController.paymentStatus);
 recipientRoutes.post("/payments/:id/confirm", validate(paymentIdParamSchema), recipientController.confirmWalkInPayment);

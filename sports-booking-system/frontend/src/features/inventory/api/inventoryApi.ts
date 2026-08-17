@@ -70,9 +70,51 @@ export interface PurchaseOrder {
   }>;
 }
 
+export interface InventoryPagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface LowStockAlert {
+  serviceId: string;
+  serviceName: string;
+  unit: string;
+  quantity: number;
+  minimumStock: number;
+  status: "LOW_STOCK" | "OUT_OF_STOCK";
+}
+
+export interface ReorderSuggestion {
+  serviceId: string;
+  serviceName: string;
+  unit: string;
+  costPrice: number;
+  quantity: number;
+  minimumStock: number;
+  dailyRate: number | null;
+  daysRemaining: number | null;
+  suggestedQuantity: number;
+  status: "REORDER_SOON" | "INSUFFICIENT_DATA";
+}
+
 export const inventoryApi = {
-  async getSummary() {
-    const res = await api.get<ApiResponse<{ summary: InventorySummary; items: InventoryItem[] }>>("/partner/inventory/summary");
+  async getSummary(params?: { page?: number; limit?: number; status?: string; search?: string; categoryId?: string; sortBy?: string; sortOrder?: string }) {
+    const res = await api.get<ApiResponse<{ summary: InventorySummary; items: InventoryItem[]; pagination: InventoryPagination }>>(
+      "/partner/inventory/summary",
+      { params }
+    );
+    return res.data.data;
+  },
+
+  async getLowStockAlerts(limit?: number) {
+    const res = await api.get<ApiResponse<LowStockAlert[]>>("/partner/inventory/alerts", { params: { limit } });
+    return res.data.data;
+  },
+
+  async getReorderSuggestions() {
+    const res = await api.get<ApiResponse<ReorderSuggestion[]>>("/partner/inventory/reorder-suggestions");
     return res.data.data;
   },
 

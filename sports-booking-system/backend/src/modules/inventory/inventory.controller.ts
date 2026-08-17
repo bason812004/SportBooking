@@ -26,7 +26,27 @@ async function getPartnerId(userId: string): Promise<string> {
 export const inventoryController = {
   async getInventorySummary(req: Request, res: Response) {
     const partnerId = await getPartnerId(req.user!.id);
-    const data = await inventoryService.getInventorySummary(partnerId);
+    const page = req.query.page ? Number(req.query.page) : undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const status = typeof req.query.status === "string" ? req.query.status : undefined;
+    const search = typeof req.query.search === "string" ? req.query.search : undefined;
+    const categoryId = typeof req.query.categoryId === "string" ? req.query.categoryId : undefined;
+    const sortBy = typeof req.query.sortBy === "string" ? req.query.sortBy : undefined;
+    const sortOrder = typeof req.query.sortOrder === "string" ? req.query.sortOrder : undefined;
+    const data = await inventoryService.getInventorySummary(partnerId, { page, limit, status, search, categoryId, sortBy, sortOrder });
+    return sendSuccess(res, data);
+  },
+
+  async getLowStockAlerts(req: Request, res: Response) {
+    const partnerId = await getPartnerId(req.user!.id);
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const data = await inventoryService.getLowStockAlerts(partnerId, limit);
+    return sendSuccess(res, data);
+  },
+
+  async getReorderSuggestions(req: Request, res: Response) {
+    const partnerId = await getPartnerId(req.user!.id);
+    const data = await inventoryService.getReorderSuggestions(partnerId);
     return sendSuccess(res, data);
   },
 

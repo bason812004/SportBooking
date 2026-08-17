@@ -232,6 +232,7 @@ export function RecipientBookingsPage() {
     queryClient.invalidateQueries({ queryKey: ["recipient-bookings"] });
     queryClient.invalidateQueries({ queryKey: ["recipient-calendar"] });
     queryClient.invalidateQueries({ queryKey: ["recipient-dashboard"] });
+    queryClient.invalidateQueries({ queryKey: ["recipient-surface-availability"] });
   };
 
   const [rentEquipmentBooking, setRentEquipmentBooking] = useState<Booking | null>(null);
@@ -784,6 +785,7 @@ export function RecipientBookingsPage() {
             initialSlot={{ startTime: walkInCell.startTime, endTime: addOneHour(walkInCell.startTime) }}
             onBookingCreated={invalidateAll}
             onSettled={() => setWalkInCell(null)}
+            depositPercent={courtSurfacesQuery.data?.find((s) => s.id === walkInCell.courtSurfaceId)?.depositPercent}
           />
         </Overlay>
       ) : null}

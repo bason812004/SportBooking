@@ -63,7 +63,6 @@ export async function ensureServiceTables() {
       }
 
       console.log("[ServiceRepository] Schema & categories checked/initialized.");
-      await forceSeedAllServicesToDb().catch(() => {});
     } catch (err) {
       console.error("[ServiceRepository] Table setup warning:", err);
     } finally {

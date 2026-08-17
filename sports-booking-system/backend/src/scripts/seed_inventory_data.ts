@@ -89,40 +89,34 @@ export async function seedInventoryData() {
       for (const prod of sampleProducts) {
         const categoryId = catMap.get(prod.categorySlug) || null;
 
-        // Upsert Service into `services` table
-        const serviceRows: any = await prisma.$queryRawUnsafe(
-          `INSERT INTO services (id, partner_id, category_id, name, type, price, cost_price, unit, status, track_inventory, created_at, updated_at)
-           VALUES (gen_random_uuid(), $1, CASE WHEN $2::text IS NULL OR $2::text = '' THEN NULL ELSE $2::uuid END, $3, $4, $5, $6, $7, 'ACTIVE', TRUE, NOW(), NOW())
-           ON CONFLICT DO NOTHING
-           RETURNING id;`,
-          pid, categoryId, prod.name, prod.type, prod.price, prod.costPrice, prod.unit
+        // Find existing service first — avoids creating a duplicate on every server restart
+        // (there is no unique constraint on (partner_id, name), so ON CONFLICT never matches).
+        const existing: any = await prisma.$queryRawUnsafe(
+          `SELECT id FROM services WHERE partner_id = $1 AND name = $2 LIMIT 1;`,
+          pid, prod.name
         ).catch(() => []);
 
-        let serviceId: string | null = null;
-        if (Array.isArray(serviceRows) && serviceRows.length > 0) {
-          serviceId = serviceRows[0].id;
-        } else {
-          // Find existing
-          const existing: any = await prisma.$queryRawUnsafe(
-            `SELECT id FROM services WHERE partner_id = $1 AND name = $2 LIMIT 1;`,
-            pid, prod.name
+        let serviceId: string | null = Array.isArray(existing) && existing.length > 0 ? existing[0].id : null;
+
+        if (!serviceId) {
+          const serviceRows: any = await prisma.$queryRawUnsafe(
+            `INSERT INTO services (id, partner_id, category_id, name, type, price, cost_price, unit, status, track_inventory, created_at, updated_at)
+             VALUES (gen_random_uuid(), $1, CASE WHEN $2::text IS NULL OR $2::text = '' THEN NULL ELSE $2::uuid END, $3, $4, $5, $6, $7, 'ACTIVE', TRUE, NOW(), NOW())
+             RETURNING id;`,
+            pid, categoryId, prod.name, prod.type, prod.price, prod.costPrice, prod.unit
           ).catch(() => []);
-          if (Array.isArray(existing) && existing.length > 0) {
-            serviceId = existing[0].id;
+          if (Array.isArray(serviceRows) && serviceRows.length > 0) {
+            serviceId = serviceRows[0].id;
           }
         }
 
         if (serviceId) {
-          // Ensure Inventory has initialStock = 50 & minimumStock = 5
+          // Only set the initial stock when the inventory row doesn't exist yet.
+          // Never touch quantity on an existing row — it would silently undo real sales on every dev restart.
           await prisma.$executeRawUnsafe(
             `INSERT INTO service_inventories (id, service_id, quantity, reserved_quantity, minimum_stock, unit, last_purchase_price, created_at, updated_at)
              VALUES (gen_random_uuid(), $1::uuid, 50, 0, 5, $2, $3, NOW(), NOW())
-             ON CONFLICT (service_id) DO UPDATE 
-             SET quantity = GREATEST(service_inventories.quantity, 50),
-                 minimum_stock = 5,
-                 unit = EXCLUDED.unit,
-                 last_purchase_price = EXCLUDED.last_purchase_price,
-                 updated_at = NOW();`,
+             ON CONFLICT (service_id) DO NOTHING;`,
             serviceId, prod.unit, prod.costPrice
           ).catch(() => {});
 

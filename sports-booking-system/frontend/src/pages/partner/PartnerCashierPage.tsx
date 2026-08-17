@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Search,
   Plus,
@@ -17,7 +17,7 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Modal } from "../../components/ui/Modal";
-import { cashierApi, type CashierBooking, type ActiveBookingService } from "../../features/cashier/api/cashierApi";
+import { cashierApi, type CashierBooking, type CashierBookingDetail, type ActiveBookingService } from "../../features/cashier/api/cashierApi";
 import { serviceApi, type ServiceCategory, type ServiceItem } from "../../features/services/api/serviceApi";
 import { getSocket } from "../../lib/socket";
 import { useAuth } from "../../features/auth/hooks/useAuth";
@@ -74,32 +74,35 @@ export function PartnerCashierPage() {
     }
   };
 
+  // Unlock Invoice Confirm Modal
+  const [isUnlockConfirmOpen, setIsUnlockConfirmOpen] = useState(false);
+
   // Rental Return Modal
   const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
   const [selectedRental, setSelectedRental] = useState<{ id: string; name: string } | null>(null);
   const [returnStatus, setReturnStatus] = useState<"RETURNED" | "DAMAGED" | "LOST">("RETURNED");
   const [returnNotes, setReturnNotes] = useState("");
 
-  const fetchData = async () => {
-    setLoading(true);
+  // silent=true is used by background polling: no loading skeleton, no toast on transient errors.
+  const fetchData = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const [bookings, cats] = await Promise.all([
         cashierApi.getActiveBookings(),
         serviceApi.getCategories()
       ]);
       setActiveBookings(bookings);
-      if (bookings.length > 0 && !selectedBooking) {
-        setSelectedBooking(bookings[0]);
-      } else if (selectedBooking) {
-        const updated = bookings.find((b) => b.id === selectedBooking.id);
-        if (updated) setSelectedBooking(updated);
-      }
+      setSelectedBooking((prev) => {
+        if (!prev) return bookings.length > 0 ? bookings[0] : prev;
+        if (hasAnyPendingWork()) return prev; // don't clobber an unconfirmed optimistic add/update
+        return bookings.find((b) => b.id === prev.id) || prev;
+      });
       setCategories(cats);
     } catch (err) {
       console.error("Failed to load cashier data:", err);
-      showToast("Lỗi tải dữ liệu thu ngân", "error");
+      if (!silent) showToast("Lỗi tải dữ liệu thu ngân", "error");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -107,115 +110,217 @@ export function PartnerCashierPage() {
     fetchData();
   }, []);
 
-  // Fetch available services when selected booking changes
+  // Background polling so newly-eligible bookings (time just reached start, or created by another
+  // terminal) show up without the staff needing to click "Cập nhật" manually.
   useEffect(() => {
-    if (!selectedBooking) return;
-    const fetchServices = async () => {
-      try {
-        const svcs = await serviceApi.getCourtServices(selectedBooking.court.id, selectedCategory);
-        setServices(svcs);
-      } catch (err) {
-        console.error("Failed to load court services:", err);
-      }
-    };
-    fetchServices();
-  }, [selectedBooking, selectedCategory]);
+    const interval = setInterval(() => fetchData(true), 20000);
+    return () => clearInterval(interval);
+  }, []);
 
-  // Realtime Socket IO listeners
+  const refetchServices = async () => {
+    if (!selectedBooking) return;
+    try {
+      const svcs = await serviceApi.getCourtServices(selectedBooking.court.id, selectedCategory);
+      setServices(svcs);
+    } catch (err) {
+      console.error("Failed to load court services:", err);
+    }
+  };
+
+  // Fetch available services when selected COURT changes (not on every selectedBooking object refresh)
+  useEffect(() => {
+    refetchServices();
+  }, [selectedBooking?.court.id, selectedCategory]);
+
+  // Adjust the "Kho:" badge on the services grid instantly, without waiting for a refetch/reload
+  const patchServiceInventory = (serviceId: string, delta: number) => {
+    setServices((prev) =>
+      prev.map((s) => (s.id === serviceId && s.inventory ? { ...s, inventory: { ...s.inventory, quantity: s.inventory.quantity + delta } } : s))
+    );
+  };
+
+  // Patch local state from server-computed totals, instead of reloading the whole page
+  const lastAppliedAtRef = useRef<number>(0);
+  const applyTotals = (bookingId: string, totals: CashierBookingDetail) => {
+    const patch = (b: CashierBooking): CashierBooking => ({
+      ...b,
+      services: totals.activeServices,
+      courtSubtotal: totals.courtSubtotal,
+      serviceSubtotal: totals.serviceSubtotal,
+      totalAmount: totals.grandTotal,
+      depositPaid: totals.depositPaid,
+      remainingAmount: totals.remainingAmount
+    });
+    setActiveBookings((prev) => prev.map((b) => (b.id === bookingId ? patch(b) : b)));
+    setSelectedBooking((prev) => (prev && prev.id === bookingId ? patch(prev) : prev));
+  };
+
+  // Lightweight single-booking resync for realtime events fired by OTHER terminals on the same booking
+  const socketRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshBookingLight = (targetBookingId: string) => {
+    if (Date.now() - lastAppliedAtRef.current < 500) return; // we just applied fresh totals ourselves, skip redundant refetch
+    if (socketRefreshTimerRef.current) clearTimeout(socketRefreshTimerRef.current);
+    socketRefreshTimerRef.current = setTimeout(async () => {
+      if (hasAnyPendingWork()) return; // an unconfirmed optimistic add/update is still queued — let its own flush apply the result
+      try {
+        const detail = await cashierApi.getBookingDetail(targetBookingId);
+        if (detail) applyTotals(targetBookingId, detail);
+      } catch (err) {
+        console.error("Failed to refresh booking after realtime event:", err);
+      }
+    }, 200);
+  };
+
+  // Realtime Socket IO listeners — resync only the affected booking, never the whole page
   useEffect(() => {
     if (!selectedBooking) return;
 
     const socket = getSocket(token || "");
-    socket.emit("booking:subscribe", selectedBooking.id);
+    const bookingId = selectedBooking.id;
+    socket.emit("booking:subscribe", bookingId);
 
-    const handleServiceAdded = () => fetchData();
-    const handleServiceUpdated = () => fetchData();
-    const handleServiceRemoved = () => fetchData();
-    const handleTotalUpdated = () => fetchData();
+    const refresh = () => refreshBookingLight(bookingId);
 
-    socket.on("booking:service-added", handleServiceAdded);
-    socket.on("booking:service-updated", handleServiceUpdated);
-    socket.on("booking:service-removed", handleServiceRemoved);
-    socket.on("booking:total-updated", handleTotalUpdated);
+    socket.on("booking:service-added", refresh);
+    socket.on("booking:service-updated", refresh);
+    socket.on("booking:service-removed", refresh);
+    socket.on("booking:total-updated", refresh);
 
     return () => {
-      socket.emit("booking:unsubscribe", selectedBooking.id);
-      socket.off("booking:service-added", handleServiceAdded);
-      socket.off("booking:service-updated", handleServiceUpdated);
-      socket.off("booking:service-removed", handleServiceRemoved);
-      socket.off("booking:total-updated", handleTotalUpdated);
+      socket.emit("booking:unsubscribe", bookingId);
+      socket.off("booking:service-added", refresh);
+      socket.off("booking:service-updated", refresh);
+      socket.off("booking:service-removed", refresh);
+      socket.off("booking:total-updated", refresh);
     };
   }, [token, selectedBooking?.id]);
 
-  const [isAdding, setIsAdding] = useState(false);
+  // Per-service pending quantity + debounce + sequential send queue,
+  // so bursts of rapid clicks collapse into 1 accurate request per service.
+  const pendingDeltaRef = useRef<Record<string, number>>({});
+  const debounceTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const flushQueueRef = useRef<Record<string, Promise<void>>>({});
 
-  const handleAddService = async (service: ServiceItem) => {
-    if (!selectedBooking || isAdding) return;
+  // True when another add/update/remove for this service is still queued — used to skip
+  // applying a stale server response over a newer optimistic value (avoids the UI briefly
+  // jumping backwards while a later click's request is still in flight).
+  const hasPendingWork = (serviceId: string) => Boolean(pendingDeltaRef.current[serviceId]) || serviceId in pendingQtyTargetRef.current;
+
+  // True when ANY service has unconfirmed optimistic work queued — used to stop background
+  // sync sources (socket refresh, periodic poll) from wholesale-overwriting the cart mid-flight.
+  const hasAnyPendingWork = () =>
+    Object.values(pendingDeltaRef.current).some((v) => v > 0) || Object.keys(pendingQtyTargetRef.current).length > 0;
+
+  const flushAddService = (bookingId: string, service: ServiceItem) => {
+    const qty = pendingDeltaRef.current[service.id];
+    if (!qty) return;
+    pendingDeltaRef.current[service.id] = 0;
+
+    const prevTask = flushQueueRef.current[service.id] || Promise.resolve();
+    flushQueueRef.current[service.id] = prevTask
+      .then(() => cashierApi.addServiceToBooking(bookingId, service.id, qty))
+      .then((res) => {
+        lastAppliedAtRef.current = Date.now();
+        if (res?.totals && !hasPendingWork(service.id)) applyTotals(bookingId, res.totals);
+      })
+      .catch((err: any) => {
+        showToast(err.message || "Lỗi thêm dịch vụ", "error");
+        fetchData();
+        refetchServices();
+      });
+  };
+
+  const handleAddService = (service: ServiceItem) => {
+    if (!selectedBooking) return;
 
     if (isCurrentBookingLocked) {
       showToast("Hóa đơn đã được lưu và khóa. Vui lòng mở khóa để thêm dịch vụ!", "error");
       return;
     }
 
-    setIsAdding(true);
+    const bookingId = selectedBooking.id;
 
-    // Optimistic UI update
-    const prevBooking = { ...selectedBooking };
-    const existingIndex = selectedBooking.services?.findIndex((s) => s.serviceId === service.id || s.service?.id === service.id);
-    let updatedServices = [...(selectedBooking.services || [])];
-
-    if (existingIndex !== undefined && existingIndex >= 0) {
-      const existing = updatedServices[existingIndex];
-      updatedServices[existingIndex] = {
-        ...existing,
-        quantity: existing.quantity + 1,
-        totalPrice: Number(existing.unitPrice || service.price) * (existing.quantity + 1)
-      };
-    } else {
-      updatedServices.push({
-        id: `temp_${Date.now()}`,
-        bookingId: selectedBooking.id,
-        serviceId: service.id,
-        quantity: 1,
-        price: Number(service.price),
-        unitPrice: Number(service.price),
-        totalPrice: Number(service.price),
-        status: "ACTIVE",
-        addedBy: "CASHIER",
-        service: {
-          id: service.id,
-          name: service.name,
-          type: service.type as any,
-          unit: service.unit
-        }
-      });
-    }
-
-    const newServiceSubtotal = updatedServices.reduce((sum, item) => sum + Number(item.totalPrice || item.price || 0), 0);
-    const newTotal = selectedBooking.courtSubtotal + newServiceSubtotal;
-    const newRemaining = Math.max(0, newTotal - selectedBooking.depositPaid);
-
-    setSelectedBooking({
-      ...selectedBooking,
-      services: updatedServices,
-      serviceSubtotal: newServiceSubtotal,
-      totalAmount: newTotal,
-      remainingAmount: newRemaining
+    // Instant optimistic increment — every click counts, regardless of click speed
+    setSelectedBooking((prev) => {
+      if (!prev || prev.id !== bookingId) return prev;
+      const services = [...(prev.services || [])];
+      const idx = services.findIndex((s) => s.serviceId === service.id || s.service?.id === service.id);
+      if (idx >= 0) {
+        const existing = services[idx];
+        const quantity = existing.quantity + 1;
+        services[idx] = { ...existing, quantity, totalPrice: Number(existing.unitPrice || service.price) * quantity };
+      } else {
+        services.push({
+          id: `temp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          bookingId,
+          serviceId: service.id,
+          quantity: 1,
+          price: Number(service.price),
+          unitPrice: Number(service.price),
+          totalPrice: Number(service.price),
+          status: "ACTIVE",
+          addedBy: "CASHIER",
+          service: { id: service.id, name: service.name, type: service.type as any, unit: service.unit }
+        });
+      }
+      const serviceSubtotal = services.reduce((sum, item) => sum + Number(item.totalPrice || item.price || 0), 0);
+      const totalAmount = prev.courtSubtotal + serviceSubtotal;
+      const remainingAmount = Math.max(0, totalAmount - prev.depositPaid);
+      return { ...prev, services, serviceSubtotal, totalAmount, remainingAmount };
     });
 
-    try {
-      await cashierApi.addServiceToBooking(selectedBooking.id, service.id, 1);
-      showToast(`Đã thêm "+1 ${service.name}"`, "success");
-      fetchData();
-    } catch (err: any) {
-      setSelectedBooking(prevBooking);
-      showToast(err.message || err.response?.data?.message || "Lỗi thêm dịch vụ", "error");
-    } finally {
-      setIsAdding(false);
-    }
+    patchServiceInventory(service.id, -1);
+
+    const newPending = (pendingDeltaRef.current[service.id] || 0) + 1;
+    pendingDeltaRef.current[service.id] = newPending;
+    showToast(`Đã thêm ${newPending > 1 ? `x${newPending} ` : ""}"${service.name}"`, "success");
+
+    if (debounceTimerRef.current[service.id]) clearTimeout(debounceTimerRef.current[service.id]);
+    debounceTimerRef.current[service.id] = setTimeout(() => flushAddService(bookingId, service), 400);
   };
 
-  const handleUpdateQuantity = async (serviceId: string, currentQty: number, delta: number) => {
+  // Pending final-quantity target per service + debounce, sharing flushQueueRef with
+  // handleAddService so a +/- burst and an add-from-menu click on the same service never race.
+  const pendingQtyTargetRef = useRef<Record<string, number>>({});
+  const qtyDebounceTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  const flushQuantityChange = (bookingId: string, serviceId: string) => {
+    if (!(serviceId in pendingQtyTargetRef.current)) return;
+    const target = pendingQtyTargetRef.current[serviceId];
+    delete pendingQtyTargetRef.current[serviceId];
+
+    const prevTask = flushQueueRef.current[serviceId] || Promise.resolve();
+    flushQueueRef.current[serviceId] = prevTask
+      .then(() => (target <= 0 ? cashierApi.removeServiceFromBooking(bookingId, serviceId) : cashierApi.updateServiceQuantity(bookingId, serviceId, target)))
+      .then((res) => {
+        lastAppliedAtRef.current = Date.now();
+        if (res?.totals && !hasPendingWork(serviceId)) applyTotals(bookingId, res.totals);
+      })
+      .catch((err: any) => {
+        showToast(err.message || "Lỗi cập nhật dịch vụ", "error");
+        fetchData();
+        refetchServices();
+      });
+  };
+
+  // Instant optimistic patch of the cart item's quantity (or removal when it reaches 0)
+  const patchCartQuantity = (bookingId: string, serviceId: string, newQty: number) => {
+    setSelectedBooking((prev) => {
+      if (!prev || prev.id !== bookingId) return prev;
+      const services =
+        newQty <= 0
+          ? (prev.services || []).filter((s) => (s.serviceId || s.id) !== serviceId)
+          : (prev.services || []).map((s) =>
+              (s.serviceId || s.id) === serviceId ? { ...s, quantity: newQty, totalPrice: Number(s.unitPrice || s.price) * newQty } : s
+            );
+      const serviceSubtotal = services.reduce((sum, item) => sum + Number(item.totalPrice || item.price || 0), 0);
+      const totalAmount = prev.courtSubtotal + serviceSubtotal;
+      const remainingAmount = Math.max(0, totalAmount - prev.depositPaid);
+      return { ...prev, services, serviceSubtotal, totalAmount, remainingAmount };
+    });
+  };
+
+  const handleUpdateQuantity = (serviceId: string, currentQty: number, delta: number) => {
     if (!selectedBooking) return;
 
     if (isCurrentBookingLocked) {
@@ -223,21 +328,18 @@ export function PartnerCashierPage() {
       return;
     }
 
-    const newQty = currentQty + delta;
-    try {
-      if (newQty <= 0) {
-        await cashierApi.removeServiceFromBooking(selectedBooking.id, serviceId);
-        showToast("Đã xóa dịch vụ khỏi hóa đơn", "info");
-      } else {
-        await cashierApi.updateServiceQuantity(selectedBooking.id, serviceId, newQty);
-      }
-      fetchData();
-    } catch (err: any) {
-      showToast(err.message || err.response?.data?.message || "Lỗi cập nhật số lượng", "error");
-    }
+    const bookingId = selectedBooking.id;
+    const newQty = Math.max(0, currentQty + delta);
+
+    patchCartQuantity(bookingId, serviceId, newQty);
+    patchServiceInventory(serviceId, -delta);
+
+    pendingQtyTargetRef.current[serviceId] = newQty;
+    if (qtyDebounceTimerRef.current[serviceId]) clearTimeout(qtyDebounceTimerRef.current[serviceId]);
+    qtyDebounceTimerRef.current[serviceId] = setTimeout(() => flushQuantityChange(bookingId, serviceId), 300);
   };
 
-  const handleRemoveService = async (serviceId: string) => {
+  const handleRemoveService = (serviceId: string) => {
     if (!selectedBooking) return;
 
     if (isCurrentBookingLocked) {
@@ -245,23 +347,32 @@ export function PartnerCashierPage() {
       return;
     }
 
-    try {
-      await cashierApi.removeServiceFromBooking(selectedBooking.id, serviceId);
-      showToast("Đã xóa dịch vụ thành công", "info");
-      fetchData();
-    } catch (err: any) {
-      showToast(err.message || err.response?.data?.message || "Lỗi xóa dịch vụ", "error");
-    }
+    const bookingId = selectedBooking.id;
+    const removedItem = selectedBooking.services?.find((s) => (s.serviceId || s.id) === serviceId);
+    const removedQty = removedItem?.quantity || 0;
+
+    patchCartQuantity(bookingId, serviceId, 0);
+    if (removedQty > 0) patchServiceInventory(serviceId, removedQty);
+    showToast("Đã xóa dịch vụ khỏi hóa đơn", "info");
+
+    if (qtyDebounceTimerRef.current[serviceId]) clearTimeout(qtyDebounceTimerRef.current[serviceId]);
+    pendingQtyTargetRef.current[serviceId] = 0;
+    flushQuantityChange(bookingId, serviceId);
   };
 
   const handleReturnRental = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedRental) return;
+    if (!selectedRental || !selectedBooking) return;
+    const bookingId = selectedBooking.id;
     try {
       await cashierApi.returnRentalItem(selectedRental.id, returnStatus, returnNotes);
       setIsReturnModalOpen(false);
       showToast("Đã xử lý trả thiết bị cho thuê thành công!", "success");
-      fetchData();
+      const detail = await cashierApi.getBookingDetail(bookingId).catch(() => null);
+      if (detail) {
+        lastAppliedAtRef.current = Date.now();
+        applyTotals(bookingId, detail);
+      }
     } catch (err: any) {
       showToast(err.message || err.response?.data?.message || "Lỗi trả thiết bị cho thuê", "error");
     }
@@ -299,7 +410,7 @@ export function PartnerCashierPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button className="flex items-center gap-2 bg-[#02712a] text-white font-bold" onClick={fetchData}>
+          <Button className="flex items-center gap-2 bg-[#02712a] text-white font-bold" onClick={() => fetchData()}>
             <RefreshCw className="h-4 w-4" /> Cập nhật sân đang hoạt động
           </Button>
         </div>
@@ -512,11 +623,7 @@ export function PartnerCashierPage() {
                       <span>HÓA ĐƠN ĐÃ LƯU & KHÓA CHỈNH SỬA</span>
                     </div>
                     <button
-                      onClick={() => {
-                        if (confirm("Bạn có chắc chắn muốn mở khóa hóa đơn để chỉnh sửa lại dịch vụ?")) {
-                          toggleLockInvoice(selectedBooking.id, false);
-                        }
-                      }}
+                      onClick={() => setIsUnlockConfirmOpen(true)}
                       className="flex items-center gap-1 font-bold text-slate-600 hover:text-slate-900 hover:underline"
                     >
                       <Unlock className="h-3.5 w-3.5" /> Mở khóa
@@ -677,6 +784,28 @@ export function PartnerCashierPage() {
           )}
         </div>
       </div>
+
+      {/* Unlock Invoice Confirm Modal */}
+      <Modal isOpen={isUnlockConfirmOpen} onClose={() => setIsUnlockConfirmOpen(false)} title="Mở khóa hóa đơn?" maxWidth="max-w-sm">
+        <div className="space-y-4 pt-2">
+          <p className="text-sm text-slate-600">Bạn có chắc chắn muốn mở khóa hóa đơn để chỉnh sửa lại dịch vụ?</p>
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+            <Button type="button" variant="secondary" onClick={() => setIsUnlockConfirmOpen(false)}>
+              Hủy
+            </Button>
+            <Button
+              type="button"
+              className="bg-[#02712a] text-white font-bold"
+              onClick={() => {
+                if (selectedBooking) toggleLockInvoice(selectedBooking.id, false);
+                setIsUnlockConfirmOpen(false);
+              }}
+            >
+              Mở khóa
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Return Rental Modal */}
       <Modal isOpen={isReturnModalOpen} onClose={() => setIsReturnModalOpen(false)} title={`Xử Lý Trả Thiết Bị - ${selectedRental?.name}`}>

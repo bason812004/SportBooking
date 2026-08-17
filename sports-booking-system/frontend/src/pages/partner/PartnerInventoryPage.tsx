@@ -1,18 +1,48 @@
 import { useEffect, useState } from "react";
-import { Boxes, AlertTriangle, ArrowUpRight, ArrowDownLeft, RefreshCw, History, ShieldAlert, DollarSign, Edit3 } from "lucide-react";
+import { Boxes, AlertTriangle, ArrowUpRight, ArrowDownLeft, RefreshCw, History, ShieldAlert, DollarSign, Edit3, Sparkles, PackagePlus } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Modal } from "../../components/ui/Modal";
-import { inventoryApi, type InventoryItem, type InventorySummary, type InventoryTransaction } from "../../features/inventory/api/inventoryApi";
+import { SortableTh } from "../../components/common/SortableTh";
+import { useUrlSort } from "../../hooks/useUrlSort";
+import {
+  inventoryApi,
+  type InventoryItem,
+  type InventoryPagination,
+  type InventorySummary,
+  type InventoryTransaction,
+  type ReorderSuggestion
+} from "../../features/inventory/api/inventoryApi";
+import { serviceApi, type ServiceCategory } from "../../features/services/api/serviceApi";
 import { formatMoney } from "../../utils/formatters";
+
+const PAGE_SIZE = 10;
+
+type SortField = "serviceName" | "categoryName" | "quantity" | "costPrice" | "price" | "stockValue";
+const SORT_FIELDS: SortField[] = ["serviceName", "categoryName", "quantity", "costPrice", "price", "stockValue"];
 
 export function PartnerInventoryPage() {
   const [summary, setSummary] = useState<InventorySummary | null>(null);
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [pagination, setPagination] = useState<InventoryPagination | null>(null);
   const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
+  const [categories, setCategories] = useState<ServiceCategory[]>([]);
+  const [suggestions, setSuggestions] = useState<ReorderSuggestion[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState<string>("ALL");
-  const [activeTab, setActiveTab] = useState<"STOCK" | "TRANSACTIONS">("STOCK");
+  const [search, setSearch] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [page, setPage] = useState(1);
+  const [activeTab, setActiveTab] = useState<"STOCK" | "TRANSACTIONS" | "SUGGESTIONS">("STOCK");
+
+  const { sortField, sortOrder, handleSort: sortBy } = useUrlSort<SortField>({
+    fields: SORT_FIELDS,
+    default: { field: "serviceName", order: "asc" }
+  });
+  const handleSort = (field: SortField) => {
+    setPage(1);
+    sortBy(field);
+  };
 
   // Adjust Modal
   const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
@@ -24,16 +54,25 @@ export function PartnerInventoryPage() {
     note: ""
   });
 
-  const fetchData = async () => {
+  // Page/filter/sort changes only need to re-fetch the stock list — pulling in the 50-row
+  // transaction history on every page click was doubling round-trips for data that hadn't
+  // changed, which is what made pagination feel slow. Transactions are fetched separately,
+  // only on mount and after actions that actually create new transactions.
+  const fetchStock = async () => {
     setLoading(true);
     try {
-      const [invData, txData] = await Promise.all([
-        inventoryApi.getSummary(),
-        inventoryApi.getTransactions(50)
-      ]);
+      const invData = await inventoryApi.getSummary({
+        page,
+        limit: PAGE_SIZE,
+        status: filterStatus === "ALL" ? undefined : filterStatus,
+        search: search || undefined,
+        categoryId: categoryId || undefined,
+        sortBy: sortField ?? undefined,
+        sortOrder
+      });
       setSummary(invData.summary);
       setItems(invData.items);
-      setTransactions(txData);
+      setPagination(invData.pagination);
     } catch (err) {
       console.error("Failed to load inventory:", err);
     } finally {
@@ -41,9 +80,36 @@ export function PartnerInventoryPage() {
     }
   };
 
+  const fetchTransactions = () => {
+    inventoryApi.getTransactions(50).then(setTransactions).catch(() => {});
+  };
+
+  const fetchSuggestions = () => {
+    inventoryApi.getReorderSuggestions().then(setSuggestions).catch(() => {});
+  };
+
+  const fetchData = () => {
+    fetchStock();
+    fetchTransactions();
+  };
+
   useEffect(() => {
-    fetchData();
+    serviceApi.getCategories().then(setCategories).catch(() => {});
+    fetchTransactions();
+    // Fetched once on mount, independent of the STOCK tab's loading state, so it never
+    // slows down the main list — this endpoint does a heavier consumption-velocity query.
+    fetchSuggestions();
   }, []);
+
+  useEffect(() => {
+    fetchStock();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, filterStatus, search, categoryId, sortField, sortOrder]);
+
+  const changeFilter = (status: string) => {
+    setFilterStatus(status);
+    setPage(1);
+  };
 
   const handleOpenAdjust = (item: InventoryItem) => {
     setSelectedItem(item);
@@ -69,16 +135,33 @@ export function PartnerInventoryPage() {
       });
       setIsAdjustModalOpen(false);
       fetchData();
+      fetchSuggestions();
     } catch (err: any) {
       alert(err.response?.data?.message || "Lỗi điều chỉnh tồn kho");
     }
   };
 
-  const filteredItems = items.filter((item) => {
-    if (filterStatus === "LOW_STOCK") return item.status === "LOW_STOCK";
-    if (filterStatus === "OUT_OF_STOCK") return item.status === "OUT_OF_STOCK";
-    return true;
-  });
+  const handleQuickReorder = (s: ReorderSuggestion) => {
+    setSelectedItem({
+      serviceId: s.serviceId,
+      serviceName: s.serviceName,
+      categoryName: "",
+      unit: s.unit,
+      quantity: s.quantity,
+      minimumStock: s.minimumStock,
+      costPrice: s.costPrice,
+      price: 0,
+      stockValue: 0,
+      status: "LOW_STOCK"
+    });
+    setAdjustForm({
+      type: "IMPORT",
+      quantity: s.suggestedQuantity,
+      unitCost: s.costPrice,
+      note: "Nhập theo gợi ý tự động"
+    });
+    setIsAdjustModalOpen(true);
+  };
 
   return (
     <div className="space-y-6">
@@ -166,6 +249,16 @@ export function PartnerInventoryPage() {
         >
           <History className="h-4 w-4" /> Lịch sử xuất/nhập
         </button>
+        <button
+          onClick={() => setActiveTab("SUGGESTIONS")}
+          className={`flex items-center gap-2 border-b-2 px-6 py-3 text-sm font-bold transition ${
+            activeTab === "SUGGESTIONS"
+              ? "border-[#02712a] text-[#02712a]"
+              : "border-transparent text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          <Sparkles className="h-4 w-4" /> Gợi ý nhập hàng{suggestions.length > 0 ? ` (${suggestions.length})` : ""}
+        </button>
       </div>
 
       {activeTab === "STOCK" && (
@@ -173,7 +266,7 @@ export function PartnerInventoryPage() {
           {/* Quick Filter Buttons */}
           <div className="flex gap-2">
             <button
-              onClick={() => setFilterStatus("ALL")}
+              onClick={() => changeFilter("ALL")}
               className={`rounded-xl px-4 py-2 text-xs font-bold transition ${
                 filterStatus === "ALL" ? "bg-slate-900 text-white" : "bg-white text-slate-700 border border-slate-200"
               }`}
@@ -181,7 +274,7 @@ export function PartnerInventoryPage() {
               Tất cả
             </button>
             <button
-              onClick={() => setFilterStatus("LOW_STOCK")}
+              onClick={() => changeFilter("LOW_STOCK")}
               className={`rounded-xl px-4 py-2 text-xs font-bold transition ${
                 filterStatus === "LOW_STOCK" ? "bg-amber-600 text-white" : "bg-white text-slate-700 border border-slate-200"
               }`}
@@ -189,7 +282,7 @@ export function PartnerInventoryPage() {
               Sắp hết hàng ({summary?.lowStockCount || 0})
             </button>
             <button
-              onClick={() => setFilterStatus("OUT_OF_STOCK")}
+              onClick={() => changeFilter("OUT_OF_STOCK")}
               className={`rounded-xl px-4 py-2 text-xs font-bold transition ${
                 filterStatus === "OUT_OF_STOCK" ? "bg-rose-600 text-white" : "bg-white text-slate-700 border border-slate-200"
               }`}
@@ -198,30 +291,59 @@ export function PartnerInventoryPage() {
             </button>
           </div>
 
+          {/* Search & Category Filter */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Input
+              label="Tìm kiếm"
+              value={search}
+              onChange={(e) => {
+                setPage(1);
+                setSearch(e.target.value);
+              }}
+              placeholder="Tên sản phẩm"
+            />
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase text-slate-700">Danh mục</label>
+              <select
+                className="w-full rounded-xl border border-slate-300 p-2.5 text-sm font-semibold focus:border-green-600 focus:outline-none"
+                value={categoryId}
+                onChange={(e) => {
+                  setPage(1);
+                  setCategoryId(e.target.value);
+                }}
+              >
+                <option value="">Tất cả danh mục</option>
+                {categories.map((cat) => (
+                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           {/* Table */}
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <table className="w-full text-left text-sm text-slate-700">
               <thead className="bg-slate-50 text-xs uppercase font-extrabold text-slate-600 border-b border-slate-200">
                 <tr>
-                  <th className="p-4">Sản phẩm</th>
-                  <th className="p-4">Danh mục</th>
-                  <th className="p-4">Số lượng tồn</th>
-                  <th className="p-4">Giá vốn (Nhập)</th>
-                  <th className="p-4">Giá bán</th>
-                  <th className="p-4">Tổng giá trị tồn</th>
+                  <SortableTh label="Sản phẩm" field="serviceName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <SortableTh label="Danh mục" field="categoryName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <SortableTh label="Số lượng tồn" field="quantity" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <SortableTh label="Giá vốn (Nhập)" field="costPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <SortableTh label="Giá bán" field="price" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <SortableTh label="Tổng giá trị tồn" field="stockValue" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
                   <th className="p-4">Trạng thái</th>
                   <th className="p-4 text-right">Thao tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-semibold">
-                {filteredItems.length === 0 ? (
+                {items.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="p-8 text-center text-slate-500 font-normal">
                       Không có sản phẩm nào phù hợp
                     </td>
                   </tr>
                 ) : (
-                  filteredItems.map((item) => (
+                  items.map((item) => (
                     <tr key={item.serviceId} className="hover:bg-slate-50/80 transition">
                       <td className="p-4 font-bold text-slate-900">{item.serviceName}</td>
                       <td className="p-4 text-slate-600">{item.categoryName}</td>
@@ -262,6 +384,13 @@ export function PartnerInventoryPage() {
                 )}
               </tbody>
             </table>
+          </div>
+
+          {/* Pagination */}
+          <div className="flex items-center justify-end gap-3">
+            <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Trang trước</Button>
+            <span>Trang {pagination?.page}/{Math.max(pagination?.totalPages ?? 1, 1)}</span>
+            <Button variant="secondary" disabled={page >= (pagination?.totalPages ?? 1)} onClick={() => setPage(page + 1)}>Trang sau</Button>
           </div>
         </div>
       )}
@@ -307,6 +436,68 @@ export function PartnerInventoryPage() {
                     </td>
                     <td className="p-4">{formatMoney(tx.unitCost)}</td>
                     <td className="p-4 text-xs text-slate-500">{tx.note || "---"}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {activeTab === "SUGGESTIONS" && (
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-left text-sm text-slate-700">
+            <thead className="bg-slate-50 text-xs uppercase font-extrabold text-slate-600 border-b border-slate-200">
+              <tr>
+                <th className="p-4">Sản phẩm</th>
+                <th className="p-4">Tồn hiện tại</th>
+                <th className="p-4">Tốc độ bán/ngày</th>
+                <th className="p-4">Dự kiến hết trong</th>
+                <th className="p-4">Nên nhập thêm</th>
+                <th className="p-4 text-right">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 font-semibold">
+              {suggestions.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="p-8 text-center text-slate-500 font-normal">
+                    Chưa có sản phẩm nào cần nhập thêm.
+                  </td>
+                </tr>
+              ) : (
+                suggestions.map((s) => (
+                  <tr key={s.serviceId} className="hover:bg-slate-50/80 transition">
+                    <td className="p-4 font-bold text-slate-900">{s.serviceName}</td>
+                    <td className="p-4">
+                      {s.quantity} <span className="text-xs text-slate-500">{s.unit}</span>
+                    </td>
+                    <td className="p-4">
+                      {s.status === "INSUFFICIENT_DATA" ? (
+                        <span className="text-xs font-bold text-slate-400">Chưa đủ dữ liệu</span>
+                      ) : (
+                        `${s.dailyRate} ${s.unit}/ngày`
+                      )}
+                    </td>
+                    <td className="p-4">
+                      {s.status === "INSUFFICIENT_DATA" || s.daysRemaining === null ? (
+                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-extrabold text-amber-700">Sắp/đã hết</span>
+                      ) : (
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-extrabold ${s.daysRemaining <= 3 ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>
+                          ~{s.daysRemaining} ngày
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-4 font-extrabold text-base text-slate-900">
+                      {s.suggestedQuantity} {s.unit}
+                    </td>
+                    <td className="p-4 text-right">
+                      <button
+                        onClick={() => handleQuickReorder(s)}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-1.5 text-xs font-extrabold text-[#02712a] transition hover:bg-[#02712a] hover:text-white hover:border-[#02712a] shadow-sm active:scale-95"
+                      >
+                        <PackagePlus className="h-3.5 w-3.5" /> Nhập nhanh
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}

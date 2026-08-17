@@ -684,6 +684,7 @@ model Booking {
   bookingStatus            BookingStatus           @default(PENDING) @map("booking_status")
   cancelReason             String?                 @map("cancel_reason")
   note                     String?
+  checkedInAt              DateTime?               @map("checked_in_at") @db.Timestamptz(6)
   createdAt                DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   depositAmount            Decimal                 @default(0) @map("deposit_amount") @db.Decimal(12, 2)
@@ -1029,6 +1030,7 @@ model BookingService {
   service        Service?      @relation(fields: [serviceId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   rentalItems    RentalItem[]
 
+  @@index([bookingId], map: "idx_booking_services_booking_id")
   @@map("booking_services")
 }
 

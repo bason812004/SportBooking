@@ -172,6 +172,7 @@ export function AppRoutes() {
             <Route path="partner/cashier" element={<PartnerCashierPage />} />
             <Route path="partner/pos/:bookingId" element={<CashierBookingPosPage />} />
             <Route path="partner/checkouts" element={<PartnerCheckoutsPage />} />
+            <Route path="booking/:bookingId/checkout" element={<BookingCheckoutPage />} />
             <Route path="partner/settings" element={<PartnerSettingsPage />} />
             <Route path="partner/staff" element={<PartnerStaffPage />} />
           </Route>
@@ -186,6 +187,7 @@ export function AppRoutes() {
             <Route path="recipient/inventory" element={<PartnerInventoryPage />} />
             <Route path="recipient/purchases" element={<PartnerPurchasesPage />} />
             <Route path="recipient/checkouts" element={<PartnerCheckoutsPage />} />
+            <Route path="booking/:bookingId/checkout" element={<BookingCheckoutPage />} />
             <Route path="recipient/bookings" element={<RecipientBookingsPage />} />
             <Route path="recipient/calendar" element={<Navigate to="/recipient/bookings?view=calendar" replace />} />
             <Route path="recipient/court-surfaces" element={<RecipientCourtSurfacesPage />} />

@@ -135,7 +135,7 @@ export const partnerRepository = {
     const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
     const previousMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
-    return prisma.$transaction([
+    return Promise.all([
       prisma.court.count({ where: { partnerId, activeStatus: "ACTIVE" } }),
       prisma.booking.count({ where: { court: { partnerId }, bookingDate: today } }),
       prisma.commissionTransaction.aggregate({
@@ -187,7 +187,20 @@ export const partnerRepository = {
   async listCourts(partnerId: string) {
     const courts = await prisma.court.findMany({
       where: { partnerId },
-      include: { category: true, images: true, prices: true, services: true, _count: { select: { surfaces: true } } },
+      select: {
+        id: true,
+        name: true,
+        district: true,
+        city: true,
+        openingTime: true,
+        closingTime: true,
+        approvalStatus: true,
+        activeStatus: true,
+        verified: true,
+        category: { select: { name: true } },
+        images: { select: { imageUrl: true }, take: 1, orderBy: { sortOrder: "asc" } },
+        _count: { select: { surfaces: true } }
+      },
       orderBy: { createdAt: "desc" }
     });
     return attachCourtDeposits(courts);

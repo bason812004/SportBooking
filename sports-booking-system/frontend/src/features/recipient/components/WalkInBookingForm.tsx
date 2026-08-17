@@ -20,6 +20,7 @@ type WalkInForm = {
   customerName: string;
   customerPhone: string;
   paymentMethod: "CASH" | "BANK_TRANSFER" | "E_WALLET";
+  paymentType: "FULL_PAYMENT" | "DEPOSIT";
   note: string;
 };
 
@@ -27,6 +28,7 @@ const defaultWalkInForm = (): WalkInForm => ({
   customerName: "",
   customerPhone: "",
   paymentMethod: "CASH",
+  paymentType: "FULL_PAYMENT",
   note: ""
 });
 
@@ -107,9 +109,11 @@ type UseWalkInBookingArgs = {
   enableCustomerLookup?: boolean;
   /** courtSurfaceId -> display name, used only to label chips when a selection spans several surfaces. */
   surfaceNames?: Record<string, string>;
+  /** Court's configured deposit %, if any. Deposit option is hidden entirely when 0/undefined. */
+  depositPercent?: number;
 };
 
-function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingCreated, onSettled, enableCustomerLookup, surfaceNames }: UseWalkInBookingArgs) {
+function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingCreated, onSettled, enableCustomerLookup, surfaceNames, depositPercent }: UseWalkInBookingArgs) {
   const effectiveDate = bookingDate ?? todayValue();
   const isToday = effectiveDate === todayValue();
   const [walkInForm, setWalkInForm] = useState<WalkInForm>(defaultWalkInForm());
@@ -246,6 +250,7 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
           startTime: customStart,
           minutes: customMinutes,
           paymentMethod: walkInForm.paymentMethod,
+          paymentType: walkInForm.paymentType,
           note: walkInForm.note || undefined
         });
         return { bookingsCount: 1, payment: result.payment };
@@ -263,13 +268,15 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
           startTime: cluster.startTime,
           minutes: minutesBetween(cluster.startTime, cluster.endTime),
           paymentMethod: walkInForm.paymentMethod,
+          paymentType: walkInForm.paymentType,
           note: walkInForm.note || undefined
         });
         return { bookingsCount: 1, payment: result.payment };
       }
 
-      // Multiple non-contiguous time ranges (possibly across different dates/surfaces) are grouped into a single BookingOrder; only cash is supported here.
-      await recipientApi.createWalkInBookingOrder({
+      // Multiple non-contiguous time ranges (possibly across different dates/surfaces) are grouped into a single BookingOrder,
+      // paid via one QR covering the combined total (or cash), same as a single walk-in booking.
+      const orderResult = await recipientApi.createWalkInBookingOrder({
         customerName: walkInForm.customerName,
         customerPhone: walkInForm.customerPhone,
         slots: slotClusters.map((cluster) => ({
@@ -278,9 +285,11 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
           startTime: cluster.startTime,
           minutes: minutesBetween(cluster.startTime, cluster.endTime)
         })),
+        paymentMethod: walkInForm.paymentMethod === "BANK_TRANSFER" ? "BANK_TRANSFER" : "CASH",
+        paymentType: walkInForm.paymentType,
         note: walkInForm.note || undefined
       });
-      return { bookingsCount: slotClusters.length, payment: null };
+      return { bookingsCount: slotClusters.length, payment: orderResult.payment };
     },
     onSuccess: (result) => {
       setWalkInSlots([]);
@@ -299,23 +308,31 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
 
   const createRecurringWalkIn = useMutation({
     mutationFn: () => {
-      if (slotClusters.length === 0) throw new Error("Chọn khung giờ cho chuỗi lặp");
-      if (slotClusters.length > 1) throw new Error("Chuỗi lặp hàng tuần chỉ hỗ trợ một khung giờ liền nhau");
-      const cluster = slotClusters[0];
+      if (slotClusters.length === 0) throw new Error("Chọn ít nhất một khung giờ cho chuỗi lặp");
+      // Each selected slot repeats weekly independently — lets staff set up different
+      // day/time combos (e.g. Tue 18h + Thu 20h) that all recur together.
       return recipientApi.createRecurringWalkInBooking({
-        courtSurfaceId,
         customerName: walkInForm.customerName,
         customerPhone: walkInForm.customerPhone,
-        startDate: cluster.date ?? effectiveDate,
-        startTime: cluster.startTime,
-        minutes: minutesBetween(cluster.startTime, cluster.endTime),
+        slots: slotClusters.map((cluster) => ({
+          courtSurfaceId: cluster.courtSurfaceId ?? courtSurfaceId,
+          bookingDate: cluster.date ?? effectiveDate,
+          startTime: cluster.startTime,
+          minutes: minutesBetween(cluster.startTime, cluster.endTime)
+        })),
         occurrences,
+        paymentMethod: walkInForm.paymentMethod === "BANK_TRANSFER" ? "BANK_TRANSFER" : "CASH",
+        paymentType: walkInForm.paymentType,
         note: walkInForm.note || undefined
       });
     },
     onSuccess: (result) => {
       setWalkInSlots([]);
       onBookingCreated?.();
+      if (result.payment) {
+        setActiveWalkInPayment(result.payment);
+        return;
+      }
       if (result.skipped.length) {
         toast.success(`Đã tạo ${result.created.length} buổi, bỏ qua ${result.skipped.length} buổi trùng lịch: ${result.skipped.map((item) => item.date).join(", ")}`);
       } else {
@@ -336,6 +353,7 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
       setActiveWalkInPayment(null);
       setWalkInForm(defaultWalkInForm());
       setSelectedMatch(null);
+      setRepeatWeekly(false);
       onBookingCreated?.();
       onSettled?.();
     },
@@ -348,6 +366,7 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
       setActiveWalkInPayment(null);
       setWalkInForm(defaultWalkInForm());
       setSelectedMatch(null);
+      setRepeatWeekly(false);
       onBookingCreated?.();
       onSettled?.();
     }
@@ -359,6 +378,7 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
     effectiveDate,
     courtSurfaceId,
     surfaceNames,
+    depositPercent,
     walkInForm,
     setWalkInForm,
     walkInSlots,
@@ -537,11 +557,6 @@ export function WalkInScheduleField({ walkIn, columnsClassName }: { walkIn: Walk
                   Bỏ chọn tất cả
                 </button>
               </div>
-              {slotClusters.length > 1 ? (
-                <p className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-bold text-amber-700">
-                  {slotClusters.length} khung giờ → gộp thành 1 lần đặt, thanh toán bằng tiền mặt.
-                </p>
-              ) : null}
             </div>
           ) : null}
         </>
@@ -647,6 +662,7 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
     activeWalkInPayment,
     effectiveDate,
     courtSurfaceId,
+    depositPercent,
     walkInForm,
     setWalkInForm,
     createWalkIn,
@@ -755,11 +771,6 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
               <button type="button" onClick={() => setWalkInSlots([])} className="rounded-md px-1.5 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-50">
                 Bỏ chọn tất cả
               </button>
-              {slotClusters.length > 1 ? (
-                <p className="rounded-md bg-amber-50 px-1.5 py-1 text-[11px] font-bold text-amber-700">
-                  {slotClusters.length} khung giờ → gộp thành 1 lần đặt, thanh toán bằng tiền mặt.
-                </p>
-              ) : null}
             </div>
           </div>
         )}
@@ -832,32 +843,40 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
         Lặp lại hàng tuần
       </label>
 
-      {repeatWeekly ? (
-        <>
-          <Input
-            dense
-            label="Số buổi lặp (tuần)"
-            type="number"
-            min={2}
-            max={26}
-            value={occurrences}
-            onChange={(event) => setOccurrences(Number(event.target.value))}
-            required
-          />
-          <p className="rounded-lg bg-white px-2 py-1 text-[11px] font-bold text-slate-600">Thanh toán: Tiền mặt tại quầy</p>
-        </>
-      ) : mode === "grid" && slotClusters.length > 1 ? (
-        <p className="rounded-lg bg-white px-2 py-1 text-[11px] font-bold text-slate-600">Thanh toán: Tiền mặt tại quầy (nhiều khung giờ rời rạc)</p>
-      ) : (
+      {repeatWeekly && (
+        <Input
+          dense
+          label="Số buổi lặp (tuần)"
+          type="number"
+          min={2}
+          max={26}
+          value={occurrences}
+          onChange={(event) => setOccurrences(Number(event.target.value))}
+          required
+        />
+      )}
+      <Select
+        dense
+        label="Thanh toán"
+        value={walkInForm.paymentMethod}
+        onChange={(event) => setWalkInForm({ ...walkInForm, paymentMethod: event.target.value as WalkInForm["paymentMethod"] })}
+        options={[
+          { value: "CASH", label: "Tiền mặt" },
+          {
+            value: "BANK_TRANSFER",
+            label: repeatWeekly ? "Chuyển khoản (1 mã QR cho cả chuỗi)" : mode === "grid" && slotClusters.length > 1 ? "Chuyển khoản (1 mã QR cho cả đơn)" : "Chuyển khoản (QR)"
+          }
+        ]}
+      />
+      {Boolean(depositPercent) && (
         <Select
           dense
-          label="Thanh toán"
-          value={walkInForm.paymentMethod}
-          onChange={(event) => setWalkInForm({ ...walkInForm, paymentMethod: event.target.value as WalkInForm["paymentMethod"] })}
+          label="Số tiền thu"
+          value={walkInForm.paymentType}
+          onChange={(event) => setWalkInForm({ ...walkInForm, paymentType: event.target.value as WalkInForm["paymentType"] })}
           options={[
-            { value: "CASH", label: "Tiền mặt" },
-            { value: "BANK_TRANSFER", label: "Chuyển khoản" },
-            { value: "E_WALLET", label: "Ví điện tử" }
+            { value: "FULL_PAYMENT", label: "Trả đủ" },
+            { value: "DEPOSIT", label: `Đặt cọc ${depositPercent}%` }
           ]}
         />
       )}
@@ -867,14 +886,16 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
         className="w-full"
         disabled={
           repeatWeekly
-            ? createRecurringWalkIn.isPending || slotClusters.length !== 1
+            ? createRecurringWalkIn.isPending || slotClusters.length === 0
             : createWalkIn.isPending || (mode === "now" ? !customStart : slotClusters.length === 0)
         }
       >
         {repeatWeekly
           ? createRecurringWalkIn.isPending
             ? "Đang tạo..."
-            : `Tạo ${occurrences} buổi lặp`
+            : slotClusters.length > 1
+              ? `Tạo ${slotClusters.length} khung giờ × ${occurrences} tuần lặp`
+              : `Tạo ${occurrences} buổi lặp`
           : createWalkIn.isPending
             ? "Đang tạo..."
             : mode === "grid" && slotClusters.length > 1
