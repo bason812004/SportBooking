@@ -4,8 +4,11 @@ import { api } from "../../../lib/axios";
 import type { ApiResponse, WeeklyScheduleResponse } from "../../../types/api";
 
 export const bookingScheduleApi = {
-  async weekly(courtId: string, weekStart?: string) {
-    const params = weekStart ? { weekStart } : undefined;
+  async weekly(courtId: string, weekStart?: string, surfaceId?: string) {
+    const params = {
+      ...(weekStart ? { weekStart } : {}),
+      ...(surfaceId ? { surfaceId } : {})
+    };
     const { data } = await api.get<ApiResponse<WeeklyScheduleResponse>>(
       `/courts/${courtId}/weekly-schedule`,
       { params }
@@ -14,24 +17,31 @@ export const bookingScheduleApi = {
   }
 };
 
-export const weeklyScheduleQueryKey = (courtId: string | undefined, weekStart: string | undefined) =>
-  (["weekly-schedule", courtId, weekStart ?? "current"] as const);
+export const weeklyScheduleQueryKey = (courtId: string | undefined, weekStart: string | undefined, surfaceId: string | undefined) =>
+  (["weekly-schedule", courtId, weekStart ?? "current", surfaceId ?? "ALL"] as const);
 
-export function useWeeklySchedule(courtId?: string, weekStart?: string, enabled = true) {
+export function useWeeklySchedule(courtId?: string, weekStart?: string, surfaceId?: string, enabled = true) {
   return useQuery({
-    queryKey: weeklyScheduleQueryKey(courtId, weekStart),
-    queryFn: () => bookingScheduleApi.weekly(courtId!, weekStart),
+    queryKey: weeklyScheduleQueryKey(courtId, weekStart, surfaceId),
+    queryFn: () => bookingScheduleApi.weekly(courtId!, weekStart, surfaceId),
     enabled: Boolean(courtId) && enabled,
     staleTime: 30_000,    // 30s — data is relatively stable per week
     gcTime: 5 * 60_000,   // 5 min — keep cached data for faster back navigation
     refetchInterval: false, // disable polling; rely on Socket.IO realtime invalidation
     refetchOnWindowFocus: false,
-    placeholderData: keepPreviousData
+    placeholderData: (previousData, previousQuery) => {
+      const prevSurfaceId = previousQuery?.queryKey?.[3];
+      const targetSurfaceId = surfaceId ?? "ALL";
+      if (prevSurfaceId === targetSurfaceId) {
+        return previousData;
+      }
+      return undefined;
+    }
   });
 }
 
 /** Prefetch previous and next weeks for instant navigation */
-export function usePrefetchAdjacentWeeks(courtId: string | undefined, currentWeekStart: string) {
+export function usePrefetchAdjacentWeeks(courtId: string | undefined, currentWeekStart: string, surfaceId?: string) {
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -47,14 +57,14 @@ export function usePrefetchAdjacentWeeks(courtId: string | undefined, currentWee
 
     for (const target of targets) {
       queryClient.prefetchQuery({
-        queryKey: weeklyScheduleQueryKey(courtId, target),
-        queryFn: () => bookingScheduleApi.weekly(courtId, target),
+        queryKey: weeklyScheduleQueryKey(courtId, target, surfaceId),
+        queryFn: () => bookingScheduleApi.weekly(courtId, target, surfaceId),
         staleTime: 30_000,
         gcTime: 5 * 60_000
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [courtId, currentWeekStart]);
+  }, [courtId, currentWeekStart, surfaceId]);
 }
 
 function formatYmdLocal(date: Date) {

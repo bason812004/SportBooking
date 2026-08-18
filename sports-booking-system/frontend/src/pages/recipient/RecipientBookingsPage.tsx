@@ -24,6 +24,8 @@ import { PageHero } from "../../components/common/PageHero";
 import { useUrlSort } from "../../hooks/useUrlSort";
 import { BookingCalendarGrid } from "../../components/booking/BookingCalendarGrid";
 import { WalkInBookingForm } from "../../features/recipient/components/WalkInBookingForm";
+import { RentEquipmentModal } from "../../features/recipient/components/RentEquipmentModal";
+import type { Booking } from "../../types/api";
 
 type Action = "confirm" | "reject" | "complete" | "no-show";
 
@@ -44,6 +46,13 @@ function addOneHour(time: string) {
   const [hours, minutes] = time.split(":").map(Number);
   const total = hours * 60 + minutes + 60;
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function hasCustomerArrived(bookingDate: string, startTime: string) {
+  const datePart = bookingDate.slice(0, 10);
+  const timePart = startTime.slice(11, 16) || startTime.slice(0, 5);
+  const startsAt = new Date(`${datePart}T${timePart}:00`);
+  return new Date() >= startsAt;
 }
 
 function shiftDate(date: string, days: number) {
@@ -201,7 +210,9 @@ export function RecipientBookingsPage() {
     return rawGroups.filter((group) => {
       const primary = group.bookings[0];
       if (!primary) return false;
-      return ["CONFIRMED", "IN_PROGRESS", "DEPOSIT_PAID", "CHECKOUT_PENDING", "PENDING"].includes(primary.bookingStatus);
+      if (!["CONFIRMED", "IN_PROGRESS", "DEPOSIT_PAID", "CHECKOUT_PENDING", "PENDING"].includes(primary.bookingStatus)) return false;
+      const startsAt = new Date(`${primary.bookingDate.slice(0, 10)}T${primary.startTime.slice(11, 16)}:00`);
+      return new Date() >= startsAt;
     });
   }, [bookings.data?.items, servingOnly]);
 
@@ -221,7 +232,10 @@ export function RecipientBookingsPage() {
     queryClient.invalidateQueries({ queryKey: ["recipient-bookings"] });
     queryClient.invalidateQueries({ queryKey: ["recipient-calendar"] });
     queryClient.invalidateQueries({ queryKey: ["recipient-dashboard"] });
+    queryClient.invalidateQueries({ queryKey: ["recipient-surface-availability"] });
   };
+
+  const [rentEquipmentBooking, setRentEquipmentBooking] = useState<Booking | null>(null);
 
   const statusMutation = useMutation({
     mutationFn: ({ id, action }: { id: string; action: Action }) => {
@@ -326,6 +340,16 @@ export function RecipientBookingsPage() {
                 onClick={() => navigate(`/recipient/pos/${primary.id}`)}
               >
                 <ShoppingBag className="mr-1 h-3.5 w-3.5" /> Dịch vụ (POS)
+              </Button>
+            )}
+            {["CONFIRMED", "DEPOSIT_PAID"].includes(primary.bookingStatus) && !hasCustomerArrived(primary.bookingDate, primary.startTime) && (
+              <Button
+                size="sm"
+                variant="secondary"
+                className="border-emerald-300 text-[#02712a] hover:bg-emerald-50 font-bold text-xs"
+                onClick={() => setRentEquipmentBooking(primary)}
+              >
+                <ShoppingBag className="mr-1 h-3.5 w-3.5" /> Thuê dụng cụ
               </Button>
             )}
             {!isGroup &&
@@ -761,6 +785,7 @@ export function RecipientBookingsPage() {
             initialSlot={{ startTime: walkInCell.startTime, endTime: addOneHour(walkInCell.startTime) }}
             onBookingCreated={invalidateAll}
             onSettled={() => setWalkInCell(null)}
+            depositPercent={courtSurfacesQuery.data?.find((s) => s.id === walkInCell.courtSurfaceId)?.depositPercent}
           />
         </Overlay>
       ) : null}
@@ -768,6 +793,17 @@ export function RecipientBookingsPage() {
         isOpen={Boolean(cashierBookingId)}
         onClose={() => setCashierBookingId(null)}
         bookingId={cashierBookingId}
+      />
+      <RentEquipmentModal
+        isOpen={Boolean(rentEquipmentBooking)}
+        onClose={() => setRentEquipmentBooking(null)}
+        bookingId={rentEquipmentBooking?.id ?? ""}
+        courtId={rentEquipmentBooking?.court.id ?? ""}
+        courtName={rentEquipmentBooking?.court.name}
+        onRented={() => {
+          toast.success("Đã thuê dụng cụ cho khách");
+          invalidateAll();
+        }}
       />
     </div>
   );

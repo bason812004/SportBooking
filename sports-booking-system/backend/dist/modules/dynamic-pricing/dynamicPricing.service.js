@@ -19,24 +19,55 @@ async function partnerProfile(userId) {
     return profile;
 }
 export const dynamicPricingService = {
-    async calculate(courtId, input) {
-        if (timeToMinutes(input.startTime) >= timeToMinutes(input.endTime))
-            throw new ValidationError("Gio bat dau phai nho hon gio ket thuc");
+    /** Fetches the court's base prices + active rules once — reuse across many `resolveFromPrefetched`
+     * calls (e.g. one per week of a recurring booking) instead of re-querying per call. */
+    async prefetch(courtId) {
         const court = await dynamicPricingRepository.courtWithBasePrices(courtId);
         if (!court)
             throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
+        const rules = await dynamicPricingRepository.activeRules(courtId);
+        return { court, rules };
+    },
+    /** Pure price resolution from already-fetched court/rules — no DB I/O, no analytics event. */
+    resolveFromPrefetched(prefetched, input) {
+        if (timeToMinutes(input.startTime) >= timeToMinutes(input.endTime))
+            throw new ValidationError("Gio bat dau phai nho hon gio ket thuc");
+        const { court, rules } = prefetched;
         const dayType = dayTypeFor(input.date);
-        const basePriceRow = court.basePrices.find((price) => price.dayType === dayType &&
-            timeToMinutes(dbTime(price.startTime)) <= timeToMinutes(input.startTime) &&
-            timeToMinutes(dbTime(price.endTime)) >= timeToMinutes(input.endTime)) ??
-            court.prices.find((price) => price.dayType === dayType &&
-                timeToMinutes(dbTime(price.startTime)) <= timeToMinutes(input.startTime) &&
-                timeToMinutes(dbTime(price.endTime)) >= timeToMinutes(input.endTime));
-        if (!basePriceRow)
-            throw new ValidationError("Khung gio nay chua co bang gia");
-        const basePrice = Number("basePrice" in basePriceRow ? basePriceRow.basePrice : basePriceRow.price);
+        const startMins = timeToMinutes(input.startTime);
+        const endMins = timeToMinutes(input.endTime);
+        const allPriceRows = [
+            ...court.basePrices.map((p) => ({
+                dayType: p.dayType,
+                startTimeMins: timeToMinutes(dbTime(p.startTime)),
+                endTimeMins: timeToMinutes(dbTime(p.endTime)),
+                price: Number(p.basePrice)
+            })),
+            ...court.prices.map((p) => ({
+                dayType: p.dayType,
+                startTimeMins: timeToMinutes(dbTime(p.startTime)),
+                endTimeMins: timeToMinutes(dbTime(p.endTime)),
+                price: Number(p.price)
+            }))
+        ];
+        // Priority 1: Exact match for same dayType
+        let basePriceMatch = allPriceRows.find((p) => p.dayType === dayType && p.startTimeMins <= startMins && p.endTimeMins >= endMins);
+        // Priority 2: Overlapping match for same dayType
+        if (!basePriceMatch) {
+            basePriceMatch = allPriceRows.find((p) => p.dayType === dayType && p.startTimeMins < endMins && p.endTimeMins > startMins);
+        }
+        // Priority 3: Any match for same dayType
+        if (!basePriceMatch) {
+            basePriceMatch = allPriceRows.find((p) => p.dayType === dayType);
+        }
+        // Priority 4: Fallback to any price entry for this court
+        if (!basePriceMatch && allPriceRows.length > 0) {
+            basePriceMatch = allPriceRows[0];
+        }
+        if (!basePriceMatch)
+            throw new ValidationError("Khung giờ này chưa có bảng giá. Vui lòng thiết lập bảng giá cho sân.");
+        const basePrice = basePriceMatch.price;
         try {
-            const rules = await dynamicPricingRepository.activeRules(courtId);
             const applicableRules = rules.filter((rule) => (!rule.dayType || rule.dayType === dayType) &&
                 overlapsWindow(rule.startTime, rule.endTime, input.startTime, input.endTime));
             const result = calculateDynamicPrice({
@@ -49,19 +80,24 @@ export const dynamicPricingService = {
                     maxPrice: rule.maxPrice == null ? null : Number(rule.maxPrice)
                 }))
             });
-            await trackEvent({
-                partnerId: court.partnerId,
-                eventType: "DYNAMIC_PRICE_CALCULATED",
-                entityType: "COURT",
-                entityId: courtId,
-                metadataJson: { date: input.date, startTime: input.startTime, endTime: input.endTime, finalPrice: result.finalPrice }
-            });
-            return { courtId, ...result, currency: "VND" };
+            return { courtId: court.id, ...result, currency: "VND" };
         }
         catch (error) {
-            logger.warn("dynamic_price_fallback_base_price", { courtId, error: error instanceof Error ? error.message : String(error) });
-            return { courtId, basePrice, adjustments: [], dynamicAdjustmentAmount: 0, finalPrice: basePrice, currency: "VND" };
+            logger.warn("dynamic_price_fallback_base_price", { courtId: court.id, error: error instanceof Error ? error.message : String(error) });
+            return { courtId: court.id, basePrice, adjustments: [], dynamicAdjustmentAmount: 0, finalPrice: basePrice, currency: "VND" };
         }
+    },
+    async calculate(courtId, input) {
+        const prefetched = await this.prefetch(courtId);
+        const result = this.resolveFromPrefetched(prefetched, input);
+        await trackEvent({
+            partnerId: prefetched.court.partnerId,
+            eventType: "DYNAMIC_PRICE_CALCULATED",
+            entityType: "COURT",
+            entityId: courtId,
+            metadataJson: { date: input.date, startTime: input.startTime, endTime: input.endTime, finalPrice: result.finalPrice }
+        });
+        return result;
     },
     async listRules(userId) {
         const profile = await partnerProfile(userId);

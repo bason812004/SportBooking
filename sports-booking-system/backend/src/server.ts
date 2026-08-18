@@ -14,17 +14,16 @@ initRealtime(server);
 
 server.listen(env.PORT, async () => {
   console.log(`API listening on http://localhost:${env.PORT}`);
-  startPaymentPoller();
   try {
-    await Promise.all([
-      ensureTeamChatTables(),
-      ensureReviewTables(),
-      ensureBookingTables(),
-      ensureServiceTables()
-    ]);
+    await ensureTeamChatTables().catch((e) => console.warn("[DB Init] teamChat:", e?.message));
+    await ensureReviewTables().catch((e) => console.warn("[DB Init] review:", e?.message));
+    await ensureBookingTables().catch((e) => console.warn("[DB Init] booking:", e?.message));
+    await ensureServiceTables().catch((e) => console.warn("[DB Init] service:", e?.message));
     console.log("Database schema helpers ready");
   } catch (err) {
     console.error("Failed to initialize database tables:", err);
+  } finally {
+    startPaymentPoller();
   }
 });
 

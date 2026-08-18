@@ -107,7 +107,8 @@ function compareTime(a: string, b: string) {
 }
 
 function slotKey(slot: WeeklyScheduleSlot) {
-  return `${slot.date}|${slot.startTime}|${slot.endTime}`;
+  const sub = slot.courtSurfaceId || "";
+  return `${slot.date}|${sub}|${slot.startTime}|${slot.endTime}`;
 }
 
 const DAY_LABELS = ["CN", "Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7"];

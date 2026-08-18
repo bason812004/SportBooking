@@ -36,18 +36,30 @@ import { partnerWalletRoutes, adminWalletRoutes } from "./modules/wallets/wallet
 import { partnerSettlementRoutes, adminSettlementRoutes } from "./modules/settlements/settlement.routes.js";
 import { partnerWithdrawalRoutes, adminWithdrawalRoutes } from "./modules/withdrawals/withdrawal.routes.js";
 import { uploadRoutes } from "./modules/uploads/upload.routes.js";
+import { serviceRoutes } from "./modules/services/service.routes.js";
+import { inventoryRoutes } from "./modules/inventory/inventory.routes.js";
+import { cashierRoutes } from "./modules/cashier/cashier.routes.js";
+import { checkoutRoutes } from "./modules/checkout/checkout.routes.js";
 export const app = express();
 const allowedOrigins = new Set([
     env.FRONTEND_URL,
     "http://localhost:5173",
-    "http://127.0.0.1:5173"
+    "http://127.0.0.1:5173",
+    "http://localhost:8081",
+    "http://127.0.0.1:8081",
+    "http://localhost:19006",
+    "http://127.0.0.1:19006"
 ]);
 app.use(helmet());
 app.use(compression());
 app.use(cors({
     origin(origin, callback) {
-        if (!origin || allowedOrigins.has(origin))
+        if (!origin ||
+            allowedOrigins.has(origin) ||
+            process.env.NODE_ENV !== "production" ||
+            /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$/.test(origin)) {
             return callback(null, true);
+        }
         return callback(new Error(`Origin ${origin} is not allowed by CORS`));
     },
     credentials: true
@@ -87,6 +99,11 @@ app.use("/api/partner/analytics", partnerAnalyticsRoutes);
 app.use("/api/partner/wallet", partnerWalletRoutes);
 app.use("/api/partner/settlements", partnerSettlementRoutes);
 app.use("/api/partner/withdrawals", partnerWithdrawalRoutes);
+app.use("/api/services", serviceRoutes);
+app.use("/api/partner/inventory", inventoryRoutes);
+app.use("/api/inventory", inventoryRoutes);
+app.use("/api/cashier", cashierRoutes);
+app.use("/api/checkouts", checkoutRoutes);
 app.use("/api/partner", partnerRoutes);
 app.use("/api/recipient", recipientRoutes);
 app.use("/api/admin/analytics", adminAnalyticsRoutes);

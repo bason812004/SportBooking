@@ -162,7 +162,10 @@ export function RecipientCourtSurfacesPage() {
     [items, selectedSurfaceId]
   );
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ["recipient-operations"] });
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["recipient-operations"] });
+    queryClient.invalidateQueries({ queryKey: ["recipient-surface-availability"] });
+  };
 
   const [walkInDate, setWalkInDate] = useState(todayValue());
   useEffect(() => {
@@ -176,7 +179,8 @@ export function RecipientCourtSurfacesPage() {
     bookingDate: walkInDate,
     onBookingCreated: refresh,
     enableCustomerLookup: true,
-    surfaceNames
+    surfaceNames,
+    depositPercent: canBookAdvance ? selected!.surface.depositPercent : undefined
   });
 
   const toggleStatus = useMutation({
@@ -198,7 +202,7 @@ export function RecipientCourtSurfacesPage() {
   });
 
   const earlyCheckIn = useMutation({
-    mutationFn: (bookingId: string) => recipientApi.earlyCheckInBooking(bookingId),
+    mutationFn: (bookingId: string) => recipientApi.checkInBooking(bookingId),
     onSuccess: () => {
       toast.success("Đã check-in sớm cho khách");
       refresh();
@@ -233,7 +237,7 @@ export function RecipientCourtSurfacesPage() {
     <div className="space-y-5">
       <PageHero
         eyebrow="Vận hành"
-        title="Quản lý sân"
+        title="Đặt sân tại quầy"
         subtitle={`Theo dõi khách đang sử dụng từng sân con của ${data.court.name} - cập nhật lúc ${data.nowTime} ngày ${new Date(data.date).toLocaleDateString("vi-VN")}.`}
         actions={
           <Button variant="secondary" onClick={() => refresh()}>
@@ -359,6 +363,14 @@ export function RecipientCourtSurfacesPage() {
                           {completeOverdue.isPending ? "Đang xác nhận..." : "Xác nhận trả sân"}
                         </Button>
                       </>
+                    ) : selected.currentBooking && !selected.currentBooking.checkedInAt ? (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                        <p className="mb-2 text-sm font-bold text-amber-800">Khách đã tới giờ nhưng chưa check-in — hãy xác nhận để bắt đầu bán dịch vụ cho sân này.</p>
+                        <Button className="w-full" disabled={earlyCheckIn.isPending} onClick={() => earlyCheckIn.mutate(selected.currentBooking!.id)}>
+                          <LogIn className="h-4 w-4" />
+                          {earlyCheckIn.isPending ? "Đang check-in..." : "Check-in"}
+                        </Button>
+                      </div>
                     ) : selected.currentBooking ? (
                       <>
                         <div>

@@ -11,6 +11,7 @@ import { CourtList } from "./search/CourtList";
 import { MapPanel } from "./search/MapPanel";
 import { PaginationSection } from "./search/PaginationSection";
 import type { SearchCourtItem } from "./search/CourtCard";
+import { UserLocationBadge } from "../../components/common/UserLocationBadge";
 
 const PAGE_SIZE = 8;
 
@@ -29,7 +30,7 @@ export function CourtsPage() {
   const [radiusKm, setRadiusKm] = useState<number | undefined>(undefined);
   const [sortBy, setSortBy] = useState("newest");
   const sportTypes = useSportTypes();
-  const userLocation = useUserLocation({ autoRequest: true });
+  const userLocation = useUserLocation({ autoRequest: true, enableRealtimeWatch: true });
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedKeyword(keyword), 350);
@@ -147,6 +148,13 @@ export function CourtsPage() {
           onClear={clearFilters}
         />
         <main className="space-y-5">
+          <UserLocationBadge
+            location={userLocation.location}
+            status={userLocation.status}
+            statusMessage={userLocation.statusMessage}
+            loading={userLocation.loading}
+            onRefresh={userLocation.refreshLocation}
+          />
           <SortBar onOpenFilter={() => setFilterOpen(true)} sortBy={sortBy} onSortChange={setSortBy} />
           <ResultStats
             total={total}

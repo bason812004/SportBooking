@@ -17,6 +17,8 @@ export type BookingSlotPayload = {
   date?: string;
   startTime: string;
   endTime: string;
+  courtSurfaceId?: string;
+  courtSubId?: string;
 };
 
 export type BookingDayPayload = {

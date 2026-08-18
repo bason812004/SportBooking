@@ -31,6 +31,7 @@ export type RecipientCourtSurface = {
   imageUrl?: string | null;
   status: "ACTIVE" | "INACTIVE";
   sortOrder: number;
+  depositPercent: number;
 };
 
 export type RecipientOperationBooking = {
@@ -44,6 +45,7 @@ export type RecipientOperationBooking = {
   bookingStatus: string;
   paymentStatus: string;
   totalPrice: number;
+  checkedInAt?: string | null;
 };
 
 export type RecipientOperationItem = {
@@ -56,6 +58,7 @@ export type RecipientOperationItem = {
     size?: string | null;
     imageUrl?: string | null;
     status: "ACTIVE" | "INACTIVE";
+    depositPercent: number;
   };
   status: "AVAILABLE" | "OCCUPIED" | "ENDING_SOON" | "OVERDUE" | "RESERVED_SOON" | "INACTIVE";
   minutesLeft: number | null;
@@ -129,6 +132,7 @@ export type RecipientWalkInBookingPayload = {
   startTime: string;
   minutes: number;
   paymentMethod: "CASH" | "BANK_TRANSFER" | "E_WALLET";
+  paymentType?: "FULL_PAYMENT" | "DEPOSIT";
   note?: string;
 };
 
@@ -151,29 +155,32 @@ export type RecipientWalkInBookingOrderPayload = {
   customerName: string;
   customerPhone: string;
   slots: Array<{ courtSurfaceId: string; bookingDate: string; startTime: string; minutes: number }>;
+  paymentMethod: "CASH" | "BANK_TRANSFER";
+  paymentType?: "FULL_PAYMENT" | "DEPOSIT";
   note?: string;
 };
 
 export type RecipientWalkInBookingOrderResult = {
   orderId: string;
   bookings: Booking[];
+  payment: RecipientWalkInPayment | null;
 };
 
 export type RecipientRecurringBookingPayload = {
-  courtSurfaceId: string;
   customerName: string;
   customerPhone: string;
-  startDate: string;
-  startTime: string;
-  minutes: number;
+  slots: Array<{ courtSurfaceId: string; bookingDate: string; startTime: string; minutes: number }>;
   occurrences: number;
+  paymentMethod: "CASH" | "BANK_TRANSFER";
+  paymentType?: "FULL_PAYMENT" | "DEPOSIT";
   note?: string;
 };
 
 export type RecipientRecurringBookingResult = {
-  series: { id: string };
+  series: { id: string }[];
   created: Booking[];
-  skipped: { date: string; reason: string }[];
+  skipped: { courtSurfaceId: string; date: string; reason: string }[];
+  payment: RecipientWalkInPayment | null;
 };
 
 export type RecipientCustomerMatch = {
@@ -319,8 +326,8 @@ export const recipientApi = {
     return data.data;
   },
 
-  async earlyCheckInBooking(id: string) {
-    const { data } = await api.post<ApiResponse<Booking>>(`/recipient/bookings/${id}/early-check-in`);
+  async checkInBooking(id: string) {
+    const { data } = await api.post<ApiResponse<Booking>>(`/recipient/bookings/${id}/check-in`);
     return data.data;
   },
 

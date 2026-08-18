@@ -94,10 +94,15 @@ export function CourtDetailBookingSidePanel({
                     </div>
                     {daySlots.map((slot) => (
                       <div
-                        key={`${slot.date}-${slot.startTime}`}
+                        key={`${slot.date}-${slot.courtSurfaceId || ''}-${slot.startTime}`}
                         className="flex items-center justify-between pl-2 font-semibold text-slate-600"
                       >
                         <span className="flex items-center gap-1.5">
+                          {slot.courtSurfaceName && (
+                            <span className="rounded bg-emerald-100 px-1 py-0.5 text-[10px] font-black text-emerald-800">
+                              {slot.courtSurfaceName}
+                            </span>
+                          )}
                           {slot.startTime} – {slot.endTime}
                           {onRemoveSlot && (
                             <button

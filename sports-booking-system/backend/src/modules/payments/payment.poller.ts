@@ -18,12 +18,11 @@ async function pollPayments() {
         where: { status: "PENDING" },
         include: { booking: true }
       });
-    } catch (dbErr: any) {
-      console.warn(`[Poller] Database temporary unreachable (${dbErr?.code || dbErr?.message?.slice(0, 60)})`);
+    } catch {
       return;
     }
 
-    if (pendingPayments.length === 0) return;
+    if (!pendingPayments || pendingPayments.length === 0) return;
 
     for (const payment of pendingPayments) {
       if (payment.expiresAt.getTime() <= Date.now()) {
@@ -141,7 +140,7 @@ async function pollPayments() {
 export function startPaymentPoller() {
   const provider = env.PAYMENT_PROVIDER;
   if (provider === "PAYOS" || provider === "SEPAY") {
-    console.log(`[Poller] Starting background payment transaction poller for ${provider} (every 10s)...`);
-    setInterval(pollPayments, 10000);
+    console.log(`[Poller] Starting background payment transaction poller for ${provider} (every 25s)...`);
+    setInterval(pollPayments, 25000);
   }
 }

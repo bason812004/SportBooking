@@ -70,6 +70,15 @@ export function UserBookingDetailPage() {
     return { canCancel: true, reason: "" };
   }, [booking.data]);
 
+  const courtSubtotal = useMemo(() => {
+    const data = booking.data;
+    if (!data) return 0;
+    if (data.bookingSlots && data.bookingSlots.length > 0) {
+      return data.bookingSlots.reduce((sum: number, slot: any) => sum + Number(slot.slotPrice ?? 0), 0);
+    }
+    return Number(data.basePrice ?? 0);
+  }, [booking.data]);
+
   if (booking.isLoading) return <LoadingState />;
   if (booking.isError) return <ErrorState message={booking.error.message} onRetry={() => booking.refetch()} />;
   if (!booking.data) return <ErrorState message="Không tìm thấy đơn đặt sân" />;
@@ -79,6 +88,7 @@ export function UserBookingDetailPage() {
   const firstImage = court.images?.[0]?.imageUrl;
   const voucher = data.bookingVoucher?.voucher;
   const bookingServices = data.bookingServices ?? [];
+
   const servicesTotal = bookingServices.reduce((sum, line) => sum + Number(line.price) * line.quantity, 0);
   const paymentId = data.payments?.[0]?.id;
   const canPay = !["PAID", "REFUNDED"].includes(data.paymentStatus);
@@ -170,6 +180,11 @@ export function UserBookingDetailPage() {
                               className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-800"
                             >
                               <Clock3 className="h-3.5 w-3.5" />
+                              {slot.court_surfaces?.name && (
+                                <span className="rounded bg-emerald-200 px-1.5 py-0.5 text-[10px] font-black text-emerald-900">
+                                  {slot.court_surfaces.name}
+                                </span>
+                              )}
                               {slot.bookingDate ? `${formatDate(slot.bookingDate)} · ` : ""}
                               {timeText(slot.startTime)} - {timeText(slot.endTime)}
                               <span className="text-[11px] font-semibold text-emerald-600">
@@ -231,7 +246,7 @@ export function UserBookingDetailPage() {
             <section className="rounded-2xl border border-emerald-200 bg-white p-5 shadow-lg shadow-emerald-900/5">
               <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-700">Thanh toán & voucher</p>
               <div className="mt-4 space-y-2 text-sm">
-                <PriceRow label="Tiền sân" value={formatCurrency(data.basePrice)} />
+                <PriceRow label="Tiền sân" value={formatCurrency(courtSubtotal)} />
                 <PriceRow label="Dịch vụ đi kèm" value={formatCurrency(servicesTotal)} />
                 <PriceRow label="Tạm tính" value={formatCurrency(data.subtotal ?? data.totalPrice)} strong />
                 <PriceRow label={voucher ? `Voucher ${voucher.code}` : "Voucher"} value={Number(data.voucherDiscountAmount ?? 0) > 0 ? `-${formatCurrency(data.voucherDiscountAmount)}` : "-"} accent={Number(data.voucherDiscountAmount ?? 0) > 0} />

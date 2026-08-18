@@ -139,41 +139,29 @@ export const commissionService = {
 
   async adminReport(month?: string) {
     const range = monthRange(month);
-    const transactions = await commissionRepository.report(range.from, range.to);
-    const partners = new Map<
-      string,
-      {
-        partnerId: string;
-        businessName: string;
-        grossAmount: number;
-        commissionAmount: number;
-        netAmount: number;
-        transactionCount: number;
-      }
-    >();
-
-    for (const item of transactions) {
-      const current = partners.get(item.partnerId) ?? {
-        partnerId: item.partnerId,
-        businessName: item.partner.businessName,
-        grossAmount: 0,
-        commissionAmount: 0,
-        netAmount: 0,
-        transactionCount: 0
-      };
-      current.grossAmount += asNumber(item.grossAmount);
-      current.commissionAmount += asNumber(item.commissionAmount);
-      current.netAmount += asNumber(item.netAmount);
-      current.transactionCount += 1;
-      partners.set(item.partnerId, current);
-    }
+    const { totals, perPartner, partnerNames } = await commissionRepository.reportAggregate(
+      range.from,
+      range.to
+    );
 
     return {
       month: range.month,
-      summary: summarize(transactions),
-      partners: [...partners.values()].sort(
-        (a, b) => b.commissionAmount - a.commissionAmount
-      )
+      summary: {
+        grossAmount: asNumber(totals._sum.grossAmount),
+        commissionAmount: asNumber(totals._sum.commissionAmount),
+        netAmount: asNumber(totals._sum.netAmount),
+        transactionCount: totals._count
+      },
+      partners: perPartner
+        .map((row) => ({
+          partnerId: row.partnerId,
+          businessName: partnerNames.get(row.partnerId) ?? "",
+          grossAmount: asNumber(row._sum.grossAmount),
+          commissionAmount: asNumber(row._sum.commissionAmount),
+          netAmount: asNumber(row._sum.netAmount),
+          transactionCount: row._count
+        }))
+        .sort((a, b) => b.commissionAmount - a.commissionAmount)
     };
   },
 

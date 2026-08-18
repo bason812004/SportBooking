@@ -754,6 +754,8 @@ export type WeeklyScheduleSlot = {
   date: string;
   startTime: string;
   endTime: string;
+  courtSurfaceId?: string | null;
+  courtSurfaceName?: string | null;
   status: WeeklySlotStatus;
   basePrice: number;
   finalPrice: number;

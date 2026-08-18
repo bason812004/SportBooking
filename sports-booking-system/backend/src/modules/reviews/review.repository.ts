@@ -34,8 +34,8 @@ export async function ensureReviewTables() {
       add column if not exists is_edited boolean not null default false
     `;
     reviewTablesReady = true;
-  } catch (err) {
-    console.warn("Failed to ensure review tables:", err);
+  } catch (err: any) {
+    console.warn("[ReviewRepository] Note on ensure review tables:", err?.message || err);
   }
 }
 

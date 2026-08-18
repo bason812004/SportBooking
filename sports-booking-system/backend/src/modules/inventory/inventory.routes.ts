@@ -8,12 +8,16 @@ import { inventoryController } from "./inventory.controller.js";
 export const inventoryRoutes = Router();
 
 inventoryRoutes.use(authMiddleware);
-inventoryRoutes.use(requireRole(UserRole.PARTNER, UserRole.RECIPIENT, UserRole.ADMIN, UserRole.USER));
 
-inventoryRoutes.get("/summary", asyncHandler(inventoryController.getInventorySummary));
-inventoryRoutes.post("/adjust", asyncHandler(inventoryController.adjustStock));
-inventoryRoutes.get("/transactions", asyncHandler(inventoryController.getTransactions));
-inventoryRoutes.get("/suppliers", asyncHandler(inventoryController.listSuppliers));
-inventoryRoutes.post("/suppliers", asyncHandler(inventoryController.createSupplier));
-inventoryRoutes.get("/purchase-orders", asyncHandler(inventoryController.listPurchaseOrders));
-inventoryRoutes.post("/purchase-orders", asyncHandler(inventoryController.createPurchaseOrder));
+const canView = requireRole(UserRole.PARTNER, UserRole.RECIPIENT);
+const canManage = requireRole(UserRole.PARTNER);
+
+inventoryRoutes.get("/summary", canView, asyncHandler(inventoryController.getInventorySummary));
+inventoryRoutes.get("/alerts", canView, asyncHandler(inventoryController.getLowStockAlerts));
+inventoryRoutes.get("/reorder-suggestions", canView, asyncHandler(inventoryController.getReorderSuggestions));
+inventoryRoutes.post("/adjust", canManage, asyncHandler(inventoryController.adjustStock));
+inventoryRoutes.get("/transactions", canView, asyncHandler(inventoryController.getTransactions));
+inventoryRoutes.get("/suppliers", canView, asyncHandler(inventoryController.listSuppliers));
+inventoryRoutes.post("/suppliers", canManage, asyncHandler(inventoryController.createSupplier));
+inventoryRoutes.get("/purchase-orders", canView, asyncHandler(inventoryController.listPurchaseOrders));
+inventoryRoutes.post("/purchase-orders", canManage, asyncHandler(inventoryController.createPurchaseOrder));

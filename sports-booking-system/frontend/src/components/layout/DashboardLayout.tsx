@@ -88,12 +88,12 @@ const menus = {
   RECIPIENT: [
     { to: "/recipient/dashboard", label: "Bảng điều khiển", icon: Grid2X2, group: "Tổng quan" },
     { to: "/recipient/cashier", label: "Thu ngân (POS)", icon: Receipt, group: "Vận hành" },
+    { to: "/recipient/court-surfaces", label: "Đặt sân tại quầy", icon: UserRoundCheck, group: "Vận hành" },
     { to: "/recipient/bookings", label: "Đơn đặt sân", icon: CalendarCheck, group: "Vận hành" },
     { to: "/recipient/services", label: "Dịch vụ & Món", icon: ShoppingBag, group: "Tồn kho & Dịch vụ" },
     { to: "/recipient/inventory", label: "Tồn kho hàng hóa", icon: Boxes, group: "Tồn kho & Dịch vụ" },
     { to: "/recipient/purchases", label: "Nhập hàng & NCC", icon: Truck, group: "Tồn kho & Dịch vụ" },
-    { to: "/recipient/checkouts", label: "Lịch sử Checkout", icon: CreditCard, group: "Tài chính" },
-    { to: "/recipient/court-surfaces", label: "Quản lý sân", icon: UserRoundCheck, group: "Vận hành" }
+    { to: "/recipient/checkouts", label: "Lịch sử Checkout", icon: CreditCard, group: "Tài chính" }
   ]
 } satisfies Record<"PARTNER" | "ADMIN" | "RECIPIENT", MenuItem[]>;
 

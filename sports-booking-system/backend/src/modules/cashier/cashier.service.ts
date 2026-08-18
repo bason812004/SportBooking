@@ -13,7 +13,7 @@ export const cashierService = {
 
   async addServiceToBooking(bookingId: string, input: AddServiceToBookingInput, addedBy: string) {
     const result = await cashierRepository.addServiceToBooking(bookingId, input, addedBy);
-    const detail = await cashierRepository.getBookingDetailForCashier(bookingId);
+    const detail = await cashierRepository.getBookingDetailForCashier(bookingId, true);
 
     // Emit Realtime socket events
     realtimeService.toBooking(bookingId, "booking:service-added", {
@@ -39,7 +39,7 @@ export const cashierService = {
 
   async updateBookingServiceQuantity(bookingId: string, serviceId: string, quantity: number) {
     const result = await cashierRepository.updateBookingServiceQuantity(bookingId, serviceId, quantity);
-    const detail = await cashierRepository.getBookingDetailForCashier(bookingId);
+    const detail = await cashierRepository.getBookingDetailForCashier(bookingId, true);
 
     realtimeService.toBooking(bookingId, "booking:service-updated", {
       bookingId,
@@ -65,7 +65,7 @@ export const cashierService = {
 
   async removeBookingService(bookingId: string, serviceId: string) {
     const result = await cashierRepository.removeBookingService(bookingId, serviceId);
-    const detail = await cashierRepository.getBookingDetailForCashier(bookingId);
+    const detail = await cashierRepository.getBookingDetailForCashier(bookingId, true);
 
     realtimeService.toBooking(bookingId, "booking:service-removed", {
       bookingId,

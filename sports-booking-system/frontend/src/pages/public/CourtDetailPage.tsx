@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { LayoutGrid } from "lucide-react";
@@ -78,6 +78,13 @@ export function CourtDetailPage() {
   // ── Initialize week from URL ────────────────────────────────────────────────
   const initialWeekFromUrl = searchParams.get("week") ?? undefined;
   const [weekStartDate, setWeekStartDate] = [bookingState.weekStart, ctxSetWeekStart];
+  const weekStart = formatYmd(weekStartDate);
+
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams);
+    params.set("week", weekStart);
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+  }, [weekStart]);
 
   // ── Sync court info to global context ───────────────────────────────────────
   useEffect(() => {
@@ -86,17 +93,34 @@ export function CourtDetailPage() {
     }
   }, [court.data?.id, court.data?.name, ctxSetCourt]);
 
-  // ── Sync week to URL ────────────────────────────────────────────────────────
-  const weekStart = formatYmd(weekStartDate);
+  // Reset draft selection when navigating away from this court
   useEffect(() => {
-    const params = new URLSearchParams(searchParams);
-    params.set("week", weekStart);
-    // Preserve slot params for multi-week deep-linking
-    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
-  }, [weekStart]);
+    return () => {
+      clearSlots();
+    };
+  }, [clearSlots]);
 
-  const schedule = useWeeklySchedule(id, weekStart);
-  usePrefetchAdjacentWeeks(id, weekStart);
+  const activeSurface = useMemo(() => {
+    if (!court.data?.surfaces?.length) return null;
+    return court.data.surfaces.find((s: any) => s.id === selectedSurfaceId) || court.data.surfaces[0];
+  }, [court.data?.surfaces, selectedSurfaceId]);
+
+  const activeSurfaceId = activeSurface?.id;
+
+  const schedule = useWeeklySchedule(id, weekStart, activeSurfaceId);
+  usePrefetchAdjacentWeeks(id, weekStart, activeSurfaceId);
+
+  const handleToggleSlot = useCallback(
+    (slot: WeeklyScheduleSlot) => {
+      const enrichedSlot: WeeklyScheduleSlot = {
+        ...slot,
+        courtSurfaceId: slot.courtSurfaceId || activeSurfaceId || null,
+        courtSurfaceName: slot.courtSurfaceName || activeSurface?.name || court.data?.name || ""
+      };
+      toggleSlot(enrichedSlot);
+    },
+    [activeSurfaceId, activeSurface?.name, court.data?.name, toggleSlot]
+  );
 
   // ── Realtime invalidation ──────────────────────────────────────────────────
   useEffect(() => {
@@ -195,9 +219,7 @@ export function CourtDetailPage() {
                   Quý khách có thể chọn cụ thể 1 trong các sân con bên dưới để đặt lịch thi đấu
                 </p>
               </div>
-              <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-[#02712a]">
-                Hệ Thống Sân Thật Trong Database
-              </span>
+
             </div>
 
             <div className="grid gap-4 sm:grid-cols-3">
@@ -208,11 +230,10 @@ export function CourtDetailPage() {
                     key={sf.id}
                     type="button"
                     onClick={() => setSelectedSurfaceId(isSelected ? null : sf.id)}
-                    className={`rounded-2xl border p-4 text-left transition flex items-start justify-between ${
-                      isSelected
+                    className={`rounded-2xl border p-4 text-left transition flex items-start justify-between ${isSelected
                         ? "border-[#02712a] bg-emerald-50/70 shadow-md ring-2 ring-[#02712a]/30"
                         : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-slate-50"
-                    }`}
+                      }`}
                   >
                     <div>
                       <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[11px] font-black text-[#02712a]">
@@ -270,11 +291,10 @@ export function CourtDetailPage() {
                           key={s.id}
                           type="button"
                           onClick={() => setSelectedSurfaceId(s.id)}
-                          className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-black transition border ${
-                            (selectedSurfaceId ?? court.data.surfaces[0]?.id) === s.id
+                          className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-black transition border ${(selectedSurfaceId ?? court.data.surfaces[0]?.id) === s.id
                               ? "bg-[#02712a] text-white border-[#02712a] shadow-md scale-105"
                               : "bg-white text-slate-700 border-slate-200 hover:bg-emerald-100/60"
-                          }`}
+                            }`}
                         >
                           <span className="h-2 w-2 rounded-full bg-emerald-400" />
                           {s.name} ({s.code})
@@ -300,7 +320,7 @@ export function CourtDetailPage() {
                     // We use toggleSlot from context instead
                     // This callback is only used internally by the calendar
                   }}
-                  onToggleSlot={toggleSlot}
+                  onToggleSlot={handleToggleSlot}
                   language={language}
                   forceDayOnCompact
                   rightSlot={

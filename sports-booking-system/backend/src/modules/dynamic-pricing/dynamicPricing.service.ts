@@ -20,11 +20,25 @@ async function partnerProfile(userId: string) {
   return profile;
 }
 
+type PricingPrefetch = {
+  court: NonNullable<Awaited<ReturnType<typeof dynamicPricingRepository.courtWithBasePrices>>>;
+  rules: Awaited<ReturnType<typeof dynamicPricingRepository.activeRules>>;
+};
+
 export const dynamicPricingService = {
-  async calculate(courtId: string, input: { date: string; startTime: string; endTime: string }) {
-    if (timeToMinutes(input.startTime) >= timeToMinutes(input.endTime)) throw new ValidationError("Gio bat dau phai nho hon gio ket thuc");
+  /** Fetches the court's base prices + active rules once — reuse across many `resolveFromPrefetched`
+   * calls (e.g. one per week of a recurring booking) instead of re-querying per call. */
+  async prefetch(courtId: string): Promise<PricingPrefetch> {
     const court = await dynamicPricingRepository.courtWithBasePrices(courtId);
     if (!court) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
+    const rules = await dynamicPricingRepository.activeRules(courtId);
+    return { court, rules };
+  },
+
+  /** Pure price resolution from already-fetched court/rules — no DB I/O, no analytics event. */
+  resolveFromPrefetched(prefetched: PricingPrefetch, input: { date: string; startTime: string; endTime: string }) {
+    if (timeToMinutes(input.startTime) >= timeToMinutes(input.endTime)) throw new ValidationError("Gio bat dau phai nho hon gio ket thuc");
+    const { court, rules } = prefetched;
 
     const dayType = dayTypeFor(input.date);
     const startMins = timeToMinutes(input.startTime);
@@ -71,7 +85,6 @@ export const dynamicPricingService = {
     const basePrice = basePriceMatch.price;
 
     try {
-      const rules = await dynamicPricingRepository.activeRules(courtId);
       const applicableRules = rules.filter(
         (rule) =>
           (!rule.dayType || rule.dayType === dayType) &&
@@ -89,19 +102,26 @@ export const dynamicPricingService = {
         }))
       });
 
-      await trackEvent({
-        partnerId: court.partnerId,
-        eventType: "DYNAMIC_PRICE_CALCULATED",
-        entityType: "COURT",
-        entityId: courtId,
-        metadataJson: { date: input.date, startTime: input.startTime, endTime: input.endTime, finalPrice: result.finalPrice }
-      });
-
-      return { courtId, ...result, currency: "VND" };
+      return { courtId: court.id, ...result, currency: "VND" };
     } catch (error) {
-      logger.warn("dynamic_price_fallback_base_price", { courtId, error: error instanceof Error ? error.message : String(error) });
-      return { courtId, basePrice, adjustments: [], dynamicAdjustmentAmount: 0, finalPrice: basePrice, currency: "VND" };
+      logger.warn("dynamic_price_fallback_base_price", { courtId: court.id, error: error instanceof Error ? error.message : String(error) });
+      return { courtId: court.id, basePrice, adjustments: [], dynamicAdjustmentAmount: 0, finalPrice: basePrice, currency: "VND" };
     }
+  },
+
+  async calculate(courtId: string, input: { date: string; startTime: string; endTime: string }) {
+    const prefetched = await this.prefetch(courtId);
+    const result = this.resolveFromPrefetched(prefetched, input);
+
+    await trackEvent({
+      partnerId: prefetched.court.partnerId,
+      eventType: "DYNAMIC_PRICE_CALCULATED",
+      entityType: "COURT",
+      entityId: courtId,
+      metadataJson: { date: input.date, startTime: input.startTime, endTime: input.endTime, finalPrice: result.finalPrice }
+    });
+
+    return result;
   },
 
   async listRules(userId: string) {

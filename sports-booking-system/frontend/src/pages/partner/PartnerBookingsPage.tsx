@@ -26,6 +26,8 @@ import {
   formatYmd,
   startOfWeek
 } from "../../features/bookings/components/BookingCalendar/utils";
+import { RentEquipmentModal } from "../../features/recipient/components/RentEquipmentModal";
+import type { Booking } from "../../types/api";
 
 type Action = "confirm" | "reject" | "complete" | "no-show";
 
@@ -45,6 +47,13 @@ function todayValue() {
 function currentYearRange() {
   const year = new Date().getFullYear();
   return { fromDate: `${year}-01-01`, toDate: `${year}-12-31` };
+}
+
+function hasCustomerArrived(bookingDate: string, startTime: string) {
+  const datePart = bookingDate.slice(0, 10);
+  const timePart = startTime.slice(11, 16) || startTime.slice(0, 5);
+  const startsAt = new Date(`${datePart}T${timePart}:00`);
+  return new Date() >= startsAt;
 }
 
 function shiftDate(date: string, days: number) {
@@ -203,7 +212,9 @@ export function PartnerBookingsPage() {
     return rawGroups.filter((group) => {
       const primary = group.bookings[0];
       if (!primary) return false;
-      return ["CONFIRMED", "IN_PROGRESS", "DEPOSIT_PAID", "CHECKOUT_PENDING", "PENDING"].includes(primary.bookingStatus);
+      if (!["CONFIRMED", "IN_PROGRESS", "DEPOSIT_PAID", "CHECKOUT_PENDING", "PENDING"].includes(primary.bookingStatus)) return false;
+      const startsAt = new Date(`${primary.bookingDate.slice(0, 10)}T${primary.startTime.slice(11, 16)}:00`);
+      return new Date() >= startsAt;
     });
   }, [bookings.data?.items, servingOnly]);
 
@@ -223,6 +234,8 @@ export function PartnerBookingsPage() {
     queryClient.invalidateQueries({ queryKey: ["partner-bookings"] });
     queryClient.invalidateQueries({ queryKey: ["partner-calendar"] });
   };
+
+  const [rentEquipmentBooking, setRentEquipmentBooking] = useState<Booking | null>(null);
 
   const statusMutation = useMutation({
     mutationFn: ({ id, action }: { id: string; action: Action }) => partnerApi.setBookingStatus(id, action),
@@ -320,6 +333,16 @@ export function PartnerBookingsPage() {
                 onClick={() => navigate(`/partner/pos/${primary.id}`)}
               >
                 <ShoppingBag className="mr-1 h-3.5 w-3.5" /> Dịch vụ (POS)
+              </Button>
+            )}
+            {["CONFIRMED", "DEPOSIT_PAID"].includes(primary.bookingStatus) && !hasCustomerArrived(primary.bookingDate, primary.startTime) && (
+              <Button
+                size="sm"
+                variant="secondary"
+                className="border-emerald-300 text-[#02712a] hover:bg-emerald-50 font-bold text-xs"
+                onClick={() => setRentEquipmentBooking(primary)}
+              >
+                <ShoppingBag className="mr-1 h-3.5 w-3.5" /> Thuê dụng cụ
               </Button>
             )}
             <Button variant="secondary" onClick={() => setRowDetail(group)}>
@@ -784,6 +807,17 @@ export function PartnerBookingsPage() {
         isOpen={Boolean(cashierBookingId)}
         onClose={() => setCashierBookingId(null)}
         bookingId={cashierBookingId}
+      />
+      <RentEquipmentModal
+        isOpen={Boolean(rentEquipmentBooking)}
+        onClose={() => setRentEquipmentBooking(null)}
+        bookingId={rentEquipmentBooking?.id ?? ""}
+        courtId={rentEquipmentBooking?.court.id ?? ""}
+        courtName={rentEquipmentBooking?.court.name}
+        onRented={() => {
+          toast.success("Đã thuê dụng cụ cho khách");
+          invalidateAll();
+        }}
       />
     </div>
   );

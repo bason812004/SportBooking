@@ -14,6 +14,8 @@ import { BookingSummary, WeeklyCalendarSection, startOfWeek, formatYmd } from ".
 import type { WeeklyScheduleSlot, WeeklyScheduleVoucher } from "../../types/api";
 import { getSocket } from "../../lib/socket";
 import { useBookingContext } from "../../context/BookingContext";
+import { BookingServiceSelector } from "../../features/services/components/BookingServiceSelector";
+import type { ServiceItem } from "../../features/services/api/serviceApi";
 
 function isVoucherApplicableToSlot(voucher: WeeklyScheduleVoucher, subtotal: number) {
   if (subtotal < voucher.minBookingAmount) return { applicable: false, estimatedDiscount: 0 };
@@ -70,6 +72,28 @@ export function BookingPage() {
   // ── Sync calendar week state with global context ───────────────────────────
   const weekStartDate = bookingState.weekStart;
   const setWeekStartDate = ctxSetWeekStart;
+
+  const [selectedServices, setSelectedServices] = useState<Map<string, { service: ServiceItem; quantity: number }>>(new Map());
+
+  const handleUpdateServiceQuantity = useCallback((service: ServiceItem, quantity: number) => {
+    setSelectedServices((prev) => {
+      const next = new Map(prev);
+      if (quantity <= 0) {
+        next.delete(service.id);
+      } else {
+        next.set(service.id, { service, quantity });
+      }
+      return next;
+    });
+  }, []);
+
+  const servicesSubtotal = useMemo(() => {
+    let sum = 0;
+    selectedServices.forEach((item) => {
+      sum += item.service.price * item.quantity;
+    });
+    return sum;
+  }, [selectedServices]);
 
   const [focusedDate, setFocusedDate] = useState<Date>(() => {
     const fromUrl = searchParams.get("date") ?? undefined;
@@ -203,8 +227,7 @@ export function BookingPage() {
         return dc !== 0 ? dc : a.startTime.localeCompare(b.startTime);
       });
 
-      // Group selected slots by date for the days array expected by backend schema
-      const daysMap = new Map<string, Array<{ startTime: string; endTime: string }>>();
+      const daysMap = new Map<string, Array<{ startTime: string; endTime: string; courtSurfaceId?: string }>>();
       for (const s of sorted) {
         const dateStr = s.date;
         const list = daysMap.get(dateStr) ?? [];
@@ -212,7 +235,8 @@ export function BookingPage() {
         const end = s.endTime.length > 5 ? s.endTime.slice(0, 5) : s.endTime;
         list.push({
           startTime: start,
-          endTime: end
+          endTime: end,
+          courtSurfaceId: s.courtSurfaceId || undefined
         });
         daysMap.set(dateStr, list);
       }
@@ -222,10 +246,16 @@ export function BookingPage() {
         slots
       }));
 
+      const servicesPayload = Array.from(selectedServices.values()).map((item) => ({
+        serviceId: item.service.id,
+        quantity: item.quantity
+      }));
+
       const payload: BookingCheckoutPayload = {
         courtId,
         days,
         paymentType,
+        services: servicesPayload,
         voucherCode: appliedVoucher?.code,
         note: note || undefined
       };
@@ -246,17 +276,6 @@ export function BookingPage() {
     clearSlots();
   }
 
-  // ── Derived ─────────────────────────────────────────────────────
-  if (!courtId) return <ErrorState message="Không tìm thấy sân." />;
-  if (court.isLoading) return <LoadingState />;
-  if (court.isError) return <ErrorState message={court.error.message} onRetry={() => court.refetch()} />;
-  if (!court.data) return <EmptyState title="Sân không tồn tại." />;
-
-  const c = court.data;
-  const openingTime = timeText(c.openingTime) || response?.openingTime || "05:00";
-  const closingTime = timeText(c.closingTime) || response?.closingTime || "23:00";
-  const firstImage = c.images?.[0]?.imageUrl;
-
   const highestDemandSlot = useMemo<WeeklyScheduleSlot | null>(() => {
     if (!response) return null;
     let best: WeeklyScheduleSlot | null = null;
@@ -273,6 +292,17 @@ export function BookingPage() {
     }
     return best;
   }, [response]);
+
+  // ── Derived ─────────────────────────────────────────────────────
+  if (!courtId) return <ErrorState message="Không tìm thấy sân." />;
+  if (court.isLoading) return <LoadingState />;
+  if (court.isError) return <ErrorState message={court.error.message} onRetry={() => court.refetch()} />;
+  if (!court.data) return <EmptyState title="Sân không tồn tại." />;
+
+  const c = court.data;
+  const openingTime = timeText(c.openingTime) || response?.openingTime || "05:00";
+  const closingTime = timeText(c.closingTime) || response?.closingTime || "23:00";
+  const firstImage = c.images?.[0]?.imageUrl;
 
   const summaryPanel = response ? (
     <BookingSummary
@@ -337,6 +367,7 @@ export function BookingPage() {
       language={language}
       availableVouchers={response.availableVouchers}
       highestDemandSlot={highestDemandSlot}
+      servicesSubtotal={servicesSubtotal}
     />
   ) : null;
 
@@ -393,7 +424,14 @@ export function BookingPage() {
           </div>
         </header>
 
-        <div className="mt-6">
+        <div className="mt-6 space-y-6">
+          <BookingServiceSelector
+            courtId={c.id}
+            selectedServices={selectedServices}
+            onUpdateQuantity={handleUpdateServiceQuantity}
+            onClearServices={() => setSelectedServices(new Map())}
+          />
+
           <WeeklyCalendarSection
             response={response}
             isLoading={schedule.isLoading}

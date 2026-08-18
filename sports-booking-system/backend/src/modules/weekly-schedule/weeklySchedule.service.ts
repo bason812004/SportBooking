@@ -41,8 +41,8 @@ function isPeakHour(startTime: string) {
 const responseCache = new Map<string, { expiresAt: number; data: WeeklyScheduleResponse }>();
 const RESPONSE_TTL_MS = 30_000;
 
-function cacheKey(courtId: string, weekStart: string) {
-  return `${courtId}__${weekStart}`;
+function cacheKey(courtId: string, weekStart: string, surfaceId?: string) {
+  return `${courtId}__${weekStart}__${surfaceId || "ALL"}`;
 }
 
 function readCache(key: string) {
@@ -61,17 +61,7 @@ function writeCache(key: string, data: WeeklyScheduleResponse) {
 }
 
 export function invalidateWeeklyScheduleCache(courtId?: string, weekStart?: string) {
-  if (!courtId) {
-    responseCache.clear();
-    return;
-  }
-  if (weekStart) {
-    responseCache.delete(cacheKey(courtId, weekStart));
-    return;
-  }
-  for (const key of responseCache.keys()) {
-    if (key.startsWith(`${courtId}__`)) responseCache.delete(key);
-  }
+  responseCache.clear();
 }
 
 
@@ -124,16 +114,27 @@ function hasActivePayment(
   return false;
 }
 
-function toIsoTime(value: Date | string | null | undefined) {
+function toIsoTime(value: Date | string | null | undefined): string {
   if (!value) return "";
-  if (typeof value === "string") return value.length >= 5 ? value.slice(0, 5) : value;
-  return value.toISOString().slice(11, 16);
+  if (typeof value === "string") {
+    if (value.includes("T")) return value.slice(11, 16);
+    return value.length >= 5 ? value.slice(0, 5) : value;
+  }
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return "";
+    return value.toISOString().slice(11, 16);
+  }
+  return "";
 }
 
-function toIsoDate(value: Date | string | null | undefined) {
+function toIsoDate(value: Date | string | null | undefined): string {
   if (!value) return "";
   if (typeof value === "string") return value.length >= 10 ? value.slice(0, 10) : value;
-  return value.toISOString().slice(0, 10);
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return "";
+    return value.toISOString().slice(0, 10);
+  }
+  return "";
 }
 
 function addDays(date: string, days: number) {
@@ -160,14 +161,18 @@ function dynamicPriceForHour(
   endTime: string
 ) {
   const dayType = dayTypeFor(date);
+  const basePrices = bundle?.basePrices ?? [];
+  const legacyPrices = bundle?.legacyPrices ?? [];
+  const rules = bundle?.rules ?? [];
+
   const basePriceRow =
-    bundle.basePrices.find(
+    basePrices.find(
       (row) =>
         row.dayType === dayType &&
         timeToMinutes(row.startTime) <= timeToMinutes(startTime) &&
         timeToMinutes(row.endTime) >= timeToMinutes(endTime)
     ) ??
-    bundle.legacyPrices.find(
+    legacyPrices.find(
       (row) =>
         row.dayType === dayType &&
         timeToMinutes(row.startTime) <= timeToMinutes(startTime) &&
@@ -178,7 +183,7 @@ function dynamicPriceForHour(
     ? "basePrice" in basePriceRow
       ? basePriceRow.basePrice
       : basePriceRow.price
-    : bundle.fallbackBasePrice;
+    : (bundle?.fallbackBasePrice ?? 0);
   if (basePrice <= 0) {
     return {
       basePrice: 0,
@@ -189,7 +194,7 @@ function dynamicPriceForHour(
     };
   }
 
-  const applicableRules = bundle.rules.filter((rule) => {
+  const applicableRules = rules.filter((rule) => {
     if (rule.dayType && rule.dayType !== dayType) return false;
     if (rule.startTime && rule.endTime) {
       return timeToMinutes(rule.startTime) <= timeToMinutes(startTime) && timeToMinutes(rule.endTime) >= timeToMinutes(endTime);
@@ -232,14 +237,14 @@ function predictHour(
   endTime: string
 ) {
   const matchingKey = `${startTime}-${endTime}`;
-  const matchingSlotBookings = bundle.matchingCountsByWindow[matchingKey] ?? 0;
+  const matchingSlotBookings = bundle?.matchingCountsByWindow?.[matchingKey] ?? 0;
   const result = calculateDemandScore({
-    totalHistoricalBookings: bundle.totalHistoricalBookings,
+    totalHistoricalBookings: bundle?.totalHistoricalBookings ?? 0,
     matchingSlotBookings,
-    averageBookingsPerComparableSlot: bundle.averageBookingsPerComparableSlot,
+    averageBookingsPerComparableSlot: bundle?.averageBookingsPerComparableSlot ?? 0,
     isWeekend: dayTypeFor(date) === "WEEKEND",
     isPeakHour: isPeakHour(startTime),
-    cancellationCount: bundle.cancellationCount
+    cancellationCount: bundle?.cancellationCount ?? 0
   });
 
   return {
@@ -255,6 +260,8 @@ function projectSlot(slot: InternalWeeklySlot): WeeklySlotRow {
     date: slot.date,
     startTime: slot.startTime,
     endTime: slot.endTime,
+    courtSurfaceId: (slot as any).courtSurfaceId ?? null,
+    courtSurfaceName: (slot as any).courtSurfaceName ?? null,
     status: slot.status,
     basePrice: slot.basePrice,
     finalPrice: slot.finalPrice,
@@ -351,10 +358,10 @@ function buildVoucherEntry(row: VoucherRow): WeeklyVoucherEntry {
 }
 
 export const weeklyScheduleService = {
-  async build(courtId: string, weekStart?: string) {
+  async build(courtId: string, weekStart?: string, surfaceId?: string) {
     const baseDate = weekStart ?? new Date().toISOString().slice(0, 10);
     const monday = startOfWeek(baseDate);
-    const key = cacheKey(courtId, monday);
+    const key = cacheKey(courtId, monday, surfaceId);
     const cached = readCache(key);
     if (cached) return cached;
 
@@ -363,10 +370,18 @@ export const weeklyScheduleService = {
     const sunday = addDays(monday, 6);
     const slotShape = weeklyScheduleRepository.buildSlots(court, monday, sunday);
 
+    const currentSurfaceId = surfaceId || (court.surfaces?.[0]?.id ?? null);
+    const currentSurfaceName = court.surfaces?.find((s: any) => s.id === currentSurfaceId)?.name || court.name;
+
+    for (const slot of slotShape.slots) {
+      (slot as any).courtSurfaceId = currentSurfaceId;
+      (slot as any).courtSurfaceName = currentSurfaceName;
+    }
+
     const [blocks, bookings, bookingSlots, pricingBundle, demandBundle] = await Promise.all([
-      weeklyScheduleRepository.availabilityBlocks(courtId, monday, sunday),
-      weeklyScheduleRepository.bookings(courtId, monday, sunday),
-      weeklyScheduleRepository.bookingSlots(courtId, monday, sunday),
+      weeklyScheduleRepository.availabilityBlocks(courtId, monday, sunday, surfaceId),
+      weeklyScheduleRepository.bookings(courtId, monday, sunday, surfaceId),
+      weeklyScheduleRepository.bookingSlots(courtId, monday, sunday, surfaceId),
       loadPricingBundle(courtId, court, monday, sunday, slotShape.openMins, slotShape.closeMins),
       loadDemandBundle(courtId, monday, sunday)
     ]);
@@ -375,12 +390,12 @@ export const weeklyScheduleService = {
     // This eliminates N+1: previously each pending booking triggered a nested SELECT.
     const pendingBookingIds = [
       ...bookings
-        .filter((b) => b.bookingStatus === "PENDING" || b.bookingStatus === "PENDING_PAYMENT")
+        .filter((b) => b && (b.bookingStatus === "PENDING" || b.bookingStatus === "PENDING_PAYMENT"))
         .map((b) => b.id),
       ...bookingSlots
-        .filter((bs) => bs.booking.bookingStatus === "PENDING" || bs.booking.bookingStatus === "PENDING_PAYMENT")
+        .filter((bs) => bs?.booking && (bs.booking.bookingStatus === "PENDING" || bs.booking.bookingStatus === "PENDING_PAYMENT"))
         .map((bs) => bs.bookingId)
-    ];
+    ].filter((id): id is string => Boolean(id));
     const paymentMap = await fetchPendingPayments([...new Set(pendingBookingIds)]);
 
     function applyToMatchingSlots(
@@ -418,6 +433,7 @@ export const weeklyScheduleService = {
 
     // 2. Granular booking slots.
     for (const bs of bookingSlots) {
+      if (!bs || !bs.booking) continue;
       const dateKey = toIsoDate(bs.bookingDate);
       const startKey = toIsoTime(bs.startTime);
       const endKey = toIsoTime(bs.endTime);

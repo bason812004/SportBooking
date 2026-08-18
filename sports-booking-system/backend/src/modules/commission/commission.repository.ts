@@ -52,15 +52,30 @@ export const commissionRepository = {
     });
   },
 
-  report(from: Date, to: Date) {
-    return prisma.commissionTransaction.findMany({
-      where: { createdAt: { gte: from, lt: to } },
-      include: {
-        partner: { select: { id: true, businessName: true } },
-        booking: { select: { id: true, bookingCode: true } }
-      },
-      orderBy: { createdAt: "desc" }
-    });
+  async reportAggregate(from: Date, to: Date) {
+    const [totals, perPartner] = await Promise.all([
+      prisma.commissionTransaction.aggregate({
+        where: { createdAt: { gte: from, lt: to } },
+        _sum: { grossAmount: true, commissionAmount: true, netAmount: true },
+        _count: true
+      }),
+      prisma.commissionTransaction.groupBy({
+        by: ["partnerId"],
+        where: { createdAt: { gte: from, lt: to } },
+        _sum: { grossAmount: true, commissionAmount: true, netAmount: true },
+        _count: true
+      })
+    ]);
+
+    const partners = perPartner.length
+      ? await prisma.partnerProfile.findMany({
+          where: { id: { in: perPartner.map((row) => row.partnerId) } },
+          select: { id: true, businessName: true }
+        })
+      : [];
+    const partnerNames = new Map(partners.map((partner) => [partner.id, partner.businessName]));
+
+    return { totals, perPartner, partnerNames };
   },
 
   partnerReport(partnerId: string, from: Date, to: Date) {

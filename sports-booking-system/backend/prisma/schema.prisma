@@ -684,6 +684,7 @@ model Booking {
   bookingStatus            BookingStatus           @default(PENDING) @map("booking_status")
   cancelReason             String?                 @map("cancel_reason")
   note                     String?
+  checkedInAt              DateTime?               @map("checked_in_at") @db.Timestamptz(6)
   createdAt                DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   depositAmount            Decimal                 @default(0) @map("deposit_amount") @db.Decimal(12, 2)
@@ -782,19 +783,21 @@ model Favorite {
 }
 
 model BookingSlot {
-  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  bookingId        String        @map("booking_id") @db.VarChar(20)
-  courtId          String        @map("court_id") @db.VarChar(20)
-  bookingDate      DateTime      @map("booking_date") @db.Date
-  startTime        DateTime      @map("start_time") @db.Time(6)
-  endTime          DateTime      @map("end_time") @db.Time(6)
-  slotPrice        Decimal       @map("slot_price") @db.Decimal(12, 2)
-  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  court_surface_id String?       @db.VarChar(20)
-  booking          Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  court            Court         @relation(fields: [courtId], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  court_surfaces   CourtSurface? @relation(fields: [court_surface_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                      String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bookingId               String        @map("booking_id") @db.VarChar(20)
+  courtId                 String        @map("court_id") @db.VarChar(20)
+  bookingDate             DateTime      @map("booking_date") @db.Date
+  startTime               DateTime      @map("start_time") @db.Time(6)
+  endTime                 DateTime      @map("end_time") @db.Time(6)
+  basePrice               Decimal?      @default(0) @map("base_price") @db.Decimal(12, 2)
+  dynamicAdjustmentAmount Decimal?      @default(0) @map("dynamic_adjustment_amount") @db.Decimal(12, 2)
+  slotPrice               Decimal       @map("slot_price") @db.Decimal(12, 2)
+  createdAt               DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  court_surface_id        String?       @db.VarChar(20)
+  booking                 Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  court                   Court         @relation(fields: [courtId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  court_surfaces          CourtSurface? @relation(fields: [court_surface_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([courtId, bookingDate, startTime, endTime], map: "idx_booking_slots_schedule")
   @@index([bookingId], map: "idx_booking_slots_booking_id")
@@ -1029,6 +1032,7 @@ model BookingService {
   service        Service?      @relation(fields: [serviceId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   rentalItems    RentalItem[]
 
+  @@index([bookingId], map: "idx_booking_services_booking_id")
   @@map("booking_services")
 }
 

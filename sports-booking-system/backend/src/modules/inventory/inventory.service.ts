@@ -3,8 +3,19 @@ import { inventoryRepository } from "./inventory.repository.js";
 import type { AdjustStockInput, CreatePurchaseOrderInput, CreateSupplierInput } from "./inventory.types.js";
 
 export const inventoryService = {
-  async getInventorySummary(partnerId: string, courtId?: string) {
-    return inventoryRepository.getInventorySummary(partnerId, courtId);
+  async getInventorySummary(
+    partnerId: string,
+    options?: { page?: number; limit?: number; status?: string; search?: string; categoryId?: string; sortBy?: string; sortOrder?: string }
+  ) {
+    return inventoryRepository.getInventorySummary(partnerId, options);
+  },
+
+  async getLowStockAlerts(partnerId: string, limit?: number) {
+    return inventoryRepository.getLowStockAlerts(partnerId, limit);
+  },
+
+  async getReorderSuggestions(partnerId: string) {
+    return inventoryRepository.getReorderSuggestions(partnerId);
   },
 
   async adjustStock(partnerId: string, data: AdjustStockInput) {

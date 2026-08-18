@@ -44,6 +44,7 @@ export type BookingSummaryStandaloneProps = {
   language: Language;
   availableVouchers: WeeklyScheduleVoucher[];
   highestDemandSlot?: WeeklyScheduleSlot | null;
+  servicesSubtotal?: number;
 };
 
 interface WeekGroup {
@@ -295,7 +296,9 @@ export function BookingSummary(props: BookingSummaryStandaloneProps) {
     })
   ).size;
 
-  const subtotal = sorted.reduce((sum, s) => sum + (s.finalPrice || s.basePrice || 0), 0);
+  const courtSubtotal = sorted.reduce((sum, s) => sum + (s.finalPrice || s.basePrice || 0), 0);
+  const servicesSubtotal = props.servicesSubtotal || 0;
+  const subtotal = courtSubtotal + servicesSubtotal;
   const basePriceTotal = sorted.reduce((sum, s) => sum + (s.basePrice || 0), 0);
   const dynamicAdjustment = sorted.reduce((sum, s) => sum + s.dynamicAdjustmentAmount, 0);
   const discount = appliedVoucher ? Math.min(appliedVoucher.discountAmount, subtotal) : 0;
@@ -576,9 +579,16 @@ export function BookingSummary(props: BookingSummaryStandaloneProps) {
 
         <div className="mt-4 space-y-2 text-sm">
           <SummaryRow
-            label={language === "en" ? "Base price" : "Giá cơ bản"}
-            value={formatCurrency(basePriceTotal)}
+            label={language === "en" ? "Court subtotal" : "Tiền sân"}
+            value={formatCurrency(courtSubtotal)}
           />
+          {servicesSubtotal > 0 && (
+            <SummaryRow
+              label={language === "en" ? "Services & Equipment" : "Dịch vụ & Dụng cụ"}
+              value={`+${formatCurrency(servicesSubtotal)}`}
+              accent
+            />
+          )}
           {dynamicAdjustment > 0 && (
             <SummaryRow
               label={language === "en" ? "Dynamic pricing" : "Giá động"}
@@ -587,7 +597,7 @@ export function BookingSummary(props: BookingSummaryStandaloneProps) {
             />
           )}
           <SummaryRow
-            label={language === "en" ? "Subtotal" : "Tạm tính"}
+            label={language === "en" ? "Subtotal" : "Tạm tính (Đã cộng dồn)"}
             value={formatCurrency(subtotal)}
             strong
           />
