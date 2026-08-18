@@ -15,7 +15,7 @@ import {
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { PageHero } from "../../components/common/PageHero";
 import { Button } from "../../components/ui/Button";
-import { Input } from "../../components/ui/Input";
+import { DatePicker } from "../../components/ui/DatePicker";
 import { Select } from "../../components/ui/Select";
 import { SortableTh } from "../../components/common/SortableTh";
 import { THead, TBody, Tr, Th, Td } from "../../components/common/Table";
@@ -117,8 +117,8 @@ export function AdminWithdrawalsPage() {
         subtitle="Duyệt và xác nhận chuyển khoản cho yêu cầu rút tiền của partner."
       >
         <div className="flex flex-wrap items-end gap-3 rounded-xl bg-white p-3 shadow-md">
-          <Input label="Từ ngày" type="date" value={fromDate} onChange={(event) => { setPage(1); setFromDate(event.target.value); }} />
-          <Input label="Đến ngày" type="date" value={toDate} onChange={(event) => { setPage(1); setToDate(event.target.value); }} />
+          <DatePicker label="Từ ngày" value={fromDate} onChange={(value) => { setPage(1); setFromDate(value); }} />
+          <DatePicker label="Đến ngày" value={toDate} onChange={(value) => { setPage(1); setToDate(value); }} />
           <Select label="Trạng thái" value={status} options={statusOptions} onChange={(event) => { setPage(1); setStatus(event.target.value); }} />
         </div>
       </PageHero>

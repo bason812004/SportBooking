@@ -3,6 +3,7 @@ import { prisma } from "../../config/db.js";
 import { env } from "../../config/env.js";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
+import { normalizeBookingServices } from "../../shared/utils/bookingServices.js";
 import {
   bookingStartsAt,
   ceilToFullHour,
@@ -278,7 +279,8 @@ export const recipientService = {
           name: true,
           code: true
         }
-      }
+      },
+      bookingServices: { include: { service: true, courtService: true } }
     };
 
     // Bookings created together as one walk-in order (see createWalkInBookingOrder)
@@ -307,7 +309,7 @@ export const recipientService = {
     const orderIds = pageKeys.filter((key) => isOrderKey.get(key));
     const standaloneIds = pageKeys.filter((key) => !isOrderKey.get(key));
 
-    const [orderBookings, standaloneBookings] = await Promise.all([
+    const [orderBookingsRaw, standaloneBookingsRaw] = await Promise.all([
       prisma.booking.findMany({
         where: { courtId, bookingOrderId: { in: orderIds } },
         orderBy: [{ bookingDate: "asc" }, { startTime: "asc" }],
@@ -318,6 +320,8 @@ export const recipientService = {
         include: bookingInclude
       })
     ]);
+    const orderBookings = orderBookingsRaw.map(normalizeBookingServices);
+    const standaloneBookings = standaloneBookingsRaw.map(normalizeBookingServices);
 
     const bookingsByOrderId = new Map<string, typeof orderBookings>();
     for (const booking of orderBookings) {

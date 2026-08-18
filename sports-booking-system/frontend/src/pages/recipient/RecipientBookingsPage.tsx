@@ -1,7 +1,8 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { vi } from "date-fns/locale";
 import { CalendarDays, ChevronLeft, ChevronRight, Clock, Filter, LayoutGrid, PhoneCall, Table2, User, Wallet, ShoppingBag } from "lucide-react";
 import { QuickCashierModal } from "../../components/booking/QuickCashierModal";
 import { recipientApi, type RecipientBookingGroup, type RecipientCalendarBooking } from "../../features/recipient/api/recipientApi";
@@ -14,8 +15,10 @@ import {
 } from "../../features/bookings/components/BookingCalendar/utils";
 import { LoadingState, ErrorState, EmptyState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
-import { Input } from "../../components/ui/Input";
+import { DatePicker } from "../../components/ui/DatePicker";
+import { DayPickerCalendar } from "../../components/ui/DayPickerCalendar";
 import { Select } from "../../components/ui/Select";
+import { useClickOutside } from "../../hooks/useClickOutside";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { SortableTh } from "../../components/common/SortableTh";
 import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
@@ -117,15 +120,12 @@ export function RecipientBookingsPage() {
   const [walkInCell, setWalkInCell] = useState<{ courtSurfaceId: string; startTime: string } | null>(null);
   const [orderDetail, setOrderDetail] = useState<RecipientBookingGroup | null>(null);
   const [calendarDate, setCalendarDate] = useState(() => todayValue());
-  const periodDateInputRef = useRef<HTMLInputElement>(null);
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
   const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
 
-  const openPicker = (input: HTMLInputElement | null) => {
-    if (!input) return;
-    if (typeof input.showPicker === "function") input.showPicker();
-    else input.focus();
-  };
+  const [dayPickerOpen, setDayPickerOpen] = useState(false);
+  const [dayPickerMonth, setDayPickerMonth] = useState(periodAnchor);
+  const dayPickerRef = useClickOutside<HTMLSpanElement>(dayPickerOpen, () => setDayPickerOpen(false));
 
   const openMonthPicker = () => {
     setPickerYear(periodAnchor.getFullYear());
@@ -456,22 +456,20 @@ export function RecipientBookingsPage() {
 
           {rangeMode === "custom" ? (
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <Input
+              <DatePicker
                 label="Từ ngày"
-                type="date"
                 value={customFrom}
-                onChange={(e) => {
+                onChange={(value) => {
                   setPage(1);
-                  setCustomFrom(e.target.value);
+                  setCustomFrom(value);
                 }}
               />
-              <Input
+              <DatePicker
                 label="Đến ngày"
-                type="date"
                 value={customTo}
-                onChange={(e) => {
+                onChange={(value) => {
                   setPage(1);
-                  setCustomTo(e.target.value);
+                  setCustomTo(value);
                 }}
               />
             </div>
@@ -488,24 +486,32 @@ export function RecipientBookingsPage() {
                 Hôm nay
               </Button>
               {rangeMode === "day" || rangeMode === "week" ? (
-                <span className="relative inline-flex">
-                  <Button variant="secondary" onClick={() => openPicker(periodDateInputRef.current)} title="Chọn ngày">
+                <span className="relative inline-flex" ref={dayPickerRef}>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setDayPickerMonth(periodAnchor);
+                      setDayPickerOpen((o) => !o);
+                    }}
+                    title="Chọn ngày"
+                  >
                     <CalendarDays className="h-4 w-4" />
                     Chọn ngày
                   </Button>
-                  <input
-                    ref={periodDateInputRef}
-                    type="date"
-                    value={formatYmd(periodAnchor)}
-                    onChange={(e) => {
-                      if (!e.target.value) return;
-                      setPeriodAnchor(new Date(`${e.target.value}T00:00:00`));
-                      setPage(1);
-                    }}
-                    className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
-                    tabIndex={-1}
-                    aria-hidden="true"
-                  />
+                  {dayPickerOpen && (
+                    <DayPickerCalendar
+                      required
+                      selected={periodAnchor}
+                      onSelect={(date) => {
+                        setPeriodAnchor(date);
+                        setPage(1);
+                        setDayPickerOpen(false);
+                      }}
+                      month={dayPickerMonth}
+                      onMonthChange={setDayPickerMonth}
+                      locale={vi}
+                    />
+                  )}
                 </span>
               ) : (
                 <Button variant="secondary" onClick={openMonthPicker} title="Chọn tháng">
@@ -526,7 +532,7 @@ export function RecipientBookingsPage() {
             <Button variant="secondary" onClick={() => setCalendarDate(shiftDate(calendarDate, -1))}>
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <Input type="date" value={calendarDate} onChange={(e) => setCalendarDate(e.target.value)} />
+            <DatePicker value={calendarDate} onChange={setCalendarDate} />
             <Button variant="secondary" onClick={() => setCalendarDate(shiftDate(calendarDate, 1))}>
               <ChevronRight className="h-4 w-4" />
             </Button>
@@ -719,6 +725,23 @@ export function RecipientBookingsPage() {
                       {Number(booking.totalPrice).toLocaleString("vi-VN")}đ
                     </span>
                   </div>
+                  {booking.bookingServices?.length ? (
+                    <div className="mt-1.5 border-t border-slate-100 pt-1.5">
+                      <p className="mb-1 text-xs font-semibold text-slate-500">Dịch vụ</p>
+                      <div className="max-h-28 overflow-y-auto rounded border border-slate-100">
+                        <table className="w-full text-xs">
+                          <tbody>
+                            {booking.bookingServices.map((item) => (
+                              <tr key={item.id} className="border-t border-slate-100 first:border-t-0">
+                                <td className="p-1.5 text-slate-700">{item.service.name}</td>
+                                <td className="p-1.5 text-right text-slate-500">x{item.quantity}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : null}
                   {actionsForStatus(booking.bookingStatus).length > 0 ? (
                     <div className="mt-2 flex flex-wrap gap-2 border-t border-slate-100 pt-2">
                       {actionsForStatus(booking.bookingStatus).map((action) => (

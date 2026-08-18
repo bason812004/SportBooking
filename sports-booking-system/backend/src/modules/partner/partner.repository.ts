@@ -1,5 +1,6 @@
 import { Prisma, type ApprovalStatus, type BookingStatus } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+import { normalizeBookingServices } from "../../shared/utils/bookingServices.js";
 
 const columnExistsCache = new Map<string, boolean>([
   ["blog_posts.allow_comments", true],
@@ -319,27 +320,31 @@ export const partnerRepository = {
     });
   },
 
-  bookingsByOrderIds(partnerId: string, orderIds: string[]) {
-    return prisma.booking.findMany({
+  async bookingsByOrderIds(partnerId: string, orderIds: string[]) {
+    const bookings = await prisma.booking.findMany({
       where: { court: { partnerId }, bookingOrderId: { in: orderIds } },
       include: {
         user: { select: { id: true, fullName: true, email: true, phone: true } },
         court: true,
-        courtSurface: { select: { id: true, name: true, code: true } }
+        courtSurface: { select: { id: true, name: true, code: true } },
+        bookingServices: { include: { service: true, courtService: true } }
       },
       orderBy: [{ bookingDate: "asc" }, { startTime: "asc" }]
     });
+    return bookings.map(normalizeBookingServices);
   },
 
-  bookingsByIds(partnerId: string, ids: string[]) {
-    return prisma.booking.findMany({
+  async bookingsByIds(partnerId: string, ids: string[]) {
+    const bookings = await prisma.booking.findMany({
       where: { court: { partnerId }, id: { in: ids } },
       include: {
         user: { select: { id: true, fullName: true, email: true, phone: true } },
         court: true,
-        courtSurface: { select: { id: true, name: true, code: true } }
+        courtSurface: { select: { id: true, name: true, code: true } },
+        bookingServices: { include: { service: true, courtService: true } }
       }
     });
+    return bookings.map(normalizeBookingServices);
   },
 
   bookingByPartner(bookingId: string, partnerId: string) {

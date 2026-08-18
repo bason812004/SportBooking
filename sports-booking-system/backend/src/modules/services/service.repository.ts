@@ -2,6 +2,58 @@ import crypto from "crypto";
 import { prisma } from "../../config/db.js";
 import type { CreateServiceCategoryInput, CreateServiceInput, UpdateServiceInput } from "./service.types.js";
 
+type SportFlags = {
+  isBadminton: boolean;
+  isTennis: boolean;
+  isPickleball: boolean;
+  isFootball: boolean;
+  isBasketball: boolean;
+  isVolleyball: boolean;
+};
+
+// Brand names used by the seed data to tag gear to a specific sport (e.g. "Vớ Thể Thao Yonex"
+// carries no literal sport word but Yonex is only ever used for badminton items in this catalog).
+function detectSportFromText(text: string): SportFlags {
+  const t = text.toLowerCase();
+  return {
+    isBadminton: t.includes("cầu lông") || t.includes("badminton") || t.includes("yonex"),
+    isTennis: t.includes("tennis") || t.includes("wilson") || t.includes("babolat"),
+    isPickleball: t.includes("pickleball") || t.includes("selkirk") || t.includes("franklin"),
+    isFootball: t.includes("bóng đá") || t.includes("football") || t.includes("futsal") || t.includes("soccer"),
+    isBasketball: t.includes("bóng rổ") || t.includes("basketball") || t.includes("molten"),
+    isVolleyball: t.includes("bóng chuyền") || t.includes("volleyball") || t.includes("mikasa")
+  };
+}
+
+function hasAnySport(sport: SportFlags) {
+  return sport.isBadminton || sport.isTennis || sport.isPickleball || sport.isFootball || sport.isBasketball || sport.isVolleyball;
+}
+
+function sportsIntersect(a: SportFlags, b: SportFlags) {
+  return (
+    (a.isBadminton && b.isBadminton) ||
+    (a.isTennis && b.isTennis) ||
+    (a.isPickleball && b.isPickleball) ||
+    (a.isFootball && b.isFootball) ||
+    (a.isBasketball && b.isBasketball) ||
+    (a.isVolleyball && b.isVolleyball)
+  );
+}
+
+// A service whose name implies a specific sport (by keyword or brand) only belongs on courts of
+// that sport. Items with no detectable sport (drinks, food, generic combos) are always allowed,
+// and a court whose own sport we couldn't detect is left unfiltered rather than hiding everything.
+function isServiceAllowedForSport(serviceName: string, courtSport: SportFlags) {
+  const itemSport = detectSportFromText(serviceName);
+  const isRacketItem = serviceName.toLowerCase().includes("vợt");
+  if (!hasAnySport(itemSport) && !isRacketItem) return true;
+  if (!hasAnySport(courtSport)) return true;
+  if (isRacketItem && !hasAnySport(itemSport)) {
+    return courtSport.isBadminton || courtSport.isTennis || courtSport.isPickleball;
+  }
+  return sportsIntersect(itemSport, courtSport);
+}
+
 let tablesReady = false;
 let isInitializing = false;
 
@@ -266,7 +318,7 @@ async function ensureCourtServicesSeededInDb(courtId: string) {
     const courtInfoRows: any = await prisma.$queryRawUnsafe(
       `SELECT c.id, c.partner_id as "partnerId", c.name, cat.name as "categoryName", cat.slug as "categorySlug"
        FROM courts c
-       LEFT JOIN categories cat ON c.category_id = cat.id
+       LEFT JOIN court_categories cat ON c.category_id = cat.id
        WHERE c.id = $1 LIMIT 1;`,
       courtId
     ).catch(() => []);
@@ -275,19 +327,14 @@ async function ensureCourtServicesSeededInDb(courtId: string) {
 
     const partnerId = courtInfoRows[0].partnerId || "p0001";
     const courtName = String(courtInfoRows[0].name || "").toLowerCase();
-    const fullText = `${courtName} ${String(courtInfoRows[0].categoryName || "")} ${String(courtInfoRows[0].categorySlug || "")}`.toLowerCase();
+    const fullText = `${courtName} ${String(courtInfoRows[0].categoryName || "")} ${String(courtInfoRows[0].categorySlug || "")}`;
+    const sport = detectSportFromText(fullText);
+    const { isBadminton, isTennis, isPickleball, isFootball, isBasketball, isVolleyball } = sport;
 
-    const isBadminton = fullText.includes("cầu lông") || fullText.includes("badminton");
-    const isTennis = fullText.includes("tennis");
-    const isPickleball = fullText.includes("pickleball");
-    const isFootball = fullText.includes("bóng đá") || fullText.includes("football") || fullText.includes("futsal") || fullText.includes("soccer");
-    const isBasketball = fullText.includes("bóng rổ") || fullText.includes("basketball");
-    const isVolleyball = fullText.includes("bóng chuyền") || fullText.includes("volleyball");
-
-    // If court is NOT a racket sport, clean up any mistakenly seeded racket rental services
+    // If court is NOT a racket sport, clean up any mistakenly seeded racket ("vợt") rental services
     if (!isBadminton && !isTennis && !isPickleball) {
       await prisma.$executeRawUnsafe(
-        `DELETE FROM services WHERE court_id = $1 AND (LOWER(name) LIKE '%vợt%' OR type = 'RENTAL_SERVICE');`,
+        `DELETE FROM services WHERE court_id = $1 AND LOWER(name) LIKE '%vợt%';`,
         courtId
       ).catch(() => {});
     }
@@ -600,19 +647,28 @@ export const serviceRepository = {
           si.reserved_quantity as "inventoryReservedQuantity",
           COALESCE(si.minimum_stock, 5) as "inventoryMinimumStock",
           si.unit as "inventoryUnit",
-          si.last_purchase_price as "inventoryLastPurchasePrice"
+          si.last_purchase_price as "inventoryLastPurchasePrice",
+          c.name as "courtName",
+          cc.name as "courtCategoryName",
+          cc.slug as "courtCategorySlug"
         FROM services s
         LEFT JOIN service_categories sc ON s.category_id = sc.id
         LEFT JOIN service_inventories si ON si.service_id = s.id
+        LEFT JOIN courts c ON c.id = s.court_id
+        LEFT JOIN court_categories cc ON cc.id = c.category_id
         WHERE s.court_id = $1 AND (s.status = 'ACTIVE' OR s.status IS NULL)
         ORDER BY sc.name ASC, s.name ASC;
       `, courtId).catch(() => []);
 
       if (!Array.isArray(rows) || rows.length === 0) return [];
 
-      let filtered = rows;
+      const sport = detectSportFromText(
+        `${rows[0].courtName || ""} ${rows[0].courtCategoryName || ""} ${rows[0].courtCategorySlug || ""}`
+      );
+
+      let filtered = rows.filter((r: any) => isServiceAllowedForSport(String(r.name || ""), sport));
       if (categoryId) {
-        filtered = rows.filter((r: any) => r.categoryId === categoryId);
+        filtered = filtered.filter((r: any) => r.categoryId === categoryId);
       }
 
       const seenNames = new Set<string>();

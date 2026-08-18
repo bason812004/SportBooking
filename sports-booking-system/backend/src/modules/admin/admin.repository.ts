@@ -388,10 +388,15 @@ export const adminRepository = {
           'id', bs.id,
           'quantity', bs.quantity,
           'price', bs.price::float,
-          'service', json_build_object('id', cs.id, 'name', cs.name, 'price', cs.price::float)
+          'service', json_build_object(
+            'id', coalesce(s.id::text, cs.id::text),
+            'name', coalesce(s.name, cs.name),
+            'price', coalesce(s.price, cs.price)::float
+          )
         ) order by bs.created_at) as items
         from booking_services bs
-        join court_services cs on cs.id = bs.service_id
+        left join services s on bs.service_id::text = s.id::text
+        left join court_services cs on bs.court_service_id::text = cs.id::text
         where bs.booking_id = b.id
       ) services on true
       left join lateral (

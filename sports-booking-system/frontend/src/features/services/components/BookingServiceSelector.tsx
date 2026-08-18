@@ -158,7 +158,7 @@ export function BookingServiceSelector({
           }`}
         >
           <Dumbbell className="h-3.5 w-3.5 text-emerald-600" />
-          Dụng cụ & Thuê vợt
+          Dụng cụ thể thao
         </button>
 
         <button
