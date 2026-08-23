@@ -134,6 +134,7 @@ export type RecipientWalkInBookingPayload = {
   paymentMethod: "CASH" | "BANK_TRANSFER" | "E_WALLET";
   paymentType?: "FULL_PAYMENT" | "DEPOSIT";
   note?: string;
+  services?: Array<{ serviceId: string; quantity: number }>;
 };
 
 export type RecipientWalkInPayment = {
@@ -158,6 +159,7 @@ export type RecipientWalkInBookingOrderPayload = {
   paymentMethod: "CASH" | "BANK_TRANSFER";
   paymentType?: "FULL_PAYMENT" | "DEPOSIT";
   note?: string;
+  services?: Array<{ serviceId: string; quantity: number }>;
 };
 
 export type RecipientWalkInBookingOrderResult = {
@@ -174,6 +176,7 @@ export type RecipientRecurringBookingPayload = {
   paymentMethod: "CASH" | "BANK_TRANSFER";
   paymentType?: "FULL_PAYMENT" | "DEPOSIT";
   note?: string;
+  services?: Array<{ serviceId: string; quantity: number }>;
 };
 
 export type RecipientRecurringBookingResult = {

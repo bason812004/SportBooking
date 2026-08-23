@@ -789,8 +789,6 @@ model BookingSlot {
   bookingDate             DateTime      @map("booking_date") @db.Date
   startTime               DateTime      @map("start_time") @db.Time(6)
   endTime                 DateTime      @map("end_time") @db.Time(6)
-  basePrice               Decimal?      @default(0) @map("base_price") @db.Decimal(12, 2)
-  dynamicAdjustmentAmount Decimal?      @default(0) @map("dynamic_adjustment_amount") @db.Decimal(12, 2)
   slotPrice               Decimal       @map("slot_price") @db.Decimal(12, 2)
   createdAt               DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt               DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)

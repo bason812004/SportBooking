@@ -201,9 +201,8 @@ export const bookingRepository = {
             });
             await tx.inventoryTransaction.create({
               data: {
-                id: generateShortId("it"),
                 serviceId: bs.serviceId,
-                type: "RETURN",
+                type: "RENTAL_IN",
                 quantity: bs.quantity,
                 unitCost: inv.lastPurchasePrice,
                 referenceType: "BOOKING_CANCELLED",
@@ -244,6 +243,34 @@ export const bookingRepository = {
     courtSvcs.forEach((s) => map.set(s.id, { id: s.id, name: s.name, price: s.price }));
     directSvcs.forEach((s) => map.set(s.id, { id: s.id, name: s.name, price: s.price }));
     return Array.from(map.values());
+  },
+
+  /** Creates `bookingService` rows for an already-created booking and deducts inventory, mirroring the checkout flow above. */
+  async attachServicesToBooking(tx: Prisma.TransactionClient, bookingId: string, lines: Array<{ serviceId: string; quantity: number; price: number }>) {
+    for (const line of lines) {
+      await tx.bookingService.create({
+        data: { id: generateShortId("bs"), bookingId, serviceId: line.serviceId, quantity: line.quantity, price: line.price }
+      });
+      const inv = await tx.serviceInventory.findFirst({ where: { serviceId: line.serviceId } });
+      if (inv) {
+        if (inv.quantity < line.quantity) throw new ValidationError("Sản phẩm/dịch vụ không đủ tồn kho");
+        await tx.serviceInventory.update({
+          where: { id: inv.id },
+          data: { quantity: { decrement: line.quantity } }
+        });
+        await tx.inventoryTransaction.create({
+          data: {
+            serviceId: line.serviceId,
+            type: "RENTAL_OUT",
+            quantity: line.quantity,
+            unitCost: inv.lastPurchasePrice,
+            referenceType: "BOOKING",
+            referenceId: bookingId,
+            note: `Đặt cùng đơn booking ${bookingId}`
+          }
+        });
+      }
+    }
   },
 
   createWithServices(input: {
@@ -856,9 +883,8 @@ export const bookingRepository = {
                 });
                 await tx.inventoryTransaction.create({
                   data: {
-                    id: generateShortId("it"),
                     serviceId: service.serviceId,
-                    type: "OUT",
+                    type: "RENTAL_OUT",
                     quantity: service.quantity,
                     unitCost: inv.lastPurchasePrice,
                     referenceType: "BOOKING",

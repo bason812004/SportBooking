@@ -176,6 +176,7 @@ export function RecipientCourtSurfacesPage() {
   const surfaceNames = useMemo(() => Object.fromEntries(items.map((item) => [item.surface.id, item.surface.name])), [items]);
   const walkIn = useWalkInBooking({
     courtSurfaceId: canBookAdvance ? selected!.surface.id : "",
+    courtId: canBookAdvance ? operations.data?.court.id : undefined,
     bookingDate: walkInDate,
     onBookingCreated: refresh,
     enableCustomerLookup: true,

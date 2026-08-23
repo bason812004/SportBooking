@@ -804,6 +804,7 @@ export function RecipientBookingsPage() {
           <h2 className="mb-3 text-lg font-bold text-slate-800">Đặt sân tại quầy</h2>
           <WalkInBookingForm
             courtSurfaceId={walkInCell.courtSurfaceId}
+            courtId={courtSurfacesQuery.data?.find((s) => s.id === walkInCell.courtSurfaceId)?.courtId}
             bookingDate={calendarDate}
             initialSlot={{ startTime: walkInCell.startTime, endTime: addOneHour(walkInCell.startTime) }}
             onBookingCreated={invalidateAll}

@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { ShoppingBag } from "lucide-react";
 import { Input } from "../../../components/ui/Input";
 import { Select } from "../../../components/ui/Select";
 import { WeeklyCalendarSection } from "../../bookings/components/BookingCalendar/WeeklyCalendarSection";
@@ -6,6 +7,7 @@ import { formatYmd, startOfWeek } from "../../bookings/components/BookingCalenda
 import type { WeeklyScheduleSlot } from "../../../types/api";
 import { useSurfaceWeeklySchedule } from "../hooks/useSurfaceWeeklySchedule";
 import { useWalkInBooking } from "./WalkInBookingForm";
+import { BookingServiceSelector } from "../../services/components/BookingServiceSelector";
 import { SlotManageModal } from "./SlotManageModal";
 
 type WalkIn = ReturnType<typeof useWalkInBooking>;
@@ -41,7 +43,13 @@ export function StaffScheduleGrid({
     customMinutes,
     setCustomMinutes,
     bookedRanges,
-    activeWalkInPayment
+    activeWalkInPayment,
+    courtId,
+    showServices,
+    setShowServices,
+    selectedServices,
+    updateServiceQuantity,
+    clearServices
   } = walkIn;
 
   const [weekStart, setWeekStart] = useState(() => startOfWeek(bookingDate));
@@ -93,20 +101,51 @@ export function StaffScheduleGrid({
 
   if (activeWalkInPayment) return null;
 
+  if (showServices) {
+    if (!courtId) return null;
+    return (
+      <div>
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-xs font-black uppercase tracking-wide text-slate-500">Thêm dịch vụ cho khách</span>
+          <button
+            type="button"
+            onClick={() => setShowServices(false)}
+            className="rounded-lg border border-emerald-200 bg-white px-2 py-1 text-xs font-bold text-emerald-700 hover:bg-emerald-50"
+          >
+            Quay lại chọn giờ
+          </button>
+        </div>
+        <BookingServiceSelector courtId={courtId} selectedServices={selectedServices} onUpdateQuantity={updateServiceQuantity} onClearServices={clearServices} />
+      </div>
+    );
+  }
+
   return (
     <div>
-      <div className="mb-1.5 flex items-center justify-between">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
         <span className="text-xs font-black uppercase tracking-wide text-slate-500">Chọn khung giờ</span>
-        {isToday && !repeatWeekly ? (
-          <div className="flex overflow-hidden rounded-lg border border-emerald-200 text-xs font-bold">
-            <button type="button" onClick={() => setMode("grid")} className={`px-2 py-1 transition ${mode === "grid" ? "bg-emerald-600 text-white" : "bg-white text-emerald-700"}`}>
-              Theo khung giờ
+        <div className="flex items-center gap-1.5">
+          {isToday && !repeatWeekly ? (
+            <div className="flex overflow-hidden rounded-lg border border-emerald-200 text-xs font-bold">
+              <button type="button" onClick={() => setMode("grid")} className={`px-2 py-1 transition ${mode === "grid" ? "bg-emerald-600 text-white" : "bg-white text-emerald-700"}`}>
+                Theo khung giờ
+              </button>
+              <button type="button" onClick={() => setMode("now")} className={`px-2 py-1 transition ${mode === "now" ? "bg-emerald-600 text-white" : "bg-white text-emerald-700"}`}>
+                Bắt đầu ngay
+              </button>
+            </div>
+          ) : null}
+          {courtId ? (
+            <button
+              type="button"
+              onClick={() => setShowServices(true)}
+              className="flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2 py-1 text-xs font-bold text-emerald-700 hover:bg-emerald-50"
+            >
+              <ShoppingBag className="h-3 w-3" />
+              Thêm dịch vụ{selectedServices.size > 0 ? ` (${selectedServices.size})` : ""}
             </button>
-            <button type="button" onClick={() => setMode("now")} className={`px-2 py-1 transition ${mode === "now" ? "bg-emerald-600 text-white" : "bg-white text-emerald-700"}`}>
-              Bắt đầu ngay
-            </button>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </div>
 
       {mode === "now" ? (

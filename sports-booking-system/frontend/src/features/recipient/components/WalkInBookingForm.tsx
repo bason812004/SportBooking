@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { recipientApi, type RecipientCustomerMatch, type RecipientSurfaceAvailabilitySlot, type RecipientWalkInPayment } from "../api/recipientApi";
@@ -8,9 +8,11 @@ import { Select } from "../../../components/ui/Select";
 import { SlotGrid, type SlotGridSelection } from "../../../components/booking/SlotGrid";
 import { QrPaymentPanel } from "../../../components/payment/QrPaymentPanel";
 import { Overlay } from "../../../components/common/Overlay";
+import { BookingServiceSelector } from "../../services/components/BookingServiceSelector";
+import type { ServiceItem } from "../../services/api/serviceApi";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { formatCurrency } from "../../../lib/format";
-import { CalendarDays, Clock, LayoutGrid, PhoneCall, PlusCircle, History, User, Wallet, X } from "lucide-react";
+import { CalendarDays, Clock, LayoutGrid, PhoneCall, PlusCircle, History, ShoppingBag, User, Wallet, X } from "lucide-react";
 
 const paymentDoneStatuses = ["PAID", "FAILED", "EXPIRED", "CANCELLED"];
 const todayValue = () => new Date().toISOString().slice(0, 10);
@@ -98,6 +100,8 @@ function clusterSlots(slots: SlotGridSelection[], effectiveDate: string, default
 
 type UseWalkInBookingArgs = {
   courtSurfaceId: string;
+  /** Parent court id — needed to fetch the service catalog for "Thêm dịch vụ". Omit to hide the service picker. */
+  courtId?: string;
   /** Date to book for. Defaults to today (the usual walk-in-at-the-counter case). */
   bookingDate?: string;
   initialSlot?: SlotGridSelection;
@@ -113,13 +117,33 @@ type UseWalkInBookingArgs = {
   depositPercent?: number;
 };
 
-function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingCreated, onSettled, enableCustomerLookup, surfaceNames, depositPercent }: UseWalkInBookingArgs) {
+function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, onBookingCreated, onSettled, enableCustomerLookup, surfaceNames, depositPercent }: UseWalkInBookingArgs) {
   const effectiveDate = bookingDate ?? todayValue();
   const isToday = effectiveDate === todayValue();
   const [walkInForm, setWalkInForm] = useState<WalkInForm>(defaultWalkInForm());
   const [walkInSlots, setWalkInSlots] = useState<SlotGridSelection[]>(initialSlot ? [initialSlot] : []);
   const [activeWalkInPayment, setActiveWalkInPayment] = useState<RecipientWalkInPayment | null>(null);
   const [mode, setMode] = useState<"grid" | "now">("grid");
+  const [showServices, setShowServices] = useState(false);
+  const [selectedServices, setSelectedServices] = useState<Map<string, { service: ServiceItem; quantity: number }>>(new Map());
+  const updateServiceQuantity = useCallback((service: ServiceItem, quantity: number) => {
+    setSelectedServices((prev) => {
+      const next = new Map(prev);
+      if (quantity <= 0) next.delete(service.id);
+      else next.set(service.id, { service, quantity });
+      return next;
+    });
+  }, []);
+  const clearServices = useCallback(() => setSelectedServices(new Map()), []);
+  const servicesSubtotal = useMemo(() => {
+    let sum = 0;
+    selectedServices.forEach((item) => (sum += item.service.price * item.quantity));
+    return sum;
+  }, [selectedServices]);
+  const servicesPayload = useMemo(
+    () => Array.from(selectedServices.values()).map((item) => ({ serviceId: item.service.id, quantity: item.quantity })),
+    [selectedServices]
+  );
   const [customStart, setCustomStart] = useState(nowValue());
   const [customMinutes, setCustomMinutes] = useState(60);
   const [repeatWeekly, setRepeatWeekly] = useState(false);
@@ -251,7 +275,8 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
           minutes: customMinutes,
           paymentMethod: walkInForm.paymentMethod,
           paymentType: walkInForm.paymentType,
-          note: walkInForm.note || undefined
+          note: walkInForm.note || undefined,
+          services: servicesPayload.length ? servicesPayload : undefined
         });
         return { bookingsCount: 1, payment: result.payment };
       }
@@ -269,13 +294,15 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
           minutes: minutesBetween(cluster.startTime, cluster.endTime),
           paymentMethod: walkInForm.paymentMethod,
           paymentType: walkInForm.paymentType,
-          note: walkInForm.note || undefined
+          note: walkInForm.note || undefined,
+          services: servicesPayload.length ? servicesPayload : undefined
         });
         return { bookingsCount: 1, payment: result.payment };
       }
 
       // Multiple non-contiguous time ranges (possibly across different dates/surfaces) are grouped into a single BookingOrder,
       // paid via one QR covering the combined total (or cash), same as a single walk-in booking.
+      // Selected services are attached once to the whole order (not repeated per time-slot).
       const orderResult = await recipientApi.createWalkInBookingOrder({
         customerName: walkInForm.customerName,
         customerPhone: walkInForm.customerPhone,
@@ -287,12 +314,15 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
         })),
         paymentMethod: walkInForm.paymentMethod === "BANK_TRANSFER" ? "BANK_TRANSFER" : "CASH",
         paymentType: walkInForm.paymentType,
-        note: walkInForm.note || undefined
+        note: walkInForm.note || undefined,
+        services: servicesPayload.length ? servicesPayload : undefined
       });
       return { bookingsCount: slotClusters.length, payment: orderResult.payment };
     },
     onSuccess: (result) => {
       setWalkInSlots([]);
+      clearServices();
+      setShowServices(false);
       onBookingCreated?.();
       if (result.payment) {
         setActiveWalkInPayment(result.payment);
@@ -311,6 +341,7 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
       if (slotClusters.length === 0) throw new Error("Chọn ít nhất một khung giờ cho chuỗi lặp");
       // Each selected slot repeats weekly independently — lets staff set up different
       // day/time combos (e.g. Tue 18h + Thu 20h) that all recur together.
+      // Selected services attach only to the first occurrence actually created below (see backend), never to future weekly occurrences.
       return recipientApi.createRecurringWalkInBooking({
         customerName: walkInForm.customerName,
         customerPhone: walkInForm.customerPhone,
@@ -323,11 +354,14 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
         occurrences,
         paymentMethod: walkInForm.paymentMethod === "BANK_TRANSFER" ? "BANK_TRANSFER" : "CASH",
         paymentType: walkInForm.paymentType,
-        note: walkInForm.note || undefined
+        note: walkInForm.note || undefined,
+        services: servicesPayload.length ? servicesPayload : undefined
       });
     },
     onSuccess: (result) => {
       setWalkInSlots([]);
+      clearServices();
+      setShowServices(false);
       onBookingCreated?.();
       if (result.payment) {
         setActiveWalkInPayment(result.payment);
@@ -377,6 +411,7 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
     isToday,
     effectiveDate,
     courtSurfaceId,
+    courtId,
     surfaceNames,
     depositPercent,
     walkInForm,
@@ -386,6 +421,12 @@ function useWalkInBooking({ courtSurfaceId, bookingDate, initialSlot, onBookingC
     slotClusters,
     selectedSlotsBySurface,
     walkInSubtotal,
+    showServices,
+    setShowServices,
+    selectedServices,
+    updateServiceQuantity,
+    clearServices,
+    servicesSubtotal,
     activeWalkInPayment,
     setActiveWalkInPayment,
     mode,
@@ -450,12 +491,13 @@ function WalkInPaymentPanel({ walkIn }: { walkIn: WalkInBooking }) {
   );
 }
 
-/** The interactive time-slot picker (mode toggle + slot grid / "start now" inputs). Renders nothing while a payment is pending. */
+/** The interactive time-slot picker (mode toggle + slot grid / "start now" inputs), or the service picker when toggled on. Renders nothing while a payment is pending. */
 export function WalkInScheduleField({ walkIn, columnsClassName }: { walkIn: WalkInBooking; columnsClassName?: string }) {
   const {
     isToday,
     effectiveDate,
     courtSurfaceId,
+    courtId,
     surfaceNames,
     repeatWeekly,
     mode,
@@ -469,26 +511,62 @@ export function WalkInScheduleField({ walkIn, columnsClassName }: { walkIn: Walk
     customMinutes,
     setCustomMinutes,
     bookedRanges,
-    activeWalkInPayment
+    activeWalkInPayment,
+    showServices,
+    setShowServices,
+    selectedServices,
+    updateServiceQuantity,
+    clearServices
   } = walkIn;
   if (activeWalkInPayment) return null;
   const hasMultipleDates = new Set(slotClusters.map((cluster) => cluster.date ?? effectiveDate)).size > 1;
   const hasMultipleSurfaces = new Set(slotClusters.map((cluster) => cluster.courtSurfaceId ?? courtSurfaceId)).size > 1;
 
+  if (showServices) {
+    if (!courtId) return null;
+    return (
+      <div>
+        <div className="mb-1.5 flex items-center justify-between">
+          <span className="text-xs font-black uppercase tracking-wide text-slate-500">Thêm dịch vụ cho khách</span>
+          <button
+            type="button"
+            onClick={() => setShowServices(false)}
+            className="rounded-lg border border-emerald-200 bg-white px-2 py-1 text-xs font-bold text-emerald-700 hover:bg-emerald-50"
+          >
+            Quay lại chọn giờ
+          </button>
+        </div>
+        <BookingServiceSelector courtId={courtId} selectedServices={selectedServices} onUpdateQuantity={updateServiceQuantity} onClearServices={clearServices} />
+      </div>
+    );
+  }
+
   return (
     <div>
-      <div className="mb-1.5 flex items-center justify-between">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
         <span className="text-xs font-black uppercase tracking-wide text-slate-500">Chọn khung giờ</span>
-        {isToday && !repeatWeekly ? (
-          <div className="flex overflow-hidden rounded-lg border border-emerald-200 text-xs font-bold">
-            <button type="button" onClick={() => setMode("grid")} className={`px-2 py-1 transition ${mode === "grid" ? "bg-emerald-600 text-white" : "bg-white text-emerald-700"}`}>
-              Theo khung giờ
+        <div className="flex items-center gap-1.5">
+          {isToday && !repeatWeekly ? (
+            <div className="flex overflow-hidden rounded-lg border border-emerald-200 text-xs font-bold">
+              <button type="button" onClick={() => setMode("grid")} className={`px-2 py-1 transition ${mode === "grid" ? "bg-emerald-600 text-white" : "bg-white text-emerald-700"}`}>
+                Theo khung giờ
+              </button>
+              <button type="button" onClick={() => setMode("now")} className={`px-2 py-1 transition ${mode === "now" ? "bg-emerald-600 text-white" : "bg-white text-emerald-700"}`}>
+                Bắt đầu ngay
+              </button>
+            </div>
+          ) : null}
+          {courtId ? (
+            <button
+              type="button"
+              onClick={() => setShowServices(true)}
+              className="flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2 py-1 text-xs font-bold text-emerald-700 hover:bg-emerald-50"
+            >
+              <ShoppingBag className="h-3 w-3" />
+              Thêm dịch vụ{selectedServices.size > 0 ? ` (${selectedServices.size})` : ""}
             </button>
-            <button type="button" onClick={() => setMode("now")} className={`px-2 py-1 transition ${mode === "now" ? "bg-emerald-600 text-white" : "bg-white text-emerald-700"}`}>
-              Bắt đầu ngay
-            </button>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </div>
 
       {mode === "now" ? (
@@ -672,6 +750,9 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
     slotClusters,
     selectedSlotsBySurface,
     walkInSubtotal,
+    selectedServices,
+    updateServiceQuantity,
+    servicesSubtotal,
     setWalkInSlots,
     repeatWeekly,
     setRepeatWeekly,
@@ -762,9 +843,27 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
                   </ul>
                 </li>
               ))}
+              {selectedServices.size > 0 ? (
+                <li className="space-y-1">
+                  <div className="font-black text-emerald-700">Dịch vụ thêm</div>
+                  {Array.from(selectedServices.values()).map((item) => (
+                    <div key={item.service.id} className="flex items-center justify-between gap-2 pl-2 font-semibold text-slate-600">
+                      <span>
+                        {item.service.name} × {item.quantity}
+                      </span>
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        {formatCurrency(item.service.price * item.quantity)}
+                        <button type="button" className="text-rose-500 hover:text-rose-700" onClick={() => updateServiceQuantity(item.service, 0)}>
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </span>
+                    </div>
+                  ))}
+                </li>
+              ) : null}
               <li className="flex items-center justify-between border-t border-slate-200 pt-1.5 font-black text-slate-900">
                 <span>Tạm tính</span>
-                <span>{formatCurrency(walkInSubtotal)}</span>
+                <span>{formatCurrency(walkInSubtotal + servicesSubtotal)}</span>
               </li>
             </ul>
             <div className="flex items-center justify-between gap-2">

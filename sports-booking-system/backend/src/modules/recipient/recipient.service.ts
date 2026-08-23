@@ -811,6 +811,7 @@ export const recipientService = {
       paymentMethod: PaymentMethod;
       paymentType?: "FULL_PAYMENT" | "DEPOSIT";
       note?: string;
+      services?: Array<{ serviceId: string; quantity: number }>;
     }
   ) {
     const courtId = await getManagedCourtId(userId);
@@ -851,7 +852,17 @@ export const recipientService = {
       endTime: dbTime(endTime)
     });
     const hours = durationHours(input.startTime, dbTime(endTime));
-    const subtotal = dynamicPrice.finalPrice * hours;
+    const courtSubtotal = dynamicPrice.finalPrice * hours;
+
+    const serviceIds = (input.services ?? []).map((s) => s.serviceId);
+    const availableServices = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
+    if (availableServices.length !== serviceIds.length) throw new ValidationError("Dich vu khong hop le");
+    const serviceLines = (input.services ?? []).map((line) => {
+      const service = availableServices.find((item) => item.id === line.serviceId)!;
+      return { serviceId: line.serviceId, quantity: line.quantity, price: Number(service.price) };
+    });
+    const servicesSubtotal = serviceLines.reduce((sum, line) => sum + line.price * line.quantity, 0);
+    const subtotal = courtSubtotal + servicesSubtotal;
     const chargeAmount = wantsDeposit ? calculateMinimumDeposit(subtotal, depositPercent) : subtotal;
 
     const existingUser = await prisma.user.findFirst({ where: { phone: input.customerPhone } });
@@ -917,9 +928,13 @@ export const recipientService = {
           bookingDate: toDbDate(input.bookingDate),
           startTime,
           endTime,
-          slotPrice: subtotal
+          slotPrice: courtSubtotal
         }
       });
+
+      if (serviceLines.length) {
+        await bookingRepository.attachServicesToBooking(tx, booking.id, serviceLines);
+      }
 
       let payment = null;
       if (paymentInput) {
@@ -964,6 +979,7 @@ export const recipientService = {
       paymentMethod: typeof PaymentMethod.CASH | typeof PaymentMethod.BANK_TRANSFER;
       paymentType?: "FULL_PAYMENT" | "DEPOSIT";
       note?: string;
+      services?: Array<{ serviceId: string; quantity: number }>;
     }
   ) {
     const courtId = await getManagedCourtId(userId);
@@ -977,6 +993,17 @@ export const recipientService = {
     const depositPercent = wantsDeposit ? await bookingRepository.courtDepositPercent(courtId) : 0;
     if (wantsDeposit && depositPercent <= 0) throw new ValidationError("San nay khong ho tro dat coc");
 
+    // Dịch vụ chỉ được chọn một lần cho cả đơn (không lặp lại theo từng khung giờ),
+    // sẽ được gắn vào booking đầu tiên tạo ra bên dưới.
+    const serviceIds = (input.services ?? []).map((s) => s.serviceId);
+    const availableServices = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
+    if (availableServices.length !== serviceIds.length) throw new ValidationError("Dich vu khong hop le");
+    const serviceLines = (input.services ?? []).map((line) => {
+      const service = availableServices.find((item) => item.id === line.serviceId)!;
+      return { serviceId: line.serviceId, quantity: line.quantity, price: Number(service.price) };
+    });
+    const servicesSubtotal = serviceLines.reduce((sum, line) => sum + line.price * line.quantity, 0);
+
     // Fetched once and reused for every slot below — avoids re-querying court/rules per slot,
     // same pattern already used in createRecurringWalkInBooking.
     const pricingPrefetch = await dynamicPricingService.prefetch(courtId);
@@ -988,6 +1015,7 @@ export const recipientService = {
       endTime: Date;
       basePrice: number;
       dynamicAdjustmentAmount: number;
+      courtSubtotal: number;
       subtotal: number;
       chargeAmount: number;
     }> = [];
@@ -1008,9 +1036,16 @@ export const recipientService = {
         endTime,
         basePrice: dynamicPrice.basePrice * hours,
         dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
+        courtSubtotal: subtotal,
         subtotal,
         chargeAmount: wantsDeposit ? calculateMinimumDeposit(subtotal, depositPercent) : subtotal
       });
+    }
+
+    if (servicesSubtotal > 0 && entries.length > 0) {
+      // Dịch vụ đã chọn được cộng vào booking đầu tiên của đơn thay vì lặp lại cho từng khung giờ.
+      entries[0].subtotal += servicesSubtotal;
+      entries[0].chargeAmount = wantsDeposit ? calculateMinimumDeposit(entries[0].subtotal, depositPercent) : entries[0].subtotal;
     }
 
     const existingUser = await prisma.user.findFirst({ where: { phone: input.customerPhone } });
@@ -1124,11 +1159,15 @@ export const recipientService = {
               bookingDate: toDbDate(entry.bookingDate),
               startTime: entry.startTime,
               endTime: entry.endTime,
-              slotPrice: entry.subtotal
+              slotPrice: entry.courtSubtotal
             }
           });
 
           created.push(booking);
+        }
+
+        if (serviceLines.length) {
+          await bookingRepository.attachServicesToBooking(tx, created[0].id, serviceLines);
         }
 
         let payment = null;
@@ -1171,6 +1210,7 @@ export const recipientService = {
       paymentMethod: typeof PaymentMethod.CASH | typeof PaymentMethod.BANK_TRANSFER;
       paymentType?: "FULL_PAYMENT" | "DEPOSIT";
       note?: string;
+      services?: Array<{ serviceId: string; quantity: number }>;
     }
   ) {
     const courtId = await getManagedCourtId(userId);
@@ -1183,6 +1223,16 @@ export const recipientService = {
     const wantsDeposit = input.paymentType === "DEPOSIT";
     const depositPercent = wantsDeposit ? await bookingRepository.courtDepositPercent(courtId) : 0;
     if (wantsDeposit && depositPercent <= 0) throw new ValidationError("San nay khong ho tro dat coc");
+
+    // Dịch vụ chỉ gắn vào buổi đầu tiên thực sự được tạo (không lặp lại cho mọi occurrence trong tương lai).
+    const serviceIds = (input.services ?? []).map((s) => s.serviceId);
+    const availableServices = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
+    if (availableServices.length !== serviceIds.length) throw new ValidationError("Dich vu khong hop le");
+    const serviceLines = (input.services ?? []).map((line) => {
+      const service = availableServices.find((item) => item.id === line.serviceId)!;
+      return { serviceId: line.serviceId, quantity: line.quantity, price: Number(service.price) };
+    });
+    const servicesSubtotal = serviceLines.reduce((sum, line) => sum + line.price * line.quantity, 0);
 
     const existingUser = await prisma.user.findFirst({ where: { phone: input.customerPhone } });
     const customer =
@@ -1235,6 +1285,7 @@ export const recipientService = {
       endTime: Date;
       basePrice: number;
       dynamicAdjustmentAmount: number;
+      courtSubtotal: number;
       subtotal: number;
       chargeAmount: number;
     }> = [];
@@ -1319,10 +1370,17 @@ export const recipientService = {
           endTime,
           basePrice: dynamicPrice.basePrice * hours,
           dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
+          courtSubtotal: subtotal,
           subtotal,
           chargeAmount: wantsDeposit ? calculateMinimumDeposit(subtotal, depositPercent) : subtotal
         });
       }
+    }
+
+    if (servicesSubtotal > 0 && entries.length > 0) {
+      // Dịch vụ đã chọn được cộng vào buổi đầu tiên thực sự tạo được, không nhân bản cho các occurrence sau.
+      entries[0].subtotal += servicesSubtotal;
+      entries[0].chargeAmount = wantsDeposit ? calculateMinimumDeposit(entries[0].subtotal, depositPercent) : entries[0].subtotal;
     }
 
     const bookingIds = await Promise.all(entries.map(() => nextPrefixedId("b", "seq_bookings")));
@@ -1363,12 +1421,17 @@ export const recipientService = {
               bookingDate: toDbDate(entry.occurrenceDate),
               startTime: entry.startTime,
               endTime: entry.endTime,
-              slotPrice: entry.subtotal
+              slotPrice: entry.courtSubtotal
             }
           });
 
           rows.push(createdBooking);
         }
+
+        if (serviceLines.length && rows.length) {
+          await bookingRepository.attachServicesToBooking(tx, rows[0].id, serviceLines);
+        }
+
         return rows;
       },
       { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 }
