@@ -138,6 +138,14 @@ export type Booking = {
   courtSurface?: { id: string; name: string; code: string } | null;
   user?: { id?: string; fullName: string; email?: string; phone?: string };
   bookingServices?: BookingService[];
+  bookingSlots?: Array<{
+    id: string;
+    bookingDate: string;
+    startTime: string;
+    endTime: string;
+    slotPrice: string;
+    court_surfaces?: { id: string; name: string; code: string } | null;
+  }>;
   bookingVoucher?: BookingVoucherInfo | null;
   payments?: Array<{
     id: string;

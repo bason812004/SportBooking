@@ -60,12 +60,14 @@ const menus = {
     { to: "/partner/blogs", label: "Bài viết", icon: FileText, group: "Nội dung" },
     { to: "/partner/tournaments", label: "Giải đấu", icon: Trophy, group: "Nội dung" },
     { to: "/partner/statistics", label: "Doanh thu", icon: WalletCards, group: "Tài chính" },
+    { to: "/partner/report", label: "Báo cáo", icon: BarChart3, group: "Tài chính" },
     { to: "/partner/wallet", label: "Ví & Quyết toán", icon: Wallet, group: "Tài chính" },
     { to: "/partner/settings", label: "Cài đặt", icon: Settings, group: "Bảo mật" }
   ],
   ADMIN: [
     { to: "/admin/dashboard", label: "Bảng điều khiển", icon: Grid2X2, group: "Tổng quan" },
     { to: "/admin/statistics", label: "Thống kê", icon: TrendingUp, group: "Tổng quan" },
+    { to: "/admin/business-report", label: "Báo cáo doanh thu", icon: WalletCards, group: "Tài chính" },
     { to: "/admin/bookings", label: "Đơn đặt sân", icon: CalendarCheck, group: "Vận hành" },
     { to: "/admin/courts", label: "Tất cả sân", icon: Grid2X2, group: "Vận hành" },
     { to: "/admin/courts/pending", label: "Duyệt sân", icon: FolderCheck, group: "Vận hành" },
@@ -93,7 +95,8 @@ const menus = {
     { to: "/recipient/services", label: "Dịch vụ & Món", icon: ShoppingBag, group: "Tồn kho & Dịch vụ" },
     { to: "/recipient/inventory", label: "Tồn kho hàng hóa", icon: Boxes, group: "Tồn kho & Dịch vụ" },
     { to: "/recipient/purchases", label: "Nhập hàng & NCC", icon: Truck, group: "Tồn kho & Dịch vụ" },
-    { to: "/recipient/checkouts", label: "Lịch sử Checkout", icon: CreditCard, group: "Tài chính" }
+    { to: "/recipient/checkouts", label: "Lịch sử Checkout", icon: CreditCard, group: "Tài chính" },
+    { to: "/recipient/report", label: "Báo cáo", icon: BarChart3, group: "Tài chính" }
   ]
 } satisfies Record<"PARTNER" | "ADMIN" | "RECIPIENT", MenuItem[]>;
 

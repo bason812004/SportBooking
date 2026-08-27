@@ -133,15 +133,20 @@ export function BookingPage() {
         restored.push(foundSlot);
       } else {
         restored.push({
-          id: `${dateStr}-${startTime}`,
-          courtId: courtId!,
           date: dateStr,
           startTime,
           endTime,
           basePrice: court.data?.minPrice ?? 0,
           finalPrice: court.data?.minPrice ?? 0,
+          dynamicAdjustmentAmount: 0,
+          adjustments: [],
           ruleNames: [],
-          status: "AVAILABLE"
+          status: "AVAILABLE",
+          predictionLevel: null,
+          predictionStatus: "INSUFFICIENT_DATA",
+          predictedOccupancyRate: null,
+          blockReason: null,
+          bookingCode: null
         });
       }
     });

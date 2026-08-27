@@ -1,17 +1,19 @@
 import { useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Lock, ShieldCheck, Unlock, UserRound } from "lucide-react";
+import { FileBarChart, Lock, ShieldCheck, Unlock, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
 import { useAuth } from "../../features/auth/hooks/useAuth";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
+import { Modal } from "../../components/ui/Modal";
 import { ErrorState, LoadingState } from "../../components/common/States";
 import { SortableTh } from "../../components/common/SortableTh";
 import { useUrlSort } from "../../hooks/useUrlSort";
 import { Table, THead, TBody, Tr, Td } from "../../components/common/Table";
 import { PageHero } from "../../components/common/PageHero";
+import { CustomerReportPanel } from "../../features/report/components/CustomerReportPanel";
 
 const roleLabel: Record<string, { label: string; className: string }> = {
   USER: { label: "Khách hàng", className: "bg-sky-100 text-sky-800" },
@@ -49,6 +51,7 @@ export function AdminUsersPage() {
   const [search, setSearch] = useState("");
   const [role, setRole] = useState("");
   const [status, setStatus] = useState("");
+  const [reportUserId, setReportUserId] = useState<string | null>(null);
   const { sortField, sortOrder, handleSort: sortBy } = useUrlSort<SortField>({ fields: SORT_FIELDS, default: null });
   const handleSort = (field: SortField) => { setPage(1); sortBy(field); };
 
@@ -126,21 +129,28 @@ export function AdminUsersPage() {
                     <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${st.className}`}>{st.label}</span>
                   </Td>
                   <Td className="text-right">
-                    {isMe ? (
-                      <span className="text-xs font-semibold text-slate-400">Tài khoản hiện tại</span>
-                    ) : (
-                      <Button
-                        variant={u.status === "ACTIVE" ? "danger" : "secondary"}
-                        disabled={toggle.isPending}
-                        onClick={() => toggle.mutate({ id: u.id, status: u.status })}
-                      >
-                        {u.status === "ACTIVE" ? (
-                          <><Lock className="h-4 w-4" /> Khóa</>
-                        ) : (
-                          <><Unlock className="h-4 w-4" /> Mở khóa</>
-                        )}
-                      </Button>
-                    )}
+                    <div className="flex justify-end gap-2">
+                      {u.role === "USER" && (
+                        <Button variant="secondary" onClick={() => setReportUserId(u.id)}>
+                          <FileBarChart className="h-4 w-4" /> Xem báo cáo
+                        </Button>
+                      )}
+                      {isMe ? (
+                        <span className="text-xs font-semibold text-slate-400">Tài khoản hiện tại</span>
+                      ) : (
+                        <Button
+                          variant={u.status === "ACTIVE" ? "danger" : "secondary"}
+                          disabled={toggle.isPending}
+                          onClick={() => toggle.mutate({ id: u.id, status: u.status })}
+                        >
+                          {u.status === "ACTIVE" ? (
+                            <><Lock className="h-4 w-4" /> Khóa</>
+                          ) : (
+                            <><Unlock className="h-4 w-4" /> Mở khóa</>
+                          )}
+                        </Button>
+                      )}
+                    </div>
                   </Td>
                 </Tr>
               );
@@ -150,6 +160,10 @@ export function AdminUsersPage() {
       )}
 
       <Pager page={page} total={users.data?.meta?.totalPages ?? 1} setPage={setPage} />
+
+      <Modal isOpen={reportUserId != null} onClose={() => setReportUserId(null)} title="Báo cáo khách hàng" maxWidth="max-w-4xl">
+        {reportUserId ? <CustomerReportPanel userId={reportUserId} /> : null}
+      </Modal>
     </div>
   );
 }

@@ -122,6 +122,36 @@ export const settlementService = {
   },
 
   /**
+   * Booking check-in som / gia han lam tang totalPrice khi settlement con PENDING ->
+   * cong them phan phat sinh vao settlement va pending_balance cua vi.
+   * No-op khi khong co settlement hoac settlement da SETTLED (thanh toan tien mat).
+   */
+  async addExtraGrossAmount(bookingId: string, extraGrossAmount: number, tx: DbClient) {
+    if (extraGrossAmount <= 0) return null;
+    const settlement = await settlementRepository.byBookingId(bookingId, tx);
+    if (!settlement || settlement.status !== "PENDING") return null;
+
+    const extraCommission = round2(extraGrossAmount * (asNumber(settlement.commissionRate) / 100));
+    const extraNet = round2(extraGrossAmount - extraCommission);
+
+    const count = await settlementRepository.incrementAmounts(
+      settlement.id,
+      ["PENDING"],
+      { grossAmount: extraGrossAmount, commissionAmount: extraCommission, netAmount: extraNet },
+      tx
+    );
+    if (count === 0) return null;
+
+    await walletRepository.creditPending(settlement.partnerId, extraNet, tx);
+    return {
+      ...settlement,
+      grossAmount: asNumber(settlement.grossAmount) + extraGrossAmount,
+      commissionAmount: asNumber(settlement.commissionAmount) + extraCommission,
+      netAmount: asNumber(settlement.netAmount) + extraNet
+    };
+  },
+
+  /**
    * Booking hoan thanh -> settlement PENDING chuyen SETTLED, pending -> available.
    * No-op khi booking khong co settlement (vd thanh toan tien mat) hoac da xu ly.
    */

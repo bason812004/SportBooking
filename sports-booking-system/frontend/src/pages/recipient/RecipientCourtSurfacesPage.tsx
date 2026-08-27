@@ -17,8 +17,10 @@ import { recipientApi, type RecipientOperationItem } from "../../features/recipi
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { PageHero } from "../../components/common/PageHero";
 import { Button } from "../../components/ui/Button";
+import { Modal } from "../../components/ui/Modal";
 import { useWalkInBooking, WalkInDetailsFields } from "../../features/recipient/components/WalkInBookingForm";
 import { StaffScheduleGrid } from "../../features/recipient/components/StaffScheduleGrid";
+import { formatMoney } from "../../utils/formatters";
 
 const statusMeta: Record<RecipientOperationItem["status"], { label: string; className: string; dotClassName: string }> = {
   AVAILABLE: { label: "Sân trống", className: "border-emerald-200 bg-emerald-50 text-emerald-700", dotClassName: "bg-emerald-500" },
@@ -193,19 +195,48 @@ export function RecipientCourtSurfacesPage() {
     onError: (error: any) => toast.error(error.message || "Có lỗi xảy ra")
   });
 
+  const [extendConflict, setExtendConflict] = useState<{
+    bookingId: string;
+    minutes: number;
+    surfaces: Array<{ id: string; name: string }>;
+  } | null>(null);
+
   const extendBooking = useMutation({
-    mutationFn: ({ id, minutes }: { id: string; minutes: number }) => recipientApi.extendBooking(id, minutes),
+    mutationFn: ({ id, minutes, targetSurfaceId }: { id: string; minutes: number; targetSurfaceId?: string }) =>
+      recipientApi.extendBooking(id, minutes, targetSurfaceId),
     onSuccess: () => {
       toast.success("Đã gia hạn thời gian chơi cho khách");
+      setExtendConflict(null);
       refresh();
     },
-    onError: (error: any) => toast.error(error.message || "Không thể gia hạn, sân đã có lịch sau đó")
+    onError: async (error: any, variables) => {
+      if (error?.code !== "BOOKING_EXTENSION_CONFLICT" || variables.targetSurfaceId) {
+        toast.error(error.message || "Không thể gia hạn, sân đã có lịch sau đó");
+        return;
+      }
+      try {
+        const surfaces = await recipientApi.getExtendOptions(variables.id, variables.minutes);
+        if (surfaces && surfaces.length > 0) {
+          setExtendConflict({ bookingId: variables.id, minutes: variables.minutes, surfaces });
+          return;
+        }
+      } catch {
+        // fall through to generic toast below
+      }
+      toast.error(error.message || "Sân đã có lịch, không còn sân trống để chuyển khách sang");
+    }
   });
 
   const earlyCheckIn = useMutation({
     mutationFn: (bookingId: string) => recipientApi.checkInBooking(bookingId),
-    onSuccess: () => {
-      toast.success("Đã check-in sớm cho khách");
+    onSuccess: (result) => {
+      if (result.extraChargeAmount && result.extraChargeAmount > 0) {
+        toast.success(
+          `Đã check-in sớm cho khách — cần thu thêm ${formatMoney(result.extraChargeAmount)} do chơi bù thêm giờ (thu qua trang Thu ngân)`
+        );
+      } else {
+        toast.success("Đã check-in sớm cho khách");
+      }
       refresh();
     },
     onError: (error: any) => toast.error(error.message || "Không thể check-in sớm")
@@ -381,14 +412,18 @@ export function RecipientCourtSurfacesPage() {
                               <Button
                                 key={minutes}
                                 variant="secondary"
-                                disabled={!selected.canExtend || extendBooking.isPending}
+                                disabled={extendBooking.isPending}
                                 onClick={() => extendBooking.mutate({ id: selected.currentBooking!.id, minutes })}
                               >
                                 <TimerReset className="h-4 w-4" />+{minutes} phút
                               </Button>
                             ))}
                           </div>
-                          {!selected.canExtend && <p className="mt-2 text-sm font-semibold text-amber-700">Sân đã có lịch đặt ngay sau đó, không thể gia hạn.</p>}
+                          {!selected.canExtend && (
+                            <p className="mt-2 text-sm font-semibold text-amber-700">
+                              Sân đã có lịch đặt ngay sau đó. Nếu gia hạn bị trùng lịch, bạn sẽ được chọn chuyển khách sang sân trống khác.
+                            </p>
+                          )}
                         </div>
                         <Button className="w-full" variant="secondary" disabled={earlyCheckOut.isPending} onClick={() => earlyCheckOut.mutate(selected.currentBooking!.id)}>
                           <LogOut className="h-4 w-4" />
@@ -431,6 +466,34 @@ export function RecipientCourtSurfacesPage() {
           </section>
         </div>
       )}
+
+      <Modal isOpen={extendConflict != null} onClose={() => setExtendConflict(null)} title="Sân đã có lịch, chọn sân trống để chuyển khách">
+        {extendConflict ? (
+          <div className="space-y-3">
+            <p className="text-sm text-slate-600">
+              Khung giờ tiếp theo trên sân này đã có khách đặt. Chọn một sân trống để chuyển khách sang và gia hạn thêm {extendConflict.minutes} phút.
+            </p>
+            <div className="flex flex-col gap-2">
+              {extendConflict.surfaces.map((surface) => (
+                <Button
+                  key={surface.id}
+                  variant="secondary"
+                  disabled={extendBooking.isPending}
+                  onClick={() =>
+                    extendBooking.mutate({
+                      id: extendConflict.bookingId,
+                      minutes: extendConflict.minutes,
+                      targetSurfaceId: surface.id
+                    })
+                  }
+                >
+                  {surface.name}
+                </Button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </Modal>
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { calculateOccupancyRate } from "../../shared/utils/businessRules.js";
 import { logger } from "../../shared/utils/logger.js";
 import { analyticsRepository } from "./analytics.repository.js";
 import { prisma } from "../../config/db.js";
-async function partnerIdForUser(userId) {
+export async function partnerIdForUser(userId) {
     const profile = await prisma.partnerProfile.findUnique({ where: { userId } });
     if (!profile)
         throw new ForbiddenError("Tai khoan doi tac chua co ho so");

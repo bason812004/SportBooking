@@ -1,114 +1,85 @@
 import { BookingStatus } from "@prisma/client";
-import { prisma } from "../../config/db.js";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
 import { bookingStartsAt, dayTypeFor, durationHours, parseLimit, parsePage, timeToDate, timeToMinutes, toDbDate } from "../../shared/utils/time.js";
 import { courtRepository } from "../courts/court.repository.js";
 import { bookingRepository } from "./booking.repository.js";
-import { calculateBookingQuote, canCreateBookingCheckout } from "./booking.calculations.js";
+import { canCreateBookingCheckout } from "./booking.calculations.js";
+import { realtimeService } from "../realtime/realtime.service.js";
+import { realtimeEvents } from "../realtime/realtime.events.js";
+import { invalidateWeeklyScheduleCache } from "../weekly-schedule/weeklySchedule.service.js";
 function bookingCode() {
     const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
     return `BK${stamp}${Math.floor(Math.random() * 900 + 100)}`;
 }
+function notifyCourtAvailabilityUpdated(courtId) {
+    invalidateWeeklyScheduleCache(courtId);
+    realtimeService.toCourt(courtId, "court:availability:updated", { courtId });
+    realtimeService.toPublic("court:availability:updated", { courtId });
+    realtimeService.toCourt(courtId, "court:availability-updated", { courtId });
+    realtimeService.toPublic("court:availability-updated", { courtId });
+    realtimeService.toCourt(courtId, "inventory:updated", { courtId });
+    realtimeService.toPublic("inventory:updated", { courtId });
+}
+import { calculateBookingPrice } from "../pricing/bookingPricing.service.js";
 export const bookingService = {
     async quote(userId, input) {
-        const court = await bookingRepository.courtWithPricing(input.courtId);
-        if (!court)
-            throw new NotFoundError("Sân không tồn tại hoặc chưa được duyệt");
-        const depositPercent = await bookingRepository.courtDepositPercent(input.courtId);
-        const requiresDeposit = depositPercent > 0;
-        let courtSubtotal = 0;
-        const daysResult = [];
-        for (const day of input.days) {
-            const dayType = dayTypeFor(day.bookingDate);
-            let dayCourtSubtotal = 0;
-            const slotsWithPrice = [];
-            for (const slot of day.slots) {
-                const startMin = timeToMinutes(slot.startTime);
-                const endMin = timeToMinutes(slot.endTime);
-                const allPrices = court.prices.map((p) => ({
-                    dayType: p.dayType,
-                    startMin: timeToMinutes(p.startTime.toISOString().slice(11, 16)),
-                    endMin: timeToMinutes(p.endTime.toISOString().slice(11, 16)),
-                    price: Number(p.price)
-                }));
-                let matchingPrice = allPrices.find((p) => p.dayType === dayType && p.startMin <= startMin && p.endMin >= endMin);
-                if (!matchingPrice) {
-                    matchingPrice = allPrices.find((p) => p.dayType === dayType && p.startMin < endMin && p.endMin > startMin);
-                }
-                if (!matchingPrice) {
-                    matchingPrice = allPrices.find((p) => p.dayType === dayType);
-                }
-                if (!matchingPrice && allPrices.length > 0) {
-                    matchingPrice = allPrices[0];
-                }
-                if (!matchingPrice) {
-                    throw new ValidationError(`Khung giờ ${slot.startTime} - ${slot.endTime} ngày ${day.bookingDate} chưa có bảng giá`);
-                }
-                const hours = durationHours(slot.startTime, slot.endTime);
-                const slotPrice = matchingPrice.price * hours;
-                dayCourtSubtotal += slotPrice;
-                slotsWithPrice.push({ ...slot, price: slotPrice });
-            }
-            courtSubtotal += dayCourtSubtotal;
-            daysResult.push({
-                bookingDate: day.bookingDate,
-                slots: slotsWithPrice,
-                courtSubtotal: dayCourtSubtotal,
-                subtotal: dayCourtSubtotal,
-                voucherDiscountAmount: 0,
-                totalAmount: dayCourtSubtotal
-            });
-        }
-        const serviceIds = (input.services ?? []).map((s) => s.serviceId);
-        const dbServices = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
-        if (dbServices.length !== serviceIds.length)
-            throw new ValidationError("Dịch vụ không hợp lệ");
-        const serviceLines = (input.services ?? []).map((line) => {
-            const service = dbServices.find((item) => item.id === line.serviceId);
-            const price = Number(service.price);
-            return { serviceId: line.serviceId, name: service.name, quantity: line.quantity, price, total: price * line.quantity };
+        const flatSlots = input.days.flatMap((day) => day.slots.map((s) => ({
+            courtId: input.courtId,
+            courtSurfaceId: s.courtSurfaceId || s.court_surface_id || s.courtSubId,
+            date: s.date || day.bookingDate,
+            startTime: s.startTime,
+            endTime: s.endTime
+        })));
+        const calculated = await calculateBookingPrice({
+            courtId: input.courtId,
+            slots: flatSlots,
+            services: input.services,
+            voucherId: input.voucherId,
+            voucherCode: input.voucherCode
         });
-        const servicesSubtotal = serviceLines.reduce((sum, line) => sum + line.total, 0);
-        const subtotal = courtSubtotal + servicesSubtotal;
-        let voucherDiscountAmount = 0;
-        let voucherId = input.voucherId;
-        if (input.voucherCode || input.voucherId) {
-            const voucher = await prisma.voucher.findFirst({
-                where: input.voucherId
-                    ? { id: input.voucherId }
-                    : { code: input.voucherCode.toUpperCase(), status: "ACTIVE" }
+        const daysMap = new Map();
+        for (const item of calculated.items) {
+            const list = daysMap.get(item.date) || [];
+            list.push({
+                courtSurfaceId: item.courtSurfaceId,
+                courtSurfaceName: item.courtSurfaceName,
+                startTime: item.startTime,
+                endTime: item.endTime,
+                basePrice: item.basePrice,
+                dynamicAdjustment: item.dynamicAdjustment,
+                price: item.finalPrice,
+                finalPrice: item.finalPrice
             });
-            if (voucher && voucher.status === "ACTIVE") {
-                voucherId = voucher.id;
-                const minAmount = Number(voucher.minBookingAmount ?? 0);
-                if (subtotal >= minAmount) {
-                    const discountVal = Number(voucher.discountValue);
-                    const raw = voucher.discountType === "PERCENTAGE"
-                        ? Math.round((subtotal * discountVal) / 100)
-                        : discountVal;
-                    const maxDiscount = voucher.maxDiscountAmount ? Number(voucher.maxDiscountAmount) : Number.POSITIVE_INFINITY;
-                    voucherDiscountAmount = Math.min(raw, maxDiscount, subtotal);
-                }
-            }
+            daysMap.set(item.date, list);
         }
-        const quoteResult = calculateBookingQuote(daysResult.flatMap((d) => d.slots), voucherDiscountAmount, servicesSubtotal, depositPercent);
+        const daysResult = Array.from(daysMap.entries()).map(([bookingDate, slots]) => {
+            const dayCourtSub = slots.reduce((sum, s) => sum + s.price, 0);
+            return {
+                bookingDate,
+                slots,
+                courtSubtotal: dayCourtSub,
+                subtotal: dayCourtSub,
+                voucherDiscountAmount: 0,
+                totalAmount: dayCourtSub
+            };
+        });
         return {
-            court: { id: court.id, name: court.name, address: court.address, imageUrl: court.images?.[0]?.imageUrl ?? null },
+            court: calculated.court,
             days: daysResult,
-            services: serviceLines,
-            courtSubtotal,
-            servicesSubtotal,
-            subtotal: quoteResult.subtotal,
-            voucherDiscountAmount: quoteResult.voucherDiscountAmount,
-            totalAmount: quoteResult.totalAmount,
-            minimumDepositAmount: quoteResult.minimumDepositAmount,
-            remainingAmount: quoteResult.remainingAmount,
-            depositPercent,
-            requiresDeposit,
+            services: calculated.services,
+            courtSubtotal: calculated.courtSubtotal,
+            servicesSubtotal: calculated.servicesSubtotal,
+            subtotal: calculated.subtotal,
+            voucherDiscountAmount: calculated.voucherDiscountAmount,
+            totalAmount: calculated.totalAmount,
+            minimumDepositAmount: calculated.depositAmount,
+            remainingAmount: calculated.remainingAmount,
+            depositPercent: calculated.depositPercent,
+            requiresDeposit: calculated.requiresDeposit,
             currency: "VND",
             quoteExpiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-            voucherId
+            voucherId: calculated.voucherId
         };
     },
     async checkout(userId, input) {
@@ -149,6 +120,7 @@ export const bookingService = {
                 if ("conflict" in result && result.conflict) {
                     throw new ConflictError("Khung giờ này đã có người đặt.", "BOOKING_CONFLICT");
                 }
+                notifyCourtAvailabilityUpdated(input.courtId);
                 return {
                     bookingId: result.booking.id,
                     bookingStatus: result.booking.bookingStatus,
@@ -188,6 +160,7 @@ export const bookingService = {
             if ("conflict" in result && result.conflict) {
                 throw new ConflictError("Khung giờ này đã có người đặt.", "BOOKING_CONFLICT");
             }
+            notifyCourtAvailabilityUpdated(input.courtId);
             return {
                 bookingId: result.booking.id,
                 paymentId: result.payment.id,
@@ -225,6 +198,7 @@ export const bookingService = {
             if ("conflict" in result && result.conflict) {
                 throw new ConflictError(`Khung giờ ngày ${result.conflictDate} đã có người đặt.`, "BOOKING_CONFLICT");
             }
+            notifyCourtAvailabilityUpdated(input.courtId);
             return {
                 orderId: result.orderId,
                 bookingId: result.bookings[0].id,
@@ -369,6 +343,19 @@ export const bookingService = {
         const minCancelAt = new Date(startAt.getTime() - 2 * 60 * 60 * 1000);
         if (new Date() > minCancelAt)
             throw new ValidationError("Chi duoc huy truoc gio bat dau it nhat 2 gio");
-        return bookingRepository.cancel(bookingId, { cancelReason, refundAmount: 0, platformRetainedAmount: 0, paymentStatus: "CANCELLED" });
+        const result = await bookingRepository.cancel(bookingId, {
+            cancelReason,
+            refundAmount: 0,
+            platformRetainedAmount: 0,
+            paymentStatus: "CANCELLED"
+        });
+        if (result.settlement) {
+            const partnerId = result.settlement.partnerId;
+            realtimeService.toPartner(partnerId, realtimeEvents.settlementUpdated, result.settlement);
+            realtimeService.toAdmin(realtimeEvents.settlementUpdated, result.settlement);
+            realtimeService.toPartner(partnerId, realtimeEvents.walletUpdated, { partnerId });
+            realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId });
+        }
+        return result;
     }
 };

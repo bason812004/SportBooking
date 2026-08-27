@@ -3,6 +3,7 @@ import { prisma } from "../../config/db.js";
 import { ValidationError } from "../../shared/errors/AppError.js";
 import { timeToDate, toDbDate } from "../../shared/utils/time.js";
 import { ensureServiceTables } from "../services/service.repository.js";
+import { settlementService } from "../settlements/settlement.service.js";
 
 function generateShortId(prefix: string): string {
   const rand = Math.random().toString(36).slice(2, 10);
@@ -188,6 +189,7 @@ export const bookingRepository = {
         },
         include: { court: true }
       });
+      const settlement = await settlementService.cancelForBooking(id, tx);
       const services = await tx.bookingService.findMany({
         where: { bookingId: id, status: "ACTIVE" }
       });
@@ -213,7 +215,7 @@ export const bookingRepository = {
           }
         }
       }
-      return updated;
+      return { ...updated, settlement };
     });
   },
 

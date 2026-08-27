@@ -42,6 +42,23 @@ export const settlementRepository = {
     return db.settlement.findUnique({ where: { id }, include: listInclude });
   },
 
+  async incrementAmounts(
+    id: string,
+    fromStatuses: SettlementStatus[],
+    amounts: { grossAmount: number; commissionAmount: number; netAmount: number },
+    db: DbClient
+  ) {
+    const result = await db.settlement.updateMany({
+      where: { id, status: { in: fromStatuses } },
+      data: {
+        grossAmount: { increment: amounts.grossAmount },
+        commissionAmount: { increment: amounts.commissionAmount },
+        netAmount: { increment: amounts.netAmount }
+      }
+    });
+    return result.count;
+  },
+
   async transitionById(
     id: string,
     fromStatuses: SettlementStatus[],

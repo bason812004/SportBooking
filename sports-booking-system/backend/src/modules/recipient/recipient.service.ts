@@ -109,7 +109,25 @@ function slotPrice(slot: { startTime: string; endTime: string }, date: string, p
 const activeOperationStatuses: BookingStatus[] = [BookingStatus.PENDING, BookingStatus.PENDING_PAYMENT, BookingStatus.CONFIRMED];
 const extendableBookingStatuses: BookingStatus[] = [BookingStatus.PENDING, BookingStatus.PENDING_PAYMENT, BookingStatus.CONFIRMED];
 
-async function getManagedCourtId(userId: string) {
+async function extensionConflictFor(
+  courtId: string,
+  booking: { id: string; endTime: Date; bookingDate: Date },
+  courtSurfaceId: string | null,
+  newEndTime: Date
+) {
+  return prisma.booking.findFirst({
+    where: {
+      id: { not: booking.id },
+      courtId,
+      OR: courtSurfaceId ? [{ courtSurfaceId }, { courtSurfaceId: null }] : undefined,
+      bookingDate: booking.bookingDate,
+      bookingStatus: { in: activeOperationStatuses },
+      ...overlapWhere(booking.endTime, newEndTime)
+    }
+  });
+}
+
+export async function getManagedCourtId(userId: string) {
   const [user] = await prisma.$queryRaw<Array<{ managedCourtId: string | null }>>`
     select managed_court_id as "managedCourtId"
     from users
@@ -747,7 +765,27 @@ export const recipientService = {
     };
   },
 
-  async extendBooking(userId: string, bookingId: string, minutes: number) {
+  async getAvailableSurfacesForExtension(userId: string, bookingId: string, minutes: number) {
+    const courtId = await getManagedCourtId(userId);
+    const booking = await prisma.booking.findFirst({ where: { id: bookingId, courtId } });
+    if (!booking) throw new NotFoundError("Khong tim thay don dat san thuoc quyen quan ly cua ban");
+
+    const newEndTime = addMinutes(booking.endTime, minutes);
+    const surfaces = await prisma.courtSurface.findMany({
+      where: { courtId, id: { not: booking.courtSurfaceId ?? undefined } },
+      orderBy: [{ sortOrder: "asc" }, { code: "asc" }],
+      select: { id: true, name: true }
+    });
+
+    const available = [];
+    for (const surface of surfaces) {
+      const conflict = await extensionConflictFor(courtId, booking, surface.id, newEndTime);
+      if (!conflict) available.push(surface);
+    }
+    return available;
+  },
+
+  async extendBooking(userId: string, bookingId: string, minutes: number, targetSurfaceId?: string) {
     const courtId = await getManagedCourtId(userId);
     const booking = await prisma.booking.findFirst({ where: { id: bookingId, courtId } });
     if (!booking) throw new NotFoundError("Khong tim thay don dat san thuoc quyen quan ly cua ban");
@@ -756,17 +794,18 @@ export const recipientService = {
     }
 
     const newEndTime = addMinutes(booking.endTime, minutes);
-    const conflict = await prisma.booking.findFirst({
-      where: {
-        id: { not: booking.id },
-        courtId,
-        OR: booking.courtSurfaceId ? [{ courtSurfaceId: booking.courtSurfaceId }, { courtSurfaceId: null }] : undefined,
-        bookingDate: booking.bookingDate,
-        bookingStatus: { in: activeOperationStatuses },
-        ...overlapWhere(booking.endTime, newEndTime)
-      }
-    });
-    if (conflict) throw new ConflictError("San nay da co lich sau do. Hay chuyen khach sang san trong.", "BOOKING_EXTENSION_CONFLICT");
+    let surfaceId = booking.courtSurfaceId;
+
+    if (targetSurfaceId && targetSurfaceId !== booking.courtSurfaceId) {
+      const surface = await prisma.courtSurface.findFirst({ where: { id: targetSurfaceId, courtId } });
+      if (!surface) throw new NotFoundError("Khong tim thay san con thuoc quyen quan ly cua ban");
+      const conflict = await extensionConflictFor(courtId, booking, targetSurfaceId, newEndTime);
+      if (conflict) throw new ConflictError("San duoc chon cung da co lich, vui long chon san khac", "BOOKING_EXTENSION_CONFLICT");
+      surfaceId = targetSurfaceId;
+    } else {
+      const conflict = await extensionConflictFor(courtId, booking, booking.courtSurfaceId, newEndTime);
+      if (conflict) throw new ConflictError("San nay da co lich sau do. Hay chuyen khach sang san trong.", "BOOKING_EXTENSION_CONFLICT");
+    }
 
     const date = booking.bookingDate.toISOString().slice(0, 10);
     const startTime = dbTime(booking.endTime);
@@ -775,11 +814,12 @@ export const recipientService = {
     const hours = durationHours(startTime, endTime);
     const subtotal = dynamicPrice.finalPrice * hours;
 
-    return prisma.$transaction(async (tx) => {
-      const updated = await tx.booking.update({
+    const { updated, settlement } = await prisma.$transaction(async (tx) => {
+      const updatedBooking = await tx.booking.update({
         where: { id: booking.id },
         data: {
           endTime: newEndTime,
+          courtSurfaceId: surfaceId,
           basePrice: { increment: dynamicPrice.basePrice * hours },
           dynamicAdjustmentAmount: { increment: dynamicPrice.dynamicAdjustmentAmount * hours },
           subtotal: { increment: subtotal },
@@ -791,12 +831,23 @@ export const recipientService = {
         where: { bookingId: booking.id, endTime: booking.endTime },
         data: {
           endTime: newEndTime,
+          court_surface_id: surfaceId,
           slotPrice: { increment: subtotal }
         }
       });
 
-      return updated;
+      const updatedSettlement = await settlementService.addExtraGrossAmount(booking.id, subtotal, tx);
+      return { updated: updatedBooking, settlement: updatedSettlement };
     });
+
+    if (settlement) {
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toAdmin(realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+      realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+    }
+
+    return updated;
   },
 
   async createWalkInBooking(
@@ -1565,17 +1616,42 @@ export const recipientService = {
     });
     if (conflict) throw new ConflictError("San dang co khach, khong the check-in som", "EARLY_CHECK_IN_CONFLICT");
 
-    return prisma.$transaction(async (tx) => {
-      const updated = await tx.booking.update({
+    // Khach den som duoc choi bu them thoi gian nhung van phai tra tien cho phan do
+    const extraStartTime = currentTime;
+    const extraEndTime = dbTime(booking.startTime);
+    const dynamicPrice = await dynamicPricingService.calculate(courtId, { date, startTime: extraStartTime, endTime: extraEndTime });
+    const hours = durationHours(extraStartTime, extraEndTime);
+    const extraAmount = dynamicPrice.finalPrice * hours;
+
+    const { updated, settlement } = await prisma.$transaction(async (tx) => {
+      const updatedBooking = await tx.booking.update({
         where: { id: booking.id },
-        data: { startTime: newStartTime, bookingStatus: BookingStatus.CONFIRMED, checkedInAt: now }
+        data: {
+          startTime: newStartTime,
+          bookingStatus: BookingStatus.CONFIRMED,
+          checkedInAt: now,
+          basePrice: { increment: dynamicPrice.basePrice * hours },
+          dynamicAdjustmentAmount: { increment: dynamicPrice.dynamicAdjustmentAmount * hours },
+          subtotal: { increment: extraAmount },
+          totalPrice: { increment: extraAmount }
+        }
       });
       await tx.bookingSlot.updateMany({
         where: { bookingId: booking.id, startTime: booking.startTime },
-        data: { startTime: newStartTime }
+        data: { startTime: newStartTime, slotPrice: { increment: extraAmount } }
       });
-      return updated;
+      const updatedSettlement = await settlementService.addExtraGrossAmount(booking.id, extraAmount, tx);
+      return { updated: updatedBooking, settlement: updatedSettlement };
     });
+
+    if (settlement) {
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toAdmin(realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+      realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+    }
+
+    return { ...updated, extraChargeAmount: extraAmount };
   },
 
   async earlyCheckOutBooking(userId: string, bookingId: string) {

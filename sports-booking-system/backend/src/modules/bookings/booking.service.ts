@@ -17,6 +17,7 @@ import { bookingRepository } from "./booking.repository.js";
 import { calculateBookingQuote, canCreateBookingCheckout } from "./booking.calculations.js";
 import type { CreateBookingInput } from "./booking.types.js";
 import { realtimeService } from "../realtime/realtime.service.js";
+import { realtimeEvents } from "../realtime/realtime.events.js";
 import { invalidateWeeklyScheduleCache } from "../weekly-schedule/weeklySchedule.service.js";
 
 function bookingCode() {
@@ -423,6 +424,21 @@ export const bookingService = {
     const minCancelAt = new Date(startAt.getTime() - 2 * 60 * 60 * 1000);
     if (new Date() > minCancelAt) throw new ValidationError("Chi duoc huy truoc gio bat dau it nhat 2 gio");
 
-    return bookingRepository.cancel(bookingId, { cancelReason, refundAmount: 0, platformRetainedAmount: 0, paymentStatus: "CANCELLED" });
+    const result = await bookingRepository.cancel(bookingId, {
+      cancelReason,
+      refundAmount: 0,
+      platformRetainedAmount: 0,
+      paymentStatus: "CANCELLED"
+    });
+
+    if (result.settlement) {
+      const partnerId = result.settlement.partnerId;
+      realtimeService.toPartner(partnerId, realtimeEvents.settlementUpdated, result.settlement);
+      realtimeService.toAdmin(realtimeEvents.settlementUpdated, result.settlement);
+      realtimeService.toPartner(partnerId, realtimeEvents.walletUpdated, { partnerId });
+      realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId });
+    }
+
+    return result;
   }
 };

@@ -299,8 +299,15 @@ export const recipientApi = {
     return data.data;
   },
 
-  async extendBooking(id: string, minutes: number) {
-    const { data } = await api.post<ApiResponse<Booking>>(`/recipient/bookings/${id}/extend`, { minutes });
+  async extendBooking(id: string, minutes: number, targetSurfaceId?: string) {
+    const { data } = await api.post<ApiResponse<Booking>>(`/recipient/bookings/${id}/extend`, { minutes, targetSurfaceId });
+    return data.data;
+  },
+
+  async getExtendOptions(id: string, minutes: number) {
+    const { data } = await api.get<ApiResponse<Array<{ id: string; name: string }>>>(`/recipient/bookings/${id}/extend-options`, {
+      params: { minutes }
+    });
     return data.data;
   },
 
@@ -330,7 +337,7 @@ export const recipientApi = {
   },
 
   async checkInBooking(id: string) {
-    const { data } = await api.post<ApiResponse<Booking>>(`/recipient/bookings/${id}/check-in`);
+    const { data } = await api.post<ApiResponse<Booking & { extraChargeAmount?: number }>>(`/recipient/bookings/${id}/check-in`);
     return data.data;
   },
 

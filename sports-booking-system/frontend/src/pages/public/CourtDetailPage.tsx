@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { LayoutGrid } from "lucide-react";
+import type { WeeklyScheduleSlot } from "../../types/api";
 import { LoadingState, ErrorState, EmptyState } from "../../components/common/States";
 import { useCourt } from "../../features/courts/hooks/useCourts";
 import { useUserLocation } from "../../features/courts/hooks/useUserLocation";
@@ -99,6 +100,8 @@ export function CourtDetailPage() {
       clearSlots();
     };
   }, [clearSlots]);
+
+  const surfaces = court.data?.surfaces;
 
   const activeSurface = useMemo(() => {
     if (!court.data?.surfaces?.length) return null;
@@ -279,19 +282,19 @@ export function CourtDetailPage() {
                 description="Chọn một hoặc nhiều khung giờ còn trống. Giá, dynamic pricing và demand prediction được lấy trực tiếp từ backend."
               >
                 {/* Sub-Court (Sân con) Selector */}
-                {court.data?.surfaces && court.data.surfaces.length > 0 && (
+                {surfaces && surfaces.length > 0 && (
                   <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3 shadow-sm">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-xs font-black uppercase tracking-wider text-emerald-900 flex items-center gap-1.5 mr-2">
                         <LayoutGrid className="h-4 w-4 text-emerald-600" />
                         Chọn Sân Con:
                       </span>
-                      {court.data.surfaces.map((s) => (
+                      {surfaces.map((s) => (
                         <button
                           key={s.id}
                           type="button"
                           onClick={() => setSelectedSurfaceId(s.id)}
-                          className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-black transition border ${(selectedSurfaceId ?? court.data.surfaces[0]?.id) === s.id
+                          className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-black transition border ${(selectedSurfaceId ?? surfaces[0]?.id) === s.id
                               ? "bg-[#02712a] text-white border-[#02712a] shadow-md scale-105"
                               : "bg-white text-slate-700 border-slate-200 hover:bg-emerald-100/60"
                             }`}

@@ -57,8 +57,8 @@ export function BookingServiceSelector({
 
     if (activeTab === "ALL") {
       return [...services].sort((a, b) => {
-        const slugA = (a.categorySlug || a.category?.slug || "").toLowerCase();
-        const slugB = (b.categorySlug || b.category?.slug || "").toLowerCase();
+        const slugA = (a.category?.slug || "").toLowerCase();
+        const slugB = (b.category?.slug || "").toLowerCase();
         const isEquipmentA = slugA.includes("dung-cu") || slugA.includes("thue");
         const isEquipmentB = slugB.includes("dung-cu") || slugB.includes("thue");
         if (isEquipmentA && !isEquipmentB) return -1;
@@ -68,7 +68,7 @@ export function BookingServiceSelector({
     }
 
     return services.filter((s) => {
-      const slug = (s.categorySlug || s.category?.slug || "").toLowerCase();
+      const slug = (s.category?.slug || "").toLowerCase();
       const catId = s.categoryId || s.category?.id;
       if (activeTab === "EQUIPMENT") return slug.includes("dung-cu") || slug.includes("thue");
       if (activeTab === "FOOD_DRINK") return slug.includes("do-uong") || slug.includes("do-an") || slug.includes("trai-cay");
@@ -206,8 +206,8 @@ export function BookingServiceSelector({
 
             const stock = service.inventory?.quantity ?? 50;
             const isOutOfStock = stock <= 0;
-            const catSlug = service.categorySlug || service.category?.slug;
-            const catName = service.categoryName || service.category?.name || "Dịch vụ";
+            const catSlug = service.category?.slug;
+            const catName = service.category?.name || "Dịch vụ";
 
             return (
               <div

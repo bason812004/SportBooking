@@ -214,8 +214,8 @@ export function TeamGroupChatPage() {
         attachmentSize: null,
         thumbnailUrl: null,
         mimeType: null,
-        createdAt: new Date().toISOString() as unknown as Date,
-        updatedAt: new Date().toISOString() as unknown as Date,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         sender: { id: user.id, fullName: user.fullName || "Tôi", avatarUrl: user.avatarUrl || null },
         reactions: []
       };

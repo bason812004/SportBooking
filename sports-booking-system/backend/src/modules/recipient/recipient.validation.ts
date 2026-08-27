@@ -19,7 +19,14 @@ export const operationsQuerySchema = z.object({
 
 export const bookingExtendSchema = z.object({
   body: z.object({
-    minutes: z.number().int().positive().max(240)
+    minutes: z.number().int().positive().max(240),
+    targetSurfaceId: z.string().uuid().optional()
+  })
+});
+
+export const extendOptionsQuerySchema = z.object({
+  query: z.object({
+    minutes: z.coerce.number().int().positive().max(240)
   })
 });
 

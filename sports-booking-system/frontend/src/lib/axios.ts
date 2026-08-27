@@ -47,6 +47,8 @@ api.interceptors.response.use(
     }
 
     const message = error.response?.data?.message ?? error.response?.data?.error?.message ?? "Khong the ket noi may chu";
-    return Promise.reject(new Error(message));
+    const rejected = new Error(message) as Error & { code?: string };
+    rejected.code = error.response?.data?.error?.code ?? error.response?.data?.code;
+    return Promise.reject(rejected);
   }
 );
