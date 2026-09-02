@@ -284,12 +284,36 @@ async function ensureCourtServicesSeededInDb(courtId: string) {
     const isBasketball = fullText.includes("bóng rổ") || fullText.includes("basketball");
     const isVolleyball = fullText.includes("bóng chuyền") || fullText.includes("volleyball");
 
-    // If court is NOT a racket sport, clean up any mistakenly seeded racket rental services
+    // If court is NOT a racket sport, clean up any mistakenly seeded racket rental or racket accessory services
     if (!isBadminton && !isTennis && !isPickleball) {
       await prisma.$executeRawUnsafe(
-        `DELETE FROM services WHERE court_id = $1 AND (LOWER(name) LIKE '%vợt%' OR type = 'RENTAL_SERVICE');`,
+        `DELETE FROM services WHERE court_id = $1 AND (
+          LOWER(name) LIKE '%vợt%' OR
+          LOWER(name) LIKE '%cầu lông%' OR
+          LOWER(name) LIKE '%tennis%' OR
+          LOWER(name) LIKE '%pickleball%' OR
+          LOWER(name) LIKE '%yonex%' OR
+          LOWER(name) LIKE '%babolat%' OR
+          LOWER(name) LIKE '%selkirk%'
+        );`,
         courtId
       ).catch(() => {});
+    }
+
+    // Check if sport-specific items need to be seeded
+    let needsSportItems = false;
+    if (isVolleyball) {
+      const existing: any = await prisma.$queryRawUnsafe(`SELECT COUNT(*)::int as c FROM services WHERE court_id = $1 AND LOWER(name) LIKE '%mikasa%';`, courtId).catch(() => []);
+      needsSportItems = !Array.isArray(existing) || Number(existing[0]?.c || 0) === 0;
+    } else if (isFootball) {
+      const existing: any = await prisma.$queryRawUnsafe(`SELECT COUNT(*)::int as c FROM services WHERE court_id = $1 AND LOWER(name) LIKE '%động lực%';`, courtId).catch(() => []);
+      needsSportItems = !Array.isArray(existing) || Number(existing[0]?.c || 0) === 0;
+    } else if (isBasketball) {
+      const existing: any = await prisma.$queryRawUnsafe(`SELECT COUNT(*)::int as c FROM services WHERE court_id = $1 AND LOWER(name) LIKE '%molten%';`, courtId).catch(() => []);
+      needsSportItems = !Array.isArray(existing) || Number(existing[0]?.c || 0) === 0;
+    } else if (isBadminton || isTennis || isPickleball) {
+      const existing: any = await prisma.$queryRawUnsafe(`SELECT COUNT(*)::int as c FROM services WHERE court_id = $1 AND LOWER(name) LIKE '%vợt%';`, courtId).catch(() => []);
+      needsSportItems = !Array.isArray(existing) || Number(existing[0]?.c || 0) === 0;
     }
 
     const countRows: any = await prisma.$queryRawUnsafe(
@@ -298,7 +322,7 @@ async function ensureCourtServicesSeededInDb(courtId: string) {
     ).catch(() => []);
 
     const count = Array.isArray(countRows) && countRows.length > 0 ? Number(countRows[0].count) : 0;
-    if (count > 0) {
+    if (count > 0 && !needsSportItems) {
       seededCourtSet.add(courtId);
       return;
     }

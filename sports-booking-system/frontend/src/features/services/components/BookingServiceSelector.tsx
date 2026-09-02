@@ -112,7 +112,7 @@ export function BookingServiceSelector({
             Dịch Vụ & Dụng Cụ Phục Vụ Tại Sân
           </h3>
           <p className="text-xs text-slate-500 font-semibold mt-0.5">
-            Dịch vụ thật được quản lý kho từ chủ sân · Thuê vợt, bóng, nước uống & đồ ăn chuẩn bị sẵn tại sân
+            Dịch vụ thật được quản lý kho từ chủ sân · Thuê bóng, dụng cụ, nước uống & đồ ăn chuẩn bị sẵn tại sân
           </p>
         </div>
 
@@ -158,7 +158,7 @@ export function BookingServiceSelector({
           }`}
         >
           <Dumbbell className="h-3.5 w-3.5 text-emerald-600" />
-          Dụng cụ & Thuê vợt
+          Dụng cụ & Đồ thi đấu
         </button>
 
         <button
