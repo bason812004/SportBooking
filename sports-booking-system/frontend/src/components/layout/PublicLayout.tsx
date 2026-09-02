@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Outlet, useLocation } from "react-router-dom";
+import { ChatWidget } from "../../features/chatbot/components/ChatWidget";
 import { ScrollToTopButton } from "../common/ScrollToTopButton";
 import { SiteFooter } from "./SiteFooter";
 import { SiteHeader } from "./SiteHeader";
@@ -19,6 +20,7 @@ export function PublicLayout() {
       </main>
       <SiteFooter />
       <ScrollToTopButton />
+      <ChatWidget />
     </div>
   );
 }

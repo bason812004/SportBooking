@@ -48,7 +48,15 @@ const envSchema = z.object({
   WITHDRAWAL_AUTO_APPROVE_LIMIT: z.coerce.number().min(0).default(5_000_000),
   ML_SERVICE_URL: z.string().optional(),
   ML_SERVICE_TIMEOUT_MS: z.coerce.number().int().positive().default(2000),
-  ML_MIN_HISTORY: z.coerce.number().int().positive().default(50)
+  ML_MIN_HISTORY: z.coerce.number().int().positive().default(50),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_MODEL: z.string().default("claude-sonnet-5"),
+  GEMINI_API_KEY: z.string().optional(),
+  GEMINI_MODEL: z.string().default("gemini-3.6-flash"),
+  CHATBOT_LLM_PROVIDER: z.enum(["anthropic", "gemini"]).default("gemini"),
+  CHATBOT_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(1024),
+  CHATBOT_TIMEOUT_MS: z.coerce.number().int().positive().default(45000),
+  CHATBOT_MAX_TOOL_LOOPS: z.coerce.number().int().positive().default(6)
 });
 
 export const env = envSchema.parse(process.env);

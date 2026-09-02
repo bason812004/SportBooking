@@ -1,7 +1,7 @@
 import compression from "compression";
 import cors from "cors";
 import express from "express";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import helmet from "helmet";
 import swaggerUi from "swagger-ui-express";
 import { env } from "./config/env.js";
@@ -41,6 +41,7 @@ import { serviceRoutes } from "./modules/services/service.routes.js";
 import { inventoryRoutes } from "./modules/inventory/inventory.routes.js";
 import { cashierRoutes } from "./modules/cashier/cashier.routes.js";
 import { checkoutRoutes } from "./modules/checkout/checkout.routes.js";
+import { chatbotRoutes } from "./modules/chatbot/chatbot.routes.js";
 
 export const app = express();
 
@@ -115,6 +116,15 @@ app.use("/api/partner/inventory", inventoryRoutes);
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/cashier", cashierRoutes);
 app.use("/api/checkouts", checkoutRoutes);
+const chatbotRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.id ?? ipKeyGenerator(req.ip ?? "unknown")
+});
+app.use("/api/chatbot", chatbotRateLimit);
+app.use("/api/chatbot", chatbotRoutes);
 app.use("/api/partner", partnerRoutes);
 app.use("/api/recipient/report", recipientReportRoutes);
 app.use("/api/recipient", recipientRoutes);

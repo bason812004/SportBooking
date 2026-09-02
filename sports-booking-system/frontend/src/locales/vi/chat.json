@@ -1,0 +1,29 @@
+{
+  "title": "Trợ lý đặt sân",
+  "subtitle": "Hỏi về giá sân, giờ mở cửa, chính sách hủy hoặc nhờ đặt sân giúp bạn.",
+  "placeholder": "Nhập câu hỏi của bạn...",
+  "send": "Gửi",
+  "sending": "Đang gửi...",
+  "guestBanner": "Bạn đang ở chế độ khách. Đăng nhập để xem lịch đặt sân và được hỗ trợ đặt sân tự động.",
+  "errorGeneric": "Có lỗi xảy ra, vui lòng thử lại.",
+  "suggestions": {
+    "hours": "Giờ mở cửa sân thế nào?",
+    "cancelPolicy": "Chính sách hủy sân ra sao?",
+    "myBookings": "Lịch đặt sân sắp tới của tôi",
+    "bookTonight": "Đặt giúp tôi sân cầu lông tối nay"
+  },
+  "pendingBooking": {
+    "title": "Đề xuất đặt sân",
+    "court": "Sân",
+    "date": "Ngày",
+    "slot": "Khung giờ",
+    "total": "Tổng tiền",
+    "payment": "Hình thức thanh toán",
+    "expires": "Hết hạn lúc",
+    "confirm": "Xác nhận đặt sân",
+    "cancel": "Hủy",
+    "confirming": "Đang xác nhận...",
+    "confirmed": "Đặt sân thành công!",
+    "expired": "Đề xuất đã hết hạn, vui lòng yêu cầu lại."
+  }
+}

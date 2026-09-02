@@ -331,6 +331,8 @@ model User {
   bookings                                                            Booking[]
   bookingSeries                                                       BookingSeries[]
   bookingOrders                                                       BookingOrder[]
+  chatConversations                                                   ChatConversation[]
+  pendingBookings                                                     PendingBooking[]
   favorites                                                           Favorite[]
   moderation_history                                                  ModerationHistory[]
   notification_campaigns_notification_campaigns_sent_byTousers        NotificationCampaign[]   @relation("notification_campaigns_sent_byTousers")
@@ -1268,6 +1270,46 @@ model NotificationCampaign {
   @@index([createdAt(sort: Desc)], map: "idx_notification_campaigns_created_at")
   @@index([sentBy], map: "idx_notification_campaigns_sent_by")
   @@map("notification_campaigns")
+}
+
+model ChatConversation {
+  id        String        @id @default(dbgenerated("('cc'::text || lpad((nextval('seq_chat_conversations'::regclass))::text, 4, '0'::text))")) @db.VarChar(20)
+  userId    String        @map("user_id") @db.VarChar(20)
+  title     String?       @db.VarChar(160)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime      @default(now()) @map("updated_at") @db.Timestamptz(6)
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  messages  ChatMessage[]
+
+  @@index([userId, updatedAt(sort: Desc)], map: "idx_chat_conversations_user_updated")
+  @@map("chat_conversations")
+}
+
+model ChatMessage {
+  id             String           @id @default(dbgenerated("('cm'::text || lpad((nextval('seq_chat_messages'::regclass))::text, 4, '0'::text))")) @db.VarChar(20)
+  conversationId String           @map("conversation_id") @db.VarChar(20)
+  role           String           @db.VarChar(20)
+  content        String
+  toolCallsJson  Json?            @map("tool_calls_json")
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([conversationId, createdAt], map: "idx_chat_messages_conversation_created")
+  @@map("chat_messages")
+}
+
+model PendingBooking {
+  id           String   @id @default(dbgenerated("('pb'::text || lpad((nextval('seq_pending_bookings'::regclass))::text, 4, '0'::text))")) @db.VarChar(20)
+  userId       String   @map("user_id") @db.VarChar(20)
+  quotePayload Json     @map("quote_payload")
+  quoteSummary Json     @map("quote_summary")
+  status       String   @default("PENDING") @db.VarChar(20)
+  expiresAt    DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([userId, status], map: "idx_pending_bookings_user_status")
+  @@map("pending_bookings")
 }
 
 model AuditLog {
