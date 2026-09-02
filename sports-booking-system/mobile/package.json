@@ -37,6 +37,8 @@
   },
   "scripts": {
     "start": "expo start",
+    "dev": "expo start",
+    "tunnel": "expo start --tunnel",
     "start:dev": "expo start --dev-client",
     "android": "expo start --android",
     "android:dev": "expo run:android",

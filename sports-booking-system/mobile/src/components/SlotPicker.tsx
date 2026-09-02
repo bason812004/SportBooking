@@ -26,7 +26,7 @@ export function SlotPicker({
           >
             <Text style={[styles.slotTime, active && styles.slotActiveText]}>{slot.startTime} - {slot.endTime}</Text>
             <Text style={[styles.slotPrice, active && styles.slotActiveText]}>{formatCurrency(slot.price)}</Text>
-            {disabled ? <Text style={styles.disabledText}>{slot.status === "PENDING_PAYMENT" ? "Dang giu" : "Da dat"}</Text> : null}
+            {disabled ? <Text style={styles.disabledText}>{slot.status === "PENDING_PAYMENT" ? "Đang giữ" : "Đã đặt"}</Text> : null}
           </Pressable>
         );
       })}

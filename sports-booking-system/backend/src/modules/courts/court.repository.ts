@@ -54,7 +54,11 @@ function textSearchCondition(fields: Array<"name" | "description" | "address" | 
   };
 }
 
+let surfacesSeeded = false;
+
 export async function ensureCourtSurfacesSeeded() {
+  if (surfacesSeeded) return;
+  surfacesSeeded = true;
   try {
     const courts = await prisma.court.findMany({
       select: {

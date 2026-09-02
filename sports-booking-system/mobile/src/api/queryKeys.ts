@@ -9,11 +9,18 @@ export const queryKeys = {
   vouchers: ["vouchers"] as const,
   voucher: (id: string) => ["voucher", id] as const,
   myVouchers: ["my-vouchers"] as const,
-  blogs: (filters: unknown) => ["blogs", filters] as const,
+  blogs: (filters?: unknown) => ["blogs", filters] as const,
   blog: (slug: string) => ["blog", slug] as const,
+  blogComments: (slug: string) => ["blog-comments", slug] as const,
+  myBlogs: ["my-blogs"] as const,
   tournaments: ["tournaments"] as const,
   tournament: (slug: string) => ["tournament", slug] as const,
+  teamPosts: (filters?: unknown) => ["team-posts", filters] as const,
+  teamPost: (id: string) => ["team-post", id] as const,
+  myTeamPosts: ["my-team-posts"] as const,
+  joinedTeamPosts: ["joined-team-posts"] as const,
+  teamPostMessages: (id: string) => ["team-post-messages", id] as const,
+  teamPostMembers: (id: string) => ["team-post-members", id] as const,
   profile: ["profile"] as const,
   notifications: ["notifications"] as const
 };
-

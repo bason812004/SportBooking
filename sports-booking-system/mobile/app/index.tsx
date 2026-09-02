@@ -10,9 +10,7 @@ export default function Index() {
 
   useEffect(() => {
     if (!bootstrapped) return;
-    if (!user) {
-      router.replace("/auth/login");
-    } else if (user.role === "PARTNER") {
+    if (user && user.role === "PARTNER") {
       router.replace("/partner");
     } else {
       router.replace("/(tabs)");

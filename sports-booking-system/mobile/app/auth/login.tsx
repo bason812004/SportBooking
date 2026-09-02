@@ -99,7 +99,7 @@ export default function LoginScreen() {
           </Button>
         </Card>
 
-        <View style={{ padding: 14, borderRadius: 16, backgroundColor: "#f0fdf4", borderMinimumWidth: 1, borderColor: "#bbf7d0", marginTop: 16 }}>
+        <View style={{ padding: 14, borderRadius: 16, backgroundColor: "#f0fdf4", borderWidth: 1, borderColor: "#bbf7d0", marginTop: 16 }}>
           <Text style={{ color: "#166534", fontWeight: "700", fontSize: typography.small, textAlign: "center" }}>
             Đăng nhập cho cả Khách hàng (User) & Đối tác quản lý sân (Partner).
           </Text>

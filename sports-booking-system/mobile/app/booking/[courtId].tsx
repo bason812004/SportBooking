@@ -52,13 +52,15 @@ export default function BookingScreen() {
   const court = useQuery({
     queryKey: queryKeys.court(courtId),
     queryFn: () => courtApi.detail(courtId),
-    enabled: Boolean(courtId)
+    enabled: Boolean(courtId),
+    staleTime: 2 * 60 * 1000
   });
 
   const availability = useQuery({
     queryKey: queryKeys.courtAvailability(courtId, date),
     queryFn: () => courtApi.availability(courtId, date),
-    enabled: Boolean(courtId)
+    enabled: Boolean(courtId),
+    staleTime: 30 * 1000
   });
 
   const services = useMemo(
@@ -91,7 +93,8 @@ export default function BookingScreen() {
   const quote = useQuery({
     queryKey: ["booking-quote", quotePayload],
     queryFn: () => bookingApi.quote(quotePayload),
-    enabled: Boolean(user && courtId && selectedSlots.length > 0)
+    enabled: Boolean(user && courtId && selectedSlots.length > 0),
+    staleTime: 10 * 1000
   });
 
   const checkout = useMutation({

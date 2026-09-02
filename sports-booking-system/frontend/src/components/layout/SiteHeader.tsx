@@ -162,9 +162,8 @@ function UserMenu({ role, onLogout }: { role?: string; onLogout: () => void }) {
       <div className={`absolute right-0 top-full z-40 h-3 w-72 ${open ? "block" : "hidden"}`} aria-hidden="true" />
       <div
         onMouseEnter={openMenu}
-        className={`absolute right-0 top-full z-50 mt-2 w-72 rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl transition duration-150 ${
-          open ? "visible translate-y-0 opacity-100" : "invisible translate-y-2 opacity-0"
-        }`}
+        className={`absolute right-0 top-full z-50 mt-2 w-72 rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl transition duration-150 ${open ? "visible translate-y-0 opacity-100" : "invisible translate-y-2 opacity-0"
+          }`}
       >
         {items.map((item) => (
           <Link key={item.label} to={item.to} onClick={() => setOpen(false)} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 hover:text-teal-800">

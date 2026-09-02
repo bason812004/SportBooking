@@ -15,11 +15,19 @@ onlineManager.setEventListener((setOnline) => {
 export function AppProviders({ children }: PropsWithChildren) {
   const bootstrapped = useAuthStore((state) => state.bootstrapped);
   const bootstrap = useAuthStore((state) => state.bootstrap);
+
   const queryClient = useMemo(
     () =>
       new QueryClient({
         defaultOptions: {
-          queries: { retry: 1, staleTime: 30_000 },
+          queries: {
+            retry: 1,
+            staleTime: 60 * 1000, // Keep data fresh for 1 minute before re-fetching
+            gcTime: 10 * 60 * 1000, // Keep in memory for 10 minutes
+            refetchOnWindowFocus: false, // Prevent lag when returning to app
+            refetchOnMount: false,
+            refetchOnReconnect: true
+          },
           mutations: { retry: false }
         }
       }),
@@ -46,4 +54,3 @@ export function AppProviders({ children }: PropsWithChildren) {
     </SafeAreaProvider>
   );
 }
-

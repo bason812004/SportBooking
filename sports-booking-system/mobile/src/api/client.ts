@@ -7,17 +7,19 @@ type Unauthorized = () => void;
 
 function resolveApiBaseUrl(): string {
   const envUrl = process.env.EXPO_PUBLIC_API_URL;
-  if (envUrl && !envUrl.includes("localhost") && !envUrl.includes("127.0.0.1")) {
-    return envUrl;
-  }
 
+  // 1. If hostUri from Expo Go is available and contains a valid IP
   const hostUri = Constants.expoConfig?.hostUri ?? (Constants as any).manifest2?.extra?.expoGo?.debuggerHost;
   if (hostUri) {
     const hostIp = hostUri.split(":")[0];
-    // Check if hostIp is a numeric IPv4 address (not a tunnel hostname like ngrok)
     if (hostIp && /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostIp)) {
       return `http://${hostIp}:8080/api`;
     }
+  }
+
+  // 2. If valid non-localhost envUrl provided
+  if (envUrl && !envUrl.includes("localhost") && !envUrl.includes("127.0.0.1")) {
+    return envUrl;
   }
 
   return envUrl ?? "http://localhost:8080/api";
@@ -33,7 +35,7 @@ let onUnauthorized: Unauthorized | null = null;
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 15000
+  timeout: 8000 // 8s timeout to prevent hanging UI
 });
 
 export function setClientTokens(tokens: { accessToken?: string | null; refreshToken?: string | null }) {
@@ -86,7 +88,7 @@ api.interceptors.response.use(
       onUnauthorized?.();
     }
 
-    const message = error.response?.data?.message ?? "Khong the ket noi may chu";
+    const message = error.response?.data?.message ?? (error.code === "ECONNABORTED" ? "Kết nối quá thời gian chờ (Timeout)" : "Không thể kết nối máy chủ");
     return Promise.reject(new Error(message));
   }
 );
@@ -94,4 +96,3 @@ api.interceptors.response.use(
 export function cleanParams(params: Record<string, unknown>) {
   return Object.fromEntries(Object.entries(params).filter(([, value]) => value !== "" && value !== undefined && value !== null));
 }
-

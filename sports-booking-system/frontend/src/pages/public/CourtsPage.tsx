@@ -54,12 +54,12 @@ export function CourtsPage() {
 
   const sortOrder: "asc" | "desc" | undefined =
     sortBy === "rating" ? "desc" :
-    sortBy === "distance" ? "asc" :
-    sortBy === "name" ? "asc" :
-    undefined;
+      sortBy === "distance" ? "asc" :
+        sortBy === "name" ? "asc" :
+          undefined;
   const sortField =
     sortBy === "newest" ? undefined :
-    sortBy;
+      sortBy;
 
   const filters = {
     page,
