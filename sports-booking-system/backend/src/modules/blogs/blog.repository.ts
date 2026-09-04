@@ -217,7 +217,7 @@ export const blogRepository = {
         ${input.content},
         ${input.coverImageUrl || null},
         ${input.visibility}::blog_visibility,
-        'DRAFT'::blog_post_status,
+        'PENDING'::blog_post_status,
         ${input.allowComments},
         null
       )

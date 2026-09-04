@@ -60,6 +60,16 @@ export const chatbotService = {
           continue;
         }
 
+        if (tool.name === "propose_booking" && pendingBooking) {
+          results.push({
+            callId: call.id,
+            toolName: call.name,
+            isError: true,
+            content: "Da co mot de xuat dat san dang cho nguoi dung xac nhan trong luot nay. Hay doi nguoi dung xac nhan hoac huy de xuat do truoc khi de xuat san tiep theo."
+          });
+          continue;
+        }
+
         const { isError, result } = await executeTool(tool, call.input, { userId: user?.id });
 
         if (tool.name === "propose_booking" && !isError) {

@@ -59,6 +59,14 @@ export const blogService = {
       allowComments: body.allowComments ?? true
     });
     if (!post) throw new NotFoundError("Khong the tao bai viet");
+
+    await notificationService.notifyAdmins({
+      title: "Bài viết mới cần duyệt",
+      content: `${post.author.fullName} vừa gửi bài viết mới "${post.title}", cần duyệt.`,
+      type: "BLOG_UPDATE_REQUESTED",
+      metadata: { blogId: post.id, authorId: userId }
+    });
+
     return post;
   },
 

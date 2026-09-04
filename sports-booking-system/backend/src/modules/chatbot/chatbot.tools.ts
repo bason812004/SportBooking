@@ -139,26 +139,39 @@ const getBookingDetailTool: ToolDefinition = {
 const proposeBookingTool: ToolDefinition = {
   name: "propose_booking",
   description:
-    "Bao gia va tao mot de xuat dat san (khong dat that). Dung khi nguoi dung da chon duoc san, ngay va khung gio cu the. Ket qua tra ve pendingBookingId de nguoi dung xac nhan tren giao dien.",
+    "Bao gia va tao mot de xuat dat san (khong dat that) cho MOT san cu the, co the gom nhieu khung gio trong cung 1 ngay (vi du: 18:00-19:00 va 20:00-21:00). Dung khi nguoi dung da chon duoc san, ngay va (cac) khung gio cu the. Neu nguoi dung muon dat nhieu san khac nhau, chi duoc goi cong cu nay cho MOT san moi luot, cho nguoi dung xac nhan xong roi moi de xuat san tiep theo. Ket qua tra ve pendingBookingId de nguoi dung xac nhan tren giao dien.",
   requiresAuth: true,
   input_schema: {
     type: "object",
     properties: {
       courtId: { type: "string" },
       bookingDate: { type: "string", description: "YYYY-MM-DD" },
-      startTime: { type: "string", description: "HH:00" },
-      endTime: { type: "string", description: "HH:00" },
+      slots: {
+        type: "array",
+        description: "Danh sach cac khung gio can dat trong ngay bookingDate, cung 1 san",
+        minItems: 1,
+        items: {
+          type: "object",
+          properties: {
+            startTime: { type: "string", description: "HH:00" },
+            endTime: { type: "string", description: "HH:00" }
+          },
+          required: ["startTime", "endTime"]
+        }
+      },
       paymentType: { type: "string", enum: ["DEPOSIT", "FULL_PAYMENT", "PAY_AT_COURT"], description: "Hinh thuc thanh toan mong muon" },
       voucherCode: { type: "string" }
     },
-    required: ["courtId", "bookingDate", "startTime", "endTime", "paymentType"]
+    required: ["courtId", "bookingDate", "slots", "paymentType"]
   },
   execute: async (input, ctx): Promise<{ pendingBookingId: string; summary: PendingBookingSummary }> => {
     if (!ctx.userId) throw new ForbiddenError();
 
+    const slots = input.slots as Array<{ startTime: string; endTime: string }>;
+
     const quoteInput = {
       courtId: input.courtId,
-      days: [{ bookingDate: input.bookingDate, slots: [{ startTime: input.startTime, endTime: input.endTime }] }],
+      days: [{ bookingDate: input.bookingDate, slots }],
       services: [],
       voucherCode: input.voucherCode
     };
@@ -178,7 +191,7 @@ const proposeBookingTool: ToolDefinition = {
       courtId: input.courtId,
       courtName: court.name,
       bookingDate: input.bookingDate,
-      slots: [{ startTime: input.startTime, endTime: input.endTime }],
+      slots,
       totalAmount: quote.totalAmount,
       paymentType,
       paymentAmount,

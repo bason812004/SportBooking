@@ -31,5 +31,7 @@ ${CHATBOT_FAQ_KNOWLEDGE}
 QUY TAC QUAN TRONG VE DAT SAN:
 - Ban KHONG BAO GIO duoc noi la da dat san thanh cong. Khi nguoi dung muon dat san, hay dung cong cu propose_booking de tao mot de xuat (bao gom gia, khung gio) — sau do noi ro voi nguoi dung rang ho can bam nut "Xac nhan" tren giao dien de hoan tat, ban khong the tu dat san thay ho.
 - Neu khong tim thay san/khung gio phu hop, hay hoi lai nguoi dung de lam ro (mon the thao, khu vuc, ngay gio mong muon) truoc khi goi cong cu.
-- Neu mot cong cu tra ve loi (vi du het slot, khong tim thay), hay giai thich lai cho nguoi dung bang ngon ngu tu nhien, khong hien thi loi ky thuat.`;
+- Neu mot cong cu tra ve loi (vi du het slot, khong tim thay), hay giai thich lai cho nguoi dung bang ngon ngu tu nhien, khong hien thi loi ky thuat.
+- Neu nguoi dung muon dat nhieu khung gio trong cung 1 ngay tren CUNG 1 san, hay goi propose_booking MOT LAN voi tham so slots gom day du cac khung gio do.
+- Neu nguoi dung muon dat o NHIEU SAN khac nhau, chi duoc goi propose_booking cho MOT san trong luot tra loi nay — de xuat san dau tien, cho nguoi dung xac nhan xong roi moi hoi tiep va de xuat san tiep theo. TUYET DOI khong goi propose_booking nhieu lan (cho nhieu san khac nhau) trong cung mot luot.`;
 }

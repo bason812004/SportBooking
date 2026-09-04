@@ -17,7 +17,6 @@ export function PendingBookingCard({
 }) {
   const { t } = useTranslation("chat");
   const confirmMutation = useConfirmPendingBooking();
-  const slot = pendingBooking.slots[0];
   const isExpired = new Date(pendingBooking.expiresAt).getTime() < Date.now();
 
   return (
@@ -32,14 +31,17 @@ export function PendingBookingCard({
           <dt>{t("pendingBooking.date")}</dt>
           <dd className="font-medium">{pendingBooking.bookingDate}</dd>
         </div>
-        {slot && (
-          <div className="flex justify-between">
-            <dt>{t("pendingBooking.slot")}</dt>
+        {pendingBooking.slots.map((slot, index) => (
+          <div className="flex justify-between" key={`${slot.startTime}-${slot.endTime}-${index}`}>
+            <dt>
+              {t("pendingBooking.slot")}
+              {pendingBooking.slots.length > 1 ? ` ${index + 1}` : ""}
+            </dt>
             <dd className="font-medium">
               {slot.startTime} - {slot.endTime}
             </dd>
           </div>
-        )}
+        ))}
         <div className="flex justify-between">
           <dt>{t("pendingBooking.payment")}</dt>
           <dd className="font-medium">{PAYMENT_LABEL[pendingBooking.paymentType]}</dd>
