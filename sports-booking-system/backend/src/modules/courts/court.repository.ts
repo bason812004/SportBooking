@@ -98,7 +98,6 @@ export async function ensureCourtSurfacesSeeded() {
 
 export const courtRepository = {
   async list(query: CourtListQuery, page: number, limit: number) {
-    await ensureCourtSurfacesSeeded();
     const categoryFilter: Prisma.CourtCategoryWhereInput = {};
     const andConditions: Prisma.CourtWhereInput[] = [];
     const where: Prisma.CourtWhereInput = {

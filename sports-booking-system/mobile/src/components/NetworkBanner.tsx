@@ -5,7 +5,7 @@ import { colors, typography } from "../theme/tokens";
 
 export function NetworkBanner() {
   const netInfo = useNetInfo();
-  const offline = netInfo.isConnected === false || netInfo.isInternetReachable === false;
+  const offline = netInfo.isConnected === false;
   if (!offline) return null;
   return (
     <View style={styles.banner}>
