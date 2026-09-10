@@ -67,6 +67,7 @@ export async function ensureServiceTables() {
       `CREATE EXTENSION IF NOT EXISTS "pgcrypto";`,
       `ALTER TABLE courts ADD COLUMN IF NOT EXISTS require_deposit BOOLEAN DEFAULT FALSE;`,
       `ALTER TABLE services ADD COLUMN IF NOT EXISTS court_id VARCHAR(50);`,
+      `CREATE SEQUENCE IF NOT EXISTS seq_services;`,
       `CREATE TABLE IF NOT EXISTS service_categories (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name VARCHAR(100) NOT NULL,
@@ -76,7 +77,7 @@ export async function ensureServiceTables() {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );`,
       `CREATE TABLE IF NOT EXISTS services (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        id VARCHAR(20) PRIMARY KEY DEFAULT ('sv' || lpad(nextval('seq_services')::text, 4, '0')),
         partner_id VARCHAR(50) NOT NULL,
         category_id UUID REFERENCES service_categories(id) ON DELETE SET NULL,
         name VARCHAR(255) NOT NULL,
@@ -96,7 +97,7 @@ export async function ensureServiceTables() {
       `CREATE TABLE IF NOT EXISTS court_services (
         id VARCHAR(20) PRIMARY KEY,
         court_id VARCHAR(20) NOT NULL,
-        service_id UUID REFERENCES services(id) ON DELETE SET NULL,
+        service_id VARCHAR(20) REFERENCES services(id) ON DELETE CASCADE,
         name VARCHAR(255) NOT NULL,
         price DECIMAL(12, 2) NOT NULL DEFAULT 0,
         price_override DECIMAL(12, 2),
@@ -250,7 +251,7 @@ export async function forceSeedAllServicesToDb() {
         let serviceId = "";
         const inserted: any = await prisma.$queryRawUnsafe(
           `INSERT INTO services (id, court_id, partner_id, category_id, name, type, price, cost_price, unit, status, track_inventory, created_at, updated_at)
-           VALUES (gen_random_uuid(), $1, $2, CASE WHEN $3::text IS NULL OR $3::text = '' THEN NULL ELSE $3::uuid END, $4, $5, $6, $7, $8, 'ACTIVE', TRUE, NOW(), NOW())
+           VALUES (DEFAULT, $1, $2, CASE WHEN $3::text IS NULL OR $3::text = '' THEN NULL ELSE $3::uuid END, $4, $5, $6, $7, $8, 'ACTIVE', TRUE, NOW(), NOW())
            RETURNING id;`,
           courtId, partnerId, catId, svc.name, svc.type, svc.price, svc.costPrice, svc.unit
         ).catch(async (err) => {
@@ -264,7 +265,7 @@ export async function forceSeedAllServicesToDb() {
         } else {
           await prisma.$executeRawUnsafe(
             `INSERT INTO services (id, court_id, partner_id, category_id, name, type, price, cost_price, unit, status, track_inventory, created_at, updated_at)
-             VALUES (gen_random_uuid(), $1, $2, CASE WHEN $3::text IS NULL OR $3::text = '' THEN NULL ELSE $3::uuid END, $4, $5, $6, $7, $8, 'ACTIVE', TRUE, NOW(), NOW());`,
+             VALUES (DEFAULT, $1, $2, CASE WHEN $3::text IS NULL OR $3::text = '' THEN NULL ELSE $3::uuid END, $4, $5, $6, $7, $8, 'ACTIVE', TRUE, NOW(), NOW());`,
             courtId, partnerId, catId, svc.name, svc.type, svc.price, svc.costPrice, svc.unit
           ).catch(() => {});
 
@@ -282,7 +283,7 @@ export async function forceSeedAllServicesToDb() {
           const csCustomId = `cs_${courtId}_${serviceId.slice(0, 8)}`;
           await prisma.$executeRawUnsafe(
             `INSERT INTO court_services (id, court_id, service_id, name, price, is_available, status, created_at, updated_at)
-             VALUES ($1, $2, $3::uuid, $4, $5, TRUE, 'ACTIVE', NOW(), NOW())
+             VALUES ($1, $2, $3, $4, $5, TRUE, 'ACTIVE', NOW(), NOW())
              ON CONFLICT (id) DO UPDATE SET price = EXCLUDED.price, status = 'ACTIVE';`,
             csCustomId, courtId, serviceId, svc.name, svc.price
           ).catch(() => {});
@@ -290,7 +291,7 @@ export async function forceSeedAllServicesToDb() {
 
           await prisma.$executeRawUnsafe(
             `INSERT INTO service_inventories (id, service_id, quantity, reserved_quantity, minimum_stock, unit, last_purchase_price, created_at, updated_at)
-             VALUES (gen_random_uuid(), $1::uuid, 50, 0, 5, $2, $3, NOW(), NOW())
+             VALUES (gen_random_uuid(), $1, 50, 0, 5, $2, $3, NOW(), NOW())
              ON CONFLICT (service_id) DO UPDATE 
              SET quantity = GREATEST(service_inventories.quantity, 50),
                  minimum_stock = 5,
@@ -331,12 +332,28 @@ async function ensureCourtServicesSeededInDb(courtId: string) {
     const sport = detectSportFromText(fullText);
     const { isBadminton, isTennis, isPickleball, isFootball, isBasketball, isVolleyball } = sport;
 
-    // If court is NOT a racket sport, clean up any mistakenly seeded racket ("vợt") rental services
+    // If court is NOT a racket sport, clean up any mistakenly seeded racket rental services
     if (!isBadminton && !isTennis && !isPickleball) {
       await prisma.$executeRawUnsafe(
-        `DELETE FROM services WHERE court_id = $1 AND LOWER(name) LIKE '%vợt%';`,
+        `DELETE FROM services WHERE court_id = $1 AND (LOWER(name) LIKE '%vợt%' OR type = 'RENTAL_SERVICE');`,
         courtId
       ).catch(() => {});
+    }
+
+    // Check if sport-specific items need to be seeded
+    let needsSportItems = false;
+    if (isVolleyball) {
+      const existing: any = await prisma.$queryRawUnsafe(`SELECT COUNT(*)::int as c FROM services WHERE court_id = $1 AND LOWER(name) LIKE '%mikasa%';`, courtId).catch(() => []);
+      needsSportItems = !Array.isArray(existing) || Number(existing[0]?.c || 0) === 0;
+    } else if (isFootball) {
+      const existing: any = await prisma.$queryRawUnsafe(`SELECT COUNT(*)::int as c FROM services WHERE court_id = $1 AND LOWER(name) LIKE '%động lực%';`, courtId).catch(() => []);
+      needsSportItems = !Array.isArray(existing) || Number(existing[0]?.c || 0) === 0;
+    } else if (isBasketball) {
+      const existing: any = await prisma.$queryRawUnsafe(`SELECT COUNT(*)::int as c FROM services WHERE court_id = $1 AND LOWER(name) LIKE '%molten%';`, courtId).catch(() => []);
+      needsSportItems = !Array.isArray(existing) || Number(existing[0]?.c || 0) === 0;
+    } else if (isBadminton || isTennis || isPickleball) {
+      const existing: any = await prisma.$queryRawUnsafe(`SELECT COUNT(*)::int as c FROM services WHERE court_id = $1 AND LOWER(name) LIKE '%vợt%';`, courtId).catch(() => []);
+      needsSportItems = !Array.isArray(existing) || Number(existing[0]?.c || 0) === 0;
     }
 
     const countRows: any = await prisma.$queryRawUnsafe(
@@ -345,7 +362,7 @@ async function ensureCourtServicesSeededInDb(courtId: string) {
     ).catch(() => []);
 
     const count = Array.isArray(countRows) && countRows.length > 0 ? Number(countRows[0].count) : 0;
-    if (count > 0) {
+    if (count > 0 && !needsSportItems) {
       seededCourtSet.add(courtId);
       return;
     }
@@ -440,7 +457,7 @@ async function ensureCourtServicesSeededInDb(courtId: string) {
       const categoryId = catMap.get(svc.categorySlug) || null;
       const res: any = await prisma.$queryRawUnsafe(
         `INSERT INTO services (id, partner_id, court_id, category_id, name, description, type, price, cost_price, unit, status, track_inventory, created_at, updated_at)
-         VALUES (gen_random_uuid(), $1, $2, $3::uuid, $4, $5, $6, $7, $8, $9, 'ACTIVE', true, NOW(), NOW())
+         VALUES (DEFAULT, $1, $2, $3::uuid, $4, $5, $6, $7, $8, $9, 'ACTIVE', true, NOW(), NOW())
          RETURNING id;`,
         partnerId, courtId, categoryId, svc.name, `${svc.name} phục vụ tại ${courtInfoRows[0].name}`, svc.type, svc.price, svc.costPrice, svc.unit
       ).catch(() => []);
@@ -449,7 +466,7 @@ async function ensureCourtServicesSeededInDb(courtId: string) {
         const serviceId = res[0].id;
         await prisma.$executeRawUnsafe(
           `INSERT INTO service_inventories (id, service_id, quantity, reserved_quantity, minimum_stock, unit, last_purchase_price, created_at, updated_at)
-           VALUES (gen_random_uuid(), $1::uuid, 50, 0, 5, $2, $3, NOW(), NOW());`,
+           VALUES (gen_random_uuid(), $1, 50, 0, 5, $2, $3, NOW(), NOW());`,
           serviceId, svc.unit, svc.costPrice
         ).catch(() => {});
       }
@@ -773,7 +790,7 @@ export const serviceRepository = {
           const customId = `cs_${court.id}_${service.id.slice(0, 8)}`;
           await tx.$executeRawUnsafe(
             `INSERT INTO court_services (id, court_id, service_id, name, price, is_available, status, created_at, updated_at)
-             VALUES ($1, $2, $3::uuid, $4, $5, TRUE, 'ACTIVE', NOW(), NOW())
+             VALUES ($1, $2, $3, $4, $5, TRUE, 'ACTIVE', NOW(), NOW())
              ON CONFLICT (id) DO UPDATE SET price = EXCLUDED.price, status = 'ACTIVE';`,
             customId, court.id, service.id, service.name, service.price
           ).catch(() => {});

@@ -1,13 +1,13 @@
 import { api } from "./client";
 import type { ApiResponse, Booking, Paginated } from "./types";
 
-export type BookingSlotPayload = { startTime: string; endTime: string };
+export type BookingSlotPayload = { date?: string; startTime: string; endTime: string };
 export type BookingServicePayload = { serviceId: string; quantity: number };
+export type BookingDayPayload = { bookingDate: string; slots: BookingSlotPayload[] };
 
 export type BookingQuotePayload = {
   courtId: string;
-  bookingDate: string;
-  slots: BookingSlotPayload[];
+  days: BookingDayPayload[];
   services?: BookingServicePayload[];
   voucherId?: string;
   voucherCode?: string;
@@ -15,8 +15,14 @@ export type BookingQuotePayload = {
 
 export type BookingQuote = {
   court: { id: string; name: string; address: string; imageUrl?: string | null };
-  bookingDate: string;
-  slots: Array<BookingSlotPayload & { price: number }>;
+  days: Array<{
+    bookingDate: string;
+    slots: Array<BookingSlotPayload & { price: number }>;
+    courtSubtotal: number;
+    subtotal: number;
+    voucherDiscountAmount: number;
+    totalAmount: number;
+  }>;
   services: Array<{ serviceId: string; name: string; quantity: number; price: number; total: number }>;
   courtSubtotal: number;
   servicesSubtotal: number;

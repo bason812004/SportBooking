@@ -8,18 +8,40 @@ import { colors } from "../theme/tokens";
 
 onlineManager.setEventListener((setOnline) => {
   return NetInfo.addEventListener((state) => {
-    setOnline(Boolean(state.isConnected && state.isInternetReachable !== false));
+    // In local development, isConnected is sufficient (isInternetReachable can be false on local Wi-Fi without WAN)
+    setOnline(Boolean(state.isConnected));
   });
 });
 
 export function AppProviders({ children }: PropsWithChildren) {
   const bootstrapped = useAuthStore((state) => state.bootstrapped);
   const bootstrap = useAuthStore((state) => state.bootstrap);
+
   const queryClient = useMemo(
     () =>
       new QueryClient({
         defaultOptions: {
-          queries: { retry: 1, staleTime: 30_000 },
+          queries: {
+            retry: (failureCount, error: any) => {
+              if (failureCount >= 1) return false;
+              const msg = String(error?.message ?? "");
+              if (
+                msg.includes("Timeout") ||
+                msg.includes("thời gian chờ") ||
+                msg.includes("401") ||
+                msg.includes("403") ||
+                msg.includes("404")
+              ) {
+                return false;
+              }
+              return true;
+            },
+            staleTime: 60 * 1000, // Keep data fresh for 1 minute before re-fetching
+            gcTime: 10 * 60 * 1000, // Keep in memory for 10 minutes
+            refetchOnWindowFocus: false, // Prevent lag when returning to app
+            refetchOnMount: false,
+            refetchOnReconnect: true
+          },
           mutations: { retry: false }
         }
       }),
@@ -46,4 +68,3 @@ export function AppProviders({ children }: PropsWithChildren) {
     </SafeAreaProvider>
   );
 }
-

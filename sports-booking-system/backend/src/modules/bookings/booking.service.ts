@@ -13,6 +13,7 @@ import {
   toDbDate
 } from "../../shared/utils/time.js";
 import { courtRepository } from "../courts/court.repository.js";
+import { paymentProvider } from "../payments/providers/index.js";
 import { bookingRepository } from "./booking.repository.js";
 import { calculateBookingQuote, canCreateBookingCheckout } from "./booking.calculations.js";
 import type { CreateBookingInput } from "./booking.types.js";
@@ -171,7 +172,7 @@ export const bookingService = {
           subtotal: quoteData.subtotal,
           voucherDiscountAmount: quoteData.voucherDiscountAmount,
           totalAmount: quoteData.totalAmount,
-          voucherId: quoteData.voucherId,
+          voucherId: quoteData.voucherId ?? undefined,
           note: input.note
         });
 
@@ -187,13 +188,23 @@ export const bookingService = {
           paymentType: "PAY_AT_COURT" as const,
           totalAmount: result.booking!.totalPrice,
           paymentAmount: 0,
-          remainingAmount: result.booking!.totalPrice
+          remainingAmount: result.booking!.totalPrice,
+          providerConfigured: true
         };
       }
 
       // QR_TRANSFER / DEPOSIT / FULL_PAYMENT
       const extOrderId = Date.now().toString();
       const ref = `BK${extOrderId.slice(-6)}`;
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+      const providerResult = await paymentProvider.createQrPayment({
+        amount: paymentAmount,
+        currency: "VND",
+        orderId: extOrderId,
+        paymentReference: ref,
+        description: `Thanh toan booking ${bCode}`,
+        expiresAt
+      });
       const result = await bookingRepository.createCheckout({
         bookingCode: bCode,
         userId,
@@ -208,14 +219,14 @@ export const bookingService = {
         depositAmount: minimumDepositAmount,
         paymentType: input.paymentType,
         paymentAmount,
-        voucherId: quoteData.voucherId,
+        voucherId: quoteData.voucherId ?? undefined,
         note: input.note,
-        provider: "MOCK_QR",
-        externalOrderId: extOrderId,
-        qrCodeUrl: null,
-        qrPayload: null,
+        provider: providerResult.provider,
+        externalOrderId: providerResult.externalOrderId,
+        qrCodeUrl: providerResult.qrCodeUrl,
+        qrPayload: providerResult.qrPayload,
         paymentReference: ref,
-        expiresAt: new Date(Date.now() + 15 * 60 * 1000)
+        expiresAt
       });
 
       if ("conflict" in result && result.conflict) {
@@ -235,7 +246,8 @@ export const bookingService = {
         qrCodeUrl: result.payment!.qrCodeUrl ?? null,
         qrPayload: result.payment!.qrPayload ?? null,
         paymentReference: result.payment!.paymentReference,
-        expiresAt: result.payment!.expiresAt?.toISOString() ?? null
+        expiresAt: result.payment!.expiresAt?.toISOString() ?? null,
+        providerConfigured: providerResult.providerConfigured
       };
     }
 
@@ -256,7 +268,7 @@ export const bookingService = {
         userId,
         courtId: input.courtId,
         days: daysData,
-        voucherId: quoteData.voucherId,
+        voucherId: quoteData.voucherId ?? undefined,
         note: input.note
       });
 
@@ -276,13 +288,23 @@ export const bookingService = {
         paymentAmount: 0,
         remainingAmount: quoteData.totalAmount,
         bookingCount: result.bookings!.length,
-        isMultiBooking: true
+        isMultiBooking: true,
+        providerConfigured: true
       };
     }
 
     // Multi-day QR payment
     const extOrderId = Date.now().toString();
     const ref = `BO${extOrderId.slice(-6)}`;
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    const providerResult = await paymentProvider.createQrPayment({
+      amount: paymentAmount,
+      currency: "VND",
+      orderId: extOrderId,
+      paymentReference: ref,
+      description: `Thanh toan booking order ${extOrderId}`,
+      expiresAt
+    });
     const result = await bookingRepository.createOrderCheckout({
       userId,
       courtId: input.courtId,
@@ -292,14 +314,14 @@ export const bookingService = {
       totalAmount: quoteData.totalAmount,
       paymentType: input.paymentType,
       paymentAmount,
-      voucherId: quoteData.voucherId,
+      voucherId: quoteData.voucherId ?? undefined,
       note: input.note,
-      provider: "MOCK_QR",
-      externalOrderId: extOrderId,
-      qrCodeUrl: null,
-      qrPayload: null,
+      provider: providerResult.provider,
+      externalOrderId: providerResult.externalOrderId,
+      qrCodeUrl: providerResult.qrCodeUrl,
+      qrPayload: providerResult.qrPayload,
       paymentReference: ref,
-      expiresAt: new Date(Date.now() + 15 * 60 * 1000)
+      expiresAt
     });
 
     if ("conflict" in result && result.conflict) {
@@ -322,7 +344,8 @@ export const bookingService = {
       paymentReference: result.payment!.paymentReference,
       expiresAt: result.payment!.expiresAt?.toISOString() ?? null,
       bookingCount: result.bookings!.length,
-      isMultiBooking: true
+      isMultiBooking: true,
+      providerConfigured: providerResult.providerConfigured
     };
   },
 

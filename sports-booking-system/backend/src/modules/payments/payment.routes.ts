@@ -11,3 +11,4 @@ paymentRoutes.get("/debug/info", paymentController.debugInfo);
 paymentRoutes.get("/debug/checkout", paymentController.debugCheckout);
 paymentRoutes.get("/:paymentId", authMiddleware, validate(paymentIdSchema), paymentController.detail);
 paymentRoutes.get("/:paymentId/status", authMiddleware, validate(paymentIdSchema), paymentController.status);
+paymentRoutes.post("/:paymentId/dev-complete", authMiddleware, validate(paymentIdSchema), paymentController.devComplete);

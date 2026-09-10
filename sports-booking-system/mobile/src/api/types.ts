@@ -56,9 +56,9 @@ export type Court = {
   partner?: { id: string; businessName: string; user?: { fullName: string; email: string; phone?: string | null } | null } | null;
   images: Array<{ id: string; imageUrl: string; sortOrder: number }>;
   amenities: Array<{ id: string; name: string }>;
-  surfaces?: Array<{ id: string; name: string; imageUrl?: string | null; sortOrder: number }>;
-  prices: Array<{ id: string; dayType: string; startTime: string; endTime: string; price: string; note?: string | null }>;
-  services: Array<{ id: string; name: string; description?: string | null; price: string; status: string }>;
+  surfaces?: Array<{ id: string; name: string; code?: string; surface?: string; capacity?: string; imageUrl?: string | null; sortOrder?: number }>;
+  prices: Array<{ id: string; dayType: string; startTime: string; endTime: string; price: string | number; note?: string | null }>;
+  services: Array<{ id: string; name: string; description?: string | null; price: string | number; status: string; unit?: string }>;
   reviews?: Array<{ id: string; rating: number; comment?: string | null; createdAt: string; user: { id: string; fullName: string; avatarUrl?: string | null } }>;
   ratingBreakdown?: Array<{ rating: number; count: number; percent: number }>;
   nearbyCourts?: Court[];
@@ -69,6 +69,9 @@ export type AvailabilitySlot = {
   endTime: string;
   status: "AVAILABLE" | "BOOKED" | "PENDING_PAYMENT" | "BLOCKED" | "MAINTENANCE" | "CLOSED";
   price: number;
+  finalPrice?: number;
+  courtSurfaceId?: string | null;
+  courtSurfaceName?: string | null;
   bookingId: string | null;
 };
 
@@ -76,8 +79,17 @@ export type BookingService = {
   id: string;
   serviceId: string;
   quantity: number;
-  price: string;
-  service: { id: string; name: string; description?: string | null; price: string };
+  price: string | number;
+  service: { id: string; name: string; description?: string | null; price: string | number };
+};
+
+export type BookingSlotItem = {
+  id?: string;
+  bookingDate?: string;
+  startTime: string;
+  endTime: string;
+  slotPrice?: number | string;
+  court_surfaces?: { id: string; name: string };
 };
 
 export type Booking = {
@@ -87,9 +99,9 @@ export type Booking = {
   startTime: string;
   endTime: string;
   createdAt: string;
-  totalPrice: string;
-  subtotal?: string;
-  voucherDiscountAmount?: string;
+  totalPrice: string | number;
+  subtotal?: string | number;
+  voucherDiscountAmount?: string | number;
   paymentMethod: string;
   paymentStatus: string;
   bookingStatus: string;
@@ -99,12 +111,13 @@ export type Booking = {
   depositAmount?: string | null;
   refundAmount?: string | null;
   court: Court;
+  bookingSlots?: BookingSlotItem[];
   bookingServices?: BookingService[];
   bookingVoucher?: {
-    discountAmount: string;
+    discountAmount: string | number;
     voucher: { id: string; code: string; title: string; discountType: "PERCENTAGE" | "FIXED_AMOUNT"; discountValue: number };
   } | null;
-  payments?: Array<{ id: string; status: string; amount: string; paymentMethod: string; paymentType: string; expiresAt?: string | null; createdAt: string }>;
+  payments?: Array<{ id: string; status: string; amount: string | number; paymentMethod: string; paymentType: string; expiresAt?: string | null; createdAt: string }>;
   review?: { id: string; rating: number; comment?: string | null; createdAt: string } | null;
 };
 
@@ -148,6 +161,13 @@ export type BlogPost = {
   author?: { id: string; fullName: string; avatarUrl?: string | null };
 };
 
+export type BlogComment = {
+  id: string;
+  content: string;
+  createdAt: string;
+  user: { id: string; fullName: string; avatarUrl?: string | null };
+};
+
 export type Tournament = {
   id: string;
   title: string;
@@ -167,6 +187,72 @@ export type Tournament = {
   court?: { id: string; name: string; city: string; district: string; imageUrl?: string | null };
 };
 
+export type TeamRecruitmentPost = {
+  id: string;
+  title: string;
+  sportType: string;
+  courtName: string;
+  address: string;
+  currentPlayers: number;
+  maxPlayers: number;
+  missingPlayers?: number;
+  playingDate?: string | null;
+  startTime: string;
+  endTime: string;
+  pricePerPerson: number;
+  extraServices?: string | null;
+  note?: string | null;
+  zaloGroupLink?: string | null;
+  zaloQrImage?: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt?: string;
+  createdBy: { id: string; fullName: string; avatarUrl?: string | null };
+};
+
+export type TeamPostMessage = {
+  id: string;
+  postId: string;
+  content: string | null;
+  messageType?: "TEXT" | "IMAGE" | "VIDEO" | "SYSTEM";
+  attachmentUrl?: string | null;
+  attachmentName?: string | null;
+  attachmentSize?: number | null;
+  thumbnailUrl?: string | null;
+  mimeType?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+  sender: { id: string; fullName: string; avatarUrl?: string | null };
+  reactions?: Array<{ reaction: string; userId: string; createdAt?: string }>;
+};
+
+export type TeamRecruitmentInput = {
+  courtId?: string | null;
+  title: string;
+  sportType: string;
+  courtName: string;
+  address: string;
+  currentPlayers: number;
+  maxPlayers: number;
+  playingDate?: string | null;
+  startTime: string;
+  endTime: string;
+  pricePerPerson: number;
+  extraServices?: string | null;
+  note?: string | null;
+  zaloGroupLink?: string | null;
+  zaloQrImage?: string | null;
+};
+
+export type GroupMember = {
+  userId: string;
+  fullName: string;
+  avatarUrl: string | null;
+  role: string;
+  status: string;
+  joinedAt: string;
+};
+
 export type NotificationItem = {
   id: string;
   title: string;
@@ -176,4 +262,3 @@ export type NotificationItem = {
   isRead: boolean;
   createdAt: string;
 };
-

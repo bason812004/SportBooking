@@ -6,6 +6,7 @@ export const paymentController = {
   detail: asyncHandler(async (req, res) => sendSuccess(res, await paymentService.detail(req.user!.id, req.params.paymentId))),
   status: asyncHandler(async (req, res) => sendSuccess(res, await paymentService.status(req.user!.id, req.params.paymentId))),
   webhook: asyncHandler(async (req, res) => sendSuccess(res, await paymentService.webhook(req.params.provider, req.body, req.headers))),
+  devComplete: asyncHandler(async (req, res) => sendSuccess(res, await paymentService.devMarkPaid(req.user!.id, req.params.paymentId))),
   debugInfo: asyncHandler(async (req, res) => {
     const { prisma } = await import("../../config/db.js");
     const enumValues = await prisma.$queryRaw`

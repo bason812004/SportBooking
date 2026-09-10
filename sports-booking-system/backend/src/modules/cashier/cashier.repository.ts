@@ -13,7 +13,7 @@ function dbTime(value: any) {
 async function ensureInventoryRowLocked(tx: Prisma.TransactionClient, serviceId: string, unit: string) {
   await tx.$executeRawUnsafe(
     `INSERT INTO service_inventories (id, service_id, quantity, minimum_stock, unit)
-     VALUES (gen_random_uuid(), $1::uuid, 50, 5, $2)
+     VALUES (gen_random_uuid(), $1, 50, 5, $2)
      ON CONFLICT (service_id) DO NOTHING;`,
     serviceId, unit || "cái"
   );
@@ -300,7 +300,7 @@ export const cashierRepository = {
 
         await tx.$executeRawUnsafe(
           `INSERT INTO inventory_transactions (id, service_id, type, quantity, unit_cost, reference_type, reference_id, note, created_at)
-           VALUES (gen_random_uuid(), $1::uuid, 'SALE', $2, $3, 'BOOKING_SERVICE', $4, $5, NOW());`,
+           VALUES (gen_random_uuid(), $1, 'SALE', $2, $3, 'BOOKING_SERVICE', $4, $5, NOW());`,
           service.id, input.quantity, Number(service.costPrice || 0), bookingId, `Bán dịch vụ cho booking ${booking.bookingCode}`
         );
       }
@@ -351,7 +351,7 @@ export const cashierRepository = {
         for (let i = 0; i < input.quantity; i++) {
           await tx.$executeRawUnsafe(
             `INSERT INTO rental_items (id, booking_service_id, service_id, status, rental_start_time, created_at, updated_at)
-             VALUES (gen_random_uuid(), $1::text, $2::uuid, 'RENTED', NOW(), NOW(), NOW());`,
+             VALUES (gen_random_uuid(), $1::text, $2, 'RENTED', NOW(), NOW(), NOW());`,
             bookingServiceRecord.id, service.id
           );
         }
@@ -400,7 +400,7 @@ export const cashierRepository = {
           );
           await tx.$executeRawUnsafe(
             `INSERT INTO inventory_transactions (id, service_id, type, quantity, unit_cost, reference_type, reference_id, note, created_at)
-             VALUES (gen_random_uuid(), $1::uuid, 'ADJUSTMENT', $2, 0, 'BOOKING_SERVICE', $3, $4, NOW());`,
+             VALUES (gen_random_uuid(), $1, 'ADJUSTMENT', $2, 0, 'BOOKING_SERVICE', $3, $4, NOW());`,
             item.serviceId, currentQty, bookingId, `Hủy dịch vụ khỏi booking ${bookingId}`
           );
         }
@@ -431,7 +431,7 @@ export const cashierRepository = {
           );
           await tx.$executeRawUnsafe(
             `INSERT INTO inventory_transactions (id, service_id, type, quantity, unit_cost, reference_type, reference_id, note, created_at)
-             VALUES (gen_random_uuid(), $1::uuid, 'SALE', $2, 0, 'BOOKING_SERVICE', $3, $4, NOW());`,
+             VALUES (gen_random_uuid(), $1, 'SALE', $2, 0, 'BOOKING_SERVICE', $3, $4, NOW());`,
             item.serviceId, diff, bookingId, `Tăng số lượng dịch vụ trong booking ${bookingId}`
           );
         } else if (diff < 0) {
@@ -442,7 +442,7 @@ export const cashierRepository = {
           );
           await tx.$executeRawUnsafe(
             `INSERT INTO inventory_transactions (id, service_id, type, quantity, unit_cost, reference_type, reference_id, note, created_at)
-             VALUES (gen_random_uuid(), $1::uuid, 'ADJUSTMENT', $2, 0, 'BOOKING_SERVICE', $3, $4, NOW());`,
+             VALUES (gen_random_uuid(), $1, 'ADJUSTMENT', $2, 0, 'BOOKING_SERVICE', $3, $4, NOW());`,
             item.serviceId, Math.abs(diff), bookingId, `Giảm số lượng dịch vụ trong booking ${bookingId}`
           );
         }

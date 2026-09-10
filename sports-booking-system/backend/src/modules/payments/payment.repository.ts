@@ -134,7 +134,7 @@ export const paymentRepository = {
       }
 
       return { payment: updatedPayment, idempotent: false, settlement: settlements[0] ?? null, settlements, bookings: bookingsToSettle };
-    });
+    }, { timeout: 15000, maxWait: 10000 });
   },
 
   expirePendingPayment(paymentId: string) {

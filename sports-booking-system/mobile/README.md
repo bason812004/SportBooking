@@ -54,7 +54,7 @@ mobile/
 ### 1. Requirements
 - Node.js 18+
 - Expo CLI (`npx expo`)
-- Working backend running at `http://localhost:5000/api` (or LAN IP)
+- Working backend running at `http://localhost:8080/api` (or LAN IP)
 
 ### 2. Setup Environment
 ```bash
@@ -64,9 +64,9 @@ cp .env.example .env
 
 Configure `.env`:
 ```env
-EXPO_PUBLIC_API_URL=http://localhost:5000/api
+EXPO_PUBLIC_API_URL=http://<your-lan-ip>:8080/api
 ```
-*(For Android emulator, use `http://10.0.2.2:5000/api`. For physical device, use `http://<your-lan-ip>:5000/api`)*
+*(Dynamic detection is built-in: in development mode, the app automatically connects to the host machine running Metro packager at port 8080. For Android emulator, fallback is `http://10.0.2.2:8080/api`)*
 
 ### 3. Start Expo Development Server
 ```bash

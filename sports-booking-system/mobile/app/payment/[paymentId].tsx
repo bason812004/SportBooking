@@ -1,7 +1,7 @@
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Alert, StyleSheet, Text, View } from "react-native";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { paymentApi } from "../../src/api/payments";
 import { Button } from "../../src/components/Buttons";
 import { StatusBadge } from "../../src/components/Badges";
@@ -12,6 +12,7 @@ import { formatCurrency, formatDateTime } from "../../src/utils/format";
 
 export default function PaymentScreen() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { paymentId } = useLocalSearchParams<{ paymentId: string }>();
   const id = Array.isArray(paymentId) ? paymentId[0] : paymentId;
   const detail = useQuery({ queryKey: ["payment", id], queryFn: () => paymentApi.detail(id), enabled: Boolean(id) });
@@ -23,6 +24,15 @@ export default function PaymentScreen() {
       const data = query.state.data;
       return data && ["PAID", "FAILED", "EXPIRED", "CANCELLED"].includes(data.status) ? false : 2000;
     }
+  });
+
+  const devComplete = useMutation({
+    mutationFn: () => paymentApi.devComplete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["payment-status", id] });
+      queryClient.invalidateQueries({ queryKey: ["payment", id] });
+    },
+    onError: (error) => Alert.alert("Loi", error instanceof Error ? error.message : "Khong the hoan tat thanh toan thu")
   });
 
   if (detail.isLoading) return <Screen back><LoadingState label="Dang tai thanh toan" /></Screen>;
@@ -60,6 +70,12 @@ export default function PaymentScreen() {
       ) : (
         <Button variant="secondary" onPress={() => status.refetch().catch(() => Alert.alert("Chua cap nhat", "Hay thu lai sau vai giay."))}>Kiem tra lai</Button>
       )}
+
+      {__DEV__ && !["PAID", "FAILED", "EXPIRED", "CANCELLED"].includes(currentStatus) ? (
+        <Button variant="secondary" loading={devComplete.isPending} onPress={() => devComplete.mutate()}>
+          Hoan tat (Test - chi hien o dev)
+        </Button>
+      ) : null}
     </Screen>
   );
 }

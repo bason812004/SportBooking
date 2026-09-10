@@ -175,6 +175,8 @@ export const inventoryRepository = {
       let totalStockValue = 0;
       let lowStockCount = 0;
       let outOfStockCount = 0;
+      const seenNames = new Set<string>();
+      const items: any[] = [];
 
       for (const r of rawRows || []) {
         if (!r || !r.serviceName) continue;

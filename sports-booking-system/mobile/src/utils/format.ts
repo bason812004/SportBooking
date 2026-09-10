@@ -42,26 +42,26 @@ export function shortAddress(input?: { address?: string; district?: string; city
 
 export function bookingStatusLabel(status: string) {
   const labels: Record<string, string> = {
-    PENDING: "Cho xac nhan",
-    PENDING_PAYMENT: "Cho thanh toan",
-    CONFIRMED: "Da xac nhan",
-    COMPLETED: "Hoan tat",
-    CANCELLED: "Da huy",
-    NO_SHOW: "Khach khong den"
+    PENDING: "Chờ xác nhận",
+    PENDING_PAYMENT: "Chờ thanh toán",
+    CONFIRMED: "Đã xác nhận",
+    COMPLETED: "Hoàn tất",
+    CANCELLED: "Đã hủy",
+    NO_SHOW: "Khách không đến"
   };
   return labels[status] ?? status;
 }
 
 export function paymentStatusLabel(status: string) {
   const labels: Record<string, string> = {
-    UNPAID: "Chua thanh toan",
-    PENDING: "Dang xu ly",
-    PAID: "Da thanh toan",
-    FAILED: "That bai",
-    EXPIRED: "Het han",
-    CANCELLED: "Da huy",
-    REFUNDED: "Da hoan tien",
-    PARTIALLY_REFUNDED: "Hoan mot phan"
+    UNPAID: "Chưa thanh toán",
+    PENDING: "Đang xử lý",
+    PAID: "Đã thanh toán",
+    FAILED: "Thất bại",
+    EXPIRED: "Hết hạn",
+    CANCELLED: "Đã hủy",
+    REFUNDED: "Đã hoàn tiền",
+    PARTIALLY_REFUNDED: "Hoàn một phần"
   };
   return labels[status] ?? status;
 }

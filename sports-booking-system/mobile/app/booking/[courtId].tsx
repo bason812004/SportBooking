@@ -52,13 +52,15 @@ export default function BookingScreen() {
   const court = useQuery({
     queryKey: queryKeys.court(courtId),
     queryFn: () => courtApi.detail(courtId),
-    enabled: Boolean(courtId)
+    enabled: Boolean(courtId),
+    staleTime: 2 * 60 * 1000
   });
 
   const availability = useQuery({
     queryKey: queryKeys.courtAvailability(courtId, date),
     queryFn: () => courtApi.availability(courtId, date),
-    enabled: Boolean(courtId)
+    enabled: Boolean(courtId),
+    staleTime: 30 * 1000
   });
 
   const services = useMemo(
@@ -66,32 +68,33 @@ export default function BookingScreen() {
     [serviceQuantities]
   );
 
-  const earliestDate = useMemo(() => {
-    if (!selectedSlots.length) return date;
-    const sorted = [...selectedSlots].sort((a, b) => a.date.localeCompare(b.date));
-    return sorted[0].date;
-  }, [selectedSlots, date]);
-
-  const slotsPayload = useMemo(
-    () => selectedSlots.map((s) => ({ date: s.date, startTime: s.startTime, endTime: s.endTime })),
-    [selectedSlots]
-  );
+  const daysPayload = useMemo(() => {
+    const byDate = new Map<string, { date: string; startTime: string; endTime: string }[]>();
+    for (const s of selectedSlots) {
+      const list = byDate.get(s.date) ?? [];
+      list.push({ date: s.date, startTime: s.startTime, endTime: s.endTime });
+      byDate.set(s.date, list);
+    }
+    return Array.from(byDate.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([bookingDate, slots]) => ({ bookingDate, slots }));
+  }, [selectedSlots]);
 
   const quotePayload = useMemo(
     () => ({
       courtId,
-      bookingDate: earliestDate,
-      slots: slotsPayload,
+      days: daysPayload,
       services,
       voucherCode
     }),
-    [courtId, earliestDate, slotsPayload, services, voucherCode]
+    [courtId, daysPayload, services, voucherCode]
   );
 
   const quote = useQuery({
     queryKey: ["booking-quote", quotePayload],
     queryFn: () => bookingApi.quote(quotePayload),
-    enabled: Boolean(user && courtId && selectedSlots.length > 0)
+    enabled: Boolean(user && courtId && selectedSlots.length > 0),
+    staleTime: 10 * 1000
   });
 
   const checkout = useMutation({

@@ -1,7 +1,7 @@
 import compression from "compression";
 import cors from "cors";
 import express from "express";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import helmet from "helmet";
 import swaggerUi from "swagger-ui-express";
 import { env } from "./config/env.js";
@@ -112,7 +112,7 @@ const chatbotRateLimit = rateLimit({
     limit: 15,
     standardHeaders: true,
     legacyHeaders: false,
-    keyGenerator: (req) => req.user?.id ?? req.ip ?? "unknown"
+    keyGenerator: (req) => req.user?.id ?? ipKeyGenerator(req.ip ?? "unknown")
 });
 app.use("/api/chatbot", chatbotRateLimit);
 app.use("/api/chatbot", chatbotRoutes);

@@ -54,7 +54,11 @@ function textSearchCondition(fields: Array<"name" | "description" | "address" | 
   };
 }
 
+let surfacesSeeded = false;
+
 export async function ensureCourtSurfacesSeeded() {
+  if (surfacesSeeded) return;
+  surfacesSeeded = true;
   try {
     const courts = await prisma.court.findMany({
       select: {
@@ -94,7 +98,6 @@ export async function ensureCourtSurfacesSeeded() {
 
 export const courtRepository = {
   async list(query: CourtListQuery, page: number, limit: number) {
-    await ensureCourtSurfacesSeeded();
     const categoryFilter: Prisma.CourtCategoryWhereInput = {};
     const andConditions: Prisma.CourtWhereInput[] = [];
     const where: Prisma.CourtWhereInput = {

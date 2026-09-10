@@ -1,3 +1,4 @@
+import { prisma } from "../config/db.js";
 import { forceSeedAllServicesToDb } from "../modules/services/service.repository.js";
 
 export async function seedInventoryData() {
@@ -101,7 +102,7 @@ export async function seedInventoryData() {
         if (!serviceId) {
           const serviceRows: any = await prisma.$queryRawUnsafe(
             `INSERT INTO services (id, partner_id, category_id, name, type, price, cost_price, unit, status, track_inventory, created_at, updated_at)
-             VALUES (gen_random_uuid(), $1, CASE WHEN $2::text IS NULL OR $2::text = '' THEN NULL ELSE $2::uuid END, $3, $4, $5, $6, $7, 'ACTIVE', TRUE, NOW(), NOW())
+             VALUES (DEFAULT, $1, CASE WHEN $2::text IS NULL OR $2::text = '' THEN NULL ELSE $2::uuid END, $3, $4, $5, $6, $7, 'ACTIVE', TRUE, NOW(), NOW())
              RETURNING id;`,
             pid, categoryId, prod.name, prod.type, prod.price, prod.costPrice, prod.unit
           ).catch(() => []);
@@ -115,7 +116,7 @@ export async function seedInventoryData() {
           // Never touch quantity on an existing row — it would silently undo real sales on every dev restart.
           await prisma.$executeRawUnsafe(
             `INSERT INTO service_inventories (id, service_id, quantity, reserved_quantity, minimum_stock, unit, last_purchase_price, created_at, updated_at)
-             VALUES (gen_random_uuid(), $1::uuid, 50, 0, 5, $2, $3, NOW(), NOW())
+             VALUES (gen_random_uuid(), $1, 50, 0, 5, $2, $3, NOW(), NOW())
              ON CONFLICT (service_id) DO NOTHING;`,
             serviceId, prod.unit, prod.costPrice
           ).catch(() => { });
@@ -138,7 +139,7 @@ export async function seedInventoryData() {
           const customId = `cs_${court.id}_${svc.id.slice(0, 8)}`;
           await prisma.$executeRawUnsafe(
             `INSERT INTO court_services (id, court_id, service_id, name, price, is_available, status, created_at, updated_at)
-             VALUES ($1, $2, $3::uuid, $4, $5, TRUE, 'ACTIVE', NOW(), NOW())
+             VALUES ($1, $2, $3, $4, $5, TRUE, 'ACTIVE', NOW(), NOW())
              ON CONFLICT (id) DO UPDATE SET price = EXCLUDED.price, status = 'ACTIVE';`,
             customId, court.id, svc.id, svc.name, svc.price
           ).catch(() => { });

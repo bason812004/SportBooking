@@ -12,8 +12,8 @@ import { ensureServiceTables } from "./modules/services/service.repository.js";
 const server = http.createServer(app);
 initRealtime(server);
 
-server.listen(env.PORT, async () => {
-  console.log(`API listening on http://localhost:${env.PORT}`);
+server.listen(env.PORT, "0.0.0.0", async () => {
+  console.log(`API listening on http://0.0.0.0:${env.PORT} (LAN: http://192.168.1.12:${env.PORT})`);
   try {
     await ensureTeamChatTables().catch((e) => console.warn("[DB Init] teamChat:", e?.message));
     await ensureReviewTables().catch((e) => console.warn("[DB Init] review:", e?.message));

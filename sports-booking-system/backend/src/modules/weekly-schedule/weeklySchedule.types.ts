@@ -28,6 +28,8 @@ export type WeeklySlotRow = {
   predictedOccupancyRate: number | null;
   blockReason: string | null;
   bookingCode: string | null;
+  courtSurfaceId?: string | null;
+  courtSurfaceName?: string | null;
 };
 
 // Internal slot used while assembling the schedule. Mirrors WeeklySlotRow plus
