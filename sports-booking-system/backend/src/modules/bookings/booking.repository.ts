@@ -378,21 +378,6 @@ export const bookingRepository = {
       const endTime = timeToDate(slot.endTime.slice(0, 5));
       const surfaceId = slot.courtSurfaceId || slot.court_surface_id || slot.courtSubId || null;
 
-      const legacyBooking = await tx.booking.findFirst({
-        where: {
-          courtId,
-          bookingDate,
-          bookingStatus: { in: activeStatuses as any },
-          startTime: { lt: endTime },
-          endTime: { gt: startTime },
-          ...(surfaceId ? { OR: [{ courtSurfaceId: surfaceId }, { courtSurfaceId: null }] } : {})
-        }
-      });
-      if (legacyBooking) {
-        conflicts.push(legacyBooking);
-        continue;
-      }
-
       const slotBooking = await tx.bookingSlot.findFirst({
         where: {
           courtId,

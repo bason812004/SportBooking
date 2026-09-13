@@ -56,7 +56,13 @@ const envSchema = z.object({
   CHATBOT_LLM_PROVIDER: z.enum(["anthropic", "gemini"]).default("gemini"),
   CHATBOT_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(1024),
   CHATBOT_TIMEOUT_MS: z.coerce.number().int().positive().default(45000),
-  CHATBOT_MAX_TOOL_LOOPS: z.coerce.number().int().positive().default(6)
+  CHATBOT_MAX_TOOL_LOOPS: z.coerce.number().int().positive().default(6),
+  BOOKING_REMINDER_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+  BOOKING_REMINDER_INTERVAL_MS: z.coerce.number().int().positive().default(21_600_000),
+  BOOKING_REMINDER_LOOKBACK_WEEKS: z.coerce.number().int().positive().default(8),
+  BOOKING_REMINDER_MIN_OCCURRENCES: z.coerce.number().int().positive().default(3),
+  BOOKING_REMINDER_LEAD_DAYS: z.coerce.number().int().min(1).default(2),
+  BOOKING_REMINDER_VOUCHER_ID: z.string().optional()
 });
 
 export const env = envSchema.parse(process.env);

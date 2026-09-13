@@ -33,10 +33,11 @@ class PredictRequest(BaseModel):
     day_of_week: int = Field(ge=0, le=6)
     is_weekend: bool
     sport_type: str
-    booking_count: int = Field(ge=0)
-    cancellation_count: int = Field(ge=0)
-    voucher_usage_count: int = Field(ge=0)
-    average_price: float = Field(ge=0)
+    prior_total_bookings: float = Field(ge=0)
+    prior_avg_comparable_bookings: float = Field(ge=0)
+    prior_cancellation_count: float = Field(ge=0)
+    prior_voucher_usage_count: float = Field(ge=0)
+    prior_average_price: float = Field(ge=0)
 
 
 class PredictResponse(BaseModel):

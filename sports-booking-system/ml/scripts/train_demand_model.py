@@ -4,17 +4,11 @@ from pathlib import Path
 import joblib
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
 
-
-def demand_score(row: pd.Series) -> float:
-    base = min(float(row["booking_count"]) * 20.0, 70.0)
-    weekend = 10.0 if bool(row["is_weekend"]) else 0.0
-    cancellation_penalty = min(float(row["cancellation_count"]) * 5.0, 20.0)
-    return max(0.0, min(100.0, base + weekend - cancellation_penalty))
+from feature_engineering import FEATURES, TARGET, chronological_split
 
 
 def main() -> None:
@@ -27,9 +21,9 @@ def main() -> None:
     if len(data) < 50:
         raise SystemExit("Not enough rows to train a reliable model. Keep using rule-based prediction.")
 
-    data["target_demand_score"] = data.apply(demand_score, axis=1)
-    features = ["hour_of_day", "day_of_week", "is_weekend", "sport_type", "booking_count", "cancellation_count", "voucher_usage_count", "average_price"]
-    x_train, x_test, y_train, y_test = train_test_split(data[features], data["target_demand_score"], test_size=0.2, random_state=42)
+    train, test = chronological_split(data)
+    x_train, y_train = train[FEATURES], train[TARGET]
+    x_test = test[FEATURES]
 
     preprocessor = ColumnTransformer(
         transformers=[("sport", OneHotEncoder(handle_unknown="ignore"), ["sport_type"])],
@@ -39,8 +33,8 @@ def main() -> None:
     model.fit(x_train, y_train)
 
     model_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump({"model": model, "features": features, "test_rows": len(x_test)}, model_path)
-    print(f"Saved model to {model_path}")
+    joblib.dump({"model": model, "features": FEATURES, "test_rows": len(x_test)}, model_path)
+    print(f"Saved model to {model_path} (trained on {len(x_train)} rows, held out {len(x_test)} rows from later weeks)")
 
 
 if __name__ == "__main__":

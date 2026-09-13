@@ -10,7 +10,7 @@ import { errorMiddleware } from "./middlewares/error.middleware.js";
 import { performanceLogger } from "./middlewares/performance.middleware.js";
 import { adminRoutes } from "./modules/admin/admin.routes.js";
 import { adminAnalyticsRoutes, partnerAnalyticsRoutes } from "./modules/analytics/analytics.routes.js";
-import { adminReportRoutes, partnerReportRoutes, recipientReportRoutes } from "./modules/report/report.routes.js";
+import { adminReportRoutes, partnerReportRoutes, recipientReportRoutes } from "./modules/business-report/report.routes.js";
 import { authRoutes } from "./modules/auth/auth.routes.js";
 import { blogRoutes } from "./modules/blogs/blog.routes.js";
 import { bookingRoutes } from "./modules/bookings/booking.routes.js";
@@ -36,6 +36,7 @@ import { weeklyScheduleRoutes } from "./modules/weekly-schedule/weeklySchedule.r
 import { partnerWalletRoutes, adminWalletRoutes } from "./modules/wallets/wallet.routes.js";
 import { partnerSettlementRoutes, adminSettlementRoutes } from "./modules/settlements/settlement.routes.js";
 import { partnerWithdrawalRoutes, adminWithdrawalRoutes } from "./modules/withdrawals/withdrawal.routes.js";
+import { adminBookingReminderRoutes } from "./modules/booking-reminders/bookingReminder.routes.js";
 import { uploadRoutes } from "./modules/uploads/upload.routes.js";
 import { serviceRoutes } from "./modules/services/service.routes.js";
 import { inventoryRoutes } from "./modules/inventory/inventory.routes.js";
@@ -133,6 +134,7 @@ app.use("/api/admin/report", adminReportRoutes);
 app.use("/api/admin/wallets", adminWalletRoutes);
 app.use("/api/admin/settlements", adminSettlementRoutes);
 app.use("/api/admin/withdrawals", adminWithdrawalRoutes);
+app.use("/api/admin/booking-reminders", adminBookingReminderRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/uploads", uploadRoutes);
 

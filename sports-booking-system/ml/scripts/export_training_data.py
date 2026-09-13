@@ -5,6 +5,28 @@ from urllib.parse import urlparse, urlunparse
 import pandas as pd
 import psycopg2
 
+from feature_engineering import build_training_frame
+
+# One row per individual booking (not pre-aggregated) so build_training_frame can
+# do the weekly rolling-history aggregation itself -- the exact same code path
+# used for the synthetic dataset in generate_synthetic_booking_history.py, so
+# real and synthetic data are labeled identically.
+QUERY = """
+select
+  c.id::text as court_id,
+  cc.slug as sport_type,
+  b.booking_date,
+  extract(hour from b.start_time)::int as hour_of_day,
+  b.booking_status,
+  b.total_price::float as total_price,
+  (bv.id is not null) as has_voucher
+from bookings b
+join courts c on c.id = b.court_id
+join court_categories cc on cc.id = c.category_id
+left join booking_vouchers bv on bv.booking_id = b.id
+order by b.booking_date, hour_of_day
+"""
+
 
 def strip_unsupported_query_params(database_url: str) -> str:
     """Prisma connection strings may carry params (e.g. pgbouncer=true) psycopg2 rejects."""
@@ -12,41 +34,34 @@ def strip_unsupported_query_params(database_url: str) -> str:
     return urlunparse(parsed._replace(query=""))
 
 
-QUERY = """
-select
-  c.id::text as court_id,
-  b.booking_date,
-  extract(hour from b.start_time)::int as hour_of_day,
-  extract(dow from b.booking_date)::int as day_of_week,
-  extract(dow from b.booking_date)::int in (0, 6) as is_weekend,
-  cc.slug as sport_type,
-  count(*) filter (where b.booking_status not in ('CANCELLED', 'NO_SHOW')) as booking_count,
-  count(*) filter (where b.booking_status = 'CANCELLED') as cancellation_count,
-  count(bv.id) as voucher_usage_count,
-  avg(b.total_price)::float as average_price,
-  least(count(*) filter (where b.booking_status not in ('CANCELLED', 'NO_SHOW'))::float / greatest(c.court_count, 1), 1) as occupancy_rate
-from bookings b
-join courts c on c.id = b.court_id
-join court_categories cc on cc.id = c.category_id
-left join booking_vouchers bv on bv.booking_id = b.id
-group by c.id, b.booking_date, extract(hour from b.start_time), extract(dow from b.booking_date), cc.slug, c.court_count
-order by b.booking_date, hour_of_day
-"""
+def load_raw_events() -> pd.DataFrame:
+    synthetic_path = os.environ.get("SYNTHETIC_EVENTS_PATH")
+    if synthetic_path:
+        path = Path(synthetic_path)
+        if not path.exists():
+            raise SystemExit(f"SYNTHETIC_EVENTS_PATH is set but {path} does not exist. Run generate_synthetic_booking_history.py first.")
+        print(f"Loading raw booking events from synthetic dataset: {path}")
+        return pd.read_csv(path)
+
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        raise SystemExit("DATABASE_URL is required (or set SYNTHETIC_EVENTS_PATH to use synthetic data instead)")
+
+    with psycopg2.connect(strip_unsupported_query_params(database_url)) as conn:
+        return pd.read_sql_query(QUERY, conn)
 
 
 def main() -> None:
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        raise SystemExit("DATABASE_URL is required")
-
     output = Path(os.environ.get("TRAINING_DATA_PATH", "ml/models/demand_training_data.csv"))
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    with psycopg2.connect(strip_unsupported_query_params(database_url)) as conn:
-        frame = pd.read_sql_query(QUERY, conn)
+    events = load_raw_events()
+    frame = build_training_frame(events)
+    if frame.empty:
+        raise SystemExit("No training rows could be built -- every slot pattern only has a single observed week so far.")
 
     frame.to_csv(output, index=False)
-    print(f"Exported {len(frame)} rows to {output}")
+    print(f"Exported {len(frame)} training rows (from {len(events)} raw booking events) to {output}")
 
 
 if __name__ == "__main__":
