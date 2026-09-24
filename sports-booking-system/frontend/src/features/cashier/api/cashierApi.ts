@@ -6,17 +6,21 @@ export interface ActiveBookingService {
   bookingId: string;
   serviceId?: string | null;
   courtServiceId?: string | null;
+  name?: string;
+  unit?: string;
+  imageUrl?: string | null;
   quantity: number;
   price: number;
   unitPrice: number;
   totalPrice: number;
   status: string;
-  addedBy: string;
+  addedBy?: string;
   service?: {
     id: string;
     name: string;
     type: "PRODUCT" | "RENTAL_SERVICE";
     unit: string;
+    imageUrl?: string | null;
   } | null;
   rentalItems?: Array<{
     id: string;
@@ -27,7 +31,6 @@ export interface ActiveBookingService {
 }
 
 export interface CashierBooking {
-  checkedInAt?: string | null;
   id: string;
   bookingCode: string;
   bookingDate: string;
@@ -35,6 +38,7 @@ export interface CashierBooking {
   endTime: string;
   bookingStatus: string;
   paymentStatus: string;
+  paymentMethod?: string;
   totalPrice: number;
   depositAmount: number;
   courtSubtotal: number;
@@ -42,6 +46,7 @@ export interface CashierBooking {
   totalAmount: number;
   depositPaid: number;
   remainingAmount: number;
+  checkedInAt?: string | null;
   user: {
     id: string;
     fullName: string;
@@ -52,6 +57,11 @@ export interface CashierBooking {
     id: string;
     name: string;
   };
+  courtSurface?: {
+    id: string;
+    name: string;
+    code?: string;
+  } | null;
   services: ActiveBookingService[];
 }
 
@@ -67,13 +77,20 @@ export interface CashierBookingDetail {
 }
 
 export const cashierApi = {
-  async getActiveBookings(courtId?: string) {
-    const res = await api.get<ApiResponse<CashierBooking[]>>("/cashier/bookings/active", { params: { courtId } });
+  async getActiveBookings(courtId?: string, search?: string, filter?: string) {
+    const res = await api.get<ApiResponse<CashierBooking[]>>("/cashier/bookings/active", {
+      params: { courtId: courtId || undefined, search: search || undefined, filter: filter || undefined }
+    });
     return res.data.data;
   },
 
   async getBookingDetail(bookingId: string) {
     const res = await api.get<ApiResponse<CashierBookingDetail>>(`/cashier/bookings/${bookingId}`);
+    return res.data.data;
+  },
+
+  async checkInBooking(bookingId: string) {
+    const res = await api.post<ApiResponse<any>>(`/cashier/bookings/${bookingId}/check-in`);
     return res.data.data;
   },
 

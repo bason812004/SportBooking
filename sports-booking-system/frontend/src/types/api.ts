@@ -86,11 +86,16 @@ export type BookingService = {
   serviceId: string;
   quantity: number;
   price: string;
+  unitPrice?: number | string;
+  totalPrice?: number | string;
+  status?: string;
   service: {
     id: string;
     name: string;
     description?: string | null;
     price: string;
+    imageUrl?: string | null;
+    unit?: string;
   };
 };
 
@@ -137,15 +142,19 @@ export type Booking = {
   court: Court;
   courtSurface?: { id: string; name: string; code: string } | null;
   user?: { id?: string; fullName: string; email?: string; phone?: string };
-  bookingServices?: BookingService[];
+  // Superset of both shapes the API returns: the list endpoints send Date objects and
+  // courtSurfaceId, the detail endpoint sends strings plus bookingDate/court_surfaces.
   bookingSlots?: Array<{
     id: string;
-    bookingDate: string;
-    startTime: string;
-    endTime: string;
-    slotPrice: string;
+    bookingDate?: string;
+    startTime: string | Date;
+    endTime: string | Date;
+    slotPrice?: number | string;
+    basePrice?: number | string;
+    courtSurfaceId?: string | null;
     court_surfaces?: { id: string; name: string; code: string } | null;
   }>;
+  bookingServices?: BookingService[];
   bookingVoucher?: BookingVoucherInfo | null;
   payments?: Array<{
     id: string;
@@ -759,6 +768,8 @@ export type DynamicPricingAdjustment = {
 };
 
 export type WeeklyScheduleSlot = {
+  id?: string;
+  courtId?: string;
   date: string;
   startTime: string;
   endTime: string;

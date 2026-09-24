@@ -69,13 +69,11 @@ export default function BookingScreen() {
   );
 
   const daysPayload = useMemo(() => {
-    const byDate = new Map<string, { date: string; startTime: string; endTime: string }[]>();
+    const grouped: Record<string, { startTime: string; endTime: string }[]> = {};
     for (const s of selectedSlots) {
-      const list = byDate.get(s.date) ?? [];
-      list.push({ date: s.date, startTime: s.startTime, endTime: s.endTime });
-      byDate.set(s.date, list);
+      (grouped[s.date] ??= []).push({ startTime: s.startTime, endTime: s.endTime });
     }
-    return Array.from(byDate.entries())
+    return Object.entries(grouped)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([bookingDate, slots]) => ({ bookingDate, slots }));
   }, [selectedSlots]);

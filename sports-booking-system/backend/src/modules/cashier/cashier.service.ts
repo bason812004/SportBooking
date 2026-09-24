@@ -4,13 +4,29 @@ import { cashierRepository } from "./cashier.repository.js";
 import type { AddServiceToBookingInput, ReturnRentalItemInput } from "./cashier.types.js";
 
 export const cashierService = {
-  async getActiveBookings(partnerId: string, courtId?: string) {
-    return cashierRepository.getActiveBookings(partnerId, courtId);
+  async getActiveBookings(partnerId: string, courtId?: string, search?: string, filter?: string) {
+    return cashierRepository.getActiveBookings(partnerId, courtId, search, filter);
   },
 
   async getBookingDetailForCashier(bookingId: string, actor: CheckoutActor) {
     await checkoutAccessRepository.assertBooking(bookingId, actor);
     return cashierRepository.getBookingDetailForCashier(bookingId);
+  },
+
+  async checkInBooking(bookingId: string, actor: CheckoutActor) {
+    await checkoutAccessRepository.assertBooking(bookingId, actor, true);
+    const updated = await cashierRepository.checkInBooking(bookingId);
+    realtimeService.toBooking(bookingId, "booking:status-changed", {
+      bookingId,
+      status: "IN_PROGRESS"
+    });
+    if (updated.courtId) {
+      realtimeService.toCourt(updated.courtId, "court:booking-updated", {
+        bookingId,
+        status: "IN_PROGRESS"
+      });
+    }
+    return updated;
   },
 
   async addServiceToBooking(bookingId: string, input: AddServiceToBookingInput, addedBy: string, actor: CheckoutActor) {
@@ -20,7 +36,7 @@ export const cashierService = {
 
     realtimeService.toBooking(bookingId, "booking:checkout-ready", { bookingId });
 
-    // Emit Realtime socket events
+    // Emit Realtime socket events to booking room
     realtimeService.toBooking(bookingId, "booking:service-added", {
       bookingId,
       addedService: result,
@@ -38,6 +54,14 @@ export const cashierService = {
       grandTotal: detail.grandTotal,
       remainingAmount: detail.remainingAmount
     });
+
+    if (detail.booking?.courtId) {
+      realtimeService.toCourt(detail.booking.courtId, "court:booking-updated", {
+        bookingId,
+        grandTotal: detail.grandTotal,
+        remainingAmount: detail.remainingAmount
+      });
+    }
 
     return { result, totals: detail };
   },
@@ -66,6 +90,14 @@ export const cashierService = {
       remainingAmount: detail.remainingAmount
     });
 
+    if (detail.booking?.courtId) {
+      realtimeService.toCourt(detail.booking.courtId, "court:booking-updated", {
+        bookingId,
+        grandTotal: detail.grandTotal,
+        remainingAmount: detail.remainingAmount
+      });
+    }
+
     return { result, totals: detail };
   },
 
@@ -91,6 +123,14 @@ export const cashierService = {
       grandTotal: detail.grandTotal,
       remainingAmount: detail.remainingAmount
     });
+
+    if (detail.booking?.courtId) {
+      realtimeService.toCourt(detail.booking.courtId, "court:booking-updated", {
+        bookingId,
+        grandTotal: detail.grandTotal,
+        remainingAmount: detail.remainingAmount
+      });
+    }
 
     return { result, totals: detail };
   },

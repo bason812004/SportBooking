@@ -15,6 +15,7 @@ serviceRoutes.get("/categories", asyncHandler(serviceController.listCategories))
 serviceRoutes.get("/redistribute", asyncHandler(serviceController.redistributeServices));
 serviceRoutes.get("/courts/:courtId", asyncHandler(serviceController.listCourtServices));
 serviceRoutes.get("/detail/:id", asyncHandler(serviceController.getServiceById));
+serviceRoutes.get("/", asyncHandler(serviceController.listServices));
 
 // Partner / Recipient routes
 serviceRoutes.get("/partner", authMiddleware, requireRole(UserRole.PARTNER, UserRole.RECIPIENT), asyncHandler(serviceController.listPartnerServices));
@@ -29,3 +30,7 @@ serviceRoutes.post(
   asyncHandler(serviceController.uploadServiceImage)
 );
 serviceRoutes.post("/categories", authMiddleware, requireRole(UserRole.PARTNER, UserRole.ADMIN), asyncHandler(serviceController.createCategory));
+
+// Catch-all by id stays last: Express matches in registration order, so declaring it earlier makes
+// "/partner", "/categories" and friends resolve as an id and 404 on a lookup that was never meant.
+serviceRoutes.get("/:id", asyncHandler(serviceController.getServiceById));

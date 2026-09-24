@@ -16,7 +16,7 @@ function dbTime(value: any) {
 async function ensureInventoryRowLocked(tx: Prisma.TransactionClient, serviceId: string, unit: string) {
   await tx.$executeRawUnsafe(
     `INSERT INTO service_inventories (id, service_id, quantity, minimum_stock, unit)
-     VALUES (gen_random_uuid(), $1, 50, 5, $2)
+     VALUES (gen_random_uuid(), $1, 0, 5, $2)
      ON CONFLICT (service_id) DO NOTHING;`,
     serviceId, unit || "cái"
   );
@@ -28,7 +28,7 @@ async function ensureInventoryRowLocked(tx: Prisma.TransactionClient, serviceId:
 }
 
 export const cashierRepository = {
-  async getActiveBookings(partnerId: string, courtId?: string) {
+  async getActiveBookings(partnerId: string, courtId?: string, search?: string, filter?: string) {
     await ensureServiceTables();
 
     // 1. Fetch Courts
@@ -44,32 +44,79 @@ export const cashierRepository = {
     const courtIds = Array.from(courtMap.keys());
     if (courtIds.length === 0) return [];
 
-    // 2. Fetch Active Bookings
+    // 2. Build dynamic filter & search clauses
+    const params: any[] = [courtIds];
+    let filterClause = "AND b.booking_status IN ('CONFIRMED', 'DEPOSIT_PAID', 'IN_PROGRESS', 'CHECKOUT_PENDING', 'COMPLETED')";
+
+    if (filter === "IN_USE") {
+      filterClause = "AND (b.booking_status = 'IN_PROGRESS' OR (b.checked_in_at IS NOT NULL AND b.booking_status NOT IN ('COMPLETED', 'CANCELLED', 'REJECTED')))";
+    } else if (filter === "UPCOMING") {
+      filterClause = "AND b.booking_status IN ('CONFIRMED', 'DEPOSIT_PAID') AND b.checked_in_at IS NULL";
+    } else if (filter === "UNPAID") {
+      filterClause = "AND b.payment_status IN ('UNPAID', 'PARTIALLY_PAID', 'PENDING') AND b.booking_status NOT IN ('CANCELLED', 'REJECTED')";
+    } else if (filter === "PAID") {
+      filterClause = "AND b.payment_status = 'PAID'";
+    } else if (filter === "COMPLETED") {
+      filterClause = "AND b.booking_status = 'COMPLETED'";
+    }
+
+    let searchClause = "";
+    if (search && search.trim()) {
+      params.push(`%${search.trim()}%`);
+      const idx = params.length;
+      searchClause = `AND (b.booking_code ILIKE $${idx} OR u.full_name ILIKE $${idx} OR u.phone ILIKE $${idx} OR cs.name ILIKE $${idx} OR c.name ILIKE $${idx})`;
+    }
+
+    // 3. Fetch Bookings (today's bookings + in-progress / pending checkout bookings)
     const bRows: any[] = (await prisma.$queryRawUnsafe(
       `SELECT b.id, b.booking_code as "bookingCode", b.court_id as "courtId", b.user_id as "userId",
               b.booking_date as "bookingDate", b.start_time as "startTime", b.end_time as "endTime",
               b.base_price as "basePrice", b.dynamic_adjustment_amount as "dynamicAdjustmentAmount", b.voucher_discount_amount as "voucherDiscountAmount", b.checked_in_at as "checkedInAt", b.total_price as "totalPrice", b.deposit_amount as "depositAmount", b.booking_status as "bookingStatus",
               b.payment_status as "paymentStatus", b.payment_method as "paymentMethod",
-              u.full_name as "userName", u.phone as "userPhone", u.email as "userEmail"
+              b.checked_in_at as "checkedInAt",
+              u.full_name as "userName", u.phone as "userPhone", u.email as "userEmail",
+              c.name as "courtName",
+              COALESCE(cs.id, cs_slot.id) as "courtSurfaceId",
+              COALESCE(cs.name, cs_slot.name) as "courtSurfaceName",
+              COALESCE(cs.code, cs_slot.code) as "courtSurfaceCode"
        FROM bookings b
        LEFT JOIN users u ON b.user_id = u.id
+       LEFT JOIN courts c ON b.court_id = c.id
+       LEFT JOIN court_surfaces cs ON b.court_surface_id = cs.id
+       LEFT JOIN booking_slots bslot ON bslot.booking_id = b.id
+       LEFT JOIN court_surfaces cs_slot ON bslot.court_surface_id = cs_slot.id
        WHERE b.court_id = ANY($1::text[])
-         AND b.booking_status IN ('CONFIRMED', 'DEPOSIT_PAID', 'IN_PROGRESS', 'CHECKOUT_PENDING', 'COMPLETED')
-         AND b.booking_date::date = (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+         ${filterClause}
+         ${searchClause}
+         -- Vietnam date, not CURRENT_DATE: the server may run in UTC, where "today" flips at 07:00 local.
+         -- Sessions still open from an earlier day stay listed so staff can close them out.
+         AND (b.booking_date::date = (NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+              OR b.booking_status IN ('IN_PROGRESS', 'CHECKOUT_PENDING'))
        ORDER BY b.start_time ASC;`,
-      courtIds
+      ...params
     ).catch(() => [])) as any[];
 
     if (!Array.isArray(bRows) || bRows.length === 0) return [];
 
-    const bookingIds = bRows.map((b) => b.id);
+    // Deduplicate bookings in case multiple booking_slots matched
+    const uniqueBRows: any[] = [];
+    const seenBookingIds = new Set<string>();
+    for (const b of bRows) {
+      if (!seenBookingIds.has(b.id)) {
+        seenBookingIds.add(b.id);
+        uniqueBRows.push(b);
+      }
+    }
 
-    // 3. Fetch Booking Services
+    const bookingIds = uniqueBRows.map((b) => b.id);
+
+    // 4. Fetch Booking Services
     const bsRows: any[] = (await prisma.$queryRawUnsafe(
       `SELECT bs.id, bs.booking_id as "bookingId", bs.service_id as "serviceId", bs.court_service_id as "courtServiceId",
               bs.quantity, bs.price, bs.unit_price as "unitPrice", bs.total_price as "totalPrice", bs.status,
               COALESCE(s.name, cs.name, 'Dịch vụ') as "name",
               COALESCE(s.unit, 'đơn vị') as "unit",
+              s.image_url as "imageUrl",
               s.type as "type", s.track_inventory as "trackInventory"
        FROM booking_services bs
        LEFT JOIN services s ON bs.service_id::text = s.id::text
@@ -88,6 +135,7 @@ export const cashierRepository = {
           serviceId: bs.serviceId || bs.courtServiceId,
           name: bs.name,
           unit: bs.unit,
+          imageUrl: bs.imageUrl || null,
           type: bs.type || "PRODUCT",
           quantity: Number(bs.quantity),
           price: Number(bs.price || bs.totalPrice || 0),
@@ -98,6 +146,7 @@ export const cashierRepository = {
             id: bs.serviceId || bs.courtServiceId,
             name: bs.name,
             unit: bs.unit,
+            imageUrl: bs.imageUrl || null,
             type: bs.type || "PRODUCT"
           }
         });
@@ -107,8 +156,10 @@ export const cashierRepository = {
 
     const paidRows = await prisma.checkout.findMany({ where: { bookingId: { in: bookingIds } }, include: { payments: { where: { status: "PAID" } } } });
     const paidByBooking = new Map(paidRows.map(row => [row.bookingId, row.payments.reduce((sum, p) => sum + Number(p.amount), 0)]));
-    // 4. Construct Response
-    return bRows.map((b) => {
+    // 5. Construct Response
+    return uniqueBRows.map((b) => {
+      // courtAmount, not totalPrice: totalPrice historically already includes services, so using it
+      // here would charge every service twice once serviceSubtotal is added below.
       const courtSubtotal = courtAmount(b);
       const activeServices = bsGrouped.get(b.id) || [];
       const serviceSubtotal = activeServices.reduce((sum, item) => sum + Number(item.totalPrice || item.price || 0), 0);
@@ -116,7 +167,7 @@ export const cashierRepository = {
       const depositPaid = ["UNPAID", "FAILED", "REFUNDED"].includes(b.paymentStatus) ? 0 : Number(b.depositAmount) || 0;
       const remainingAmount = Math.max(0, totalAmount - depositPaid - (paidByBooking.get(b.id) ?? 0));
 
-      const courtObj = courtMap.get(b.courtId) || { id: b.courtId, name: "Sân bóng" };
+      const courtObj = courtMap.get(b.courtId) || { id: b.courtId, name: b.courtName || "Sân thể thao" };
 
       return {
         id: b.id,
@@ -142,6 +193,11 @@ export const cashierRepository = {
           id: courtObj.id,
           name: courtObj.name
         },
+        courtSurface: b.courtSurfaceId ? {
+          id: b.courtSurfaceId,
+          name: b.courtSurfaceName || "Sân con",
+          code: b.courtSurfaceCode || ""
+        } : null,
         bookingServices: activeServices,
         courtSubtotal,
         serviceSubtotal,
@@ -162,11 +218,18 @@ export const cashierRepository = {
               b.booking_date as "bookingDate", b.start_time as "startTime", b.end_time as "endTime",
               b.base_price as "basePrice", b.dynamic_adjustment_amount as "dynamicAdjustmentAmount", b.voucher_discount_amount as "voucherDiscountAmount", b.checked_in_at as "checkedInAt", b.total_price as "totalPrice", b.deposit_amount as "depositAmount", b.booking_status as "bookingStatus",
               b.payment_status as "paymentStatus", b.payment_method as "paymentMethod", b.admin_note as "adminNote", b.note,
+              b.checked_in_at as "checkedInAt",
               u.full_name as "userName", u.phone as "userPhone", u.email as "userEmail",
-              c.name as "courtName", c.partner_id as "partnerId"
+              c.name as "courtName", c.partner_id as "partnerId",
+              COALESCE(cs.id, cs_slot.id) as "courtSurfaceId",
+              COALESCE(cs.name, cs_slot.name) as "courtSurfaceName",
+              COALESCE(cs.code, cs_slot.code) as "courtSurfaceCode"
        FROM bookings b
        LEFT JOIN users u ON b.user_id = u.id
        LEFT JOIN courts c ON b.court_id = c.id
+       LEFT JOIN court_surfaces cs ON b.court_surface_id = cs.id
+       LEFT JOIN booking_slots bslot ON bslot.booking_id = b.id
+       LEFT JOIN court_surfaces cs_slot ON bslot.court_surface_id = cs_slot.id
        WHERE b.id::text = $1::text OR b.booking_code::text = $1::text OR b.booking_order_id::text = $1::text
        LIMIT 1;`,
       bookingId
@@ -188,6 +251,7 @@ export const cashierRepository = {
               bs.quantity, bs.price, bs.unit_price as "unitPrice", bs.total_price as "totalPrice", bs.status,
               COALESCE(s.name, cs.name, 'Dịch vụ') as "name",
               COALESCE(s.unit, 'đơn vị') as "unit",
+              s.image_url as "imageUrl",
               s.type as "type", s.track_inventory as "trackInventory"
        FROM booking_services bs
        LEFT JOIN services s ON bs.service_id::text = s.id::text
@@ -203,6 +267,7 @@ export const cashierRepository = {
           serviceId: bs.serviceId || bs.courtServiceId,
           name: bs.name,
           unit: bs.unit,
+          imageUrl: bs.imageUrl || null,
           type: bs.type || "PRODUCT",
           quantity: Number(bs.quantity),
           price: Number(bs.price || bs.totalPrice || 0),
@@ -213,6 +278,7 @@ export const cashierRepository = {
             id: bs.serviceId || bs.courtServiceId,
             name: bs.name,
             unit: bs.unit,
+            imageUrl: bs.imageUrl || null,
             type: bs.type || "PRODUCT"
           }
         }))
@@ -229,7 +295,7 @@ export const cashierRepository = {
 
     const courtFallback = {
       id: b.courtId,
-      name: b.courtName || "Sân Sala 1",
+      name: b.courtName || "Sân thể thao",
       partnerId: b.partnerId || ""
     };
 
@@ -239,6 +305,12 @@ export const cashierRepository = {
         startTime: dbTime(b.startTime),
         endTime: dbTime(b.endTime),
         court: courtFallback,
+        courtSurface: b.courtSurfaceId ? {
+          id: b.courtSurfaceId,
+          name: b.courtSurfaceName || "Sân con",
+          code: b.courtSurfaceCode || ""
+        } : null,
+        checkedInAt: b.checkedInAt,
         user: {
           id: b.userId,
           fullName: b.userName || "Khách vãng lai",
@@ -289,7 +361,13 @@ export const cashierRepository = {
       }
       if (!booking.checkedInAt) {
         if (!nowWithinPlayWindow(booking)) throw new ValidationError("Booking chưa tới giờ chơi hoặc đã quá giờ phục vụ, không thể thêm dịch vụ");
-        await tx.$executeRawUnsafe(`UPDATE bookings SET checked_in_at = NOW(), booking_status = 'IN_PROGRESS' WHERE id::text = $1::text AND checked_in_at IS NULL;`, bookingId);
+        // A COMPLETED booking keeps its status; only an un-started one moves to IN_PROGRESS.
+        await tx.$executeRawUnsafe(
+          `UPDATE bookings SET checked_in_at = NOW(),
+                  booking_status = CASE WHEN booking_status IN ('CONFIRMED', 'DEPOSIT_PAID') THEN 'IN_PROGRESS'::booking_status ELSE booking_status END
+           WHERE id::text = $1::text AND checked_in_at IS NULL;`,
+          bookingId
+        );
       }
 
       // 3. Check inventory if PRODUCT (locked row, atomic with the deduction below)
@@ -463,6 +541,25 @@ export const cashierRepository = {
 
     await checkoutRepository.getOrCreateCheckout(bookingId);
     return result;
+  },
+
+  async checkInBooking(bookingId: string) {
+    await ensureServiceTables();
+    return prisma.$transaction(async (tx) => {
+      const b = await tx.booking.findUnique({ where: { id: bookingId } });
+      if (!b) throw new NotFoundError("Booking không tồn tại");
+      if (["CANCELLED", "REJECTED", "EXPIRED"].includes(b.bookingStatus)) {
+        throw new ValidationError("Booking không thể check-in do đã bị hủy");
+      }
+      const updated = await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          checkedInAt: new Date(),
+          bookingStatus: b.bookingStatus === "COMPLETED" ? "COMPLETED" : "IN_PROGRESS"
+        }
+      });
+      return updated;
+    });
   },
 
   async removeBookingService(bookingId: string, serviceId: string) {

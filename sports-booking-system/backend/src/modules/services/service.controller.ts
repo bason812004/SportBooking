@@ -67,6 +67,30 @@ export const serviceController = {
     return sendSuccess(res, services);
   },
 
+  async listServices(req: Request, res: Response) {
+    const courtId = typeof req.query.courtId === "string" ? req.query.courtId : undefined;
+    const categoryId = typeof req.query.categoryId === "string" && req.query.categoryId.trim() !== "" ? req.query.categoryId.trim() : undefined;
+    const search = typeof req.query.search === "string" && req.query.search.trim() !== "" ? req.query.search.trim() : undefined;
+
+    if (courtId) {
+      const services = await serviceService.listServicesForCourt(courtId, categoryId);
+      const filtered = search
+        ? services.filter((s: any) => s.name?.toLowerCase().includes(search.toLowerCase()) || s.description?.toLowerCase().includes(search.toLowerCase()))
+        : services;
+      return sendSuccess(res, filtered);
+    }
+
+    let partnerId = typeof req.query.partnerId === "string" ? req.query.partnerId : "";
+    if (!partnerId && req.user?.id) {
+      try {
+        partnerId = await getPartnerId(req.user.id);
+      } catch {}
+    }
+
+    const services = await serviceService.listPartnerServices(partnerId, categoryId, search);
+    return sendSuccess(res, services);
+  },
+
   async listCourtServices(req: Request, res: Response) {
     const courtId = req.params.courtId;
     const categoryId = req.query.categoryId as string | undefined;

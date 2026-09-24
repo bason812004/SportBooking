@@ -204,7 +204,9 @@ export const bookingRepository = {
             await tx.inventoryTransaction.create({
               data: {
                 serviceId: bs.serviceId,
-                type: "RENTAL_IN",
+                // Restocking covers products as well as rentals, and the POS records the same
+                // return as ADJUSTMENT — RENTAL_IN would mislabel every drink put back.
+                type: "ADJUSTMENT",
                 quantity: bs.quantity,
                 unitCost: inv.lastPurchasePrice,
                 referenceType: "BOOKING_CANCELLED",
@@ -883,7 +885,8 @@ export const bookingRepository = {
                 await tx.inventoryTransaction.create({
                   data: {
                     serviceId: service.serviceId,
-                    type: "RENTAL_OUT",
+                    // Matches how the POS records the same deduction (cashier.repository).
+                    type: "SALE",
                     quantity: service.quantity,
                     unitCost: inv.lastPurchasePrice,
                     referenceType: "BOOKING",

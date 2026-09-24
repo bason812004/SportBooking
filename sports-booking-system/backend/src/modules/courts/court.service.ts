@@ -72,11 +72,26 @@ export const courtService = {
       summarized = summarized.filter((item) => item.distanceKm === null || item.distanceKm <= radiusKm);
     }
 
-    if (query.sortBy === "distance" && userLocation) {
+    const sortMode = query.sort || query.sortBy;
+    if (sortMode === "distance" && userLocation) {
       summarized.sort((left, right) => (left.distanceKm ?? Number.MAX_SAFE_INTEGER) - (right.distanceKm ?? Number.MAX_SAFE_INTEGER));
+    } else if (sortMode === "price_asc") {
+      summarized.sort((left, right) => (left.minPrice || 0) - (right.minPrice || 0));
+    } else if (sortMode === "price_desc") {
+      summarized.sort((left, right) => (right.minPrice || 0) - (left.minPrice || 0));
+    } else if (sortMode === "popular" || sortMode === "rating") {
+      summarized.sort((left, right) => {
+        const ratingDiff = (right.averageRating || 0) - (left.averageRating || 0);
+        if (Math.abs(ratingDiff) > 0.1) return ratingDiff;
+        return (right.reviewCount || 0) - (left.reviewCount || 0);
+      });
     }
 
-    const needsCustomPagination = Boolean(userLocation || query.sortBy === "distance" || hasRadiusFilter);
+    const needsCustomPagination = Boolean(
+      userLocation ||
+      hasRadiusFilter ||
+      ["distance", "price_asc", "price_desc", "popular", "rating"].includes(sortMode || "")
+    );
     const effectiveTotal = needsCustomPagination ? summarized.length : total;
     const start = (page - 1) * limit;
     const pagedCandidates = needsCustomPagination ? summarized.slice(start, start + limit) : summarized;

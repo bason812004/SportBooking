@@ -9,5 +9,32 @@ export const bookingController = {
   detail: asyncHandler(async (req, res) => sendSuccess(res, await bookingService.getForUser(req.user!.id, req.params.id))),
   cancel: asyncHandler(async (req, res) =>
     sendSuccess(res, await bookingService.cancel(req.user!.id, req.params.id, req.body.cancelReason))
+  ),
+  getBill: asyncHandler(async (req, res) =>
+    sendSuccess(res, await bookingService.getBookingBill(req.user!.id, req.params.id, req.user?.role))
+  ),
+  getServices: asyncHandler(async (req, res) =>
+    sendSuccess(res, await bookingService.getBookingServices(req.user!.id, req.params.id, req.user?.role))
+  ),
+  addService: asyncHandler(async (req, res) =>
+    sendSuccess(res, await bookingService.addServiceToBooking(req.user!.id, req.params.id, req.body, req.user?.role), 201)
+  ),
+  updateService: asyncHandler(async (req, res) =>
+    sendSuccess(
+      res,
+      await bookingService.updateBookingServiceQuantity(
+        req.user!.id,
+        req.params.id,
+        req.params.serviceId,
+        Number(req.body.quantity),
+        req.user?.role
+      )
+    )
+  ),
+  removeService: asyncHandler(async (req, res) =>
+    sendSuccess(res, await bookingService.removeBookingService(req.user!.id, req.params.id, req.params.serviceId, req.user?.role))
+  ),
+  checkoutBooking: asyncHandler(async (req, res) =>
+    sendSuccess(res, await bookingService.checkoutBooking(req.user!.id, req.params.id, req.user?.role))
   )
 };

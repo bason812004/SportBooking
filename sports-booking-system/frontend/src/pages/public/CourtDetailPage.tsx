@@ -294,7 +294,7 @@ export function CourtDetailPage() {
                           key={s.id}
                           type="button"
                           onClick={() => setSelectedSurfaceId(s.id)}
-                          className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-black transition border ${(selectedSurfaceId ?? surfaces[0]?.id) === s.id
+                          className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-black transition border ${(selectedSurfaceId ?? surfaces?.[0]?.id) === s.id
                               ? "bg-[#02712a] text-white border-[#02712a] shadow-md scale-105"
                               : "bg-white text-slate-700 border-slate-200 hover:bg-emerald-100/60"
                             }`}

@@ -185,56 +185,56 @@ export async function forceSeedAllServicesToDb() {
       }
     }
 
-    // Master sample services pool
+    // Master sample services pool with high quality preview images
     const masterServices = [
-      { name: "Nước suối Aquafina 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 10000, costPrice: 4000, unit: "chai" },
-      { name: "Coca Cola 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon" },
-      { name: "Pepsi Vị Chanh 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon" },
-      { name: "7Up Vị Chanh 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon" },
-      { name: "Sting Dâu Đỏ 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "chai" },
-      { name: "Pocari Sweat Bù Khoáng 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 15000, costPrice: 9000, unit: "chai" },
-      { name: "Redbull (Bò Húc Thái)", categorySlug: "do-uong", type: "PRODUCT", price: 18000, costPrice: 10000, unit: "lon" },
-      { name: "Trà Đào Cam Sả Tươi", categorySlug: "do-uong", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "ly" },
-      { name: "Nước Dừa Tươi Ướp Lạnh", categorySlug: "do-uong", type: "PRODUCT", price: 25000, costPrice: 15000, unit: "trái" },
-      { name: "Revive Chanh Muối 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "chai" },
+      { name: "Nước suối Aquafina 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 10000, costPrice: 4000, unit: "chai", imageUrl: "https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=500&auto=format&fit=crop&q=60" },
+      { name: "Coca Cola 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon", imageUrl: "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=500&auto=format&fit=crop&q=60" },
+      { name: "Pepsi Vị Chanh 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon", imageUrl: "https://images.unsplash.com/photo-1553456558-aff63285bdd1?w=500&auto=format&fit=crop&q=60" },
+      { name: "7Up Vị Chanh 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon", imageUrl: "https://images.unsplash.com/photo-1625772299848-391b6a87d7b3?w=500&auto=format&fit=crop&q=60" },
+      { name: "Sting Dâu Đỏ 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "chai", imageUrl: "https://images.unsplash.com/photo-1527960471264-932f39eb5846?w=500&auto=format&fit=crop&q=60" },
+      { name: "Pocari Sweat Bù Khoáng 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 15000, costPrice: 9000, unit: "chai", imageUrl: "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=500&auto=format&fit=crop&q=60" },
+      { name: "Redbull (Bò Húc Thái)", categorySlug: "do-uong", type: "PRODUCT", price: 18000, costPrice: 10000, unit: "lon", imageUrl: "https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=500&auto=format&fit=crop&q=60" },
+      { name: "Trà Đào Cam Sả Tươi", categorySlug: "do-uong", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "ly", imageUrl: "https://images.unsplash.com/photo-1556679343-c7306c1976bc?w=500&auto=format&fit=crop&q=60" },
+      { name: "Nước Dừa Tươi Ướp Lạnh", categorySlug: "do-uong", type: "PRODUCT", price: 25000, costPrice: 15000, unit: "trái", imageUrl: "https://images.unsplash.com/photo-1525385133512-2f3bdd039054?w=500&auto=format&fit=crop&q=60" },
+      { name: "Revive Chanh Muối 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "chai", imageUrl: "https://images.unsplash.com/photo-1534353473418-4cfa6c56fd38?w=500&auto=format&fit=crop&q=60" },
 
-      { name: "Hộp Dưa Hấu Ướp Lạnh", categorySlug: "trai-cay", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "hộp" },
-      { name: "Hộp Xoài Lắc Muối Ớt", categorySlug: "trai-cay", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "hộp" },
-      { name: "Hộp Ổi Giòn Ngọt", categorySlug: "trai-cay", type: "PRODUCT", price: 20000, costPrice: 10000, unit: "hộp" },
-      { name: "Hộp Nho Mỹ Không Hạt", categorySlug: "trai-cay", type: "PRODUCT", price: 40000, costPrice: 22000, unit: "hộp" },
-      { name: "Đĩa Trái Cây Thập Cẩm Lớn", categorySlug: "trai-cay", type: "PRODUCT", price: 65000, costPrice: 35000, unit: "đĩa" },
-      { name: "Chuối Sứ Thể Thao", categorySlug: "trai-cay", type: "PRODUCT", price: 8000, costPrice: 4000, unit: "quả" },
+      { name: "Hộp Dưa Hấu Ướp Lạnh", categorySlug: "trai-cay", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1587049352846-4a222e784d38?w=500&auto=format&fit=crop&q=60" },
+      { name: "Hộp Xoài Lắc Muối Ớt", categorySlug: "trai-cay", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1553279768-865429fa0078?w=500&auto=format&fit=crop&q=60" },
+      { name: "Hộp Ổi Giòn Ngọt", categorySlug: "trai-cay", type: "PRODUCT", price: 20000, costPrice: 10000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1536511135898-1b2c4e51be9b?w=500&auto=format&fit=crop&q=60" },
+      { name: "Hộp Nho Mỹ Không Hạt", categorySlug: "trai-cay", type: "PRODUCT", price: 40000, costPrice: 22000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1537640538966-79f369143f8f?w=500&auto=format&fit=crop&q=60" },
+      { name: "Đĩa Trái Cây Thập Cẩm Lớn", categorySlug: "trai-cay", type: "PRODUCT", price: 65000, costPrice: 35000, unit: "đĩa", imageUrl: "https://images.unsplash.com/photo-1619566636858-adf3ef46400b?w=500&auto=format&fit=crop&q=60" },
+      { name: "Chuối Sứ Thể Thao", categorySlug: "trai-cay", type: "PRODUCT", price: 8000, costPrice: 4000, unit: "quả", imageUrl: "https://images.unsplash.com/photo-1571771894821-ce9b6c11b08e?w=500&auto=format&fit=crop&q=60" },
 
-      { name: "Bánh Mì Chả Pate", categorySlug: "do-an", type: "PRODUCT", price: 20000, costPrice: 11000, unit: "ổ" },
-      { name: "Bánh Mì Ốp La 2 Trứng", categorySlug: "do-an", type: "PRODUCT", price: 25000, costPrice: 13000, unit: "ổ" },
-      { name: "Mì Ly Cung Đình Bò Hầm", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "ly" },
-      { name: "Xúc Xích Nướng Đức", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 7000, unit: "cây" },
-      { name: "Bánh Bao Nhân Thịt Trứng Cút", categorySlug: "do-an", type: "PRODUCT", price: 18000, costPrice: 10000, unit: "cái" },
-      { name: "Bánh Ngọt Croissant Bơ Tươi", categorySlug: "do-an", type: "PRODUCT", price: 22000, costPrice: 12000, unit: "cái" },
-      { name: "Gói Snack Lay's Vị Tự Nhiên", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 9000, unit: "gói" },
-      { name: "Mì Cốc Hảo Hảo Tôm Chua Cay", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "cốc" },
+      { name: "Bánh Mì Chả Pate", categorySlug: "do-an", type: "PRODUCT", price: 20000, costPrice: 11000, unit: "ổ", imageUrl: "https://images.unsplash.com/photo-1626074353765-517a681e40be?w=500&auto=format&fit=crop&q=60" },
+      { name: "Bánh Mì Ốp La 2 Trứng", categorySlug: "do-an", type: "PRODUCT", price: 25000, costPrice: 13000, unit: "ổ", imageUrl: "https://images.unsplash.com/photo-1525351484163-7529414344d8?w=500&auto=format&fit=crop&q=60" },
+      { name: "Mì Ly Cung Đình Bò Hầm", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "ly", imageUrl: "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=500&auto=format&fit=crop&q=60" },
+      { name: "Xúc Xích Nướng Đức", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 7000, unit: "cây", imageUrl: "https://images.unsplash.com/photo-1541592106381-b31e9677c0e5?w=500&auto=format&fit=crop&q=60" },
+      { name: "Bánh Bao Nhân Thịt Trứng Cút", categorySlug: "do-an", type: "PRODUCT", price: 18000, costPrice: 10000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1541696432-82c6da8ce7bf?w=500&auto=format&fit=crop&q=60" },
+      { name: "Bánh Ngọt Croissant Bơ Tươi", categorySlug: "do-an", type: "PRODUCT", price: 22000, costPrice: 12000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1555507036-ab1f4038808a?w=500&auto=format&fit=crop&q=60" },
+      { name: "Gói Snack Lay's Vị Tự Nhiên", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 9000, unit: "gói", imageUrl: "https://images.unsplash.com/photo-1566478989037-eec170784d0b?w=500&auto=format&fit=crop&q=60" },
+      { name: "Mì Cốc Hảo Hảo Tôm Chua Cay", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "cốc", imageUrl: "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=500&auto=format&fit=crop&q=60" },
 
-      { name: "Vớ Thể Thao Yonex", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "đôi" },
-      { name: "Khăn Lạnh Ướp Hương", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 5000, costPrice: 2000, unit: "cái" },
-      { name: "Khăn Bông Thấm Mồ Hôi 100% Cotton", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 18000, unit: "cái" },
-      { name: "Băng Trán / Cổ Tay Thể Thao", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 20000, costPrice: 9000, unit: "cái" },
-      { name: "Bóng Tennis Wilson (Hộp 3 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 95000, costPrice: 65000, unit: "hộp" },
-      { name: "Cầu Lông Ba Sao Đỏ (Ống 12 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 240000, costPrice: 170000, unit: "ống" },
-      { name: "Bóng Pickleball Franklin X-40", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 45000, costPrice: 28000, unit: "quả" },
-      { name: "Quả Cầu Lông Thành Công (Hộp 12)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 250000, costPrice: 180000, unit: "hộp" },
-      { name: "Bóng Tennis Wilson US Open", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 110000, costPrice: 75000, unit: "hộp" },
-      { name: "Vớ Thể Thao Cổ Cao Yonex", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 20000, unit: "đôi" },
-      { name: "Khăn Bông Tắm Thể Thao", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 45000, costPrice: 25000, unit: "cái" },
+      { name: "Vớ Thể Thao Yonex", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" },
+      { name: "Khăn Lạnh Ướp Hương", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 5000, costPrice: 2000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" },
+      { name: "Khăn Bông Thấm Mồ Hôi 100% Cotton", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 18000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" },
+      { name: "Băng Trán / Cổ Tay Thể Thao", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 20000, costPrice: 9000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=500&auto=format&fit=crop&q=60" },
+      { name: "Bóng Tennis Wilson (Hộp 3 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 95000, costPrice: 65000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1554068865-24cecd4e34b8?w=500&auto=format&fit=crop&q=60" },
+      { name: "Cầu Lông Ba Sao Đỏ (Ống 12 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 240000, costPrice: 170000, unit: "ống", imageUrl: "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?w=500&auto=format&fit=crop&q=60" },
+      { name: "Bóng Pickleball Franklin X-40", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 45000, costPrice: 28000, unit: "quả", imageUrl: "https://images.unsplash.com/photo-1688649475459-71583d735079?w=500&auto=format&fit=crop&q=60" },
+      { name: "Quả Cầu Lông Thành Công (Hộp 12)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 250000, costPrice: 180000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?w=500&auto=format&fit=crop&q=60" },
+      { name: "Bóng Tennis Wilson US Open", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 110000, costPrice: 75000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1554068865-24cecd4e34b8?w=500&auto=format&fit=crop&q=60" },
+      { name: "Vớ Thể Thao Cổ Cao Yonex", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 20000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" },
+      { name: "Khăn Bông Tắm Thể Thao", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 45000, costPrice: 25000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" },
 
-      { name: "Thuê Vợt Tennis Wilson Pro", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 80000, costPrice: 0, unit: "lượt" },
-      { name: "Thuê Vợt Cầu Lông Yonex Astrox", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 40000, costPrice: 0, unit: "lượt" },
-      { name: "Thuê Vợt Pickleball Selkirk", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 60000, costPrice: 0, unit: "lượt" },
-      { name: "Cho Thuê Vợt Tennis Babolat", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 100000, costPrice: 20000, unit: "lượt" },
-      { name: "Cho Thuê Vợt Cầu Lông Cao Cấp", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 50000, costPrice: 10000, unit: "lượt" },
+      { name: "Thuê Vợt Tennis Wilson Pro", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 80000, costPrice: 0, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1617083934555-563d9178ee72?w=500&auto=format&fit=crop&q=60" },
+      { name: "Thuê Vợt Cầu Lông Yonex Astrox", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 40000, costPrice: 0, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1613918108466-292b78a8ef95?w=500&auto=format&fit=crop&q=60" },
+      { name: "Thuê Vợt Pickleball Selkirk", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 60000, costPrice: 0, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1688649475459-71583d735079?w=500&auto=format&fit=crop&q=60" },
+      { name: "Cho Thuê Vợt Tennis Babolat", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 100000, costPrice: 20000, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1617083934555-563d9178ee72?w=500&auto=format&fit=crop&q=60" },
+      { name: "Cho Thuê Vợt Cầu Lông Cao Cấp", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 50000, costPrice: 10000, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1613918108466-292b78a8ef95?w=500&auto=format&fit=crop&q=60" },
 
-      { name: "Combo Đôi Năng Lượng (2 Suối + 1 Dưa Hấu + 2 Khăn)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 45000, costPrice: 22000, unit: "combo" },
-      { name: "Combo Team 4 Đập Phá (4 Nước Ngọt + 1 Đĩa Trái Cây + 4 Khăn)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 110000, costPrice: 58000, unit: "combo" },
-      { name: "Combo Thể Lực Tốc Độ (1 Pocari + 1 Redbull + 2 Chuối Sứ)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 42000, costPrice: 22000, unit: "combo" }
+      { name: "Combo Đôi Năng Lượng (2 Suối + 1 Dưa Hấu + 2 Khăn)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 45000, costPrice: 22000, unit: "combo", imageUrl: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=500&auto=format&fit=crop&q=60" },
+      { name: "Combo Team 4 Đập Phá (4 Nước Ngọt + 1 Đĩa Trái Cây + 4 Khăn)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 110000, costPrice: 58000, unit: "combo", imageUrl: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=500&auto=format&fit=crop&q=60" },
+      { name: "Combo Thể Lực Tốc Độ (1 Pocari + 1 Redbull + 2 Chuối Sứ)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 42000, costPrice: 22000, unit: "combo", imageUrl: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=500&auto=format&fit=crop&q=60" }
     ];
 
     // Fetch all courts
@@ -273,10 +273,12 @@ export async function forceSeedAllServicesToDb() {
 
         let serviceId = "";
         const inserted: any = await prisma.$queryRawUnsafe(
-          `INSERT INTO services (id, court_id, partner_id, category_id, name, type, price, cost_price, unit, status, track_inventory, created_at, updated_at)
-           VALUES (DEFAULT, $1, $2, CASE WHEN $3::text IS NULL OR $3::text = '' THEN NULL ELSE $3::uuid END, $4, $5, $6, $7, $8, 'ACTIVE', TRUE, NOW(), NOW())
+          // id stays DEFAULT: services.id is VARCHAR(20) fed by seq_services ('svNNNN'), so a
+          // 36-char gen_random_uuid() would not fit the column.
+          `INSERT INTO services (id, court_id, partner_id, category_id, name, type, price, cost_price, unit, image_url, status, track_inventory, created_at, updated_at)
+           VALUES (DEFAULT, $1, $2, CASE WHEN $3::text IS NULL OR $3::text = '' THEN NULL ELSE $3::uuid END, $4, $5, $6, $7, $8, $9, 'ACTIVE', TRUE, NOW(), NOW())
            RETURNING id;`,
-          courtId, partnerId, catId, svc.name, svc.type, svc.price, svc.costPrice, svc.unit
+          courtId, partnerId, catId, svc.name, svc.type, svc.price, svc.costPrice, svc.unit, svc.imageUrl || null
         ).catch(async (err) => {
           console.error("[ServiceRepository] Direct insert error:", err);
           return [];
@@ -287,9 +289,10 @@ export async function forceSeedAllServicesToDb() {
           totalServicesSeeded++;
         } else {
           await prisma.$executeRawUnsafe(
-            `INSERT INTO services (id, court_id, partner_id, category_id, name, type, price, cost_price, unit, status, track_inventory, created_at, updated_at)
-             VALUES (DEFAULT, $1, $2, CASE WHEN $3::text IS NULL OR $3::text = '' THEN NULL ELSE $3::uuid END, $4, $5, $6, $7, $8, 'ACTIVE', TRUE, NOW(), NOW());`,
-            courtId, partnerId, catId, svc.name, svc.type, svc.price, svc.costPrice, svc.unit
+            `INSERT INTO services (id, court_id, partner_id, category_id, name, type, price, cost_price, unit, image_url, status, track_inventory, created_at, updated_at)
+             VALUES (DEFAULT, $1, $2, CASE WHEN $3::text IS NULL OR $3::text = '' THEN NULL ELSE $3::uuid END, $4, $5, $6, $7, $8, $9, 'ACTIVE', TRUE, NOW(), NOW())
+             ON CONFLICT DO NOTHING;`,
+            courtId, partnerId, catId, svc.name, svc.type, svc.price, svc.costPrice, svc.unit, svc.imageUrl || null
           ).catch(() => {});
 
           const existing: any = await prisma.$queryRawUnsafe(
@@ -299,6 +302,12 @@ export async function forceSeedAllServicesToDb() {
           if (Array.isArray(existing) && existing.length > 0) {
             serviceId = existing[0].id;
             totalServicesSeeded++;
+            if (svc.imageUrl) {
+              await prisma.$executeRawUnsafe(
+                `UPDATE services SET image_url = $1 WHERE id = $2 AND (image_url IS NULL OR image_url = '');`,
+                svc.imageUrl, serviceId
+              ).catch(() => {});
+            }
           }
         }
 
@@ -392,82 +401,82 @@ async function ensureCourtServicesSeededInDb(courtId: string) {
 
     const masterServices = [
       // Drinks
-      { name: "Nước suối Aquafina 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 10000, costPrice: 4000, unit: "chai" },
-      { name: "Coca Cola 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon" },
-      { name: "Pocari Sweat Bù Khoáng 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 15000, costPrice: 9000, unit: "chai" },
-      { name: "Redbull (Bò Húc Thái)", categorySlug: "do-uong", type: "PRODUCT", price: 18000, costPrice: 10000, unit: "lon" },
-      { name: "Revive Chanh Muối 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "chai" },
+      { name: "Nước suối Aquafina 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 10000, costPrice: 4000, unit: "chai", imageUrl: "https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=500&auto=format&fit=crop&q=60" },
+      { name: "Coca Cola 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon", imageUrl: "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=500&auto=format&fit=crop&q=60" },
+      { name: "Pocari Sweat Bù Khoáng 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 15000, costPrice: 9000, unit: "chai", imageUrl: "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=500&auto=format&fit=crop&q=60" },
+      { name: "Redbull (Bò Húc Thái)", categorySlug: "do-uong", type: "PRODUCT", price: 18000, costPrice: 10000, unit: "lon", imageUrl: "https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=500&auto=format&fit=crop&q=60" },
+      { name: "Revive Chanh Muối 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "chai", imageUrl: "https://images.unsplash.com/photo-1534353473418-4cfa6c56fd38?w=500&auto=format&fit=crop&q=60" },
 
       // Fresh Fruit
-      { name: "Hộp Dưa Hấu Ướp Lạnh", categorySlug: "trai-cay", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "hộp" },
-      { name: "Chuối Sứ Thể Thao", categorySlug: "trai-cay", type: "PRODUCT", price: 8000, costPrice: 4000, unit: "quả" },
+      { name: "Hộp Dưa Hấu Ướp Lạnh", categorySlug: "trai-cay", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1587049352846-4a222e784d38?w=500&auto=format&fit=crop&q=60" },
+      { name: "Chuối Sứ Thể Thao", categorySlug: "trai-cay", type: "PRODUCT", price: 8000, costPrice: 4000, unit: "quả", imageUrl: "https://images.unsplash.com/photo-1571771894821-ce9b6c11b08e?w=500&auto=format&fit=crop&q=60" },
 
       // Food & Snacks
-      { name: "Bánh Mì Chả Pate", categorySlug: "do-an", type: "PRODUCT", price: 20000, costPrice: 11000, unit: "ổ" },
-      { name: "Mì Ly Cung Đình Bò Hầm", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "ly" },
-      { name: "Bánh Bao Nhân Thịt Trứng Cút", categorySlug: "do-an", type: "PRODUCT", price: 18000, costPrice: 10000, unit: "cái" },
+      { name: "Bánh Mì Chả Pate", categorySlug: "do-an", type: "PRODUCT", price: 20000, costPrice: 11000, unit: "ổ", imageUrl: "https://images.unsplash.com/photo-1626074353765-517a681e40be?w=500&auto=format&fit=crop&q=60" },
+      { name: "Mì Ly Cung Đình Bò Hầm", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "ly", imageUrl: "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=500&auto=format&fit=crop&q=60" },
+      { name: "Bánh Bao Nhân Thịt Trứng Cút", categorySlug: "do-an", type: "PRODUCT", price: 18000, costPrice: 10000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1541696432-82c6da8ce7bf?w=500&auto=format&fit=crop&q=60" },
 
       // Common Gear
-      { name: "Khăn Lạnh Ướp Hương", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 5000, costPrice: 2000, unit: "cái" },
-      { name: "Khăn Bông Thấm Mồ Hôi 100% Cotton", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 18000, unit: "cái" },
+      { name: "Khăn Lạnh Ướp Hương", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 5000, costPrice: 2000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" },
+      { name: "Khăn Bông Thấm Mồ Hôi 100% Cotton", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 18000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" },
 
       // 🎾 1. BADMINTON (Cầu lông - Có thuê vợt)
       ...(isBadminton ? [
-        { name: "Thuê Vợt Cầu Lông Yonex Astrox", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 40000, costPrice: 0, unit: "lượt" },
-        { name: "Cho Thuê Vợt Cầu Lông Cao Cấp", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 50000, costPrice: 10000, unit: "lượt" },
-        { name: "Cầu Lông Ba Sao Đỏ (Ống 12 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 240000, costPrice: 170000, unit: "ống" },
-        { name: "Quả Cầu Lông Thành Công (Hộp 12)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 250000, costPrice: 180000, unit: "hộp" },
-        { name: "Quấn Cán Vợt Cầu Lông Yonex", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 20000, costPrice: 8000, unit: "cái" },
-        { name: "Vớ Thể Thao Yonex Chống Trượt", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 30000, costPrice: 15000, unit: "đôi" }
+        { name: "Thuê Vợt Cầu Lông Yonex Astrox", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 40000, costPrice: 0, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1613918108466-292b78a8ef95?w=500&auto=format&fit=crop&q=60" },
+        { name: "Cho Thuê Vợt Cầu Lông Cao Cấp", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 50000, costPrice: 10000, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1613918108466-292b78a8ef95?w=500&auto=format&fit=crop&q=60" },
+        { name: "Cầu Lông Ba Sao Đỏ (Ống 12 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 240000, costPrice: 170000, unit: "ống", imageUrl: "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?w=500&auto=format&fit=crop&q=60" },
+        { name: "Quả Cầu Lông Thành Công (Hộp 12)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 250000, costPrice: 180000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?w=500&auto=format&fit=crop&q=60" },
+        { name: "Quấn Cán Vợt Cầu Lông Yonex", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 20000, costPrice: 8000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1613918108466-292b78a8ef95?w=500&auto=format&fit=crop&q=60" },
+        { name: "Vớ Thể Thao Yonex Chống Trượt", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 30000, costPrice: 15000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" }
       ] : []),
 
       // 🎾 2. TENNIS (Tennis - Có thuê vợt)
       ...(isTennis ? [
-        { name: "Thuê Vợt Tennis Wilson Pro", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 80000, costPrice: 0, unit: "lượt" },
-        { name: "Cho Thuê Vợt Tennis Babolat", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 100000, costPrice: 20000, unit: "lượt" },
-        { name: "Bóng Tennis Wilson (Hộp 3 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 95000, costPrice: 65000, unit: "hộp" },
-        { name: "Bóng Tennis Wilson US Open", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 110000, costPrice: 75000, unit: "hộp" },
-        { name: "Quấn Cán Vợt Tennis Babolat", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 25000, costPrice: 10000, unit: "cái" },
-        { name: "Vớ Thể Thao Tennis Cotton", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 18000, unit: "đôi" }
+        { name: "Thuê Vợt Tennis Wilson Pro", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 80000, costPrice: 0, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1617083934555-563d9178ee72?w=500&auto=format&fit=crop&q=60" },
+        { name: "Cho Thuê Vợt Tennis Babolat", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 100000, costPrice: 20000, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1617083934555-563d9178ee72?w=500&auto=format&fit=crop&q=60" },
+        { name: "Bóng Tennis Wilson (Hộp 3 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 95000, costPrice: 65000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1554068865-24cecd4e34b8?w=500&auto=format&fit=crop&q=60" },
+        { name: "Bóng Tennis Wilson US Open", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 110000, costPrice: 75000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1554068865-24cecd4e34b8?w=500&auto=format&fit=crop&q=60" },
+        { name: "Quấn Cán Vợt Tennis Babolat", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 25000, costPrice: 10000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1617083934555-563d9178ee72?w=500&auto=format&fit=crop&q=60" },
+        { name: "Vớ Thể Thao Tennis Cotton", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 18000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" }
       ] : []),
 
       // 🎾 3. PICKLEBALL (Pickleball - Có thuê vợt)
       ...(isPickleball ? [
-        { name: "Thuê Vợt Pickleball Selkirk", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 60000, costPrice: 0, unit: "lượt" },
-        { name: "Cho Thuê Vợt Pickleball Franklin", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 50000, costPrice: 10000, unit: "lượt" },
-        { name: "Bóng Pickleball Franklin X-40", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 45000, costPrice: 28000, unit: "quả" },
-        { name: "Bóng Pickleball Diadem (Hộp 3 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 120000, costPrice: 80000, unit: "hộp" },
-        { name: "Vớ Thể Thao Pickleball Chống Trượt", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 30000, costPrice: 15000, unit: "đôi" }
+        { name: "Thuê Vợt Pickleball Selkirk", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 60000, costPrice: 0, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1688649475459-71583d735079?w=500&auto=format&fit=crop&q=60" },
+        { name: "Cho Thuê Vợt Pickleball Franklin", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 50000, costPrice: 10000, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1688649475459-71583d735079?w=500&auto=format&fit=crop&q=60" },
+        { name: "Bóng Pickleball Franklin X-40", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 45000, costPrice: 28000, unit: "quả", imageUrl: "https://images.unsplash.com/photo-1688649475459-71583d735079?w=500&auto=format&fit=crop&q=60" },
+        { name: "Bóng Pickleball Diadem (Hộp 3 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 120000, costPrice: 80000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1688649475459-71583d735079?w=500&auto=format&fit=crop&q=60" },
+        { name: "Vớ Thể Thao Pickleball Chống Trượt", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 30000, costPrice: 15000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" }
       ] : []),
 
       // ⚽ 4. FOOTBALL (Bóng đá - Không thuê vợt!)
       ...(isFootball ? [
-        { name: "Cho Thuê Bóng Đá Động Lực Số 5", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 30000, costPrice: 0, unit: "trận" },
-        { name: "Băng Bọc Ống Quyển Chống Chấn Thương", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 45000, costPrice: 22000, unit: "cặp" },
-        { name: "Vớ Đá Bóng Cổ Cao Dày 100% Cotton", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 16000, unit: "đôi" },
-        { name: "Vớ Chống Trượt Đá Bóng Fox-Socks", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 40000, costPrice: 20000, unit: "đôi" },
-        { name: "Thuê Bộ 10 Áo Bít Phân Đội Đá Bóng", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 50000, costPrice: 10000, unit: "bộ" }
+        { name: "Cho Thuê Bóng Đá Động Lực Số 5", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 30000, costPrice: 0, unit: "trận", imageUrl: "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=500&auto=format&fit=crop&q=60" },
+        { name: "Băng Bọc Ống Quyển Chống Chấn Thương", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 45000, costPrice: 22000, unit: "cặp", imageUrl: "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=500&auto=format&fit=crop&q=60" },
+        { name: "Vớ Đá Bóng Cổ Cao Dày 100% Cotton", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 16000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" },
+        { name: "Vớ Chống Trượt Đá Bóng Fox-Socks", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 40000, costPrice: 20000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" },
+        { name: "Thuê Bộ 10 Áo Bít Phân Đội Đá Bóng", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 50000, costPrice: 10000, unit: "bộ", imageUrl: "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=500&auto=format&fit=crop&q=60" }
       ] : []),
 
       // 🏀 5. BASKETBALL (Bóng rổ - Không thuê vợt!)
       ...(isBasketball ? [
-        { name: "Cho Thuê Bóng Rổ Molten Da Thật", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 30000, costPrice: 0, unit: "lượt" },
-        { name: "Băng Bọc Cổ Tay & Ngón Tay Thể Thao", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 20000, costPrice: 9000, unit: "cái" },
-        { name: "Vớ Bóng Rổ Cổ Cao Đệm Dày Chống Trượt", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 40000, costPrice: 18000, unit: "đôi" },
-        { name: "Băng Đệm Bảo Vệ Đầu Gối / Khuỷu Tay", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 50000, costPrice: 25000, unit: "cặp" }
+        { name: "Cho Thuê Bóng Rổ Molten Da Thật", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 30000, costPrice: 0, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1519766304817-4f37bda74a29?w=500&auto=format&fit=crop&q=60" },
+        { name: "Băng Bọc Cổ Tay & Ngón Tay Thể Thao", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 20000, costPrice: 9000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=500&auto=format&fit=crop&q=60" },
+        { name: "Vớ Bóng Rổ Cổ Cao Đệm Dày Chống Trượt", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 40000, costPrice: 18000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" },
+        { name: "Băng Đệm Bảo Vệ Đầu Gối / Khuỷu Tay", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 50000, costPrice: 25000, unit: "cặp", imageUrl: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=500&auto=format&fit=crop&q=60" }
       ] : []),
 
       // 🏐 6. VOLLEYBALL (Bóng chuyền - Không thuê vợt!)
       ...(isVolleyball ? [
-        { name: "Cho Thuê Bóng Chuyền Mikasa Da Thật", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 30000, costPrice: 0, unit: "lượt" },
-        { name: "Băng Đệm Bảo Vệ Đầu Gối Thi Đấu", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 60000, costPrice: 30000, unit: "cặp" },
-        { name: "Băng Bảo Vệ Cổ Tay / Cánh Tay", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 16000, unit: "cặp" },
-        { name: "Vớ Thể Thao Chuyên Dụng Thi Đấu", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 30000, costPrice: 15000, unit: "đôi" }
+        { name: "Cho Thuê Bóng Chuyền Mikasa Da Thật", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 30000, costPrice: 0, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?w=500&auto=format&fit=crop&q=60" },
+        { name: "Băng Đệm Bảo Vệ Đầu Gối Thi Đấu", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 60000, costPrice: 30000, unit: "cặp", imageUrl: "https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?w=500&auto=format&fit=crop&q=60" },
+        { name: "Băng Bảo Vệ Cổ Tay / Cánh Tay", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 16000, unit: "cặp", imageUrl: "https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?w=500&auto=format&fit=crop&q=60" },
+        { name: "Vớ Thể Thao Chuyên Dụng Thi Đấu", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 30000, costPrice: 15000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" }
       ] : []),
 
       // Combos
-      { name: "Combo Đôi Năng Lượng (2 Suối + 1 Dưa Hấu + 2 Khăn)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 45000, costPrice: 22000, unit: "combo" },
-      { name: "Combo Team 4 Đập Phá (4 Nước Ngọt + 1 Đĩa Trái Cây + 4 Khăn)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 110000, costPrice: 58000, unit: "combo" }
+      { name: "Combo Đôi Năng Lượng (2 Suối + 1 Dưa Hấu + 2 Khăn)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 45000, costPrice: 22000, unit: "combo", imageUrl: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=500&auto=format&fit=crop&q=60" },
+      { name: "Combo Team 4 Đập Phá (4 Nước Ngọt + 1 Đĩa Trái Cây + 4 Khăn)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 110000, costPrice: 58000, unit: "combo", imageUrl: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=500&auto=format&fit=crop&q=60" }
     ];
 
     const catRows: any = await prisma.$queryRawUnsafe(`SELECT id, slug FROM service_categories;`).catch(() => []);
@@ -479,17 +488,35 @@ async function ensureCourtServicesSeededInDb(courtId: string) {
     for (const svc of masterServices) {
       const categoryId = catMap.get(svc.categorySlug) || null;
       const res: any = await prisma.$queryRawUnsafe(
-        `INSERT INTO services (id, partner_id, court_id, category_id, name, description, type, price, cost_price, unit, status, track_inventory, created_at, updated_at)
-         VALUES (DEFAULT, $1, $2, $3::uuid, $4, $5, $6, $7, $8, $9, 'ACTIVE', true, NOW(), NOW())
+        `INSERT INTO services (id, partner_id, court_id, category_id, name, description, type, price, cost_price, unit, image_url, status, track_inventory, created_at, updated_at)
+         VALUES (DEFAULT, $1, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10, 'ACTIVE', true, NOW(), NOW())
+         ON CONFLICT DO NOTHING
          RETURNING id;`,
-        partnerId, courtId, categoryId, svc.name, `${svc.name} phục vụ tại ${courtInfoRows[0].name}`, svc.type, svc.price, svc.costPrice, svc.unit
+        partnerId, courtId, categoryId, svc.name, `${svc.name} phục vụ tại ${courtInfoRows[0].name}`, svc.type, svc.price, svc.costPrice, svc.unit, svc.imageUrl || null
       ).catch(() => []);
 
-      if (Array.isArray(res) && res.length > 0 && res[0].id) {
-        const serviceId = res[0].id;
+      let serviceId = Array.isArray(res) && res.length > 0 && res[0].id ? res[0].id : null;
+      if (!serviceId) {
+        const existRows: any = await prisma.$queryRawUnsafe(
+          `SELECT id FROM services WHERE court_id = $1 AND name = $2 LIMIT 1;`,
+          courtId, svc.name
+        ).catch(() => []);
+        if (Array.isArray(existRows) && existRows.length > 0) {
+          serviceId = existRows[0].id;
+          if (svc.imageUrl) {
+            await prisma.$executeRawUnsafe(
+              `UPDATE services SET image_url = $1 WHERE id = $2 AND (image_url IS NULL OR image_url = '');`,
+              svc.imageUrl, serviceId
+            ).catch(() => {});
+          }
+        }
+      }
+
+      if (serviceId) {
         await prisma.$executeRawUnsafe(
           `INSERT INTO service_inventories (id, service_id, quantity, reserved_quantity, minimum_stock, unit, last_purchase_price, created_at, updated_at)
-           VALUES (gen_random_uuid(), $1, 50, 0, 5, $2, $3, NOW(), NOW());`,
+           VALUES (gen_random_uuid(), $1, 50, 0, 5, $2, $3, NOW(), NOW())
+           ON CONFLICT (service_id) DO NOTHING;`,
           serviceId, svc.unit, svc.costPrice
         ).catch(() => {});
       }
@@ -617,7 +644,7 @@ export const serviceRepository = {
             c.name as "categoryName",
             s.court_id as "courtId",
             ct.name as "courtName",
-            COALESCE(si.quantity, 50) as quantity,
+            COALESCE(si.quantity, 0) as quantity,
             COALESCE(si.minimum_stock, 5) as "minimumStock"
           FROM services s
           LEFT JOIN service_categories c ON s.category_id = c.id
@@ -647,8 +674,8 @@ export const serviceRepository = {
             court: r.courtId ? { id: r.courtId, name: r.courtName } : null,
             category: r.categoryName ? { id: r.categoryId, name: r.categoryName } : null,
             inventory: {
-              quantity: Number(r.quantity),
-              minimumStock: Number(r.minimumStock)
+              quantity: Number(r.quantity || 0),
+              minimumStock: Number(r.minimumStock || 5)
             }
           })) as any;
         }
@@ -688,7 +715,7 @@ export const serviceRepository = {
           sc.name as "categoryName",
           sc.slug as "categorySlug",
           si.id as "inventoryId",
-          COALESCE(si.quantity, 50) as "inventoryQuantity",
+          COALESCE(si.quantity, 0) as "inventoryQuantity",
           si.reserved_quantity as "inventoryReservedQuantity",
           COALESCE(si.minimum_stock, 5) as "inventoryMinimumStock",
           si.unit as "inventoryUnit",
@@ -701,6 +728,8 @@ export const serviceRepository = {
         LEFT JOIN service_inventories si ON si.service_id = s.id
         LEFT JOIN courts c ON c.id = s.court_id
         LEFT JOIN court_categories cc ON cc.id = c.category_id
+        -- Strictly this court's rows: after migrate_fix_orphan_service_owner.sql no service is
+        -- court-less, and matching NULL court_id would show one partner's leftovers on every court.
         WHERE s.court_id = $1 AND (s.status = 'ACTIVE' OR s.status IS NULL)
         ORDER BY sc.name ASC, s.name ASC;
       `, courtId).catch(() => []);
@@ -743,7 +772,7 @@ export const serviceRepository = {
             inventory: {
               id: r.inventoryId,
               serviceId: r.id,
-              quantity: Number(r.inventoryQuantity ?? 50),
+              quantity: Number(r.inventoryQuantity ?? 0),
               reservedQuantity: Number(r.inventoryReservedQuantity ?? 0),
               minimumStock: Number(r.inventoryMinimumStock ?? 5),
               unit: r.unit,

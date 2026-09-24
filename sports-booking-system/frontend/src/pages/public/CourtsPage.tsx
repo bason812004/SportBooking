@@ -57,10 +57,6 @@ export function CourtsPage() {
       sortBy === "distance" ? "asc" :
         sortBy === "name" ? "asc" :
           undefined;
-  const sortField =
-    sortBy === "newest" ? undefined :
-      sortBy;
-
   const filters = {
     page,
     limit: PAGE_SIZE,
@@ -72,7 +68,7 @@ export function CourtsPage() {
     radiusKm: radiusKm && radiusKm > 0 ? radiusKm : undefined,
     latitude: userLocation.location?.latitude,
     longitude: userLocation.location?.longitude,
-    sortBy: sortField,
+    sortBy: sortBy || undefined,
     sortOrder
   };
   const courtsQuery = useCourts(filters);

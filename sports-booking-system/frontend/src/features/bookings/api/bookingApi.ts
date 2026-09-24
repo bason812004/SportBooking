@@ -109,7 +109,96 @@ export const bookingApi = {
   async cancel(id: string, cancelReason?: string) {
     const { data } = await api.put<ApiResponse<Booking>>(`/users/me/bookings/${id}/cancel`, { cancelReason });
     return data.data;
+  },
+  async getBill(bookingId: string) {
+    const { data } = await api.get<ApiResponse<BookingBill>>(`/bookings/${bookingId}/bill`);
+    return data.data;
+  },
+  async getServices(bookingId: string) {
+    const { data } = await api.get<ApiResponse<BookingBill["services"]>>(`/bookings/${bookingId}/services`);
+    return data.data;
+  },
+  async addService(bookingId: string, payload: { serviceId: string; quantity: number }) {
+    const { data } = await api.post<ApiResponse<any>>(`/bookings/${bookingId}/services`, payload);
+    return data.data;
+  },
+  async updateService(bookingId: string, serviceId: string, quantity: number) {
+    const { data } = await api.patch<ApiResponse<any>>(`/bookings/${bookingId}/services/${serviceId}`, { quantity });
+    return data.data;
+  },
+  async removeService(bookingId: string, serviceId: string) {
+    const { data } = await api.delete<ApiResponse<any>>(`/bookings/${bookingId}/services/${serviceId}`);
+    return data.data;
+  },
+  async listAvailableServices(params?: { courtId?: string; categoryId?: string; sportType?: string; search?: string }) {
+    const { data } = await api.get<ApiResponse<AvailableService[]>>(`/services`, { params });
+    return data.data;
   }
+};
+
+export type BookingBill = {
+  bookingId: string;
+  bookingCode: string;
+  bookingStatus: string;
+  paymentStatus: "PAID" | "PARTIAL" | "UNPAID" | "OVERDUE";
+  court: {
+    id: string;
+    name: string;
+    address: string;
+  };
+  user?: {
+    id: string;
+    fullName: string;
+    phone: string;
+    email: string;
+  };
+  bookingDate: string;
+  startTime: string;
+  endTime: string;
+  services: Array<{
+    id: string;
+    serviceId: string;
+    name: string;
+    category?: string;
+    unit?: string;
+    imageUrl?: string | null;
+    price: number;
+    unitPrice: number;
+    quantity: number;
+    totalPrice: number;
+    status: string;
+  }>;
+  subtotalCourt: number;
+  serviceSubtotal: number;
+  voucherDiscount: number;
+  depositPaid: number;
+  totalPaid: number;
+  remainingAmount: number;
+  totalAmount: number;
+  grandTotal: number;
+  isFullyPaid: boolean;
+  checkoutId?: string;
+  checkoutStatus?: string;
+  payments?: any[];
+};
+
+export type AvailableService = {
+  id: string;
+  courtId?: string;
+  categoryId?: string;
+  categoryName?: string;
+  name: string;
+  description?: string;
+  type: string;
+  sportType?: string;
+  price: number;
+  originalPrice?: number;
+  unit: string;
+  imageUrl?: string | null;
+  status: string;
+  trackInventory?: boolean;
+  stock?: number;
+  inventoryQuantity?: number;
 };
 
 export const voucherApi = {

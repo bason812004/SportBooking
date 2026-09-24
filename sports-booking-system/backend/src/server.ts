@@ -35,7 +35,7 @@ process.on("SIGINT", async () => {
 });
 
 // Trigger reload for resilient raw SQL getActiveBookings implementation
-// Reloaded at 2026-08-13 11:52
+// Reloaded at 2026-09-24 14:41:00
 
 
 
