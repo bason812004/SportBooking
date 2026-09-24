@@ -141,7 +141,14 @@ export function BookingPage() {
           basePrice: court.data?.minPrice ?? 0,
           finalPrice: court.data?.minPrice ?? 0,
           ruleNames: [],
-          status: "AVAILABLE"
+          status: "AVAILABLE",
+          dynamicAdjustmentAmount: 0,
+          adjustments: [],
+          predictionLevel: null,
+          predictionStatus: "INSUFFICIENT_DATA",
+          predictedOccupancyRate: null,
+          blockReason: null,
+          bookingCode: null
         });
       }
     });

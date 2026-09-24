@@ -18,6 +18,9 @@ import { calculateBookingQuote, canCreateBookingCheckout } from "./booking.calcu
 import type { CreateBookingInput } from "./booking.types.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { invalidateWeeklyScheduleCache } from "../weekly-schedule/weeklySchedule.service.js";
+import { cashierService } from "../cashier/cashier.service.js";
+import { cashierRepository } from "../cashier/cashier.repository.js";
+import { checkoutRepository } from "../checkout/checkout.repository.js";
 
 function bookingCode() {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
@@ -170,7 +173,7 @@ export const bookingService = {
           subtotal: quoteData.subtotal,
           voucherDiscountAmount: quoteData.voucherDiscountAmount,
           totalAmount: quoteData.totalAmount,
-          voucherId: quoteData.voucherId,
+          voucherId: quoteData.voucherId ?? undefined,
           note: input.note
         });
 
@@ -207,7 +210,7 @@ export const bookingService = {
         depositAmount: minimumDepositAmount,
         paymentType: input.paymentType,
         paymentAmount,
-        voucherId: quoteData.voucherId,
+        voucherId: quoteData.voucherId ?? undefined,
         note: input.note,
         provider: "MOCK_QR",
         externalOrderId: extOrderId,
@@ -255,7 +258,7 @@ export const bookingService = {
         userId,
         courtId: input.courtId,
         days: daysData,
-        voucherId: quoteData.voucherId,
+        voucherId: quoteData.voucherId ?? undefined,
         note: input.note
       });
 
@@ -291,7 +294,7 @@ export const bookingService = {
       totalAmount: quoteData.totalAmount,
       paymentType: input.paymentType,
       paymentAmount,
-      voucherId: quoteData.voucherId,
+      voucherId: quoteData.voucherId ?? undefined,
       note: input.note,
       provider: "MOCK_QR",
       externalOrderId: extOrderId,
@@ -424,5 +427,180 @@ export const bookingService = {
     if (new Date() > minCancelAt) throw new ValidationError("Chi duoc huy truoc gio bat dau it nhat 2 gio");
 
     return bookingRepository.cancel(bookingId, { cancelReason, refundAmount: 0, platformRetainedAmount: 0, paymentStatus: "CANCELLED" });
+  },
+
+  async assertBookingAccess(userId: string, bookingId: string, role?: string) {
+    const booking = await prisma.booking.findFirst({
+      where: {
+        OR: [
+          { id: bookingId },
+          { bookingCode: bookingId },
+          { bookingOrderId: bookingId }
+        ]
+      },
+      include: {
+        court: { select: { id: true, name: true, address: true, partnerId: true } },
+        user: { select: { id: true, fullName: true, phone: true, email: true } }
+      }
+    });
+
+    if (!booking) throw new NotFoundError("Không tìm thấy đơn đặt sân");
+    if (role === "ADMIN" || role === "SYSTEM_ADMIN") {
+      return booking;
+    }
+    if (role === "PARTNER") {
+      const partner = await prisma.partnerProfile.findUnique({ where: { userId }, select: { id: true } });
+      if (!partner || booking.court?.partnerId !== partner.id) {
+        throw new ForbiddenError("Bạn không có quyền quản lý đơn đặt của sân này");
+      }
+      return booking;
+    }
+    if (role === "RECIPIENT") {
+      const recipient = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { managedCourtId: true, partnerId: true }
+      });
+      const matchesManagedCourt = recipient?.managedCourtId && recipient.managedCourtId === booking.courtId;
+      const matchesPartner = recipient?.partnerId && recipient.partnerId === booking.court?.partnerId;
+      if (!matchesManagedCourt && !matchesPartner) {
+        throw new ForbiddenError("Bạn không có quyền quản lý đơn đặt của sân này");
+      }
+      return booking;
+    }
+    if (booking.userId !== userId) {
+      throw new ForbiddenError("Bạn không có quyền truy cập đơn đặt này");
+    }
+    return booking;
+  },
+
+  async getBookingBill(userId: string, bookingId: string, role?: string) {
+    const booking = await this.assertBookingAccess(userId, bookingId, role);
+    const detail = await cashierRepository.getBookingDetailForCashier(booking.id);
+    const checkoutData = await checkoutRepository.getOrCreateCheckout(booking.id);
+
+    // Compute status
+    let paymentStatus: "PAID" | "PARTIAL" | "UNPAID" | "OVERDUE" = "UNPAID";
+    const remaining = Number(checkoutData.breakdown.remainingAmount);
+    const totalPaid = Number(checkoutData.breakdown.totalPaid);
+
+    if (remaining <= 0) {
+      paymentStatus = "PAID";
+    } else {
+      let isOverdue = false;
+      try {
+        const dateStr = booking.bookingDate instanceof Date
+          ? booking.bookingDate.toISOString().slice(0, 10)
+          : String(booking.bookingDate).slice(0, 10);
+        const timeStr = booking.endTime instanceof Date
+          ? booking.endTime.toISOString().slice(11, 16)
+          : String(booking.endTime).slice(0, 5);
+        const endDateTime = new Date(`${dateStr}T${timeStr}:00`);
+        if (!isNaN(endDateTime.getTime()) && new Date() > endDateTime) {
+          isOverdue = true;
+        }
+      } catch {
+        isOverdue = false;
+      }
+
+      if (isOverdue) {
+        paymentStatus = "OVERDUE";
+      } else if (totalPaid > 0) {
+        paymentStatus = "PARTIAL";
+      } else {
+        paymentStatus = "UNPAID";
+      }
+    }
+
+    return {
+      bookingId: booking.id,
+      bookingCode: booking.bookingCode,
+      bookingStatus: booking.bookingStatus,
+      paymentStatus,
+      court: {
+        id: booking.court?.id || booking.courtId,
+        name: booking.court?.name || detail.booking.court?.name,
+        address: booking.court?.address || ""
+      },
+      user: booking.user || detail.booking.user,
+      bookingDate: booking.bookingDate,
+      startTime: detail.booking.startTime,
+      endTime: detail.booking.endTime,
+      services: detail.activeServices || [],
+      subtotalCourt: checkoutData.breakdown.subtotalCourt,
+      serviceSubtotal: checkoutData.breakdown.subtotalService,
+      voucherDiscount: checkoutData.breakdown.discount,
+      depositPaid: checkoutData.breakdown.depositPaid,
+      totalPaid: checkoutData.breakdown.totalPaid,
+      remainingAmount: checkoutData.breakdown.remainingAmount,
+      totalAmount: checkoutData.breakdown.totalAmount,
+      grandTotal: checkoutData.breakdown.totalAmount,
+      isFullyPaid: checkoutData.breakdown.isFullyPaid,
+      checkoutId: checkoutData.checkout.id,
+      checkoutStatus: checkoutData.checkout.status,
+      payments: checkoutData.checkout.payments || []
+    };
+  },
+
+  async getBookingServices(userId: string, bookingId: string, role?: string) {
+    const booking = await this.assertBookingAccess(userId, bookingId, role);
+    const detail = await cashierRepository.getBookingDetailForCashier(booking.id);
+    return detail.activeServices || [];
+  },
+
+  async addServiceToBooking(
+    userId: string,
+    bookingId: string,
+    input: { serviceId: string; quantity: number },
+    role?: string
+  ) {
+    const booking = await this.assertBookingAccess(userId, bookingId, role);
+    const blockedStatuses: BookingStatus[] = [BookingStatus.CANCELLED, BookingStatus.NO_SHOW];
+    if (blockedStatuses.includes(booking.bookingStatus)) {
+      throw new ValidationError("Không thể thêm dịch vụ vào đơn đã hủy hoặc vắng mặt");
+    }
+
+    const result = await cashierService.addServiceToBooking(booking.id, input, userId);
+    await checkoutRepository.getOrCreateCheckout(booking.id);
+    return result;
+  },
+
+  async updateBookingServiceQuantity(
+    userId: string,
+    bookingId: string,
+    serviceId: string,
+    quantity: number,
+    role?: string
+  ) {
+    const booking = await this.assertBookingAccess(userId, bookingId, role);
+    const blockedStatuses: BookingStatus[] = [BookingStatus.CANCELLED, BookingStatus.NO_SHOW];
+    if (blockedStatuses.includes(booking.bookingStatus)) {
+      throw new ValidationError("Không thể cập nhật dịch vụ của đơn đã hủy hoặc vắng mặt");
+    }
+
+    const result = await cashierService.updateBookingServiceQuantity(booking.id, serviceId, quantity);
+    await checkoutRepository.getOrCreateCheckout(booking.id);
+    return result;
+  },
+
+  async removeBookingService(
+    userId: string,
+    bookingId: string,
+    serviceId: string,
+    role?: string
+  ) {
+    const booking = await this.assertBookingAccess(userId, bookingId, role);
+    const blockedStatuses: BookingStatus[] = [BookingStatus.CANCELLED, BookingStatus.NO_SHOW];
+    if (blockedStatuses.includes(booking.bookingStatus)) {
+      throw new ValidationError("Không thể xóa dịch vụ của đơn đã hủy hoặc vắng mặt");
+    }
+
+    const result = await cashierService.removeBookingService(booking.id, serviceId);
+    await checkoutRepository.getOrCreateCheckout(booking.id);
+    return result;
+  },
+
+  async checkoutBooking(userId: string, bookingId: string, role?: string) {
+    const booking = await this.assertBookingAccess(userId, bookingId, role);
+    return checkoutRepository.getOrCreateCheckout(booking.id);
   }
 };

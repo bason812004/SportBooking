@@ -157,7 +157,21 @@ export const courtRepository = {
     const orderBy: Prisma.CourtOrderByWithRelationInput =
       query.sortBy === "name" ? { name: query.sortOrder ?? "asc" } : query.sort === "newest" || !query.sort ? { createdAt: "desc" } : { name: "asc" };
 
-    if (hasLocation || query.sortBy === "distance" || hasRadiusFilter) {
+    const sortVal = String(query.sort || "");
+    const sortByVal = String(query.sortBy || "");
+    const isCustomSort =
+      hasLocation ||
+      sortByVal === "distance" ||
+      sortVal === "distance" ||
+      sortVal === "price_asc" ||
+      sortVal === "price_desc" ||
+      sortVal === "popular" ||
+      sortByVal === "price_asc" ||
+      sortByVal === "price_desc" ||
+      sortByVal === "rating" ||
+      hasRadiusFilter;
+
+    if (isCustomSort) {
       const candidates = await prisma.court.findMany({
         where,
         include: courtInclude,

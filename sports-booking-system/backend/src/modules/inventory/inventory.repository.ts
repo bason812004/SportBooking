@@ -8,17 +8,17 @@ function purchaseOrderCode() {
 }
 
 const INVENTORY_STATUS_HAVING: Record<string, string> = {
-  LOW_STOCK: `AND COALESCE(si.quantity, 50) > 0 AND COALESCE(si.quantity, 50) <= COALESCE(si.minimum_stock, 5)`,
-  OUT_OF_STOCK: `AND COALESCE(si.quantity, 50) = 0`
+  LOW_STOCK: `AND COALESCE(si.quantity, 0) > 0 AND COALESCE(si.quantity, 0) <= COALESCE(si.minimum_stock, 5)`,
+  OUT_OF_STOCK: `AND COALESCE(si.quantity, 0) = 0`
 };
 
 const INVENTORY_SORT_COLUMNS: Record<string, string> = {
   serviceName: "s.name",
   categoryName: "c.name",
-  quantity: "COALESCE(si.quantity, 50)",
+  quantity: "COALESCE(si.quantity, 0)",
   costPrice: "COALESCE(s.cost_price, 0)",
   price: "s.price",
-  stockValue: "COALESCE(si.quantity, 50) * COALESCE(s.cost_price, 0)"
+  stockValue: "COALESCE(si.quantity, 0) * COALESCE(s.cost_price, 0)"
 };
 
 const HAS_OWN_SERVICES_TTL_MS = 60_000;
@@ -73,10 +73,10 @@ export const inventoryRepository = {
           `
           SELECT
             COUNT(*)::int as "totalProducts",
-            COALESCE(SUM(COALESCE(si.quantity, 50)), 0)::int as "totalItems",
-            COALESCE(SUM(COALESCE(si.quantity, 50) * COALESCE(s.cost_price, 0)), 0)::float as "totalStockValue",
-            COUNT(*) FILTER (WHERE COALESCE(si.quantity, 50) > 0 AND COALESCE(si.quantity, 50) <= COALESCE(si.minimum_stock, 5))::int as "lowStockCount",
-            COUNT(*) FILTER (WHERE COALESCE(si.quantity, 50) = 0)::int as "outOfStockCount"
+            COALESCE(SUM(COALESCE(si.quantity, 0)), 0)::int as "totalItems",
+            COALESCE(SUM(COALESCE(si.quantity, 0) * COALESCE(s.cost_price, 0)), 0)::float as "totalStockValue",
+            COUNT(*) FILTER (WHERE COALESCE(si.quantity, 0) > 0 AND COALESCE(si.quantity, 0) <= COALESCE(si.minimum_stock, 5))::int as "lowStockCount",
+            COUNT(*) FILTER (WHERE COALESCE(si.quantity, 0) = 0)::int as "outOfStockCount"
           FROM services s
           LEFT JOIN service_categories c ON c.id = s.category_id
           LEFT JOIN service_inventories si ON si.service_id = s.id
@@ -89,7 +89,7 @@ export const inventoryRepository = {
           SELECT
             s.id as "serviceId", s.name as "serviceName", s.unit, s.price, s.cost_price as "costPrice",
             c.name as "categoryName",
-            COALESCE(si.quantity, 50) as quantity,
+            COALESCE(si.quantity, 0) as quantity,
             COALESCE(si.minimum_stock, 5) as "minimumStock",
             COUNT(*) OVER()::int as "filteredTotal"
           FROM services s
@@ -159,7 +159,7 @@ export const inventoryRepository = {
           s.price,
           s.cost_price as "costPrice",
           c.name as "categoryName",
-          COALESCE(si.quantity, 50) as quantity,
+          COALESCE(si.quantity, 0) as quantity,
           COALESCE(si.minimum_stock, 5) as "minimumStock"
         FROM services s
         LEFT JOIN service_categories c ON s.category_id = c.id
@@ -175,6 +175,8 @@ export const inventoryRepository = {
       let totalStockValue = 0;
       let lowStockCount = 0;
       let outOfStockCount = 0;
+      const items: any[] = [];
+      const seenNames = new Set<string>();
 
       for (const r of rawRows || []) {
         if (!r || !r.serviceName) continue;
@@ -182,7 +184,7 @@ export const inventoryRepository = {
         if (!key || seenNames.has(key)) continue;
         seenNames.add(key);
 
-        const qty = Number(r.quantity ?? 50);
+        const qty = Number(r.quantity ?? 0);
         const minStock = Number(r.minimumStock ?? 5);
         const cost = Number(r.costPrice ?? 0);
         const stockVal = qty * cost;

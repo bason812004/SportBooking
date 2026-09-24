@@ -17,6 +17,8 @@ export type WeeklySlotRow = {
   date: string; // YYYY-MM-DD
   startTime: string; // HH:mm
   endTime: string; // HH:mm
+  courtSurfaceId?: string | null;
+  courtSurfaceName?: string | null;
   status: WeeklySlotStatus;
   basePrice: number;
   finalPrice: number;

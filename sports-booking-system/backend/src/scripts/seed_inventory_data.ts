@@ -1,4 +1,5 @@
 import { forceSeedAllServicesToDb } from "../modules/services/service.repository.js";
+import { prisma } from "../config/db.js";
 
 export async function seedInventoryData() {
   console.log("=== BẮT ĐẦU SEED DỮ LIỆU SẢN PHẨM & TỒN KHO 50 ĐƠN VỊ ===");

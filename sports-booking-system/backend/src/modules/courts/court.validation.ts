@@ -22,7 +22,7 @@ export const courtListSchema = z.object({
     categoryId: z.string().min(1).optional(),
     sortBy: z.string().optional(),
     sortOrder: z.enum(["asc", "desc"]).optional(),
-    sort: z.enum(["newest", "price_asc", "price_desc"]).optional()
+    sort: z.enum(["newest", "price_asc", "price_desc", "popular", "distance", "rating"]).optional()
   })
 });
 

@@ -35,6 +35,7 @@ export interface CheckoutData {
     bookingStatus: string;
     user: { fullName: string; phone?: string | null; email: string };
     court: { id: string; name: string; address: string };
+    bookingServices?: any[];
   };
   breakdown: {
     subtotalCourt: number;

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { CreditCard, CheckCircle2, QrCode, DollarSign, ArrowLeft, ShieldCheck, Clock, MapPin, Receipt, Sparkles } from "lucide-react";
+import { CreditCard, CheckCircle2, QrCode, DollarSign, ArrowLeft, ShieldCheck, Clock, MapPin, Receipt, Sparkles, Coffee } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { checkoutApi, type CheckoutData } from "../../features/checkout/api/checkoutApi";
 import { getSocket } from "../../lib/socket";
@@ -144,6 +144,46 @@ export function BookingCheckoutPage() {
                 Khách hàng: <strong>{booking.user.fullName}</strong> ({booking.user.phone || booking.user.email})
               </p>
             </div>
+
+            {/* Itemized Services List */}
+            {booking.bookingServices && booking.bookingServices.length > 0 && (
+              <div className="mt-5 rounded-2xl border border-slate-100 bg-slate-50/70 p-4">
+                <h3 className="mb-2.5 text-xs font-black uppercase tracking-wider text-slate-500">
+                  Dịch vụ & Đồ dùng đã sử dụng ({booking.bookingServices.length})
+                </h3>
+                <div className="space-y-2">
+                  {booking.bookingServices.map((bs: any) => (
+                    <div
+                      key={bs.id}
+                      className="flex items-center justify-between rounded-xl border border-slate-100 bg-white p-2.5 shadow-sm text-xs"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {bs.service?.imageUrl ? (
+                          <img
+                            src={bs.service.imageUrl}
+                            alt={bs.service.name}
+                            className="h-9 w-9 rounded-lg object-cover border border-slate-200 shrink-0"
+                          />
+                        ) : (
+                          <div className="grid h-9 w-9 place-items-center rounded-lg bg-emerald-100 text-emerald-700 shrink-0">
+                            <Coffee className="h-4 w-4" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="font-bold text-slate-900 truncate">{bs.service?.name || "Dịch vụ"}</p>
+                          <p className="text-slate-500">
+                            {bs.quantity} x {formatMoney(Number(bs.price || bs.unitPrice || 0))}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="font-black text-emerald-800 shrink-0">
+                        {formatMoney(Number(bs.totalPrice || bs.price * bs.quantity))}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Detailed Breakdown */}
             <div className="mt-6 space-y-3">

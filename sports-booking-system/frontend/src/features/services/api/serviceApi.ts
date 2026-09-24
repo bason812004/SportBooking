@@ -35,6 +35,8 @@ export interface ServiceItem {
   trackInventory: boolean;
   isAvailable?: boolean;
   category?: ServiceCategory | null;
+  categorySlug?: string;
+  categoryName?: string;
   inventory?: ServiceInventory | null;
 }
 

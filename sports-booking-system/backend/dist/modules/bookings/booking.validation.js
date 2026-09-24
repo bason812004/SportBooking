@@ -50,3 +50,16 @@ export const cancelBookingSchema = z.object({
     params: z.object({ id: z.string().min(1) }),
     body: z.object({ cancelReason: z.string().min(3).optional() })
 });
+export const addBookingServiceSchema = z.object({
+    params: z.object({ id: z.string().min(1) }),
+    body: z.object({
+        serviceId: z.string().min(1),
+        quantity: z.number().int().positive().max(99)
+    })
+});
+export const updateBookingServiceSchema = z.object({
+    params: z.object({ id: z.string().min(1), serviceId: z.string().min(1) }),
+    body: z.object({
+        quantity: z.number().int().positive().max(99)
+    })
+});

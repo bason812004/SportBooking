@@ -68,26 +68,24 @@ export default function BookingScreen() {
     [serviceQuantities]
   );
 
-  const earliestDate = useMemo(() => {
-    if (!selectedSlots.length) return date;
-    const sorted = [...selectedSlots].sort((a, b) => a.date.localeCompare(b.date));
-    return sorted[0].date;
-  }, [selectedSlots, date]);
-
-  const slotsPayload = useMemo(
-    () => selectedSlots.map((s) => ({ date: s.date, startTime: s.startTime, endTime: s.endTime })),
-    [selectedSlots]
-  );
+  const daysPayload = useMemo(() => {
+    const grouped: Record<string, { startTime: string; endTime: string }[]> = {};
+    for (const s of selectedSlots) {
+      (grouped[s.date] ??= []).push({ startTime: s.startTime, endTime: s.endTime });
+    }
+    return Object.entries(grouped)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([bookingDate, slots]) => ({ bookingDate, slots }));
+  }, [selectedSlots]);
 
   const quotePayload = useMemo(
     () => ({
       courtId,
-      bookingDate: earliestDate,
-      slots: slotsPayload,
+      days: daysPayload,
       services,
       voucherCode
     }),
-    [courtId, earliestDate, slotsPayload, services, voucherCode]
+    [courtId, daysPayload, services, voucherCode]
   );
 
   const quote = useQuery({

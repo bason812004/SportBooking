@@ -3,11 +3,11 @@ import type { ApiResponse, Booking, Paginated } from "./types";
 
 export type BookingSlotPayload = { startTime: string; endTime: string };
 export type BookingServicePayload = { serviceId: string; quantity: number };
+export type BookingDayPayload = { bookingDate: string; slots: BookingSlotPayload[] };
 
 export type BookingQuotePayload = {
   courtId: string;
-  bookingDate: string;
-  slots: BookingSlotPayload[];
+  days: BookingDayPayload[];
   services?: BookingServicePayload[];
   voucherId?: string;
   voucherCode?: string;

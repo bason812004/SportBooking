@@ -1,3 +1,4 @@
+import { prisma } from "../../config/db.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { checkoutRepository } from "./checkout.repository.js";
 import type { ProcessCheckoutPaymentInput } from "./checkout.types.js";
@@ -29,6 +30,15 @@ export const checkoutService = {
       realtimeService.toBooking(bookingId, "booking:status-changed", {
         bookingId,
         status: "COMPLETED"
+      });
+    }
+
+    const booking = await prisma.booking.findUnique({ where: { id: bookingId }, select: { courtId: true } });
+    if (booking?.courtId) {
+      realtimeService.toCourt(booking.courtId, "court:booking-updated", {
+        bookingId,
+        isCompleted: data.isCompleted,
+        status: data.isCompleted ? "COMPLETED" : "CHECKOUT_PENDING"
       });
     }
 

@@ -203,7 +203,7 @@ export const bookingRepository = {
               data: {
                 id: generateShortId("it"),
                 serviceId: bs.serviceId,
-                type: "RETURN",
+                type: "ADJUSTMENT",
                 quantity: bs.quantity,
                 unitCost: inv.lastPurchasePrice,
                 referenceType: "BOOKING_CANCELLED",
@@ -858,7 +858,7 @@ export const bookingRepository = {
                   data: {
                     id: generateShortId("it"),
                     serviceId: service.serviceId,
-                    type: "OUT",
+                    type: "SALE",
                     quantity: service.quantity,
                     unitCost: inv.lastPurchasePrice,
                     referenceType: "BOOKING",

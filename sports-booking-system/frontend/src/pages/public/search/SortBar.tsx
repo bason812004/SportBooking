@@ -4,8 +4,11 @@ export type SortOption = { value: string; label: string };
 
 export const SORT_OPTIONS: SortOption[] = [
   { value: "newest", label: "Mới nhất" },
-  { value: "name", label: "Tên sân" },
-  { value: "distance", label: "Khoảng cách" }
+  { value: "price_asc", label: "Giá tăng dần" },
+  { value: "price_desc", label: "Giá giảm dần" },
+  { value: "popular", label: "Phổ biến nhất" },
+  { value: "distance", label: "Khoảng cách" },
+  { value: "rating", label: "Đánh giá cao" }
 ];
 
 export function SortBar({ onOpenFilter, sortBy, onSortChange }: { onOpenFilter: () => void; sortBy: string; onSortChange: (value: string) => void }) {

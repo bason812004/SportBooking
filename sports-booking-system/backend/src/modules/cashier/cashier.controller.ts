@@ -6,25 +6,42 @@ import { sendSuccess } from "../../shared/utils/response.js";
 import { cashierService } from "./cashier.service.js";
 import { resetAndSeed5TestBookings } from "../../scripts/reset_and_seed_test_bookings.js";
 
-async function getPartnerId(userId: string, role: string): Promise<string | null> {
+async function getPartnerScope(userId: string, role: string): Promise<{ partnerId: string | null; courtId?: string | null }> {
   if (role === "PARTNER") {
     const partner = await prisma.partnerProfile.findUnique({ where: { userId }, select: { id: true } });
-    return partner?.id ?? null;
+    return { partnerId: partner?.id ?? null };
   }
   if (role === "RECIPIENT") {
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { partnerId: true } });
-    return user?.partnerId ?? null;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { partnerId: true, managedCourtId: true, managedCourt: { select: { partnerId: true } } }
+    });
+    const partnerId = user?.partnerId || user?.managedCourt?.partnerId || null;
+    return { partnerId, courtId: user?.managedCourtId ?? null };
   }
-  return null;
+  if (role === "ADMIN") {
+    const firstPartner = await prisma.partnerProfile.findFirst({ select: { id: true } });
+    return { partnerId: firstPartner?.id ?? null };
+  }
+  return { partnerId: null };
 }
 
 export const cashierController = {
   async getActiveBookings(req: Request, res: Response) {
-    const partnerId = await getPartnerId(req.user!.id, req.user!.role);
-    if (!partnerId) throw new ForbiddenError("Không có quyền truy cập dữ liệu thu ngân");
-    const courtId = req.query.courtId as string | undefined;
-    const bookings = await cashierService.getActiveBookings(partnerId, courtId);
+    const scope = await getPartnerScope(req.user!.id, req.user!.role);
+    if (!scope.partnerId) throw new ForbiddenError("Không có quyền truy cập dữ liệu thu ngân");
+    const queryCourtId = req.query.courtId as string | undefined;
+    const courtId = scope.courtId || queryCourtId;
+    const search = req.query.search as string | undefined;
+    const filter = req.query.filter as string | undefined;
+
+    const bookings = await cashierService.getActiveBookings(scope.partnerId, courtId, search, filter);
     return sendSuccess(res, bookings);
+  },
+
+  async checkInBooking(req: Request, res: Response) {
+    const data = await cashierService.checkInBooking(req.params.bookingId);
+    return sendSuccess(res, data, 200, "Khách đã check-in vào sân thành công");
   },
 
   async getBookingDetailForCashier(req: Request, res: Response) {
