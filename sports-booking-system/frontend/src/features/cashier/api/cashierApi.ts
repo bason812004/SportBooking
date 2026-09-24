@@ -27,6 +27,7 @@ export interface ActiveBookingService {
 }
 
 export interface CashierBooking {
+  checkedInAt?: string | null;
   id: string;
   bookingCode: string;
   bookingDate: string;

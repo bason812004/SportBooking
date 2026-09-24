@@ -132,7 +132,7 @@ export type RecipientWalkInBookingPayload = {
   startTime: string;
   minutes: number;
   paymentMethod: "CASH" | "BANK_TRANSFER" | "E_WALLET";
-  paymentType?: "FULL_PAYMENT" | "DEPOSIT";
+  paymentType?: "FULL_PAYMENT" | "DEPOSIT" | "PAY_AT_COURT";
   note?: string;
   services?: Array<{ serviceId: string; quantity: number }>;
 };
@@ -157,7 +157,7 @@ export type RecipientWalkInBookingOrderPayload = {
   customerPhone: string;
   slots: Array<{ courtSurfaceId: string; bookingDate: string; startTime: string; minutes: number }>;
   paymentMethod: "CASH" | "BANK_TRANSFER";
-  paymentType?: "FULL_PAYMENT" | "DEPOSIT";
+  paymentType?: "FULL_PAYMENT" | "DEPOSIT" | "PAY_AT_COURT";
   note?: string;
   services?: Array<{ serviceId: string; quantity: number }>;
 };
@@ -174,7 +174,7 @@ export type RecipientRecurringBookingPayload = {
   slots: Array<{ courtSurfaceId: string; bookingDate: string; startTime: string; minutes: number }>;
   occurrences: number;
   paymentMethod: "CASH" | "BANK_TRANSFER";
-  paymentType?: "FULL_PAYMENT" | "DEPOSIT";
+  paymentType?: "FULL_PAYMENT" | "DEPOSIT" | "PAY_AT_COURT";
   note?: string;
   services?: Array<{ serviceId: string; quantity: number }>;
 };

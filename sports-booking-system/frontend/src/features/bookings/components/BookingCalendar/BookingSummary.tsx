@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import clsx from "clsx";
 import { useState, useMemo } from "react";
 import {
@@ -249,6 +250,7 @@ export function BookingSummarySlotList({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function BookingSummary(props: BookingSummaryStandaloneProps) {
+  const { t } = useTranslation("booking");
   const {
     slots,
     courtName,
@@ -305,9 +307,9 @@ export function BookingSummary(props: BookingSummaryStandaloneProps) {
   const finalTotal = Math.max(0, subtotal - discount);
   const paymentAmount =
     paymentType === "DEPOSIT"
-      ? minimumDepositAmount ?? Math.round((finalTotal * depositPercent) / 100)
+      ? minimumDepositAmount ?? Math.round((Math.max(0, courtSubtotal - discount) * depositPercent) / 100)
       : paymentType === "FULL_PAYMENT"
-        ? finalTotal
+        ? Math.max(0, courtSubtotal - discount)
         : 0;
   const remainingAmount = Math.max(0, finalTotal - paymentAmount);
 
@@ -615,15 +617,14 @@ export function BookingSummary(props: BookingSummaryStandaloneProps) {
             {language === "en" ? "Total" : "Tổng thanh toán"}
           </p>
           <p className="mt-1 text-2xl font-black">{formatCurrency(finalTotal)}</p>
+          {servicesSubtotal > 0 && <p className="mt-2 text-xs text-emerald-200">{t("openTab.servicesAtCourt")} · {t("openTab.payAtCourtAmount", { amount: formatCurrency(remainingAmount) })}</p>}
           <p className="mt-1 text-xs text-slate-300">
             {paymentType === "DEPOSIT"
               ? `${language === "en" ? "Pay now" : "Thanh toán trước"} ${formatCurrency(paymentAmount)}, ${language === "en" ? "remain" : "còn"} ${formatCurrency(remainingAmount)} ${language === "en" ? "at court" : "tại sân"}.`
               : paymentType === "PAY_AT_COURT"
                 ? language === "en" ? "Pay directly at the court."
                 : "Thanh toán trực tiếp tại sân."
-                : language === "en"
-                  ? "Pay the full amount by QR."
-                  : "Thanh toán toàn bộ bằng QR."}
+                : t("openTab.courtQr")}
           </p>
         </div>
 
@@ -637,7 +638,7 @@ export function BookingSummary(props: BookingSummaryStandaloneProps) {
               {requiresDeposit ? (
                 <PaymentChoice
                   active={paymentType === "DEPOSIT"}
-                  title={`${language === "en" ? "Deposit" : "Đặt cọc"} ${depositPercent}%`}
+                  title={t("openTab.courtDeposit", { percent: depositPercent })}
                   description={
                     language === "en"
                       ? "Hold the court, pay the rest on-site."
@@ -659,11 +660,9 @@ export function BookingSummary(props: BookingSummaryStandaloneProps) {
               )}
               <PaymentChoice
                 active={paymentType === "FULL_PAYMENT"}
-                title={language === "en" ? "Pay in full" : "Thanh toán toàn bộ"}
+                title={t("openTab.fullCourtPayment")}
                 description={
-                  language === "en"
-                    ? "Pay the full amount by QR."
-                    : "Hoàn tất toàn bộ chi phí ngay bằng QR."
+                  t("openTab.courtQr")
                 }
                 onClick={() => onChangePaymentType("FULL_PAYMENT")}
               />

@@ -82,6 +82,12 @@ export const vi = {
     passed: "Đã qua"
   },
   booking: {
+    serviceCharge: "Tiền dịch vụ",
+    courtDeposit: "Cọc tiền sân",
+    servicesAtCourt: "Dịch vụ thanh toán tại sân",
+    remainingAtCourt: "Trả tại sân",
+    payNow: "Thanh toán trước",
+
     summaryTitle: "Xác nhận đặt sân",
     selectedSlots: "Các khung giờ đã chọn",
     basePrice: "Giá gốc sân",
@@ -92,7 +98,7 @@ export const vi = {
     depositAmount: "Tiền đặt cọc",
     paymentMethod: "Phương thức thanh toán",
     payAtCourt: "Thanh toán tại sân",
-    fullPayment: "Thanh toán toàn bộ (QR Transfer)",
+    fullPayment: "Trả đủ tiền sân",
     depositPayment: "Đặt cọc trước (QR Transfer)",
     notePlaceholder: "Ghi chú cho chủ sân (nếu có)...",
     confirmBooking: "Xác nhận & Thanh toán",

@@ -234,3 +234,51 @@ describe("settlement.service adminSettle / adminCancel", () => {
     assert.equal(adminActionCalls.length, 1);
   });
 });
+
+
+describe("settlement.service counter collections", () => {
+  function setup(platformGross = 0) {
+    let counter: any = null;
+    let earning: any = null;
+    fakePrisma.setModels({
+      booking: { findUnique: async () => bookingFixture() },
+      settlement: {
+        findUnique: async ({ where }: any) => where.bookingId_collectedBy.collectedBy === "PARTNER" ? counter : platformGross ? { id: "online", status: "PENDING", grossAmount: platformGross } : null,
+        create: async ({ data }: any) => (counter = { id: "counter", ...data }),
+        updateMany: async ({ data }: any) => {
+          for (const key of ["grossAmount", "commissionAmount", "netAmount"]) counter[key] += data[key].increment;
+          return { count: 1 };
+        }
+      },
+      commissionTransaction: {
+        findFirst: async () => earning,
+        create: async ({ data }: any) => (earning = { id: "earning", ...data }),
+        update: async ({ data }: any) => Object.assign(earning, data)
+      }
+      // No partnerWallet stub: any wallet call fails the test.
+    });
+    return { counter: () => counter, earning: () => earning };
+  }
+
+  it("records cash once as SETTLED without touching the wallet", async () => {
+    const state = setup();
+    await settlementService.createFromCounterCollection("bk0001", 300000, fakePrisma.client);
+    await settlementService.createFromCounterCollection("bk0001", 300000, fakePrisma.client);
+    assert.equal(state.counter().collectedBy, "PARTNER");
+    assert.equal(state.counter().status, "SETTLED");
+    assert.equal(state.counter().grossAmount, 300000);
+    assert.equal(state.counter().commissionAmount, 30000);
+    assert.equal(state.earning().grossAmount, 300000);
+  });
+
+  it("keeps online deposits separate and adds only newly collected services after reopening", async () => {
+    const state = setup(100000);
+    await settlementService.createFromCounterCollection("bk0001", 300000, fakePrisma.client);
+    assert.equal(state.counter().grossAmount, 200000);
+    await settlementService.createFromCounterCollection("bk0001", 310000, fakePrisma.client);
+    assert.equal(state.counter().grossAmount, 210000);
+    assert.equal(state.counter().commissionAmount, 21000);
+    assert.equal(state.earning().grossAmount, 310000);
+    assert.equal(state.earning().commissionAmount, 31000);
+  });
+});

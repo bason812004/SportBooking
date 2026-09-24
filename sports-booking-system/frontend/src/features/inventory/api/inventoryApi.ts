@@ -5,6 +5,10 @@ export interface InventoryItem {
   serviceId: string;
   serviceName: string;
   categoryName: string;
+  /** Each court keeps its own services row and stock for the same product name. */
+  courtId?: string | null;
+  courtName?: string | null;
+  imageUrl?: string | null;
   unit: string;
   quantity: number;
   minimumStock: number;
@@ -12,6 +16,13 @@ export interface InventoryItem {
   price: number;
   stockValue: number;
   status: "NORMAL" | "LOW_STOCK" | "OUT_OF_STOCK";
+}
+
+export interface StockAdjustmentResult {
+  serviceId: string;
+  previousQuantity: number;
+  /** Server-computed stock after the adjustment — patch the row with this, don't recompute it. */
+  newQuantity: number;
 }
 
 export interface InventorySummary {
@@ -100,7 +111,7 @@ export interface ReorderSuggestion {
 }
 
 export const inventoryApi = {
-  async getSummary(params?: { page?: number; limit?: number; status?: string; search?: string; categoryId?: string; sortBy?: string; sortOrder?: string }) {
+  async getSummary(params?: { page?: number; limit?: number; status?: string; search?: string; categoryId?: string; courtId?: string; sortBy?: string; sortOrder?: string }) {
     const res = await api.get<ApiResponse<{ summary: InventorySummary; items: InventoryItem[]; pagination: InventoryPagination }>>(
       "/partner/inventory/summary",
       { params }
@@ -119,7 +130,7 @@ export const inventoryApi = {
   },
 
   async adjustStock(data: { serviceId: string; type: string; quantity: number; unitCost?: number; note?: string }) {
-    const res = await api.post<ApiResponse<any>>("/partner/inventory/adjust", data);
+    const res = await api.post<ApiResponse<StockAdjustmentResult>>("/partner/inventory/adjust", data);
     return res.data.data;
   },
 

@@ -895,6 +895,7 @@ export type PartnerWallet = {
 };
 
 export type Settlement = {
+  collectedBy: "PLATFORM" | "PARTNER";
   id: string;
   bookingId: string;
   partnerId: string;

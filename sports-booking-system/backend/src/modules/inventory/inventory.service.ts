@@ -5,7 +5,7 @@ import type { AdjustStockInput, CreatePurchaseOrderInput, CreateSupplierInput } 
 export const inventoryService = {
   async getInventorySummary(
     partnerId: string,
-    options?: { page?: number; limit?: number; status?: string; search?: string; categoryId?: string; sortBy?: string; sortOrder?: string }
+    options?: { page?: number; limit?: number; status?: string; search?: string; categoryId?: string; courtId?: string; sortBy?: string; sortOrder?: string }
   ) {
     return inventoryRepository.getInventorySummary(partnerId, options);
   },

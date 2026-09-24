@@ -12,7 +12,10 @@ if (isConfigured) {
     cloud_name: env.CLOUDINARY_CLOUD_NAME,
     api_key: env.CLOUDINARY_API_KEY,
     api_secret: env.CLOUDINARY_API_SECRET,
-    secure: true
+    secure: true,
+    // Uploads from a slow uplink legitimately take tens of seconds; fail them outright rather
+    // than leaving the request hanging.
+    timeout: 120_000
   });
 }
 

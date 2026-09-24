@@ -42,5 +42,23 @@
   "paymentGatewayNotConfigured": "Chưa cấu hình cổng thanh toán. Vui lòng cấu hình provider và webhook secret để tạo QR động từ cổng thanh toán thật.",
   "paymentTimeLeft": "Thời gian thanh toán còn lại",
   "paymentReference": "Mã tham chiếu",
-  "paymentType": "Loại thanh toán"
+  "paymentType": "Loại thanh toán",
+  "openTab": {
+    "openTab": "Mở hóa đơn, thu cuối buổi",
+    "collectionMode": "Số tiền thu",
+    "courtCharge": "Tiền sân",
+    "serviceCharge": "Tiền dịch vụ",
+    "courtDeposit": "Cọc {{percent}}% tiền sân",
+    "servicesAtCourt": "Dịch vụ thanh toán tại sân",
+    "payAtCourtAmount": "Trả tại sân: {{amount}}",
+    "fullCourtPayment": "Trả đủ tiền sân",
+    "courtQr": "Thanh toán tiền sân bằng QR; dịch vụ thu cuối buổi.",
+    "notCheckedIn": "Chưa check-in",
+    "collectionSource": "Nguồn thu",
+    "platformCollected": "Nền tảng thu",
+    "partnerCollected": "Partner thu tại quầy",
+    "settlementDescription": "Theo dõi doanh thu và hoa hồng theo nguồn thu online hoặc tại quầy.",
+    "counterCancellation": "Hủy ghi nhận thu tại quầy; số dư ví không thay đổi.",
+    "counterInstructions": "Vui lòng thanh toán tại quầy. Nhân viên sẽ xác nhận số tiền đã thu; hóa đơn tự cập nhật."
+  }
 }

@@ -42,5 +42,23 @@
   "paymentGatewayNotConfigured": "Payment gateway is not configured. Configure the provider and webhook secret to generate a dynamic QR code from a real payment gateway.",
   "paymentTimeLeft": "Payment time left",
   "paymentReference": "Payment reference",
-  "paymentType": "Payment type"
+  "paymentType": "Payment type",
+  "openTab": {
+    "openTab": "Open tab, pay at the end",
+    "collectionMode": "Collect now",
+    "courtCharge": "Court charge",
+    "serviceCharge": "Services",
+    "courtDeposit": "{{percent}}% court deposit",
+    "servicesAtCourt": "Services paid at the court",
+    "payAtCourtAmount": "Pay at court: {{amount}}",
+    "fullCourtPayment": "Pay court charge in full",
+    "courtQr": "Pay the court charge by QR; services are collected at the end.",
+    "notCheckedIn": "Not checked in",
+    "collectionSource": "Collected by",
+    "platformCollected": "Platform",
+    "partnerCollected": "Partner at counter",
+    "settlementDescription": "Track revenue and commission by online or counter collection.",
+    "counterCancellation": "Cancel the counter collection record; wallet balances stay unchanged.",
+    "counterInstructions": "Please pay at the counter. Staff will confirm the collection and this invoice will update automatically."
+  }
 }

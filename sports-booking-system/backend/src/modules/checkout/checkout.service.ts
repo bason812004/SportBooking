@@ -1,19 +1,17 @@
+import { checkoutAccessRepository, type CheckoutActor } from "./checkout.access.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { checkoutRepository } from "./checkout.repository.js";
 import type { ProcessCheckoutPaymentInput } from "./checkout.types.js";
 
 export const checkoutService = {
-  async getOrCreateCheckout(bookingId: string) {
+  async getOrCreateCheckout(bookingId: string, actor: CheckoutActor) {
+    await checkoutAccessRepository.assertBooking(bookingId, actor);
     const data = await checkoutRepository.getOrCreateCheckout(bookingId);
-    realtimeService.toBooking(bookingId, "booking:checkout-ready", {
-      bookingId,
-      checkout: data.checkout,
-      breakdown: data.breakdown
-    });
     return data;
   },
 
-  async processPayment(input: ProcessCheckoutPaymentInput) {
+  async processPayment(input: ProcessCheckoutPaymentInput, actor: CheckoutActor) {
+    await checkoutAccessRepository.assertCheckout(input.checkoutId, actor);
     const data = await checkoutRepository.processPayment(input);
     const bookingId = data.checkout.bookingId;
 

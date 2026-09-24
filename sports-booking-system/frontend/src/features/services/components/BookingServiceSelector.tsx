@@ -15,6 +15,7 @@ import {
   Shirt,
   Utensils
 } from "lucide-react";
+import { ServiceImage } from "../../../components/common/ServiceImage";
 import { serviceApi, type ServiceCategory, type ServiceItem } from "../api/serviceApi";
 import { formatCurrency } from "../../../lib/format";
 
@@ -23,13 +24,20 @@ interface BookingServiceSelectorProps {
   selectedServices: Map<string, { service: ServiceItem; quantity: number }>;
   onUpdateQuantity: (service: ServiceItem, quantity: number) => void;
   onClearServices: () => void;
+  /** Caps the grid at this many rows and scrolls the rest, so the panel stays a fixed height. */
+  maxRows?: number;
 }
+
+/** Card height is fixed (image 112px + one-line title + fixed footer), so rows can be measured. */
+const CARD_HEIGHT_PX = 242;
+const GRID_GAP_PX = 12;
 
 export function BookingServiceSelector({
   courtId,
   selectedServices,
   onUpdateQuantity,
-  onClearServices
+  onClearServices,
+  maxRows
 }: BookingServiceSelectorProps) {
   const [activeTab, setActiveTab] = useState<string>("ALL");
 
@@ -93,6 +101,10 @@ export function BookingServiceSelector({
     return sum;
   }, [selectedServices]);
 
+  const gridBoxStyle = maxRows
+    ? { height: maxRows * CARD_HEIGHT_PX + (maxRows - 1) * GRID_GAP_PX }
+    : undefined;
+
   function getIconForCategory(slug?: string) {
     const s = (slug || "").toLowerCase();
     if (s.includes("thue") || s.includes("dung-cu")) return <Dumbbell className="h-3.5 w-3.5 text-emerald-600" />;
@@ -111,9 +123,6 @@ export function BookingServiceSelector({
             <ShoppingBag className="h-5 w-5 text-[#02712a]" />
             Dịch Vụ & Dụng Cụ Phục Vụ Tại Sân
           </h3>
-          <p className="text-xs text-slate-500 font-semibold mt-0.5">
-            Dịch vụ thật được quản lý kho từ chủ sân · Thuê bóng, dụng cụ, nước uống & đồ ăn chuẩn bị sẵn tại sân
-          </p>
         </div>
 
         {totalSelectedCount > 0 && (
@@ -188,94 +197,102 @@ export function BookingServiceSelector({
         </button>
       </div>
 
-      {/* Services Grid */}
-      {servicesQuery.isLoading ? (
-        <div className="flex items-center justify-center py-10 text-slate-400 gap-2 font-semibold text-xs">
-          <Loader2 className="h-5 w-5 animate-spin text-[#02712a]" />
-          Đang kết nối kho hàng cơ sở dữ liệu sân...
-        </div>
-      ) : categorizedServices.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-slate-400 text-xs font-semibold">
-          Chưa có dịch vụ nào thuộc danh mục này tại sân.
-        </div>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {categorizedServices.map((service) => {
-            const currentItem = selectedServices.get(service.id);
-            const qty = currentItem?.quantity ?? 0;
+      {/* Services Grid — a fixed (not max) height keeps the panel from collapsing when a category
+          holds only a couple of items, so the surrounding layout stops jumping between tabs. */}
+      <div style={gridBoxStyle}>
+        {servicesQuery.isLoading ? (
+          <div className="flex items-center justify-center py-10 text-slate-400 gap-2 font-semibold text-xs">
+            <Loader2 className="h-5 w-5 animate-spin text-[#02712a]" />
+            Đang kết nối kho hàng cơ sở dữ liệu sân...
+          </div>
+        ) : categorizedServices.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-slate-400 text-xs font-semibold">
+            Chưa có dịch vụ nào thuộc danh mục này tại sân.
+          </div>
+        ) : (
+          <div
+            // content-start stops CSS Grid from stretching short rows to fill the fixed height.
+            className={`grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 ${maxRows ? "h-full content-start overflow-y-auto pr-1" : ""}`}
+          >
+            {categorizedServices.map((service) => {
+              const currentItem = selectedServices.get(service.id);
+              const qty = currentItem?.quantity ?? 0;
 
-            const stock = service.inventory?.quantity ?? 50;
-            const isOutOfStock = stock <= 0;
-            const catSlug = service.category?.slug;
-            const catName = service.category?.name || "Dịch vụ";
+              const stock = service.inventory?.quantity ?? 50;
+              const isOutOfStock = stock <= 0;
+              const catSlug = service.category?.slug;
+              const catName = service.category?.name || "Dịch vụ";
 
-            return (
-              <div
-                key={service.id}
-                className={`rounded-2xl border p-3.5 transition-all flex flex-col justify-between relative ${
-                  qty > 0
-                    ? "border-[#02712a] bg-emerald-50/40 ring-2 ring-[#02712a]/20 shadow-md"
-                    : isOutOfStock
-                    ? "border-slate-200 bg-slate-50/70 opacity-60"
-                    : "border-slate-200 bg-white hover:border-emerald-300 hover:shadow-sm"
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between gap-1.5">
-                    <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100/70 px-2 py-0.5 text-[10px] font-black text-[#02712a]">
-                      {getIconForCategory(catSlug)}
-                      {catName}
-                    </span>
-                    <span
-                      className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
-                        isOutOfStock
-                          ? "bg-rose-100 text-rose-700"
-                          : stock <= 5
-                          ? "bg-amber-100 text-amber-800"
-                          : "bg-slate-100 text-slate-600"
-                      }`}
-                    >
-                      {isOutOfStock ? "HẾT HÀNG" : `Còn ${stock} ${service.unit}`}
-                    </span>
-                  </div>
-
-                  <h4 className="mt-2 font-black text-slate-900 text-xs leading-snug line-clamp-1">{service.name}</h4>
-                </div>
-
-                <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2.5">
+              return (
+                <div
+                  key={service.id}
+                  className={`rounded-2xl border p-3.5 transition-all flex flex-col justify-between relative ${
+                    qty > 0
+                      ? "border-[#02712a] bg-emerald-50/40 ring-2 ring-[#02712a]/20 shadow-md"
+                      : isOutOfStock
+                      ? "border-slate-200 bg-slate-50/70 opacity-60"
+                      : "border-slate-200 bg-white hover:border-emerald-300 hover:shadow-sm"
+                  }`}
+                >
                   <div>
-                    <span className="text-sm font-black text-[#02712a]">{formatCurrency(service.price)}</span>
-                    <span className="text-[10px] font-semibold text-slate-400"> / {service.unit}</span>
+                    <div className="flex items-center justify-between gap-1.5">
+                      <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100/70 px-2 py-0.5 text-[10px] font-black text-[#02712a]">
+                        {getIconForCategory(catSlug)}
+                        {catName}
+                      </span>
+                      <span
+                        className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                          isOutOfStock
+                            ? "bg-rose-100 text-rose-700"
+                            : stock <= 5
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {isOutOfStock ? "HẾT HÀNG" : `Còn ${stock} ${service.unit}`}
+                      </span>
+                    </div>
+
+                    <ServiceImage src={service.imageUrl} alt={service.name} className="mt-2 h-28 w-full rounded-xl" />
+
+                    <h4 className="mt-2 font-black text-slate-900 text-xs leading-snug line-clamp-1">{service.name}</h4>
                   </div>
 
-                  {/* Quantity Counter Buttons */}
-                  <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-                    <button
-                      type="button"
-                      disabled={qty <= 0}
-                      onClick={() => onUpdateQuantity(service, qty - 1)}
-                      className="h-6 w-6 rounded-md bg-white shadow-sm flex items-center justify-center text-slate-700 font-black disabled:opacity-30 hover:bg-slate-200 transition"
-                    >
-                      <Minus className="h-3 w-3" />
-                    </button>
+                  <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2.5">
+                    <div>
+                      <span className="text-sm font-black text-[#02712a]">{formatCurrency(service.price)}</span>
+                      <span className="text-[10px] font-semibold text-slate-400"> / {service.unit}</span>
+                    </div>
 
-                    <span className="w-5 text-center text-xs font-black text-slate-900">{qty}</span>
+                    {/* Quantity Counter Buttons */}
+                    <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                      <button
+                        type="button"
+                        disabled={qty <= 0}
+                        onClick={() => onUpdateQuantity(service, qty - 1)}
+                        className="h-6 w-6 rounded-md bg-white shadow-sm flex items-center justify-center text-slate-700 font-black disabled:opacity-30 hover:bg-slate-200 transition"
+                      >
+                        <Minus className="h-3 w-3" />
+                      </button>
 
-                    <button
-                      type="button"
-                      disabled={isOutOfStock || qty >= stock}
-                      onClick={() => onUpdateQuantity(service, qty + 1)}
-                      className="h-6 w-6 rounded-md bg-[#02712a] text-white shadow-sm flex items-center justify-center font-black disabled:opacity-30 hover:bg-[#025c22] transition"
-                    >
-                      <Plus className="h-3 w-3" />
-                    </button>
+                      <span className="w-5 text-center text-xs font-black text-slate-900">{qty}</span>
+
+                      <button
+                        type="button"
+                        disabled={isOutOfStock || qty >= stock}
+                        onClick={() => onUpdateQuantity(service, qty + 1)}
+                        className="h-6 w-6 rounded-md bg-[#02712a] text-white shadow-sm flex items-center justify-center font-black disabled:opacity-30 hover:bg-[#025c22] transition"
+                      >
+                        <Plus className="h-3 w-3" />
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

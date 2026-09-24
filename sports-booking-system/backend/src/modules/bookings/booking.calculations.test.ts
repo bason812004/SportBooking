@@ -58,3 +58,9 @@ test("calculates multiple slot totals accurately with voucher discount", () => {
   assert.equal(quote.totalAmount, 420000);
 });
 
+
+test("services are deferred and only discounted court charges require a deposit", () => {
+  const quote = calculateBookingQuote([{ startTime: "18:00", endTime: "19:00", price: 200000 }], 20000, 100000, 50);
+  assert.equal(quote.minimumDepositAmount, 90000);
+  assert.equal(quote.remainingAmount, 190000);
+});

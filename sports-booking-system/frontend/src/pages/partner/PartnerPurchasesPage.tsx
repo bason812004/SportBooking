@@ -316,9 +316,10 @@ export function PartnerPurchasesPage() {
                   value={item.serviceId}
                   onChange={(e) => handleUpdatePOItem(idx, "serviceId", e.target.value)}
                 >
+                  {/* Stock is per court, so the court name is what tells same-named rows apart. */}
                   {services.map((svc) => (
                     <option key={svc.id} value={svc.id}>
-                      {svc.name} ({svc.unit})
+                      {svc.name} ({svc.unit}){svc.court?.name ? ` — ${svc.court.name}` : ""}
                     </option>
                   ))}
                 </select>

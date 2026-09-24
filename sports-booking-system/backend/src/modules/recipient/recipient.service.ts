@@ -106,8 +106,8 @@ function slotPrice(slot: { startTime: string; endTime: string }, date: string, p
   return prices.length ? Math.min(...prices.map((price) => Number(price.price))) : 0;
 }
 
-const activeOperationStatuses: BookingStatus[] = [BookingStatus.PENDING, BookingStatus.PENDING_PAYMENT, BookingStatus.CONFIRMED];
-const extendableBookingStatuses: BookingStatus[] = [BookingStatus.PENDING, BookingStatus.PENDING_PAYMENT, BookingStatus.CONFIRMED];
+const activeOperationStatuses: BookingStatus[] = [BookingStatus.PENDING, BookingStatus.PENDING_PAYMENT, BookingStatus.CONFIRMED, BookingStatus.DEPOSIT_PAID, BookingStatus.IN_PROGRESS, BookingStatus.CHECKOUT_PENDING, BookingStatus.COMPLETED];
+const extendableBookingStatuses: BookingStatus[] = [BookingStatus.PENDING, BookingStatus.PENDING_PAYMENT, BookingStatus.CONFIRMED, BookingStatus.DEPOSIT_PAID, BookingStatus.IN_PROGRESS, BookingStatus.CHECKOUT_PENDING];
 
 async function extensionConflictFor(
   courtId: string,
@@ -814,7 +814,7 @@ export const recipientService = {
     const hours = durationHours(startTime, endTime);
     const subtotal = dynamicPrice.finalPrice * hours;
 
-    const { updated, settlement } = await prisma.$transaction(async (tx) => {
+    const { updated } = await prisma.$transaction(async (tx) => {
       const updatedBooking = await tx.booking.update({
         where: { id: booking.id },
         data: {
@@ -836,16 +836,9 @@ export const recipientService = {
         }
       });
 
-      const updatedSettlement = await settlementService.addExtraGrossAmount(booking.id, subtotal, tx);
-      return { updated: updatedBooking, settlement: updatedSettlement };
+      // Additional court time is collected at checkout.
+      return { updated: updatedBooking };
     });
-
-    if (settlement) {
-      realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
-      realtimeService.toAdmin(realtimeEvents.settlementUpdated, settlement);
-      realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
-      realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
-    }
 
     return updated;
   },
@@ -860,7 +853,7 @@ export const recipientService = {
       startTime: string;
       minutes: number;
       paymentMethod: PaymentMethod;
-      paymentType?: "FULL_PAYMENT" | "DEPOSIT";
+      paymentType?: "FULL_PAYMENT" | "DEPOSIT" | "PAY_AT_COURT";
       note?: string;
       services?: Array<{ serviceId: string; quantity: number }>;
     }
@@ -869,6 +862,8 @@ export const recipientService = {
     const surface = await prisma.courtSurface.findFirst({ where: { id: input.courtSurfaceId, courtId, status: CourtActiveStatus.ACTIVE } });
     if (!surface) throw new NotFoundError("San con khong ton tai hoac dang tam ngung");
 
+    const payLater = input.paymentType === "PAY_AT_COURT";
+    const paymentMethod = payLater ? PaymentMethod.CASH : input.paymentMethod;
     const wantsDeposit = input.paymentType === "DEPOSIT";
     const depositPercent = wantsDeposit ? await bookingRepository.courtDepositPercent(courtId) : 0;
     if (wantsDeposit && depositPercent <= 0) throw new ValidationError("San nay khong ho tro dat coc");
@@ -914,7 +909,7 @@ export const recipientService = {
     });
     const servicesSubtotal = serviceLines.reduce((sum, line) => sum + line.price * line.quantity, 0);
     const subtotal = courtSubtotal + servicesSubtotal;
-    const chargeAmount = wantsDeposit ? calculateMinimumDeposit(subtotal, depositPercent) : subtotal;
+    const chargeAmount = payLater ? 0 : wantsDeposit ? calculateMinimumDeposit(courtSubtotal, depositPercent) : courtSubtotal;
 
     const existingUser = await prisma.user.findFirst({ where: { phone: input.customerPhone } });
     const customer =
@@ -931,7 +926,7 @@ export const recipientService = {
     const bookingId = await nextPrefixedId("b", "seq_bookings");
 
     let paymentInput: { reference: string; expiresAt: Date; providerResult: Awaited<ReturnType<typeof paymentProvider.createQrPayment>> } | null = null;
-    if (input.paymentMethod === PaymentMethod.BANK_TRANSFER) {
+    if (!payLater && paymentMethod === PaymentMethod.BANK_TRANSFER) {
       const expiresAt = new Date(Date.now() + env.BOOKING_HOLD_EXPIRES_MINUTES * 60 * 1000);
       const reference = paymentReference();
       const orderId =
@@ -965,9 +960,9 @@ export const recipientService = {
           subtotal,
           totalPrice: subtotal,
           depositAmount: chargeAmount,
-          paymentMethod: input.paymentMethod,
-          paymentStatus: input.paymentMethod === PaymentMethod.CASH ? "PAID" : "UNPAID",
-          bookingStatus: input.paymentMethod === PaymentMethod.CASH && wantsDeposit ? BookingStatus.DEPOSIT_PAID : BookingStatus.CONFIRMED,
+          paymentMethod,
+          paymentStatus: !payLater && paymentMethod === PaymentMethod.CASH ? "PAID" : "UNPAID",
+          bookingStatus: !payLater && paymentMethod === PaymentMethod.CASH && wantsDeposit ? BookingStatus.DEPOSIT_PAID : BookingStatus.CONFIRMED,
           note: input.note
         }
       });
@@ -1028,7 +1023,7 @@ export const recipientService = {
       customerPhone: string;
       slots: Array<{ courtSurfaceId: string; bookingDate: string; startTime: string; minutes: number }>;
       paymentMethod: typeof PaymentMethod.CASH | typeof PaymentMethod.BANK_TRANSFER;
-      paymentType?: "FULL_PAYMENT" | "DEPOSIT";
+      paymentType?: "FULL_PAYMENT" | "DEPOSIT" | "PAY_AT_COURT";
       note?: string;
       services?: Array<{ serviceId: string; quantity: number }>;
     }
@@ -1040,6 +1035,8 @@ export const recipientService = {
     });
     if (surfaces.length !== surfaceIds.length) throw new NotFoundError("Mot hoac nhieu san con khong ton tai hoac dang tam ngung");
 
+    const payLater = input.paymentType === "PAY_AT_COURT";
+    const paymentMethod = payLater ? PaymentMethod.CASH : input.paymentMethod;
     const wantsDeposit = input.paymentType === "DEPOSIT";
     const depositPercent = wantsDeposit ? await bookingRepository.courtDepositPercent(courtId) : 0;
     if (wantsDeposit && depositPercent <= 0) throw new ValidationError("San nay khong ho tro dat coc");
@@ -1089,14 +1086,14 @@ export const recipientService = {
         dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
         courtSubtotal: subtotal,
         subtotal,
-        chargeAmount: wantsDeposit ? calculateMinimumDeposit(subtotal, depositPercent) : subtotal
+        chargeAmount: payLater ? 0 : wantsDeposit ? calculateMinimumDeposit(subtotal, depositPercent) : subtotal
       });
     }
 
     if (servicesSubtotal > 0 && entries.length > 0) {
       // Dịch vụ đã chọn được cộng vào booking đầu tiên của đơn thay vì lặp lại cho từng khung giờ.
       entries[0].subtotal += servicesSubtotal;
-      entries[0].chargeAmount = wantsDeposit ? calculateMinimumDeposit(entries[0].subtotal, depositPercent) : entries[0].subtotal;
+      // Services remain on the open tab; the court charge is unchanged.
     }
 
     const existingUser = await prisma.user.findFirst({ where: { phone: input.customerPhone } });
@@ -1118,7 +1115,7 @@ export const recipientService = {
     const totalChargeAmount = entries.reduce((sum, entry) => sum + entry.chargeAmount, 0);
 
     let paymentInput: { reference: string; expiresAt: Date; providerResult: Awaited<ReturnType<typeof paymentProvider.createQrPayment>> } | null = null;
-    if (input.paymentMethod === PaymentMethod.BANK_TRANSFER) {
+    if (!payLater && paymentMethod === PaymentMethod.BANK_TRANSFER) {
       const expiresAt = new Date(Date.now() + env.BOOKING_HOLD_EXPIRES_MINUTES * 60 * 1000);
       const reference = paymentReference();
       const providerOrderId =
@@ -1162,7 +1159,7 @@ export const recipientService = {
           if (activeBlock) throw new ConflictError(`San dang trong lich nghi/bao tri ngay ${entry.bookingDate}`, "WALK_IN_BOOKING_BLOCKED");
         }
 
-        const isCash = input.paymentMethod === PaymentMethod.CASH;
+        const isCash = !payLater && paymentMethod === PaymentMethod.CASH;
 
         await tx.bookingOrder.create({
           data: {
@@ -1171,8 +1168,8 @@ export const recipientService = {
             courtId,
             subtotal: totalAmount,
             totalAmount,
-            paymentType: input.paymentMethod,
-            status: isCash ? "CONFIRMED" : "PENDING",
+            paymentType: payLater ? "PAY_AT_COURT" : paymentMethod,
+            status: payLater || isCash ? "CONFIRMED" : "PENDING",
             note: input.note
           }
         });
@@ -1196,7 +1193,7 @@ export const recipientService = {
               subtotal: entry.subtotal,
               totalPrice: entry.subtotal,
               depositAmount: entry.chargeAmount,
-              paymentMethod: input.paymentMethod,
+              paymentMethod,
               paymentStatus: isCash ? "PAID" : "UNPAID",
               bookingStatus: isCash && wantsDeposit ? BookingStatus.DEPOSIT_PAID : BookingStatus.CONFIRMED,
               note: input.note
@@ -1259,7 +1256,7 @@ export const recipientService = {
       slots: Array<{ courtSurfaceId: string; bookingDate: string; startTime: string; minutes: number }>;
       occurrences: number;
       paymentMethod: typeof PaymentMethod.CASH | typeof PaymentMethod.BANK_TRANSFER;
-      paymentType?: "FULL_PAYMENT" | "DEPOSIT";
+      paymentType?: "FULL_PAYMENT" | "DEPOSIT" | "PAY_AT_COURT";
       note?: string;
       services?: Array<{ serviceId: string; quantity: number }>;
     }
@@ -1271,6 +1268,8 @@ export const recipientService = {
     });
     if (surfaces.length !== surfaceIds.length) throw new NotFoundError("Mot hoac nhieu san con khong ton tai hoac dang tam ngung");
 
+    const payLater = input.paymentType === "PAY_AT_COURT";
+    const paymentMethod = payLater ? PaymentMethod.CASH : input.paymentMethod;
     const wantsDeposit = input.paymentType === "DEPOSIT";
     const depositPercent = wantsDeposit ? await bookingRepository.courtDepositPercent(courtId) : 0;
     if (wantsDeposit && depositPercent <= 0) throw new ValidationError("San nay khong ho tro dat coc");
@@ -1298,14 +1297,14 @@ export const recipientService = {
         }
       }));
 
-    const isCash = input.paymentMethod === PaymentMethod.CASH;
+    const isCash = !payLater && paymentMethod === PaymentMethod.CASH;
 
     // For BANK_TRANSFER, bookings share one BookingOrder so a single QR can cover the whole
     // batch (every occurrence of every slot template) — payment.repository.ts:applyWebhook
     // already cascades PAID to every booking sharing a bookingOrderId. The order's totalAmount
     // is a placeholder here (0) because some occurrences may get skipped below; it's corrected
     // after the loop once the real total is known.
-    const orderId = isCash ? null : await nextPrefixedId("bo", "seq_booking_orders");
+    const orderId = (payLater || isCash) ? null : await nextPrefixedId("bo", "seq_booking_orders");
     if (orderId) {
       await prisma.bookingOrder.create({
         data: {
@@ -1314,7 +1313,7 @@ export const recipientService = {
           courtId,
           subtotal: 0,
           totalAmount: 0,
-          paymentType: input.paymentMethod,
+          paymentType: payLater ? "PAY_AT_COURT" : paymentMethod,
           status: "PENDING",
           note: input.note
         }
@@ -1423,7 +1422,7 @@ export const recipientService = {
           dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
           courtSubtotal: subtotal,
           subtotal,
-          chargeAmount: wantsDeposit ? calculateMinimumDeposit(subtotal, depositPercent) : subtotal
+          chargeAmount: payLater ? 0 : wantsDeposit ? calculateMinimumDeposit(subtotal, depositPercent) : subtotal
         });
       }
     }
@@ -1431,7 +1430,7 @@ export const recipientService = {
     if (servicesSubtotal > 0 && entries.length > 0) {
       // Dịch vụ đã chọn được cộng vào buổi đầu tiên thực sự tạo được, không nhân bản cho các occurrence sau.
       entries[0].subtotal += servicesSubtotal;
-      entries[0].chargeAmount = wantsDeposit ? calculateMinimumDeposit(entries[0].subtotal, depositPercent) : entries[0].subtotal;
+      // Services remain on the open tab; the court charge is unchanged.
     }
 
     const bookingIds = await Promise.all(entries.map(() => nextPrefixedId("b", "seq_bookings")));
@@ -1458,7 +1457,7 @@ export const recipientService = {
               subtotal: entry.subtotal,
               totalPrice: entry.subtotal,
               depositAmount: entry.chargeAmount,
-              paymentMethod: input.paymentMethod,
+              paymentMethod,
               paymentStatus: isCash ? "PAID" : "UNPAID",
               bookingStatus: isCash && wantsDeposit ? BookingStatus.DEPOSIT_PAID : BookingStatus.CONFIRMED,
               note: input.note
@@ -1623,7 +1622,7 @@ export const recipientService = {
     const hours = durationHours(extraStartTime, extraEndTime);
     const extraAmount = dynamicPrice.finalPrice * hours;
 
-    const { updated, settlement } = await prisma.$transaction(async (tx) => {
+    const { updated } = await prisma.$transaction(async (tx) => {
       const updatedBooking = await tx.booking.update({
         where: { id: booking.id },
         data: {
@@ -1640,16 +1639,9 @@ export const recipientService = {
         where: { bookingId: booking.id, startTime: booking.startTime },
         data: { startTime: newStartTime, slotPrice: { increment: extraAmount } }
       });
-      const updatedSettlement = await settlementService.addExtraGrossAmount(booking.id, extraAmount, tx);
-      return { updated: updatedBooking, settlement: updatedSettlement };
+      // Early play is collected at checkout.
+      return { updated: updatedBooking };
     });
-
-    if (settlement) {
-      realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
-      realtimeService.toAdmin(realtimeEvents.settlementUpdated, settlement);
-      realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
-      realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
-    }
 
     return { ...updated, extraChargeAmount: extraAmount };
   },

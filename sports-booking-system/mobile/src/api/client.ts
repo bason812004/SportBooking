@@ -24,9 +24,11 @@ function resolveApiBaseUrl(): string {
     return `http://${host}:8080/api`;
   }
 
-  // 2. Android emulator fallback (Android emulator CANNOT use PC's Wi-Fi IP directly; it must connect to 10.0.2.2)
+  // 2. Android emulator fallback. Prefer localhost via `adb reverse tcp:8080 tcp:8080`
+  // (stable ADB tunnel) over the 10.0.2.2 NAT alias, which drops requests under
+  // concurrent load. Run `adb reverse tcp:8080 tcp:8080` once per emulator boot.
   if (Platform.OS === "android" && !Constants.isDevice) {
-    return "http://10.0.2.2:8080/api";
+    return "http://localhost:8080/api";
   }
 
   // 3. If explicit tunnel or remote HTTPS URL provided (e.g. localtunnel / ngrok)

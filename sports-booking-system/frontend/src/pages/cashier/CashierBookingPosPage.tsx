@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
@@ -25,11 +26,13 @@ import {
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Modal } from "../../components/ui/Modal";
+import { ServiceImage } from "../../components/common/ServiceImage";
 import { cashierApi, type CashierBookingDetail, type ActiveBookingService } from "../../features/cashier/api/cashierApi";
-import { serviceApi, type ServiceCategory, type ServiceItem } from "../../features/services/api/serviceApi";
+import { dedupeServicesByName, serviceApi, type ServiceCategory, type ServiceItem } from "../../features/services/api/serviceApi";
 import { formatMoney } from "../../utils/formatters";
 
 export function CashierBookingPosPage() {
+  const { t } = useTranslation("booking");
   const { bookingId } = useParams<{ bookingId: string }>();
   const navigate = useNavigate();
 
@@ -37,6 +40,7 @@ export function CashierBookingPosPage() {
   const [categories, setCategories] = useState<ServiceCategory[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [servicesLoading, setServicesLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
@@ -72,29 +76,18 @@ export function CashierBookingPosPage() {
     showToast(lockState ? "Hóa đơn đã được lưu và khóa chỉnh sửa!" : "Đã mở khóa hóa đơn. Bạn có thể chỉnh sửa lại!");
   };
 
-  const fetchDetail = async () => {
+  // The invoice and the product catalog are reloaded independently: switching category used to
+  // re-pull the booking too and blank the whole screen behind a spinner.
+  const fetchDetail = async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!bookingId) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
       const [bDetail, cats] = await Promise.all([
         cashierApi.getBookingDetail(bookingId).catch(() => null),
         serviceApi.getCategories().catch(() => [])
       ]);
-
       setDetail(bDetail);
       setCategories(cats || []);
-
-      if (!bDetail) {
-        setServices([]);
-        return;
-      }
-
-      const courtId = bDetail.booking?.court?.id;
-      let svcs: ServiceItem[] = courtId ? await serviceApi.getCourtServices(courtId, selectedCategory).catch(() => []) : [];
-      if (!svcs || svcs.length === 0) {
-        svcs = await serviceApi.getPartnerServices({ categoryId: selectedCategory }).catch(() => []);
-      }
-      setServices(svcs || []);
     } catch (err) {
       console.error("Failed to load cashier detail for page:", err);
     } finally {
@@ -102,9 +95,35 @@ export function CashierBookingPosPage() {
     }
   };
 
+  const fetchServices = async (courtId?: string) => {
+    if (!courtId) {
+      setServices([]);
+      return;
+    }
+    setServicesLoading(true);
+    try {
+      let svcs: ServiceItem[] = await serviceApi.getCourtServices(courtId, selectedCategory).catch(() => []);
+      if (!svcs || svcs.length === 0) {
+        // Partner-wide fallback spans every court, which repeats each product name once per
+        // court — collapse it so the POS grid shows one sellable tile per product.
+        svcs = dedupeServicesByName(await serviceApi.getPartnerServices({ categoryId: selectedCategory }).catch(() => []));
+      }
+      setServices(svcs || []);
+    } finally {
+      setServicesLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchDetail();
-  }, [bookingId, selectedCategory]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookingId]);
+
+  const courtId = detail?.booking?.court?.id;
+  useEffect(() => {
+    fetchServices(courtId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courtId, selectedCategory]);
 
   // Per-service pending state + debounce + sequential send queue, so bursts of rapid clicks
   // (on the same or different services) collapse into 1 accurate request per service instead
@@ -173,7 +192,7 @@ export function CashierBookingPosPage() {
       })
       .catch((err: any) => {
         showToast(err.message || `Không thể thêm "${service.name}"`, "error");
-        fetchDetail();
+        fetchDetail({ silent: true });
       });
   };
 
@@ -208,7 +227,7 @@ export function CashierBookingPosPage() {
       })
       .catch((err: any) => {
         showToast(err.message || "Không thể cập nhật dịch vụ", "error");
-        fetchDetail();
+        fetchDetail({ silent: true });
       });
   };
 
@@ -285,7 +304,7 @@ export function CashierBookingPosPage() {
         <div className="flex h-96 items-center justify-center rounded-3xl bg-white shadow-sm border border-slate-200">
           <div className="flex flex-col items-center gap-3">
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-[#02712a] border-t-transparent" />
-            <p className="text-sm font-bold text-slate-600">Đang tải dữ liệu dịch vụ & đơn đặt sân...</p>
+            <p className="text-sm font-bold text-slate-600">Đang tải đơn đặt sân...</p>
           </div>
         </div>
       ) : !detail ? (
@@ -307,6 +326,7 @@ export function CashierBookingPosPage() {
                   <div className="flex items-center gap-2 mb-1">
                     <span className="rounded-lg bg-white/20 px-2.5 py-0.5 text-xs font-black tracking-wider uppercase backdrop-blur">
                       Đơn #{detail.booking.bookingCode}
+                      {!detail.booking.checkedInAt && <span className="ml-2">{t("openTab.notCheckedIn")}</span>}
                     </span>
                     <span className="rounded-lg bg-emerald-400/30 px-2.5 py-0.5 text-xs font-black text-emerald-100 border border-emerald-300/30">
                       {detail.booking.court?.name || "Sân Sala 1 · Sân 01"}
@@ -378,8 +398,17 @@ export function CashierBookingPosPage() {
             </div>
 
             {/* Products Grid */}
-            <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 max-h-[520px] overflow-y-auto pr-1">
-              {filteredServices.length === 0 ? (
+            {/* Only the grid dims while a category loads — the invoice and cart stay put. */}
+            <div
+              className={`grid gap-3 sm:grid-cols-2 md:grid-cols-3 max-h-[520px] overflow-y-auto pr-1 transition-opacity ${
+                servicesLoading ? "opacity-50" : ""
+              }`}
+            >
+              {servicesLoading && filteredServices.length === 0 ? (
+                <div className="col-span-full flex justify-center rounded-3xl bg-white p-12 border border-slate-200">
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#02712a] border-t-transparent" />
+                </div>
+              ) : filteredServices.length === 0 ? (
                 <div className="col-span-full rounded-3xl bg-white p-12 text-center border border-slate-200">
                   <ShoppingBag className="mx-auto h-12 w-12 text-slate-300 mb-2" />
                   <p className="text-sm font-bold text-slate-600">Không tìm thấy dịch vụ nào phù hợp.</p>
@@ -407,6 +436,7 @@ export function CashierBookingPosPage() {
                           </span>
                         )}
                       </div>
+                      <ServiceImage src={svc.imageUrl} alt={svc.name} className="mb-1.5 h-28 w-full rounded-xl" />
                       <h3 className="font-extrabold text-slate-900 text-xs line-clamp-2 group-hover:text-[#02712a] transition">
                         {svc.name}
                       </h3>

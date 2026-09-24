@@ -29,6 +29,7 @@ export type BookingQuote = {
   subtotal: number;
   voucherDiscountAmount: number;
   totalAmount: number;
+  depositBase: number;
   minimumDepositAmount: number;
   remainingAmount: number;
   depositPercent: number;

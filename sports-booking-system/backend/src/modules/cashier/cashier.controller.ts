@@ -28,7 +28,7 @@ export const cashierController = {
   },
 
   async getBookingDetailForCashier(req: Request, res: Response) {
-    const detail = await cashierService.getBookingDetailForCashier(req.params.bookingId);
+    const detail = await cashierService.getBookingDetailForCashier(req.params.bookingId, req.user!);
     return sendSuccess(res, detail);
   },
 
@@ -36,7 +36,7 @@ export const cashierController = {
     const role = req.user!.role;
     const addedBy = role === "PARTNER" ? "PARTNER" : role === "RECIPIENT" ? "CASHIER" : "USER";
     const { serviceId, quantity } = req.body;
-    const data = await cashierService.addServiceToBooking(req.params.bookingId, { serviceId, quantity: Number(quantity) || 1 }, addedBy);
+    const data = await cashierService.addServiceToBooking(req.params.bookingId, { serviceId, quantity: Number(quantity) || 1 }, addedBy, req.user!);
     return sendSuccess(res, data, 200, "Thêm dịch vụ vào đơn thành công");
   },
 
@@ -45,13 +45,14 @@ export const cashierController = {
     const data = await cashierService.updateBookingServiceQuantity(
       req.params.bookingId,
       req.params.serviceId,
-      Number(quantity)
+      Number(quantity),
+      req.user!
     );
     return sendSuccess(res, data, 200, "Cập nhật số lượng dịch vụ thành công");
   },
 
   async removeBookingService(req: Request, res: Response) {
-    const data = await cashierService.removeBookingService(req.params.bookingId, req.params.serviceId);
+    const data = await cashierService.removeBookingService(req.params.bookingId, req.params.serviceId, req.user!);
     return sendSuccess(res, data, 200, "Xóa dịch vụ khỏi đơn thành công");
   },
 

@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Boxes, AlertTriangle, ArrowUpRight, ArrowDownLeft, RefreshCw, History, ShieldAlert, DollarSign, Edit3, Sparkles, PackagePlus } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Modal } from "../../components/ui/Modal";
 import { SortableTh } from "../../components/common/SortableTh";
+import { ServiceImage } from "../../components/common/ServiceImage";
 import { useUrlSort } from "../../hooks/useUrlSort";
 import {
   inventoryApi,
@@ -14,24 +17,27 @@ import {
   type ReorderSuggestion
 } from "../../features/inventory/api/inventoryApi";
 import { serviceApi, type ServiceCategory } from "../../features/services/api/serviceApi";
+import { partnerApi } from "../../features/partner/api/partnerApi";
+import { useAuth } from "../../features/auth/hooks/useAuth";
+import type { Court } from "../../types/api";
 import { formatMoney } from "../../utils/formatters";
 
 const PAGE_SIZE = 10;
 
-type SortField = "serviceName" | "categoryName" | "quantity" | "costPrice" | "price" | "stockValue";
-const SORT_FIELDS: SortField[] = ["serviceName", "categoryName", "quantity", "costPrice", "price", "stockValue"];
+type SortField = "serviceName" | "courtName" | "categoryName" | "quantity" | "costPrice" | "price" | "stockValue";
+const SORT_FIELDS: SortField[] = ["serviceName", "courtName", "categoryName", "quantity", "costPrice", "price", "stockValue"];
+
+type StockQueryData = { summary: InventorySummary; items: InventoryItem[]; pagination: InventoryPagination };
 
 export function PartnerInventoryPage() {
-  const [summary, setSummary] = useState<InventorySummary | null>(null);
-  const [items, setItems] = useState<InventoryItem[]>([]);
-  const [pagination, setPagination] = useState<InventoryPagination | null>(null);
-  const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
-  const [categories, setCategories] = useState<ServiceCategory[]>([]);
-  const [suggestions, setSuggestions] = useState<ReorderSuggestion[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const isPartner = user?.role === "PARTNER";
   const [filterStatus, setFilterStatus] = useState<string>("ALL");
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [courtId, setCourtId] = useState("");
   const [page, setPage] = useState(1);
   const [activeTab, setActiveTab] = useState<"STOCK" | "TRANSACTIONS" | "SUGGESTIONS">("STOCK");
 
@@ -54,57 +60,63 @@ export function PartnerInventoryPage() {
     note: ""
   });
 
-  // Page/filter/sort changes only need to re-fetch the stock list — pulling in the 50-row
-  // transaction history on every page click was doubling round-trips for data that hadn't
-  // changed, which is what made pagination feel slow. Transactions are fetched separately,
-  // only on mount and after actions that actually create new transactions.
-  const fetchStock = async () => {
-    setLoading(true);
-    try {
-      const invData = await inventoryApi.getSummary({
+  // Only the settled value reaches the query key, so typing no longer fires a request per keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Page/filter/sort changes only re-fetch the stock list — pulling in the 50-row transaction
+  // history on every page click was doubling round-trips for data that hadn't changed.
+  // Transactions and reorder suggestions are their own queries, refreshed only when an action
+  // actually creates new ones.
+  const stockKey = [
+    "partner-inventory",
+    { page, status: filterStatus, search: debouncedSearch, categoryId, courtId, sortField, sortOrder }
+  ] as const;
+
+  const stockQuery = useQuery({
+    queryKey: stockKey,
+    queryFn: () =>
+      inventoryApi.getSummary({
         page,
         limit: PAGE_SIZE,
         status: filterStatus === "ALL" ? undefined : filterStatus,
-        search: search || undefined,
+        search: debouncedSearch || undefined,
         categoryId: categoryId || undefined,
+        courtId: courtId || undefined,
         sortBy: sortField ?? undefined,
         sortOrder
-      });
-      setSummary(invData.summary);
-      setItems(invData.items);
-      setPagination(invData.pagination);
-    } catch (err) {
-      console.error("Failed to load inventory:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
+      }),
+    // Keeps the current table on screen while a new page/filter loads instead of emptying it.
+    placeholderData: keepPreviousData
+  });
 
-  const fetchTransactions = () => {
-    inventoryApi.getTransactions(50).then(setTransactions).catch(() => {});
-  };
+  const transactionsQuery = useQuery({
+    queryKey: ["inventory-transactions"],
+    queryFn: () => inventoryApi.getTransactions(50)
+  });
+  // Heavier consumption-velocity query, kept separate so it never holds up the stock table.
+  const suggestionsQuery = useQuery({
+    queryKey: ["inventory-suggestions"],
+    queryFn: inventoryApi.getReorderSuggestions
+  });
+  const categoriesQuery = useQuery({ queryKey: ["service-categories"], queryFn: serviceApi.getCategories });
+  // /api/partner/* is PARTNER-only, and this page is also mounted at /recipient/inventory.
+  // A receptionist runs exactly one court and the server already pins their queries to it, so the
+  // court filter is both forbidden and pointless for them.
+  const courtsQuery = useQuery({ queryKey: ["partner-courts"], queryFn: partnerApi.courts, enabled: isPartner });
 
-  const fetchSuggestions = () => {
-    inventoryApi.getReorderSuggestions().then(setSuggestions).catch(() => {});
-  };
-
-  const fetchData = () => {
-    fetchStock();
-    fetchTransactions();
-  };
-
-  useEffect(() => {
-    serviceApi.getCategories().then(setCategories).catch(() => {});
-    fetchTransactions();
-    // Fetched once on mount, independent of the STOCK tab's loading state, so it never
-    // slows down the main list — this endpoint does a heavier consumption-velocity query.
-    fetchSuggestions();
-  }, []);
-
-  useEffect(() => {
-    fetchStock();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, filterStatus, search, categoryId, sortField, sortOrder]);
+  const summary = stockQuery.data?.summary ?? null;
+  const items = stockQuery.data?.items ?? [];
+  const pagination = stockQuery.data?.pagination ?? null;
+  const transactions = transactionsQuery.data ?? [];
+  const suggestions = suggestionsQuery.data ?? [];
+  const categories = categoriesQuery.data ?? [];
+  const courts = courtsQuery.data ?? [];
 
   const changeFilter = (status: string) => {
     setFilterStatus(status);
@@ -126,7 +138,7 @@ export function PartnerInventoryPage() {
     e.preventDefault();
     if (!selectedItem) return;
     try {
-      await inventoryApi.adjustStock({
+      const result = await inventoryApi.adjustStock({
         serviceId: selectedItem.serviceId,
         type: adjustForm.type,
         quantity: Number(adjustForm.quantity),
@@ -134,10 +146,37 @@ export function PartnerInventoryPage() {
         note: adjustForm.note
       });
       setIsAdjustModalOpen(false);
-      fetchData();
-      fetchSuggestions();
+      // Patch the one row from the server-computed quantity instead of reloading the whole table.
+      queryClient.setQueryData<StockQueryData>(stockKey, (old) =>
+        old
+          ? {
+              ...old,
+              items: old.items.map((item) =>
+                item.serviceId === result.serviceId
+                  ? {
+                      ...item,
+                      quantity: result.newQuantity,
+                      stockValue: result.newQuantity * item.costPrice,
+                      status:
+                        result.newQuantity === 0
+                          ? "OUT_OF_STOCK"
+                          : result.newQuantity <= item.minimumStock
+                          ? "LOW_STOCK"
+                          : "NORMAL"
+                    }
+                  : item
+              )
+            }
+          : old
+      );
+      // The totals row and these two lists are derived server-side; refresh them in the
+      // background so the table itself never blanks.
+      queryClient.invalidateQueries({ queryKey: ["inventory-transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["inventory-suggestions"] });
+      queryClient.invalidateQueries({ queryKey: ["partner-inventory"] });
+      toast.success("Đã cập nhật tồn kho.");
     } catch (err: any) {
-      alert(err.response?.data?.message || "Lỗi điều chỉnh tồn kho");
+      toast.error(err.response?.data?.message || "Lỗi điều chỉnh tồn kho");
     }
   };
 
@@ -173,8 +212,15 @@ export function PartnerInventoryPage() {
             Theo dõi số lượng tồn kho, cảnh báo sắp hết hàng, giá vốn và lịch sử xuất nhập kho.
           </p>
         </div>
-        <Button className="flex items-center gap-2 bg-[#02712a] text-white" onClick={fetchData}>
-          <RefreshCw className="h-4 w-4" /> Làm mới dữ liệu
+        <Button
+          className="flex items-center gap-2 bg-[#02712a] text-white"
+          onClick={() => {
+            queryClient.invalidateQueries({ queryKey: ["partner-inventory"] });
+            queryClient.invalidateQueries({ queryKey: ["inventory-transactions"] });
+            queryClient.invalidateQueries({ queryKey: ["inventory-suggestions"] });
+          }}
+        >
+          <RefreshCw className={`h-4 w-4 ${stockQuery.isFetching ? "animate-spin" : ""}`} /> Làm mới dữ liệu
         </Button>
       </div>
 
@@ -318,6 +364,26 @@ export function PartnerInventoryPage() {
                 ))}
               </select>
             </div>
+            {/* Each court keeps its own stock row per product, so the same name repeats across
+                courts — this filter is what makes those rows tellable apart. */}
+            {isPartner ? (
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase text-slate-700">Sân</label>
+              <select
+                className="w-full rounded-xl border border-slate-300 p-2.5 text-sm font-semibold focus:border-green-600 focus:outline-none"
+                value={courtId}
+                onChange={(e) => {
+                  setPage(1);
+                  setCourtId(e.target.value);
+                }}
+              >
+                <option value="">Tất cả sân</option>
+                {courts.map((court) => (
+                  <option key={court.id} value={court.id}>{court.name}</option>
+                ))}
+              </select>
+            </div>
+            ) : null}
           </div>
 
           {/* Table */}
@@ -326,6 +392,7 @@ export function PartnerInventoryPage() {
               <thead className="bg-slate-50 text-xs uppercase font-extrabold text-slate-600 border-b border-slate-200">
                 <tr>
                   <SortableTh label="Sản phẩm" field="serviceName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <SortableTh label="Sân" field="courtName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
                   <SortableTh label="Danh mục" field="categoryName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
                   <SortableTh label="Số lượng tồn" field="quantity" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
                   <SortableTh label="Giá vốn (Nhập)" field="costPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
@@ -338,14 +405,31 @@ export function PartnerInventoryPage() {
               <tbody className="divide-y divide-slate-100 font-semibold">
                 {items.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-8 text-center text-slate-500 font-normal">
+                    <td colSpan={9} className="p-8 text-center text-slate-500 font-normal">
                       Không có sản phẩm nào phù hợp
                     </td>
                   </tr>
                 ) : (
                   items.map((item) => (
                     <tr key={item.serviceId} className="hover:bg-slate-50/80 transition">
-                      <td className="p-4 font-bold text-slate-900">{item.serviceName}</td>
+                      <td className="p-4 font-bold text-slate-900">
+                        <div className="flex items-center gap-2.5">
+                          <ServiceImage
+                            src={item.imageUrl}
+                            alt={item.serviceName}
+                            className="h-9 w-9 shrink-0 rounded-lg"
+                            fallback={
+                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xs font-black text-slate-400">
+                                {item.serviceName.charAt(0)}
+                              </div>
+                            }
+                          />
+                          <span>{item.serviceName}</span>
+                        </div>
+                      </td>
+                      <td className="p-4 text-slate-600">
+                        {item.courtName ?? <span className="text-slate-400">Chưa gán sân</span>}
+                      </td>
                       <td className="p-4 text-slate-600">{item.categoryName}</td>
                       <td className="p-4">
                         <span className="text-base font-extrabold text-slate-900">{item.quantity}</span>{" "}

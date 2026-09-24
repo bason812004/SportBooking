@@ -56,8 +56,8 @@ export const walkInBookingSchema = z.object({
     bookingDate: z.string().date(),
     startTime: z.string().regex(/^\d{2}:\d{2}$/),
     minutes: z.number().int().positive().max(240),
-    paymentMethod: z.enum(["CASH", "BANK_TRANSFER", "E_WALLET"]),
-    paymentType: z.enum(["FULL_PAYMENT", "DEPOSIT"]).default("FULL_PAYMENT"),
+    paymentMethod: z.enum(["CASH", "BANK_TRANSFER", "E_WALLET"]).default("CASH"),
+    paymentType: z.enum(["FULL_PAYMENT", "DEPOSIT", "PAY_AT_COURT"]).default("FULL_PAYMENT"),
     note: z.string().trim().max(500).optional(),
     services: walkInServicesSchema
   })
@@ -79,7 +79,7 @@ export const walkInBookingOrderSchema = z.object({
       .min(2)
       .max(14),
     paymentMethod: z.enum(["CASH", "BANK_TRANSFER"]).default("CASH"),
-    paymentType: z.enum(["FULL_PAYMENT", "DEPOSIT"]).default("FULL_PAYMENT"),
+    paymentType: z.enum(["FULL_PAYMENT", "DEPOSIT", "PAY_AT_COURT"]).default("FULL_PAYMENT"),
     note: z.string().trim().max(500).optional(),
     services: walkInServicesSchema
   })
@@ -132,7 +132,7 @@ export const recurringWalkInBookingSchema = z.object({
       .max(14),
     occurrences: z.number().int().min(2).max(26),
     paymentMethod: z.enum(["CASH", "BANK_TRANSFER"]).default("CASH"),
-    paymentType: z.enum(["FULL_PAYMENT", "DEPOSIT"]).default("FULL_PAYMENT"),
+    paymentType: z.enum(["FULL_PAYMENT", "DEPOSIT", "PAY_AT_COURT"]).default("FULL_PAYMENT"),
     note: z.string().trim().max(500).optional(),
     services: walkInServicesSchema
   })

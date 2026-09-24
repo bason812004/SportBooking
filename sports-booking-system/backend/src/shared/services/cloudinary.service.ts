@@ -26,13 +26,25 @@ export type UploadedVideo = {
   bytes: number;
 };
 
-async function uploadStream(
-  options: Record<string, unknown>,
-  buffer: Buffer
-): Promise<UploadApiResponse> {
-  if (!isCloudinaryConfigured) {
-    throw new ValidationError("Chua cau hinh Cloudinary");
-  }
+// A slow uplink keeps the connection open long enough for something in between to drop it, so a
+// reset here says nothing about the file being valid. Cloudinary's own rejections (bad key,
+// unsupported format, size limit) are permanent and must not be retried.
+const RETRYABLE_NETWORK_CODES = new Set(["ECONNRESET", "EPIPE", "ETIMEDOUT", "ECONNABORTED", "ENOTFOUND", "EAI_AGAIN"]);
+const UPLOAD_RETRY_DELAYS_MS = [1_000, 3_000];
+
+export function networkErrorCode(error: unknown): string | null {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && RETRYABLE_NETWORK_CODES.has(code)) return code;
+  const message = (error as { message?: unknown } | null)?.message;
+  if (typeof message === "string" && message.toLowerCase().includes("socket hang up")) return "ECONNRESET";
+  return null;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function uploadOnce(options: Record<string, unknown>, buffer: Buffer): Promise<UploadApiResponse> {
   return new Promise<UploadApiResponse>((resolve, reject) => {
     const upload = cloudinary.uploader.upload_stream(options, (error, uploaded) => {
       if (error) return reject(error);
@@ -41,6 +53,37 @@ async function uploadStream(
     });
     Readable.from(buffer).pipe(upload);
   });
+}
+
+async function uploadStream(
+  options: Record<string, unknown>,
+  buffer: Buffer
+): Promise<UploadApiResponse> {
+  if (!isCloudinaryConfigured) {
+    throw new ValidationError("Chua cau hinh Cloudinary");
+  }
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= UPLOAD_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await uploadOnce(options, buffer);
+    } catch (error) {
+      lastError = error;
+      const code = networkErrorCode(error);
+      if (!code || attempt === UPLOAD_RETRY_DELAYS_MS.length) break;
+      console.warn(`Cloudinary upload failed with ${code}, retrying (${attempt + 1}/${UPLOAD_RETRY_DELAYS_MS.length})`);
+      await sleep(UPLOAD_RETRY_DELAYS_MS[attempt]);
+    }
+  }
+  throw lastError;
+}
+
+/** Appends the underlying cause so the API response is diagnosable without reading server logs. */
+function withCause(message: string, error: unknown): string {
+  const code = networkErrorCode(error) ?? (error as { http_code?: unknown } | null)?.http_code;
+  const detail = (error as { message?: unknown } | null)?.message;
+  if (code) return `${message} (${code})`;
+  return typeof detail === "string" && detail ? `${message}: ${detail}` : message;
 }
 
 export const cloudinaryService = {
@@ -65,7 +108,41 @@ export const cloudinaryService = {
       );
     } catch (error) {
       console.error("Cloudinary upload failed", error);
-      throw new ValidationError("Khong the tai anh len Cloudinary");
+      throw new ValidationError(withCause("Khong the tai anh len Cloudinary", error));
+    }
+
+    return {
+      imageUrl: result.secure_url,
+      publicId: result.public_id,
+      width: result.width,
+      height: result.height,
+      format: result.format,
+      bytes: result.bytes
+    };
+  },
+
+  async uploadServiceImage(file: Express.Multer.File, partnerId: string): Promise<UploadedImage> {
+    if (!ALLOWED_IMAGE_TYPES.has(file.mimetype)) {
+      throw new ValidationError("Chi chap nhan anh JPEG, PNG hoac WebP");
+    }
+    if (file.size > MAX_IMAGE_SIZE) {
+      throw new ValidationError("Anh toi da 5MB");
+    }
+    let result: UploadApiResponse;
+    try {
+      result = await uploadStream(
+        {
+          folder: `${env.CLOUDINARY_FOLDER}/services/${partnerId}`,
+          resource_type: "image",
+          allowed_formats: ["jpg", "jpeg", "png", "webp"],
+          unique_filename: true,
+          overwrite: false
+        },
+        file.buffer
+      );
+    } catch (error) {
+      console.error("Cloudinary service image upload failed", error);
+      throw new ValidationError(withCause("Khong the tai anh san pham len Cloudinary", error));
     }
 
     return {
@@ -99,7 +176,7 @@ export const cloudinaryService = {
       );
     } catch (error) {
       console.error("Cloudinary blog cover upload failed", error);
-      throw new ValidationError("Khong the tai anh bia len Cloudinary");
+      throw new ValidationError(withCause("Khong the tai anh bia len Cloudinary", error));
     }
 
     return {
@@ -134,7 +211,7 @@ export const cloudinaryService = {
       );
     } catch (error) {
       console.error("Cloudinary avatar upload failed", error);
-      throw new ValidationError("Khong the tai avatar len Cloudinary");
+      throw new ValidationError(withCause("Khong the tai avatar len Cloudinary", error));
     }
     return {
       imageUrl: result.secure_url,
@@ -167,7 +244,7 @@ export const cloudinaryService = {
       );
     } catch (error) {
       console.error("Cloudinary chat image upload failed", error);
-      throw new ValidationError("Khong the tai anh chat len Cloudinary");
+      throw new ValidationError(withCause("Khong the tai anh chat len Cloudinary", error));
     }
     return {
       imageUrl: result.secure_url,
@@ -201,7 +278,7 @@ export const cloudinaryService = {
       );
     } catch (error) {
       console.error("Cloudinary chat video upload failed", error);
-      throw new ValidationError("Khong the tai video chat len Cloudinary");
+      throw new ValidationError(withCause("Khong the tai video chat len Cloudinary", error));
     }
     const thumbnailUrl = Array.isArray((result as unknown as { eager?: Array<{ secure_url?: string }> }).eager)
       ? (result as unknown as { eager?: Array<{ secure_url?: string }> }).eager?.[0]?.secure_url

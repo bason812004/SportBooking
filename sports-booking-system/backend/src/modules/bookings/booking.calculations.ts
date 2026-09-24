@@ -47,7 +47,8 @@ export function calculateBookingQuote(slots: PricedSlot[], voucherDiscountAmount
   const subtotal = slots.reduce((sum, slot) => sum + slot.price, 0) + extraSubtotal;
   const discount = Math.min(Math.max(voucherDiscountAmount, 0), subtotal);
   const totalAmount = subtotal - discount;
-  const minimumDepositAmount = calculateMinimumDeposit(totalAmount, depositPercent);
+  const depositBase = Math.max(0, subtotal - extraSubtotal - discount);
+  const minimumDepositAmount = calculateMinimumDeposit(depositBase, depositPercent);
   return {
     subtotal,
     voucherDiscountAmount: discount,

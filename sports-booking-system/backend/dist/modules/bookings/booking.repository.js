@@ -224,7 +224,7 @@ export const bookingRepository = {
     async attachServicesToBooking(tx, bookingId, lines) {
         for (const line of lines) {
             await tx.bookingService.create({
-                data: { id: generateShortId("bs"), bookingId, serviceId: line.serviceId, quantity: line.quantity, price: line.price }
+                data: { id: generateShortId("bs"), bookingId, serviceId: line.serviceId, quantity: line.quantity, unitPrice: line.price, price: line.price * line.quantity, totalPrice: line.price * line.quantity, status: "ACTIVE" }
             });
             const inv = await tx.serviceInventory.findFirst({ where: { serviceId: line.serviceId } });
             if (inv) {
@@ -274,7 +274,10 @@ export const bookingRepository = {
                             id: generateShortId("bs"),
                             serviceId: service.serviceId,
                             quantity: service.quantity,
-                            price: service.price
+                            unitPrice: service.price,
+                            price: service.price * service.quantity,
+                            totalPrice: service.price * service.quantity,
+                            status: "ACTIVE"
                         }))
                     }
                 },
@@ -315,7 +318,7 @@ export const bookingRepository = {
         });
     },
     async findConflictsInTransaction(tx, courtId, date, slots) {
-        const activeStatuses = ["PENDING", "PENDING_PAYMENT", "CONFIRMED", "COMPLETED"];
+        const activeStatuses = ["PENDING", "PENDING_PAYMENT", "CONFIRMED", "DEPOSIT_PAID", "IN_PROGRESS", "CHECKOUT_PENDING", "COMPLETED"];
         const conflicts = [];
         for (const slot of slots) {
             const slotDateStr = slot.date || date;
@@ -323,20 +326,6 @@ export const bookingRepository = {
             const startTime = timeToDate(slot.startTime.slice(0, 5));
             const endTime = timeToDate(slot.endTime.slice(0, 5));
             const surfaceId = slot.courtSurfaceId || slot.court_surface_id || slot.courtSubId || null;
-            const legacyBooking = await tx.booking.findFirst({
-                where: {
-                    courtId,
-                    bookingDate,
-                    bookingStatus: { in: activeStatuses },
-                    startTime: { lt: endTime },
-                    endTime: { gt: startTime },
-                    ...(surfaceId ? { OR: [{ courtSurfaceId: surfaceId }, { courtSurfaceId: null }] } : {})
-                }
-            });
-            if (legacyBooking) {
-                conflicts.push(legacyBooking);
-                continue;
-            }
             const slotBooking = await tx.bookingSlot.findFirst({
                 where: {
                     courtId,
@@ -396,7 +385,10 @@ export const bookingRepository = {
                             id: generateShortId("bs"),
                             serviceId: service.serviceId,
                             quantity: service.quantity,
-                            price: service.price
+                            unitPrice: service.price,
+                            price: service.price * service.quantity,
+                            totalPrice: service.price * service.quantity,
+                            status: "ACTIVE"
                         }))
                     }
                 },
@@ -498,7 +490,10 @@ export const bookingRepository = {
                             id: generateShortId("bs"),
                             serviceId: service.serviceId,
                             quantity: service.quantity,
-                            price: service.price
+                            unitPrice: service.price,
+                            price: service.price * service.quantity,
+                            totalPrice: service.price * service.quantity,
+                            status: "ACTIVE"
                         }))
                     }
                 },
@@ -619,7 +614,10 @@ export const bookingRepository = {
                                 id: generateShortId("bs"),
                                 serviceId: service.serviceId,
                                 quantity: service.quantity,
-                                price: service.price
+                                unitPrice: service.price,
+                                price: service.price * service.quantity,
+                                totalPrice: service.price * service.quantity,
+                                status: "ACTIVE"
                             }))
                         }
                     },
@@ -773,7 +771,10 @@ export const bookingRepository = {
                                 id: generateShortId("bs"),
                                 serviceId: service.serviceId,
                                 quantity: service.quantity,
-                                price: service.price
+                                unitPrice: service.price,
+                                price: service.price * service.quantity,
+                                totalPrice: service.price * service.quantity,
+                                status: "ACTIVE"
                             }))
                         }
                     },

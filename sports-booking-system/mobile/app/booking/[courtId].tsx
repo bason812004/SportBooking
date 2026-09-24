@@ -97,6 +97,13 @@ export default function BookingScreen() {
     staleTime: 10 * 1000
   });
 
+  useEffect(() => {
+    if (quote.data?.requiresDeposit && paymentType === "PAY_AT_COURT") setPaymentType("DEPOSIT");
+    if (quote.data && !quote.data.requiresDeposit && paymentType === "DEPOSIT") setPaymentType("PAY_AT_COURT");
+  }, [quote.data?.requiresDeposit, paymentType, setPaymentType]);
+
+  const payNow = quote.data ? paymentType === "PAY_AT_COURT" ? 0 : paymentType === "DEPOSIT" ? quote.data.minimumDepositAmount : quote.data.depositBase : 0;
+
   const checkout = useMutation({
     mutationFn: bookingApi.checkout,
     onSuccess: async (result) => {
@@ -229,8 +236,8 @@ export default function BookingScreen() {
 
         <SectionHeader title={t.booking.paymentMethod} />
         <View style={styles.actions}>
-          <Chip label={t.booking.payAtCourt} active={paymentType === "PAY_AT_COURT"} onPress={() => setPaymentType("PAY_AT_COURT")} />
-          <Chip label={t.booking.depositPayment} active={paymentType === "DEPOSIT"} onPress={() => setPaymentType("DEPOSIT")} />
+          {!quote.data?.requiresDeposit && <Chip label={t.booking.payAtCourt} active={paymentType === "PAY_AT_COURT"} onPress={() => setPaymentType("PAY_AT_COURT")} />}
+          {quote.data?.requiresDeposit && <Chip label={`${t.booking.courtDeposit} ${quote.data.depositPercent}%`} active={paymentType === "DEPOSIT"} onPress={() => setPaymentType("DEPOSIT")} />}
           <Chip label={t.booking.fullPayment} active={paymentType === "FULL_PAYMENT"} onPress={() => setPaymentType("FULL_PAYMENT")} />
         </View>
         <FormInput label={t.booking.notePlaceholder} value={note} onChangeText={setNote} multiline maxLength={500} />
@@ -244,13 +251,15 @@ export default function BookingScreen() {
           ) : quote.data ? (
             <>
               <SummaryRow label={t.booking.basePrice} value={formatCurrency(quote.data.courtSubtotal)} />
-              <SummaryRow label="Dịch vụ đi kèm" value={formatCurrency(quote.data.servicesSubtotal)} />
+              <SummaryRow label={t.booking.serviceCharge} value={formatCurrency(quote.data.servicesSubtotal)} />
               <SummaryRow label={t.booking.voucherDiscount} value={`-${formatCurrency(quote.data.voucherDiscountAmount)}`} />
               <SummaryRow
-                label={t.booking.totalAmount}
-                value={formatCurrency(paymentType === "PAY_AT_COURT" ? 0 : paymentType === "DEPOSIT" ? quote.data.minimumDepositAmount : quote.data.totalAmount)}
+                label={t.booking.payNow}
+                value={formatCurrency(payNow)}
                 strong
               />
+              <SummaryRow label={t.booking.remainingAtCourt} value={formatCurrency(Math.max(0, quote.data.totalAmount - payNow))} />
+              {quote.data.servicesSubtotal > 0 && <Text style={styles.meta}>{t.booking.servicesAtCourt}</Text>}
             </>
           ) : (
             <Text style={styles.meta}>Vui lòng chọn ít nhất 1 ô giờ để xem tổng giá.</Text>

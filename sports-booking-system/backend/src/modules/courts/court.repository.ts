@@ -43,8 +43,11 @@ function searchVariants(value: string) {
   const withoutAdministrativePrefix = ascii
     .replace(/^(quan|q|huyen|h|thi xa|tx|thanh pho|tp|tp\.|tinh)\s+/i, "")
     .trim();
+  const spaced = ascii
+    .replace(/([a-z])(\d)/gi, "$1 $2")
+    .replace(/(\d)([a-z])/gi, "$1 $2");
 
-  return Array.from(new Set([trimmed, ascii, withoutAdministrativePrefix].filter(Boolean)));
+  return Array.from(new Set([trimmed, ascii, withoutAdministrativePrefix, spaced].filter(Boolean)));
 }
 
 function textSearchCondition(fields: Array<"name" | "description" | "address" | "city" | "district" | "ward">, value: string) {

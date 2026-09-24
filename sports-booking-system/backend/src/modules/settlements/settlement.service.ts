@@ -121,6 +121,38 @@ export const settlementService = {
     return settlement;
   },
 
+  /** Counter cash is already held by the partner. Never credit it to the wallet.
+   * Separate rows preserve the source when the booking also has an online deposit.
+   * grossAmount is the cumulative invoice total, making repeated completion idempotent.
+   */
+  async createFromCounterCollection(bookingId: string, grossAmount: number, tx: DbClient) {
+    const booking = await settlementRepository.bookingForCollection(bookingId, tx);
+    if (!booking) throw new NotFoundError("Booking không tồn tại");
+    const platform = await settlementRepository.byBookingId(bookingId, tx);
+    const existing = await settlementRepository.byBookingId(bookingId, tx, "PARTNER");
+    const counterGross = Math.max(0, round2(grossAmount - (platform && platform.status !== "CANCELLED" ? asNumber(platform.grossAmount) : 0)));
+    const extraGross = round2(counterGross - asNumber(existing?.grossAmount));
+    let result = existing;
+    if (extraGross > 0) {
+      const rate = existing ? asNumber(existing.commissionRate) : await commissionService.effectiveRate(booking.court.partner, tx);
+      const commission = round2(extraGross * rate / 100);
+      if (existing) {
+        if (existing.status !== "SETTLED") throw new ValidationError("Đối soát tại quầy đã bị hủy");
+        await settlementRepository.incrementAmounts(existing.id, ["SETTLED"], { grossAmount: extraGross, commissionAmount: commission, netAmount: extraGross - commission }, tx);
+        result = await settlementRepository.byBookingId(bookingId, tx, "PARTNER");
+      } else {
+        result = await settlementRepository.create({
+          bookingId, partnerId: booking.court.partner.id, paymentId: null,
+          collectedBy: "PARTNER", status: "SETTLED", settledAt: new Date(),
+          grossAmount: counterGross, voucherDiscount: 0, platformDiscount: 0, partnerDiscount: 0,
+          commissionRate: rate, commissionAmount: commission, serviceFee: 0, netAmount: counterGross - commission
+        }, tx);
+      }
+    }
+    await commissionService.createEarning(booking, "COMPLETED", tx, grossAmount);
+    return result;
+  },
+
   /**
    * Booking check-in som / gia han lam tang totalPrice khi settlement con PENDING ->
    * cong them phan phat sinh vao settlement va pending_balance cua vi.
@@ -227,6 +259,7 @@ export const settlementService = {
       const fromStatus = settlement.status as SettlementStatus;
       const count = await settlementRepository.transitionById(id, [fromStatus], { status: "CANCELLED" }, tx);
       if (count === 0) throw new ValidationError("Settlement da duoc xu ly boi thao tac khac");
+      if (settlement.collectedBy === "PARTNER") return;
       const netAmount = asNumber(settlement.netAmount);
       const reverted =
         fromStatus === "PENDING"

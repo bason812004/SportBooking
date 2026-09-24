@@ -9,7 +9,7 @@ function toNum(v: unknown): number {
 }
 
 async function settlePendingSettlement(tx: Prisma.TransactionClient, bookingId: string) {
-  const settlement = await tx.settlement.findUnique({ where: { bookingId } });
+  const settlement = await tx.settlement.findUnique({ where: { bookingId_collectedBy: { bookingId, collectedBy: "PLATFORM" } } });
   if (!settlement || settlement.status !== "PENDING") return null;
   const updated = await tx.settlement.update({
     where: { id: settlement.id },
@@ -465,7 +465,7 @@ export const adminRepository = {
         await settlePendingSettlement(tx, id);
       }
       if (input.bookingStatus === "CANCELLED" && before.bookingStatus !== "CANCELLED") {
-        const settlement = await tx.settlement.findUnique({ where: { bookingId: id } });
+        const settlement = await tx.settlement.findUnique({ where: { bookingId_collectedBy: { bookingId: id, collectedBy: "PLATFORM" } } });
         if (settlement && settlement.status === "PENDING") {
           await tx.partnerWallet.update({
             where: { partnerId: settlement.partnerId },
@@ -482,7 +482,7 @@ export const adminRepository = {
         await settlePendingSettlement(tx, id);
       }
       if (input.bookingStatus === "CANCELLED" && before.bookingStatus !== "CANCELLED") {
-        const settlement = await tx.settlement.findUnique({ where: { bookingId: id } });
+        const settlement = await tx.settlement.findUnique({ where: { bookingId_collectedBy: { bookingId: id, collectedBy: "PLATFORM" } } });
         if (settlement && settlement.status === "PENDING") {
           await tx.partnerWallet.update({
             where: { partnerId: settlement.partnerId },

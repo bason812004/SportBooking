@@ -41,6 +41,12 @@ export const prisma = new PrismaClient({
     db: {
       url: getDatabaseUrl()
     }
+  },
+  // Supabase là DB từ xa: mỗi round-trip tốn hàng trăm ms, nên mặc định 5000ms của Prisma
+  // khiến các interactive transaction nhiều bước bị đóng giữa chừng (P2028).
+  transactionOptions: {
+    maxWait: 10_000,
+    timeout: 20_000
   }
 });
 

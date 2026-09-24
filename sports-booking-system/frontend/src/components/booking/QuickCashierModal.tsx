@@ -3,8 +3,9 @@ import { ShoppingBag, Plus, Minus, Trash2, CreditCard, Search, Clock, User, Chec
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
+import { ServiceImage } from "../common/ServiceImage";
 import { cashierApi, type CashierBookingDetail } from "../../features/cashier/api/cashierApi";
-import { serviceApi, type ServiceCategory, type ServiceItem } from "../../features/services/api/serviceApi";
+import { dedupeServicesByName, serviceApi, type ServiceCategory, type ServiceItem } from "../../features/services/api/serviceApi";
 import { formatMoney } from "../../utils/formatters";
 import { useNavigate } from "react-router-dom";
 
@@ -12,9 +13,10 @@ interface QuickCashierModalProps {
   isOpen: boolean;
   onClose: () => void;
   bookingId: string | null;
+  onServicesChanged?: () => void;
 }
 
-export function QuickCashierModal({ isOpen, onClose, bookingId }: QuickCashierModalProps) {
+export function QuickCashierModal({ isOpen, onClose, bookingId, onServicesChanged }: QuickCashierModalProps) {
   const navigate = useNavigate();
   const [detail, setDetail] = useState<CashierBookingDetail | null>(null);
   const [categories, setCategories] = useState<ServiceCategory[]>([]);
@@ -27,50 +29,22 @@ export function QuickCashierModal({ isOpen, onClose, bookingId }: QuickCashierMo
     if (!bookingId) return;
     setLoading(true);
     try {
-      let bDetail = await cashierApi.getBookingDetail(bookingId).catch(() => null);
+      const bDetail = await cashierApi.getBookingDetail(bookingId);
       const cats = await serviceApi.getCategories().catch(() => []);
-
-      if (!bDetail) {
-        bDetail = {
-          booking: {
-            id: bookingId,
-            bookingCode: bookingId.length > 12 ? bookingId.slice(0, 10).toUpperCase() : bookingId,
-            bookingDate: new Date().toISOString(),
-            startTime: "22:00:00",
-            endTime: "23:00:00",
-            bookingStatus: "CONFIRMED",
-            paymentStatus: "UNPAID",
-            totalPrice: 130000,
-            depositAmount: 0,
-            courtSubtotal: 130000,
-            serviceSubtotal: 0,
-            totalAmount: 130000,
-            depositPaid: 0,
-            remainingAmount: 130000,
-            user: { id: "u1", fullName: "Sơn Bá", phone: "Chưa cung cấp", email: "customer@example.com" },
-            court: { id: "court_sala_1", name: "Sân Sala 1 · Sân 01" },
-            services: []
-          },
-          courtSubtotal: 130000,
-          serviceSubtotal: 0,
-          voucherDiscount: 0,
-          grandTotal: 130000,
-          depositPaid: 0,
-          remainingAmount: 130000,
-          activeServices: []
-        };
-      }
 
       setDetail(bDetail);
       setCategories(cats || []);
 
-      const courtId = bDetail.booking?.court?.id || "court_sala_1";
+      const courtId = bDetail.booking.court.id;
       let svcs: ServiceItem[] = await serviceApi.getCourtServices(courtId, selectedCategory).catch(() => []);
       if (!svcs || svcs.length === 0) {
-        svcs = await serviceApi.getPartnerServices({ categoryId: selectedCategory }).catch(() => []);
+        // Partner-wide fallback repeats each product once per court; sell one tile per product.
+        svcs = dedupeServicesByName(await serviceApi.getPartnerServices({ categoryId: selectedCategory }).catch(() => []));
       }
       setServices(svcs || []);
     } catch (err) {
+      setDetail(null);
+      setServices([]);
       console.error("Failed to load cashier detail for modal:", err);
     } finally {
       setLoading(false);
@@ -90,6 +64,7 @@ export function QuickCashierModal({ isOpen, onClose, bookingId }: QuickCashierMo
     try {
       const res = await cashierApi.addServiceToBooking(bookingId, service.id, 1);
       setDetail(res.totals);
+      onServicesChanged?.();
     } catch (err: any) {
       alert(err.response?.data?.message || "Lỗi thêm dịch vụ");
     }
@@ -102,9 +77,11 @@ export function QuickCashierModal({ isOpen, onClose, bookingId }: QuickCashierMo
       if (nextQty <= 0) {
         const res = await cashierApi.removeServiceFromBooking(bookingId, serviceId);
         setDetail(res.totals);
+        onServicesChanged?.();
       } else {
         const res = await cashierApi.updateServiceQuantity(bookingId, serviceId, nextQty);
         setDetail(res.totals);
+        onServicesChanged?.();
       }
     } catch (err: any) {
       alert(err.response?.data?.message || "Lỗi cập nhật số lượng");
@@ -140,13 +117,13 @@ export function QuickCashierModal({ isOpen, onClose, bookingId }: QuickCashierMo
               </div>
               <div className="flex flex-wrap items-center gap-3 text-slate-600 font-semibold">
                 <span className="flex items-center gap-1">
-                  <Clock className="h-3.5 w-3.5 text-slate-400" /> Khung giờ: {detail.booking.startTime ? (String(detail.booking.startTime).includes("T") ? String(detail.booking.startTime).slice(11, 16) : String(detail.booking.startTime).slice(0, 5)) : "22:00"} - {detail.booking.endTime ? (String(detail.booking.endTime).includes("T") ? String(detail.booking.endTime).slice(11, 16) : String(detail.booking.endTime).slice(0, 5)) : "23:00"}
+                  <Clock className="h-3.5 w-3.5 text-slate-400" /> Khung giờ: {detail.booking.startTime ? (String(detail.booking.startTime).includes("T") ? String(detail.booking.startTime).slice(11, 16) : String(detail.booking.startTime).slice(0, 5)) : "—"} - {detail.booking.endTime ? (String(detail.booking.endTime).includes("T") ? String(detail.booking.endTime).slice(11, 16) : String(detail.booking.endTime).slice(0, 5)) : "—"}
                 </span>
                 <span className="flex items-center gap-1 text-slate-500">
                   SĐT: {detail.booking.user?.phone || "---"}
                 </span>
                 <span className="flex items-center gap-1 text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded font-black">
-                  Sân: {detail.booking.court?.name || "Sân Sala 1"}
+                  Sân: {detail.booking.court?.name || "—"}
                 </span>
               </div>
             </div>
@@ -196,9 +173,12 @@ export function QuickCashierModal({ isOpen, onClose, bookingId }: QuickCashierMo
                     onClick={() => handleAddService(svc)}
                     className="group cursor-pointer rounded-xl border border-slate-200 bg-white p-3 hover:border-green-400 transition flex items-center justify-between shadow-sm"
                   >
-                    <div>
-                      <p className="font-bold text-slate-900 text-xs group-hover:text-[#02712a]">{svc.name}</p>
-                      <p className="text-[11px] font-extrabold text-[#02712a]">{formatMoney(svc.price)}</p>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <ServiceImage src={svc.imageUrl} alt={svc.name} className="h-9 w-9 shrink-0 rounded-lg" />
+                      <div className="min-w-0">
+                        <p className="truncate font-bold text-slate-900 text-xs group-hover:text-[#02712a]">{svc.name}</p>
+                        <p className="text-[11px] font-extrabold text-[#02712a]">{formatMoney(svc.price)}</p>
+                      </div>
                     </div>
                     <button className="flex h-7 w-7 items-center justify-center rounded-lg bg-green-50 text-[#02712a] group-hover:bg-[#02712a] group-hover:text-white transition">
                       <Plus className="h-4 w-4" />

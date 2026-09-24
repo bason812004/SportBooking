@@ -85,7 +85,7 @@ export const paymentRepository = {
       }
 
       const existingTransaction = await this.findTransaction(input.provider, input.externalTransactionId, tx);
-      if (existingTransaction) {
+      if (existingTransaction || payment.status === "PAID") {
         console.log(`[applyWebhook] Transaction already processed (idempotent): provider=${input.provider}, txId=${input.externalTransactionId}`);
         return { payment, idempotent: true };
       }
@@ -126,9 +126,18 @@ export const paymentRepository = {
       });
 
       const settlements = [];
-      for (const booking of bookingsToSettle) {
+      const allocationBase = bookingsToSettle.reduce((sum, b) => sum + Math.max(0, Number(b.basePrice ?? b.totalPrice) + Number(b.dynamicAdjustmentAmount ?? 0) - Number(b.voucherDiscountAmount ?? 0)), 0);
+      let allocated = 0;
+      for (const [index, booking] of bookingsToSettle.entries()) {
+        const weight = Math.max(0, Number(booking.basePrice ?? booking.totalPrice) + Number(booking.dynamicAdjustmentAmount ?? 0) - Number(booking.voucherDiscountAmount ?? 0));
+        const received = index === bookingsToSettle.length - 1 ? input.amount - allocated : allocationBase > 0 ? Math.round(input.amount * weight / allocationBase) : 0;
+        allocated += received;
+        if (paid) {
+          await tx.booking.updateMany({ where: { id: { in: [booking.id] } }, data: { depositAmount: received } });
+          booking.depositAmount = new Prisma.Decimal(received);
+        }
         const settlement = paid
-          ? await settlementService.createFromPaidBooking(booking, updatedPayment.id, tx)
+          ? await settlementService.createFromPaidBooking({ ...booking, totalPrice: new Prisma.Decimal(received) }, updatedPayment.id, tx)
           : await settlementService.cancelForBooking(booking.id, tx);
         if (settlement) settlements.push(settlement);
       }

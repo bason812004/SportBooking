@@ -4,28 +4,34 @@ import { ForbiddenError } from "../../shared/errors/AppError.js";
 import { sendSuccess } from "../../shared/utils/response.js";
 import { inventoryService } from "./inventory.service.js";
 
-async function getPartnerId(userId: string): Promise<string> {
+async function getPartnerScope(userId: string): Promise<{ partnerId: string; managedCourtId: string | null }> {
   const partner = await prisma.partnerProfile.findUnique({
     where: { userId },
     select: { id: true }
   });
-  if (partner) return partner.id;
+  if (partner) return { partnerId: partner.id, managedCourtId: null };
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { partnerId: true, managedCourt: { select: { partnerId: true } } }
+    select: { partnerId: true, managedCourtId: true, managedCourt: { select: { partnerId: true } } }
   });
 
-  if (user?.partnerId) return user.partnerId;
-  if (user?.managedCourt?.partnerId) return user.managedCourt.partnerId;
+  // A receptionist only ever runs one court, so their scope is pinned to it.
+  if (user?.partnerId) return { partnerId: user.partnerId, managedCourtId: user.managedCourtId ?? null };
+  if (user?.managedCourt?.partnerId) return { partnerId: user.managedCourt.partnerId, managedCourtId: user.managedCourtId ?? null };
 
   const firstPartner = await prisma.partnerProfile.findFirst({ select: { id: true } });
-  return firstPartner?.id || "p0001";
+  return { partnerId: firstPartner?.id || "p0001", managedCourtId: null };
+}
+
+async function getPartnerId(userId: string): Promise<string> {
+  const { partnerId } = await getPartnerScope(userId);
+  return partnerId;
 }
 
 export const inventoryController = {
   async getInventorySummary(req: Request, res: Response) {
-    const partnerId = await getPartnerId(req.user!.id);
+    const { partnerId, managedCourtId } = await getPartnerScope(req.user!.id);
     const page = req.query.page ? Number(req.query.page) : undefined;
     const limit = req.query.limit ? Number(req.query.limit) : undefined;
     const status = typeof req.query.status === "string" ? req.query.status : undefined;
@@ -33,7 +39,10 @@ export const inventoryController = {
     const categoryId = typeof req.query.categoryId === "string" ? req.query.categoryId : undefined;
     const sortBy = typeof req.query.sortBy === "string" ? req.query.sortBy : undefined;
     const sortOrder = typeof req.query.sortOrder === "string" ? req.query.sortOrder : undefined;
-    const data = await inventoryService.getInventorySummary(partnerId, { page, limit, status, search, categoryId, sortBy, sortOrder });
+    // A receptionist sees only the court they manage, whatever courtId the client asks for.
+    const requestedCourtId = typeof req.query.courtId === "string" && req.query.courtId.trim() !== "" ? req.query.courtId.trim() : undefined;
+    const courtId = managedCourtId ?? requestedCourtId;
+    const data = await inventoryService.getInventorySummary(partnerId, { page, limit, status, search, categoryId, courtId, sortBy, sortOrder });
     return sendSuccess(res, data);
   },
 

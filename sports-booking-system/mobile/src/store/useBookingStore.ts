@@ -31,7 +31,7 @@ export const getSlotKey = (s: { date: string; startTime: string; endTime: string
 export const useBookingStore = create<BookingStoreState>((set, get) => ({
   courtId: null,
   selectedSlots: [],
-  paymentType: "FULL_PAYMENT",
+  paymentType: "PAY_AT_COURT",
   note: "",
   appliedVoucher: null,
 

@@ -251,7 +251,7 @@ export const bookingRepository = {
   async attachServicesToBooking(tx: Prisma.TransactionClient, bookingId: string, lines: Array<{ serviceId: string; quantity: number; price: number }>) {
     for (const line of lines) {
       await tx.bookingService.create({
-        data: { id: generateShortId("bs"), bookingId, serviceId: line.serviceId, quantity: line.quantity, price: line.price }
+        data: { id: generateShortId("bs"), bookingId, serviceId: line.serviceId, quantity: line.quantity, unitPrice: line.price, price: line.price * line.quantity, totalPrice: line.price * line.quantity, status: "ACTIVE" }
       });
       const inv = await tx.serviceInventory.findFirst({ where: { serviceId: line.serviceId } });
       if (inv) {
@@ -319,7 +319,10 @@ export const bookingRepository = {
               id: generateShortId("bs"),
               serviceId: service.serviceId,
               quantity: service.quantity,
-              price: service.price
+              unitPrice: service.price,
+              price: service.price * service.quantity,
+              totalPrice: service.price * service.quantity,
+              status: "ACTIVE"
             }))
           }
         },
@@ -368,7 +371,7 @@ export const bookingRepository = {
     date: string,
     slots: Array<{ startTime: string; endTime: string; courtSurfaceId?: string; court_surface_id?: string; courtSubId?: string }>
   ) {
-    const activeStatuses = ["PENDING", "PENDING_PAYMENT", "CONFIRMED", "COMPLETED"];
+    const activeStatuses = ["PENDING", "PENDING_PAYMENT", "CONFIRMED", "DEPOSIT_PAID", "IN_PROGRESS", "CHECKOUT_PENDING", "COMPLETED"];
     const conflicts: Array<unknown> = [];
 
     for (const slot of slots) {
@@ -462,7 +465,10 @@ export const bookingRepository = {
                 id: generateShortId("bs"),
                 serviceId: service.serviceId,
                 quantity: service.quantity,
-                price: service.price
+                unitPrice: service.price,
+                price: service.price * service.quantity,
+                totalPrice: service.price * service.quantity,
+                status: "ACTIVE"
               }))
             }
           },
@@ -584,7 +590,10 @@ export const bookingRepository = {
                 id: generateShortId("bs"),
                 serviceId: service.serviceId,
                 quantity: service.quantity,
-                price: service.price
+                unitPrice: service.price,
+                price: service.price * service.quantity,
+                totalPrice: service.price * service.quantity,
+                status: "ACTIVE"
               }))
             }
           },
@@ -739,7 +748,10 @@ export const bookingRepository = {
                   id: generateShortId("bs"),
                   serviceId: service.serviceId,
                   quantity: service.quantity,
-                  price: service.price
+                  unitPrice: service.price,
+                  price: service.price * service.quantity,
+                  totalPrice: service.price * service.quantity,
+                  status: "ACTIVE"
                 }))
               }
             },
@@ -918,7 +930,10 @@ export const bookingRepository = {
                   id: generateShortId("bs"),
                   serviceId: service.serviceId,
                   quantity: service.quantity,
-                  price: service.price
+                  unitPrice: service.price,
+                  price: service.price * service.quantity,
+                  totalPrice: service.price * service.quantity,
+                  status: "ACTIVE"
                 }))
               }
             },

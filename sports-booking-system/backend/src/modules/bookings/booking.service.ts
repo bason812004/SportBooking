@@ -124,6 +124,7 @@ export const bookingService = {
       subtotal: calculated.subtotal,
       voucherDiscountAmount: calculated.voucherDiscountAmount,
       totalAmount: calculated.totalAmount,
+      depositBase: calculated.depositBase,
       minimumDepositAmount: calculated.depositAmount,
       remainingAmount: calculated.remainingAmount,
       depositPercent: calculated.depositPercent,
@@ -147,7 +148,7 @@ export const bookingService = {
     }
 
     const paymentAmount = input.paymentType === "FULL_PAYMENT"
-      ? totalAmount
+      ? quoteData.depositBase
       : input.paymentType === "DEPOSIT"
       ? minimumDepositAmount
       : 0;
@@ -160,7 +161,7 @@ export const bookingService = {
       const dayQuote = quoteData.days[0];
       const bCode = bookingCode();
 
-      if (input.paymentType === "PAY_AT_COURT") {
+      if (input.paymentType === "PAY_AT_COURT" || paymentAmount === 0) {
         const result = await bookingRepository.createPayAtCourtCheckout({
           bookingCode: bCode,
           userId,
@@ -252,18 +253,22 @@ export const bookingService = {
     }
 
     // Multi-day booking
-    const daysData = quoteData.days.map((dayQuote) => ({
-      bookingCode: bookingCode(),
-      bookingDate: dayQuote.bookingDate,
-      slots: dayQuote.slots,
-      services: quoteData.services.map((s) => ({ serviceId: s.serviceId, quantity: s.quantity, price: s.price })),
-      courtSubtotal: dayQuote.courtSubtotal,
-      subtotal: dayQuote.courtSubtotal,
-      voucherDiscountAmount: Math.round((dayQuote.courtSubtotal / (quoteData.courtSubtotal || 1)) * quoteData.voucherDiscountAmount),
-      totalAmount: Math.max(0, dayQuote.courtSubtotal - Math.round((dayQuote.courtSubtotal / (quoteData.courtSubtotal || 1)) * quoteData.voucherDiscountAmount))
-    }));
+    const courtDiscount = Math.min(quoteData.voucherDiscountAmount, quoteData.courtSubtotal);
+    let allocatedDiscount = 0;
+    const daysData = quoteData.days.map((dayQuote, index) => {
+      let discount = index === quoteData.days.length - 1
+        ? courtDiscount - allocatedDiscount
+        : Math.round(dayQuote.courtSubtotal / (quoteData.courtSubtotal || 1) * courtDiscount);
+      allocatedDiscount += discount;
+      if (index === 0) discount += quoteData.voucherDiscountAmount - courtDiscount;
+      const services = index === 0 ? quoteData.services.map(s => ({ serviceId: s.serviceId, quantity: s.quantity, price: s.price })) : [];
+      const subtotal = dayQuote.courtSubtotal + (index === 0 ? quoteData.servicesSubtotal : 0);
+      return { bookingCode: bookingCode(), bookingDate: dayQuote.bookingDate, slots: dayQuote.slots,
+        services, courtSubtotal: dayQuote.courtSubtotal, subtotal, voucherDiscountAmount: discount,
+        totalAmount: Math.max(0, subtotal - discount) };
+    });
 
-    if (input.paymentType === "PAY_AT_COURT") {
+    if (input.paymentType === "PAY_AT_COURT" || paymentAmount === 0) {
       const result = await bookingRepository.createPayAtCourtOrderCheckout({
         userId,
         courtId: input.courtId,

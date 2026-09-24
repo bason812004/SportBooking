@@ -15,6 +15,7 @@ const INVENTORY_STATUS_HAVING: Record<string, string> = {
 const INVENTORY_SORT_COLUMNS: Record<string, string> = {
   serviceName: "s.name",
   categoryName: "c.name",
+  courtName: "ct.name",
   quantity: "COALESCE(si.quantity, 50)",
   costPrice: "COALESCE(s.cost_price, 0)",
   price: "s.price",
@@ -36,7 +37,7 @@ async function hasOwnServicesCached(partnerId: string): Promise<boolean> {
 export const inventoryRepository = {
   async getInventorySummary(
     partnerId: string,
-    options: { page?: number; limit?: number; status?: string; search?: string; categoryId?: string; sortBy?: string; sortOrder?: string } = {}
+    options: { page?: number; limit?: number; status?: string; search?: string; categoryId?: string; courtId?: string; sortBy?: string; sortOrder?: string } = {}
   ) {
     await ensureServiceTables();
     const page = Math.max(1, options.page ?? 1);
@@ -66,6 +67,10 @@ export const inventoryRepository = {
         params.push(options.categoryId);
         conditions.push(`s.category_id = $${params.length}::uuid`);
       }
+      if (options.courtId) {
+        params.push(options.courtId);
+        conditions.push(`s.court_id = $${params.length}`);
+      }
       const baseWhere = conditions.join(" AND ");
 
       const [summaryRows, itemRows] = await Promise.all([
@@ -89,11 +94,13 @@ export const inventoryRepository = {
           SELECT
             s.id as "serviceId", s.name as "serviceName", s.unit, s.price, s.cost_price as "costPrice",
             c.name as "categoryName",
+            s.court_id as "courtId", ct.name as "courtName", s.image_url as "imageUrl",
             COALESCE(si.quantity, 50) as quantity,
             COALESCE(si.minimum_stock, 5) as "minimumStock",
             COUNT(*) OVER()::int as "filteredTotal"
           FROM services s
           LEFT JOIN service_categories c ON c.id = s.category_id
+          LEFT JOIN courts ct ON ct.id = s.court_id
           LEFT JOIN service_inventories si ON si.service_id = s.id
           WHERE ${baseWhere} ${statusClause}
           ORDER BY ${sortColumn} ${sortDirection}
@@ -111,6 +118,9 @@ export const inventoryRepository = {
           serviceId: svc.serviceId,
           serviceName: svc.serviceName,
           categoryName: svc.categoryName ?? "Khác",
+          courtId: svc.courtId ?? null,
+          courtName: svc.courtName ?? null,
+          imageUrl: svc.imageUrl ?? null,
           unit: svc.unit,
           quantity: qty,
           minimumStock: minStock,
@@ -150,6 +160,12 @@ export const inventoryRepository = {
       };
     } catch (err) {
       console.error("getInventorySummary error:", err);
+      const fallbackParams: unknown[] = [partnerId];
+      let courtFilter = "";
+      if (options.courtId) {
+        fallbackParams.push(options.courtId);
+        courtFilter = ` AND s.court_id = $${fallbackParams.length}`;
+      }
       const rawRows: any = await prisma.$queryRawUnsafe(
         `
         SELECT
@@ -159,30 +175,32 @@ export const inventoryRepository = {
           s.price,
           s.cost_price as "costPrice",
           c.name as "categoryName",
+          s.court_id as "courtId",
+          ct.name as "courtName",
+          s.image_url as "imageUrl",
           COALESCE(si.quantity, 50) as quantity,
           COALESCE(si.minimum_stock, 5) as "minimumStock"
         FROM services s
         LEFT JOIN service_categories c ON s.category_id = c.id
+        LEFT JOIN courts ct ON ct.id = s.court_id
         LEFT JOIN service_inventories si ON s.id = si.service_id
-        WHERE s.partner_id = $1 AND s.track_inventory = true
+        WHERE s.partner_id = $1 AND s.track_inventory = true${courtFilter}
         ORDER BY s.name ASC
         LIMIT ${limit} OFFSET ${offset};
       `,
-        partnerId
+        ...fallbackParams
       ).catch(() => []);
 
       let totalItems = 0;
       let totalStockValue = 0;
       let lowStockCount = 0;
       let outOfStockCount = 0;
-      const seenNames = new Set<string>();
       const items: any[] = [];
 
+      // No name-based dedupe: each court owns a separate services row (and stock) for the same
+      // product name, so collapsing by name would hide other courts' stock and skew the totals.
       for (const r of rawRows || []) {
         if (!r || !r.serviceName) continue;
-        const key = String(r.serviceName).trim().toLowerCase();
-        if (!key || seenNames.has(key)) continue;
-        seenNames.add(key);
 
         const qty = Number(r.quantity ?? 50);
         const minStock = Number(r.minimumStock ?? 5);
@@ -197,7 +215,9 @@ export const inventoryRepository = {
 
         items.push({
           serviceId: r.serviceId,
-          courtId: r.courtId,
+          courtId: r.courtId ?? null,
+          courtName: r.courtName ?? null,
+          imageUrl: r.imageUrl ?? null,
           serviceName: r.serviceName,
           categoryName: r.categoryName ?? "Khác",
           unit: r.unit || "cái",

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -22,7 +23,7 @@ type WalkInForm = {
   customerName: string;
   customerPhone: string;
   paymentMethod: "CASH" | "BANK_TRANSFER" | "E_WALLET";
-  paymentType: "FULL_PAYMENT" | "DEPOSIT";
+  paymentType: "FULL_PAYMENT" | "DEPOSIT" | "PAY_AT_COURT";
   note: string;
 };
 
@@ -736,6 +737,7 @@ function CustomerHistoryOverlay({ walkIn }: { walkIn: WalkInBooking }) {
 
 /** The fill-in fields (customer/payment/note + submit), or the QR payment panel once a booking has been created. */
 export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
+  const { t } = useTranslation("booking");
   const {
     activeWalkInPayment,
     effectiveDate,
@@ -954,7 +956,7 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
           required
         />
       )}
-      <Select
+      {walkInForm.paymentType !== "PAY_AT_COURT" && <Select
         dense
         label="Thanh toán"
         value={walkInForm.paymentMethod}
@@ -966,16 +968,17 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
             label: repeatWeekly ? "Chuyển khoản (1 mã QR cho cả chuỗi)" : mode === "grid" && slotClusters.length > 1 ? "Chuyển khoản (1 mã QR cho cả đơn)" : "Chuyển khoản (QR)"
           }
         ]}
-      />
-      {Boolean(depositPercent) && (
+      />}
+      {(
         <Select
           dense
-          label="Số tiền thu"
+          label={t("openTab.collectionMode")}
           value={walkInForm.paymentType}
           onChange={(event) => setWalkInForm({ ...walkInForm, paymentType: event.target.value as WalkInForm["paymentType"] })}
           options={[
-            { value: "FULL_PAYMENT", label: "Trả đủ" },
-            { value: "DEPOSIT", label: `Đặt cọc ${depositPercent}%` }
+            { value: "PAY_AT_COURT", label: t("openTab.openTab") },
+            { value: "FULL_PAYMENT", label: t("openTab.fullCourtPayment") },
+            ...(depositPercent ? [{ value: "DEPOSIT", label: t("openTab.courtDeposit", { percent: depositPercent }) }] : [])
           ]}
         />
       )}
@@ -1011,6 +1014,7 @@ export { useWalkInBooking };
 
 /** Self-contained walk-in booking form: schedule picker and fill-in fields stacked in one column. */
 export function WalkInBookingForm(props: UseWalkInBookingArgs) {
+  const { t } = useTranslation("booking");
   const walkIn = useWalkInBooking(props);
 
   if (walkIn.activeWalkInPayment) return <WalkInPaymentPanel walkIn={walkIn} />;
@@ -1030,7 +1034,14 @@ export function WalkInBookingForm(props: UseWalkInBookingArgs) {
       <Input label="Tên khách" value={walkIn.walkInForm.customerName} onChange={(event) => walkIn.setWalkInForm({ ...walkIn.walkInForm, customerName: event.target.value })} required />
       <Input label="Số điện thoại" value={walkIn.walkInForm.customerPhone} onChange={(event) => walkIn.setWalkInForm({ ...walkIn.walkInForm, customerPhone: event.target.value })} required />
       <WalkInScheduleField walkIn={walkIn} />
-      <Select
+      <Select label={t("openTab.collectionMode")} value={walkIn.walkInForm.paymentType}
+        onChange={(event) => walkIn.setWalkInForm({ ...walkIn.walkInForm, paymentType: event.target.value as WalkInForm["paymentType"] })}
+        options={[
+          { value: "PAY_AT_COURT", label: t("openTab.openTab") },
+          { value: "FULL_PAYMENT", label: t("openTab.fullCourtPayment") },
+          ...(props.depositPercent ? [{ value: "DEPOSIT", label: t("openTab.courtDeposit", { percent: props.depositPercent }) }] : [])
+        ]} />
+      {walkIn.walkInForm.paymentType !== "PAY_AT_COURT" && <Select
         label="Thanh toán"
         value={walkIn.walkInForm.paymentMethod}
         onChange={(event) => walkIn.setWalkInForm({ ...walkIn.walkInForm, paymentMethod: event.target.value as WalkInForm["paymentMethod"] })}
@@ -1039,7 +1050,7 @@ export function WalkInBookingForm(props: UseWalkInBookingArgs) {
           { value: "BANK_TRANSFER", label: "Chuyển khoản" },
           { value: "E_WALLET", label: "Ví điện tử" }
         ]}
-      />
+      />}
       <Input label="Ghi chú" value={walkIn.walkInForm.note} onChange={(event) => walkIn.setWalkInForm({ ...walkIn.walkInForm, note: event.target.value })} />
       <Button className="w-full" disabled={walkIn.createWalkIn.isPending || (walkIn.mode === "now" ? !walkIn.customStart : walkIn.walkInSlots.length === 0)}>
         {walkIn.createWalkIn.isPending ? "Đang tạo..." : "Xác nhận nhận sân"}

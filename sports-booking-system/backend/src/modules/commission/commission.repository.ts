@@ -52,6 +52,10 @@ export const commissionRepository = {
     });
   },
 
+  updateEarning(id: string, grossAmount: number, commissionAmount: number, db: DbClient) {
+    return db.commissionTransaction.update({ where: { id }, data: { grossAmount, commissionAmount, netAmount: grossAmount - commissionAmount } });
+  },
+
   async reportAggregate(from: Date, to: Date) {
     const [totals, perPartner] = await Promise.all([
       prisma.commissionTransaction.aggregate({

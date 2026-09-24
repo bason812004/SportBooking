@@ -84,6 +84,12 @@ export const en: typeof vi = {
     passed: "Passed"
   },
   booking: {
+    serviceCharge: "Services",
+    courtDeposit: "Court deposit",
+    servicesAtCourt: "Services paid at court",
+    remainingAtCourt: "Pay at court",
+    payNow: "Pay now",
+
     summaryTitle: "Booking Summary",
     selectedSlots: "Selected Slots",
     basePrice: "Base Price",
@@ -94,7 +100,7 @@ export const en: typeof vi = {
     depositAmount: "Deposit Amount",
     paymentMethod: "Payment Method",
     payAtCourt: "Pay at Court",
-    fullPayment: "Full Payment (QR Transfer)",
+    fullPayment: "Pay court charge in full",
     depositPayment: "Deposit Only (QR Transfer)",
     notePlaceholder: "Notes for court owner (optional)...",
     confirmBooking: "Confirm & Pay",

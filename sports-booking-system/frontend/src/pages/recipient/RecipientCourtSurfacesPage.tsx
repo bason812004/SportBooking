@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -10,6 +10,7 @@ import {
   LogOut,
   PhoneCall,
   RefreshCcw,
+  ShoppingBag,
   TimerReset,
   Users
 } from "lucide-react";
@@ -19,7 +20,9 @@ import { PageHero } from "../../components/common/PageHero";
 import { Button } from "../../components/ui/Button";
 import { Modal } from "../../components/ui/Modal";
 import { useWalkInBooking, WalkInDetailsFields } from "../../features/recipient/components/WalkInBookingForm";
-import { StaffScheduleGrid } from "../../features/recipient/components/StaffScheduleGrid";
+import { StaffScheduleGrid, type ServiceTarget } from "../../features/recipient/components/StaffScheduleGrid";
+import { LiveBookingBillSummary, LiveBookingServicePanel } from "../../features/cashier/components/LiveBookingServicePanel";
+import { useLiveBookingServices } from "../../features/cashier/hooks/useLiveBookingServices";
 import { formatMoney } from "../../utils/formatters";
 
 const statusMeta: Record<RecipientOperationItem["status"], { label: string; className: string; dotClassName: string }> = {
@@ -151,6 +154,7 @@ function SurfaceSchedule({ courtSurfaceId, surfaceStatus }: { courtSurfaceId: st
 export function RecipientCourtSurfacesPage() {
   const queryClient = useQueryClient();
   const [selectedSurfaceId, setSelectedSurfaceId] = useState<string | null>(null);
+  const [serviceTarget, setServiceTarget] = useState<ServiceTarget>("walkin");
 
   const operations = useQuery({
     queryKey: ["recipient-operations"],
@@ -172,7 +176,12 @@ export function RecipientCourtSurfacesPage() {
   const [walkInDate, setWalkInDate] = useState(todayValue());
   useEffect(() => {
     setWalkInDate(todayValue());
+    setServiceTarget("walkin");
   }, [selected?.surface.id]);
+
+  const liveBooking = selected?.currentBooking
+    ? { id: selected.currentBooking.id, customerName: selected.currentBooking.customerName }
+    : null;
 
   const canBookAdvance = Boolean(selected && selected.surface.status === "ACTIVE");
   const surfaceNames = useMemo(() => Object.fromEntries(items.map((item) => [item.surface.id, item.surface.name])), [items]);
@@ -185,6 +194,21 @@ export function RecipientCourtSurfacesPage() {
     surfaceNames,
     depositPercent: canBookAdvance ? selected!.surface.depositPercent : undefined
   });
+
+  // Lifted so the catalog (left column) and the bill (right column) share one optimistic overlay —
+  // two separate hook calls would leave the bill a round-trip behind every +/- click.
+  const liveServices = useLiveBookingServices(liveBooking?.id ?? null, refresh);
+  const activeServiceTarget: ServiceTarget = liveBooking ? serviceTarget : "walkin";
+  // While a guest on court is being served, the side column is their bill: booking another guest
+  // at the same time is not possible anyway.
+  const servingLiveGuest = Boolean(liveBooking) && walkIn.showServices && activeServiceTarget === "live";
+
+  // The service panel sits below the surface tiles, so opening it would otherwise leave staff
+  // looking at the tiles and having to scroll down on every single order.
+  const workAreaRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (walkIn.showServices) workAreaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [walkIn.showServices]);
 
   const toggleStatus = useMutation({
     mutationFn: ({ id, status }: { id: string; status: "ACTIVE" | "INACTIVE" }) => recipientApi.updateCourtSurfaceStatus(id, status),
@@ -302,7 +326,7 @@ export function RecipientCourtSurfacesPage() {
             ))}
           </div>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-4">
+          <section ref={workAreaRef} className="scroll-mt-4 rounded-2xl border border-slate-200 bg-white p-4">
             {selected ? (
               <div className="grid gap-6 lg:grid-cols-7">
                 <div className="lg:col-span-5">
@@ -313,6 +337,10 @@ export function RecipientCourtSurfacesPage() {
                       bookingDate={walkInDate}
                       onDateChange={setWalkInDate}
                       walkIn={walkIn}
+                      liveBooking={liveBooking}
+                      liveServices={liveServices}
+                      serviceTarget={activeServiceTarget}
+                      onServiceTargetChange={setServiceTarget}
                     />
                   ) : (
                     <>
@@ -320,144 +348,169 @@ export function RecipientCourtSurfacesPage() {
                         Khung giờ ngày {new Date(walkInDate).toLocaleDateString("vi-VN")} - {selected.surface.name}
                       </p>
                       <SurfaceSchedule courtSurfaceId={selected.surface.id} surfaceStatus={selected.surface.status} />
+                      {/* Surface paused mid-session: the schedule grid is gone, so serve the guest from here. */}
+                      {liveBooking ? (
+                        <div className="mt-4">
+                          <LiveBookingServicePanel bookingId={liveBooking.id} onChanged={refresh} />
+                        </div>
+                      ) : null}
                     </>
                   )}
                 </div>
 
                 <div className="space-y-2.5 lg:col-span-2">
-                  <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-black ${statusMeta[selected.status].className}`}>
-                    {statusMeta[selected.status].label}
-                  </span>
+                  {servingLiveGuest ? (
+                    <LiveBookingBillSummary
+                      bookingId={liveBooking!.id}
+                      services={liveServices}
+                      onDone={() => walkIn.setShowServices(false)}
+                    />
+                  ) : (
+                    <>
+                      <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-black ${statusMeta[selected.status].className}`}>
+                        {statusMeta[selected.status].label}
+                      </span>
 
-                  <div className="space-y-2.5">
-                    {selected.status === "OVERDUE" && selected.latestEndedBooking ? (
-                      <div className="rounded-xl border border-red-100 bg-red-50/70 p-2.5">
-                        <p className="text-xs font-bold uppercase tracking-wide text-red-700">Khách đã quá giờ</p>
-                        <p className="mt-1 font-black text-slate-800">{selected.latestEndedBooking.customerName}</p>
-                        {selected.latestEndedBooking.customerPhone ? (
-                          <p className="flex items-center gap-1 text-sm text-slate-600">
-                            <PhoneCall className="h-3.5 w-3.5 shrink-0" />
-                            {selected.latestEndedBooking.customerPhone}
-                          </p>
-                        ) : null}
-                        <p className="mt-1 text-sm text-slate-600">
-                          Lịch cũ: {selected.latestEndedBooking.startTime} - {selected.latestEndedBooking.endTime}
-                        </p>
-                      </div>
-                    ) : selected.currentBooking ? (
-                      <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-2.5">
-                        <p className="text-xs font-bold uppercase tracking-wide text-blue-700">Khách đang chơi</p>
-                        <p className="mt-1 font-black text-slate-800">{selected.currentBooking.customerName}</p>
-                        {selected.currentBooking.customerPhone ? (
-                          <p className="flex items-center gap-1 text-sm text-slate-600">
-                            <PhoneCall className="h-3.5 w-3.5 shrink-0" />
-                            {selected.currentBooking.customerPhone}
-                          </p>
-                        ) : null}
-                        <p className="mt-1 text-sm text-slate-600">
-                          {selected.currentBooking.startTime} - {selected.currentBooking.endTime}
-                          {selected.minutesLeft != null && selected.minutesLeft > 0 ? <span className="ml-1 font-semibold text-amber-700">(còn {selected.minutesLeft} phút)</span> : null}
-                        </p>
-                      </div>
-                    ) : selected.nextBooking ? (
-                      <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-2.5">
-                        <p className="text-xs font-bold uppercase tracking-wide text-indigo-700">Khách sắp nhận sân</p>
-                        <p className="mt-1 font-black text-slate-800">{selected.nextBooking.customerName}</p>
-                        <p className="text-sm text-slate-600">
-                          {selected.nextBooking.startTime} - {selected.nextBooking.endTime}
-                        </p>
-                      </div>
-                    ) : selected.surface.status !== "ACTIVE" ? (
-                      <p className="text-sm font-semibold text-slate-500">Sân đang tạm ngưng hoạt động.</p>
-                    ) : null}
-                  </div>
-
-                  <div className="space-y-2.5">
-                    {selected.status === "OVERDUE" && selected.latestEndedBooking ? (
-                      <>
-                        <div>
-                          <p className="mb-2 text-sm font-black text-slate-500">Khách muốn chơi tiếp</p>
-                          <div className="flex flex-wrap gap-2">
-                            {extendOptions.map((minutes) => (
-                              <Button
-                                key={minutes}
-                                variant="secondary"
-                                disabled={extendBooking.isPending}
-                                onClick={() => extendBooking.mutate({ id: selected.latestEndedBooking!.id, minutes })}
-                              >
-                                <TimerReset className="h-4 w-4" />+{minutes} phút
-                              </Button>
-                            ))}
-                          </div>
-                        </div>
-                        <Button className="w-full" variant="danger" disabled={completeOverdue.isPending} onClick={() => completeOverdue.mutate(selected.latestEndedBooking!.id)}>
-                          <LogOut className="h-4 w-4" />
-                          {completeOverdue.isPending ? "Đang xác nhận..." : "Xác nhận trả sân"}
-                        </Button>
-                      </>
-                    ) : selected.currentBooking && !selected.currentBooking.checkedInAt ? (
-                      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-                        <p className="mb-2 text-sm font-bold text-amber-800">Khách đã tới giờ nhưng chưa check-in — hãy xác nhận để bắt đầu bán dịch vụ cho sân này.</p>
-                        <Button className="w-full" disabled={earlyCheckIn.isPending} onClick={() => earlyCheckIn.mutate(selected.currentBooking!.id)}>
-                          <LogIn className="h-4 w-4" />
-                          {earlyCheckIn.isPending ? "Đang check-in..." : "Check-in"}
-                        </Button>
-                      </div>
-                    ) : selected.currentBooking ? (
-                      <>
-                        <div>
-                          <p className="mb-2 text-sm font-black text-slate-500">Gia hạn thời gian chơi</p>
-                          <div className="flex flex-wrap gap-2">
-                            {extendOptions.map((minutes) => (
-                              <Button
-                                key={minutes}
-                                variant="secondary"
-                                disabled={extendBooking.isPending}
-                                onClick={() => extendBooking.mutate({ id: selected.currentBooking!.id, minutes })}
-                              >
-                                <TimerReset className="h-4 w-4" />+{minutes} phút
-                              </Button>
-                            ))}
-                          </div>
-                          {!selected.canExtend && (
-                            <p className="mt-2 text-sm font-semibold text-amber-700">
-                              Sân đã có lịch đặt ngay sau đó. Nếu gia hạn bị trùng lịch, bạn sẽ được chọn chuyển khách sang sân trống khác.
+                      <div className="space-y-2.5">
+                        {selected.status === "OVERDUE" && selected.latestEndedBooking ? (
+                          <div className="rounded-xl border border-red-100 bg-red-50/70 p-2.5">
+                            <p className="text-xs font-bold uppercase tracking-wide text-red-700">Khách đã quá giờ</p>
+                            <p className="mt-1 font-black text-slate-800">{selected.latestEndedBooking.customerName}</p>
+                            {selected.latestEndedBooking.customerPhone ? (
+                              <p className="flex items-center gap-1 text-sm text-slate-600">
+                                <PhoneCall className="h-3.5 w-3.5 shrink-0" />
+                                {selected.latestEndedBooking.customerPhone}
+                              </p>
+                            ) : null}
+                            <p className="mt-1 text-sm text-slate-600">
+                              Lịch cũ: {selected.latestEndedBooking.startTime} - {selected.latestEndedBooking.endTime}
                             </p>
-                          )}
-                        </div>
-                        <Button className="w-full" variant="secondary" disabled={earlyCheckOut.isPending} onClick={() => earlyCheckOut.mutate(selected.currentBooking!.id)}>
-                          <LogOut className="h-4 w-4" />
-                          {earlyCheckOut.isPending ? "Đang check-out..." : "Check-out"}
-                        </Button>
-                      </>
-                    ) : selected.nextBooking ? (
-                      <Button className="w-full" variant="secondary" disabled={earlyCheckIn.isPending} onClick={() => earlyCheckIn.mutate(selected.nextBooking!.id)}>
-                        <LogIn className="h-4 w-4" />
-                        {earlyCheckIn.isPending ? "Đang check-in..." : "Check-in sớm"}
-                      </Button>
-                    ) : null}
-
-                    {canBookAdvance ? (
-                      <div className="space-y-2">
-                        <p className="text-sm font-black text-slate-500">Đặt sân cho khách</p>
-                        <WalkInDetailsFields walkIn={walkIn} />
+                          </div>
+                        ) : selected.currentBooking ? (
+                          <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-2.5">
+                            <p className="text-xs font-bold uppercase tracking-wide text-blue-700">Khách đang chơi</p>
+                            <p className="mt-1 font-black text-slate-800">{selected.currentBooking.customerName}</p>
+                            {selected.currentBooking.customerPhone ? (
+                              <p className="flex items-center gap-1 text-sm text-slate-600">
+                                <PhoneCall className="h-3.5 w-3.5 shrink-0" />
+                                {selected.currentBooking.customerPhone}
+                              </p>
+                            ) : null}
+                            <p className="mt-1 text-sm text-slate-600">
+                              {selected.currentBooking.startTime} - {selected.currentBooking.endTime}
+                              {selected.minutesLeft != null && selected.minutesLeft > 0 ? <span className="ml-1 font-semibold text-amber-700">(còn {selected.minutesLeft} phút)</span> : null}
+                            </p>
+                          </div>
+                        ) : selected.nextBooking ? (
+                          <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-2.5">
+                            <p className="text-xs font-bold uppercase tracking-wide text-indigo-700">Khách sắp nhận sân</p>
+                            <p className="mt-1 font-black text-slate-800">{selected.nextBooking.customerName}</p>
+                            <p className="text-sm text-slate-600">
+                              {selected.nextBooking.startTime} - {selected.nextBooking.endTime}
+                            </p>
+                          </div>
+                        ) : selected.surface.status !== "ACTIVE" ? (
+                          <p className="text-sm font-semibold text-slate-500">Sân đang tạm ngưng hoạt động.</p>
+                        ) : null}
                       </div>
-                    ) : null}
 
-                    <Button
-                      className="w-full"
-                      variant={selected.surface.status === "ACTIVE" ? "danger" : "secondary"}
-                      disabled={toggleStatus.isPending}
-                      onClick={() =>
-                        toggleStatus.mutate({
-                          id: selected.surface.id,
-                          status: selected.surface.status === "ACTIVE" ? "INACTIVE" : "ACTIVE"
-                        })
-                      }
-                    >
-                      {selected.surface.status === "ACTIVE" ? "Tạm ngưng sân" : "Kích hoạt lại"}
-                    </Button>
-                  </div>
+                      <div className="space-y-2.5">
+                        {selected.status === "OVERDUE" && selected.latestEndedBooking ? (
+                          <>
+                            <div>
+                              <p className="mb-2 text-sm font-black text-slate-500">Khách muốn chơi tiếp</p>
+                              <div className="flex flex-wrap gap-2">
+                                {extendOptions.map((minutes) => (
+                                  <Button
+                                    key={minutes}
+                                    variant="secondary"
+                                    disabled={extendBooking.isPending}
+                                    onClick={() => extendBooking.mutate({ id: selected.latestEndedBooking!.id, minutes })}
+                                  >
+                                    <TimerReset className="h-4 w-4" />+{minutes} phút
+                                  </Button>
+                                ))}
+                              </div>
+                            </div>
+                            <Button className="w-full" variant="danger" disabled={completeOverdue.isPending} onClick={() => completeOverdue.mutate(selected.latestEndedBooking!.id)}>
+                              <LogOut className="h-4 w-4" />
+                              {completeOverdue.isPending ? "Đang xác nhận..." : "Xác nhận trả sân"}
+                            </Button>
+                          </>
+                        ) : selected.currentBooking ? (
+                          <>
+                            {canBookAdvance ? (
+                              <Button
+                                className="w-full"
+                                onClick={() => {
+                                  setServiceTarget("live");
+                                  walkIn.setShowServices(true);
+                                }}
+                              >
+                                <ShoppingBag className="h-4 w-4" />
+                                Thêm dịch vụ
+                              </Button>
+                            ) : null}
+                            {!selected.currentBooking.checkedInAt ? (
+                              <p className="text-xs font-semibold text-amber-700">
+                                Chưa check-in — hệ thống sẽ tự check-in khi thêm dịch vụ trong giờ phục vụ.
+                              </p>
+                            ) : null}
+                            <div>
+                              <p className="mb-2 text-sm font-black text-slate-500">Gia hạn thời gian chơi</p>
+                              <div className="flex flex-wrap gap-2">
+                                {extendOptions.map((minutes) => (
+                                  <Button
+                                    key={minutes}
+                                    variant="secondary"
+                                    disabled={extendBooking.isPending}
+                                    onClick={() => extendBooking.mutate({ id: selected.currentBooking!.id, minutes })}
+                                  >
+                                    <TimerReset className="h-4 w-4" />+{minutes} phút
+                                  </Button>
+                                ))}
+                              </div>
+                              {!selected.canExtend && (
+                                <p className="mt-2 text-sm font-semibold text-amber-700">
+                                  Sân đã có lịch đặt ngay sau đó. Nếu gia hạn bị trùng lịch, bạn sẽ được chọn chuyển khách sang sân trống khác.
+                                </p>
+                              )}
+                            </div>
+                            <Button className="w-full" variant="secondary" disabled={earlyCheckOut.isPending} onClick={() => earlyCheckOut.mutate(selected.currentBooking!.id)}>
+                              <LogOut className="h-4 w-4" />
+                              {earlyCheckOut.isPending ? "Đang check-out..." : "Check-out"}
+                            </Button>
+                          </>
+                        ) : selected.nextBooking ? (
+                          <Button className="w-full" variant="secondary" disabled={earlyCheckIn.isPending} onClick={() => earlyCheckIn.mutate(selected.nextBooking!.id)}>
+                            <LogIn className="h-4 w-4" />
+                            {earlyCheckIn.isPending ? "Đang check-in..." : "Check-in sớm"}
+                          </Button>
+                        ) : null}
+
+                        {canBookAdvance ? (
+                          <div className="space-y-2">
+                            <p className="text-sm font-black text-slate-500">Đặt sân cho khách</p>
+                            <WalkInDetailsFields walkIn={walkIn} />
+                          </div>
+                        ) : null}
+
+                        <Button
+                          className="w-full"
+                          variant={selected.surface.status === "ACTIVE" ? "danger" : "secondary"}
+                          disabled={toggleStatus.isPending}
+                          onClick={() =>
+                            toggleStatus.mutate({
+                              id: selected.surface.id,
+                              status: selected.surface.status === "ACTIVE" ? "INACTIVE" : "ACTIVE"
+                            })
+                          }
+                        >
+                          {selected.surface.status === "ACTIVE" ? "Tạm ngưng sân" : "Kích hoạt lại"}
+                        </Button>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             ) : (

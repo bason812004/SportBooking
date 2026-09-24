@@ -8,6 +8,8 @@ import {
   type DbClient
 } from "./commission.types.js";
 
+function roundCommission(gross: number, rate: number) { return Math.round(gross * rate) / 100; }
+
 function asNumber(value: unknown) {
   return Number(value ?? 0);
 }
@@ -112,13 +114,19 @@ export const commissionService = {
       court: { partner: Pick<PartnerProfile, "id" | "commissionRate"> };
     },
     eventType: "COMPLETED" | "NO_SHOW",
-    db: DbClient
+    db: DbClient,
+    invoiceTotal?: number
   ) {
     const existing = await commissionRepository.earningByBooking(booking.id, db);
-    if (existing) return existing;
+    if (existing) {
+      if (invoiceTotal !== undefined && invoiceTotal > asNumber(existing.grossAmount)) {
+        return commissionRepository.updateEarning(existing.id, invoiceTotal, roundCommission(invoiceTotal, asNumber(existing.commissionRate)), db);
+      }
+      return existing;
+    }
 
     const grossAmount =
-      eventType === "NO_SHOW" ? asNumber(booking.depositAmount) : asNumber(booking.totalPrice);
+      invoiceTotal ?? (eventType === "NO_SHOW" ? asNumber(booking.depositAmount) : asNumber(booking.totalPrice));
     const commissionRate = await this.effectiveRate(booking.court.partner, db);
     const commissionAmount = Math.round(grossAmount * (commissionRate / 100) * 100) / 100;
     const netAmount = Math.round((grossAmount - commissionAmount) * 100) / 100;

@@ -1,19 +1,35 @@
 import { useEffect, useState } from "react";
-import { Plus, Search, Tag, Edit3, Trash2, Box, Check, X, ShieldAlert, Layers } from "lucide-react";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { Plus, Search, Tag, Edit3, Trash2, Box, Check, X, ShieldAlert, Layers, Image as ImageIcon } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Modal } from "../../components/ui/Modal";
+import { ServiceImage } from "../../components/common/ServiceImage";
 import { serviceApi, type ServiceCategory, type ServiceItem } from "../../features/services/api/serviceApi";
+import { partnerApi } from "../../features/partner/api/partnerApi";
+import { useAuth } from "../../features/auth/hooks/useAuth";
+import type { Court } from "../../types/api";
 import { formatMoney } from "../../utils/formatters";
+import { compressImage, formatFileSize } from "../../utils/imageCompression";
+
+const servicesKey = (filters: { categoryId: string; search: string; courtId: string }) =>
+  ["partner-services", filters] as const;
 
 export function PartnerServicesPage() {
-  const [categories, setCategories] = useState<ServiceCategory[]>([]);
-  const [services, setServices] = useState<ServiceItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const isPartner = user?.role === "PARTNER";
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("");
+  const [selectedCourt, setSelectedCourt] = useState<string>("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingService, setEditingService] = useState<ServiceItem | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadPercent, setUploadPercent] = useState(0);
+  const [uploadNote, setUploadNote] = useState("");
+  const [uploadError, setUploadError] = useState("");
 
   // Form State
   const [formData, setFormData] = useState({
@@ -30,25 +46,47 @@ export function PartnerServicesPage() {
     description: ""
   });
 
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      const [cats, svcs] = await Promise.all([
-        serviceApi.getCategories(),
-        serviceApi.getPartnerServices({ categoryId: selectedCategory, search })
-      ]);
-      setCategories(cats);
-      setServices(svcs);
-    } catch (err) {
-      console.error("Failed to load services data:", err);
-    } finally {
-      setLoading(false);
-    }
+  // Only the settled value reaches the query key, so typing no longer fires a request per keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const filters = { categoryId: selectedCategory, search: debouncedSearch, courtId: selectedCourt };
+  const queryKey = servicesKey(filters);
+
+  const categoriesQuery = useQuery({ queryKey: ["service-categories"], queryFn: serviceApi.getCategories });
+  // /api/partner/* is PARTNER-only, and this page is also mounted at /recipient/services.
+  // A receptionist runs exactly one court and the server already pins their queries to it, so the
+  // court filter is both forbidden and pointless for them.
+  const courtsQuery = useQuery({ queryKey: ["partner-courts"], queryFn: partnerApi.courts, enabled: isPartner });
+  const servicesQuery = useQuery({
+    queryKey,
+    queryFn: () =>
+      serviceApi.getPartnerServices({
+        categoryId: selectedCategory,
+        search: debouncedSearch,
+        courtId: selectedCourt || undefined
+      }),
+    // Keeps the current grid on screen while a new filter loads instead of blanking it.
+    placeholderData: keepPreviousData
+  });
+
+  const categories = categoriesQuery.data ?? [];
+  const courts = courtsQuery.data ?? [];
+  const services = servicesQuery.data ?? [];
+  const loading = servicesQuery.isLoading;
+
+  /** Patches the cached list in place; returns the snapshot so a failed call can roll back. */
+  const patchServices = (update: (items: ServiceItem[]) => ServiceItem[]) => {
+    const snapshot = queryClient.getQueryData<ServiceItem[]>(queryKey);
+    queryClient.setQueryData<ServiceItem[]>(queryKey, (old) => (old ? update(old) : old));
+    return snapshot;
   };
 
-  useEffect(() => {
-    fetchData();
-  }, [selectedCategory, search]);
+  const restoreServices = (snapshot?: ServiceItem[]) => {
+    if (snapshot) queryClient.setQueryData(queryKey, snapshot);
+  };
 
   const handleOpenModal = (service?: ServiceItem) => {
     if (service) {
@@ -82,14 +120,57 @@ export function PartnerServicesPage() {
         description: ""
       });
     }
+    setUploadError("");
+    setUploadNote("");
+    setUploadPercent(0);
     setIsModalOpen(true);
   };
+
+  const handlePickImage = async (file?: File | null) => {
+    if (!file) return;
+    setUploadingImage(true);
+    setUploadError("");
+    setUploadPercent(0);
+    try {
+      // Shrinking first is what makes this work on a slow uplink: the original megapixels are
+      // never displayed anyway, and a smaller payload spends far less time on the wire.
+      const compressed = await compressImage(file);
+      setUploadNote(
+        compressed.size < file.size
+          ? `${formatFileSize(file.size)} → ${formatFileSize(compressed.size)}`
+          : formatFileSize(file.size)
+      );
+      const result = await serviceApi.uploadServiceImage(compressed, setUploadPercent);
+      setFormData((prev) => ({ ...prev, imageUrl: result.url }));
+      setUploadNote("");
+    } catch (err: any) {
+      setUploadNote("");
+      setUploadError(
+        err.response?.data?.message ||
+          "Tải ảnh lên thất bại (mạng yếu hoặc bị ngắt). Bạn có thể dán link ảnh vào ô bên dưới thay vì tải file."
+      );
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  /**
+   * The backend shares one picture across every court's row for a product name
+   * (applyImageToPartnerServices), so the cache has to mirror that — patching only the edited row
+   * would leave the other courts' cards showing the old image until the next full load.
+   */
+  const mergeSavedService = (items: ServiceItem[], saved: ServiceItem, imageChanged: boolean) =>
+    items.map((item) => {
+      if (item.id === saved.id) return { ...item, ...saved };
+      if (imageChanged && item.name === saved.name) return { ...item, imageUrl: saved.imageUrl };
+      return item;
+    });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       if (editingService) {
-        await serviceApi.updateService(editingService.id, {
+        const saved = await serviceApi.updateService(editingService.id, {
           name: formData.name,
           categoryId: formData.categoryId || null,
           type: formData.type,
@@ -101,8 +182,11 @@ export function PartnerServicesPage() {
           minimumStock: Number(formData.minimumStock),
           description: formData.description
         });
+        const imageChanged = (editingService.imageUrl || "") !== (formData.imageUrl || "");
+        patchServices((items) => mergeSavedService(items, saved, imageChanged));
+        toast.success("Đã lưu thay đổi.");
       } else {
-        await serviceApi.createService({
+        const created = await serviceApi.createService({
           name: formData.name,
           categoryId: formData.categoryId || null,
           type: formData.type,
@@ -115,32 +199,37 @@ export function PartnerServicesPage() {
           minimumStock: Number(formData.minimumStock),
           description: formData.description
         });
+        patchServices((items) => (items.some((item) => item.id === created.id) ? items : [created, ...items]));
+        toast.success("Đã tạo sản phẩm mới.");
       }
       setIsModalOpen(false);
-      fetchData();
     } catch (err: any) {
-      alert(err.response?.data?.message || "Lỗi lưu dịch vụ");
+      toast.error(err.response?.data?.message || "Lỗi lưu dịch vụ");
     }
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm("Bạn có chắc chắn muốn xóa dịch vụ này?")) return;
+    const snapshot = patchServices((items) => items.filter((item) => item.id !== id));
     try {
       await serviceApi.deleteService(id);
-      fetchData();
+      toast.success("Đã xóa dịch vụ.");
     } catch (err: any) {
-      alert(err.response?.data?.message || "Lỗi xóa dịch vụ");
+      restoreServices(snapshot);
+      toast.error(err.response?.data?.message || "Lỗi xóa dịch vụ");
     }
   };
 
   const handleToggleStatus = async (service: ServiceItem) => {
+    const nextStatus = service.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+    const snapshot = patchServices((items) =>
+      items.map((item) => (item.id === service.id ? { ...item, status: nextStatus } : item))
+    );
     try {
-      await serviceApi.updateService(service.id, {
-        status: service.status === "ACTIVE" ? "INACTIVE" : "ACTIVE"
-      });
-      fetchData();
+      await serviceApi.updateService(service.id, { status: nextStatus });
     } catch (err: any) {
-      alert("Lỗi đổi trạng thái");
+      restoreServices(snapshot);
+      toast.error(err.response?.data?.message || "Lỗi đổi trạng thái");
     }
   };
 
@@ -170,6 +259,21 @@ export function PartnerServicesPage() {
             className="pl-9"
           />
         </div>
+
+        {/* Each court keeps its own row (and stock) per product, so the same name appears once per
+            court — this filter narrows the list to a single court. */}
+        {isPartner ? (
+          <select
+            className="rounded-xl border border-slate-300 p-2 text-sm font-semibold focus:border-green-600 focus:outline-none"
+            value={selectedCourt}
+            onChange={(e) => setSelectedCourt(e.target.value)}
+          >
+            <option value="">Tất cả sân</option>
+            {courts.map((court) => (
+              <option key={court.id} value={court.id}>{court.name}</option>
+            ))}
+          </select>
+        ) : null}
 
         {/* Categories Tab Pill */}
         <div className="flex flex-wrap gap-1.5 overflow-x-auto pb-1 md:pb-0">
@@ -243,13 +347,23 @@ export function PartnerServicesPage() {
                 </div>
 
                 <div className="mt-3 flex items-center gap-3">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-green-50 text-green-700 font-black text-xl">
-                    {service.name.charAt(0)}
-                  </div>
+                  <ServiceImage
+                    src={service.imageUrl}
+                    alt={service.name}
+                    className="h-12 w-12 shrink-0 rounded-xl"
+                    fallback={
+                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-green-50 text-green-700 font-black text-xl">
+                        {service.name.charAt(0)}
+                      </div>
+                    }
+                  />
                   <div>
                     <h3 className="font-bold text-slate-900 group-hover:text-[#02712a] transition">{service.name}</h3>
                     <p className="text-xs font-semibold text-slate-500">
                       {service.category?.name || "Khác"} • {service.sportType || "Tất cả sân"}
+                    </p>
+                    <p className="text-xs font-bold text-slate-600">
+                      {service.court?.name ?? <span className="text-slate-400">Chưa gán sân</span>}
                     </p>
                   </div>
                 </div>
@@ -426,6 +540,72 @@ export function PartnerServicesPage() {
               </div>
             </div>
           )}
+
+          <div>
+            <label className="block text-xs font-bold uppercase text-slate-700 mb-1">Ảnh sản phẩm</label>
+            <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <ServiceImage
+                src={formData.imageUrl}
+                alt={formData.name || "Ảnh sản phẩm"}
+                className="h-20 w-20 shrink-0 rounded-xl bg-white"
+                fallback={
+                  <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white text-slate-400">
+                    <ImageIcon className="h-7 w-7" />
+                  </div>
+                }
+              />
+              <div className="flex-1 space-y-1.5">
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  disabled={uploadingImage}
+                  onChange={(e) => {
+                    handlePickImage(e.target.files?.[0]);
+                    e.target.value = "";
+                  }}
+                  className="block w-full text-xs font-semibold text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-[#02712a] file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-white hover:file:bg-[#025c22] disabled:opacity-60"
+                />
+                {uploadingImage ? (
+                  <div className="space-y-1">
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                      <div
+                        className="h-full rounded-full bg-[#02712a] transition-all"
+                        style={{ width: `${uploadPercent}%` }}
+                      />
+                    </div>
+                    <p className="text-[11px] font-semibold text-slate-600">
+                      Đang tải lên... {uploadPercent}%{uploadNote ? ` (${uploadNote})` : ""}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-500">
+                    JPEG, PNG hoặc WebP, tối đa 5MB. Ảnh được tự động nén và dùng chung cho món này ở mọi sân.
+                  </p>
+                )}
+                {uploadError && <p className="text-[11px] font-semibold text-rose-600">{uploadError}</p>}
+                {formData.imageUrl && (
+                  <button
+                    type="button"
+                    className="text-xs font-bold text-rose-600 hover:underline"
+                    onClick={() => setFormData({ ...formData, imageUrl: "" })}
+                  >
+                    Gỡ ảnh
+                  </button>
+                )}
+              </div>
+            </div>
+            {/* Pasting a url needs no upload at all, which is the way out when the connection is
+                too slow for Cloudinary — image_url just stores whatever url it is given. */}
+            <div className="mt-2">
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">Hoặc dán link ảnh</label>
+              <Input
+                type="url"
+                placeholder="https://..."
+                value={formData.imageUrl}
+                onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
+              />
+            </div>
+          </div>
 
           <div>
             <label className="block text-xs font-bold uppercase text-slate-700 mb-1">Mô tả chi tiết</label>

@@ -54,14 +54,9 @@ function isServiceAllowedForSport(serviceName: string, courtSport: SportFlags) {
   return sportsIntersect(itemSport, courtSport);
 }
 
-let tablesReady = false;
-let isInitializing = false;
+let initPromise: Promise<void> | null = null;
 
-export async function ensureServiceTables() {
-  if (tablesReady) return;
-  if (isInitializing) return;
-  isInitializing = true;
-
+async function runServiceTableInit() {
   try {
     const statements = [
       `CREATE EXTENSION IF NOT EXISTS "pgcrypto";`,
@@ -106,24 +101,52 @@ export async function ensureServiceTables() {
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );`,
-      `ALTER TABLE booking_services ALTER COLUMN service_id TYPE VARCHAR(100);`,
-      `ALTER TABLE booking_services ALTER COLUMN court_service_id TYPE VARCHAR(100);`,
+      `DO $$
+       BEGIN
+         IF EXISTS (
+           SELECT 1
+           FROM information_schema.columns
+           WHERE table_schema = current_schema()
+             AND table_name = 'booking_services'
+             AND column_name = 'service_id'
+             AND (data_type <> 'character varying' OR character_maximum_length IS DISTINCT FROM 100)
+         ) THEN
+           ALTER TABLE booking_services ALTER COLUMN service_id TYPE VARCHAR(100);
+         END IF;
+       END $$;`,
+      `DO $$
+       BEGIN
+         IF EXISTS (
+           SELECT 1
+           FROM information_schema.columns
+           WHERE table_schema = current_schema()
+             AND table_name = 'booking_services'
+             AND column_name = 'court_service_id'
+             AND (data_type <> 'character varying' OR character_maximum_length IS DISTINCT FROM 100)
+         ) THEN
+           ALTER TABLE booking_services ALTER COLUMN court_service_id TYPE VARCHAR(100);
+         END IF;
+       END $$;`,
       `ALTER TABLE booking_services DROP CONSTRAINT IF EXISTS booking_services_service_id_fkey;`,
       `CREATE INDEX IF NOT EXISTS idx_services_court_id ON services(court_id);`,
       `CREATE INDEX IF NOT EXISTS idx_court_services_court_id ON court_services(court_id);`
     ];
 
     for (const statement of statements) {
-      await prisma.$executeRawUnsafe(statement).catch(() => {});
+      await prisma.$executeRawUnsafe(statement);
     }
 
     console.log("[ServiceRepository] Schema & categories checked/initialized.");
-    tablesReady = true;
   } catch (err) {
-    console.error("[ServiceRepository] Table setup warning:", err);
-  } finally {
-    isInitializing = false;
+    initPromise = null;
+    console.error("[ServiceRepository] Table setup failed:", err);
+    throw err;
   }
+}
+
+export function ensureServiceTables(): Promise<void> {
+  if (!initPromise) initPromise = runServiceTableInit();
+  return initPromise;
 }
 
 export async function forceSeedAllServicesToDb() {
@@ -538,19 +561,22 @@ export const serviceRepository = {
       where: { id },
       include: {
         category: true,
-        inventory: true
+        inventory: true,
+        court: { select: { id: true, name: true } }
       }
     });
   },
 
-  async listPartnerServices(partnerId: string, categoryId?: string, search?: string) {
+  async listPartnerServices(partnerId: string, categoryId?: string, search?: string, courtId?: string) {
     await ensureServiceTables();
     try {
       const validCategoryId = categoryId && categoryId.trim() !== "" ? categoryId.trim() : undefined;
       const validSearch = search && search.trim() !== "" ? search.trim() : undefined;
+      const validCourtId = courtId && courtId.trim() !== "" ? courtId.trim() : undefined;
 
       const where: any = {
         ...(partnerId ? { partnerId } : {}),
+        ...(validCourtId ? { courtId: validCourtId } : {}),
         ...(validCategoryId ? { categoryId: validCategoryId } : {}),
         ...(validSearch
           ? {
@@ -562,11 +588,12 @@ export const serviceRepository = {
           : {})
       };
 
-      let services = await prisma.service.findMany({
+      let services: any[] = await prisma.service.findMany({
         where,
         include: {
           category: true,
-          inventory: true
+          inventory: true,
+          court: { select: { id: true, name: true } }
         },
         orderBy: { createdAt: "desc" }
       });
@@ -588,14 +615,18 @@ export const serviceRepository = {
             s.status,
             s.track_inventory as "trackInventory",
             c.name as "categoryName",
+            s.court_id as "courtId",
+            ct.name as "courtName",
             COALESCE(si.quantity, 50) as quantity,
             COALESCE(si.minimum_stock, 5) as "minimumStock"
           FROM services s
           LEFT JOIN service_categories c ON s.category_id = c.id
+          LEFT JOIN courts ct ON ct.id = s.court_id
           LEFT JOIN service_inventories si ON s.id = si.service_id
           WHERE ($1::text IS NULL OR $1::text = '' OR s.partner_id = $1)
+            AND ($2::text IS NULL OR $2::text = '' OR s.court_id = $2)
           ORDER BY s.created_at DESC;
-        `, partnerId || "").catch(() => []);
+        `, partnerId || "", validCourtId || "").catch(() => []);
 
         if (Array.isArray(rawSvcs) && rawSvcs.length > 0) {
           services = rawSvcs.map((r: any) => ({
@@ -612,6 +643,8 @@ export const serviceRepository = {
             imageUrl: r.imageUrl,
             status: r.status,
             trackInventory: r.trackInventory,
+            courtId: r.courtId ?? null,
+            court: r.courtId ? { id: r.courtId, name: r.courtName } : null,
             category: r.categoryName ? { id: r.categoryId, name: r.categoryName } : null,
             inventory: {
               quantity: Number(r.quantity),
@@ -621,17 +654,11 @@ export const serviceRepository = {
         }
       }
 
-      // Deduplicate by name
-      const seenNames = new Set<string>();
-      const uniqueServices: any[] = [];
-      for (const s of services || []) {
-        if (s && s.name && !seenNames.has(s.name)) {
-          seenNames.add(s.name);
-          uniqueServices.push(s);
-        }
-      }
-
-      return uniqueServices;
+      // No name-based dedupe: a partner owns one services row (with its own stock) per court for
+      // the same product name, so collapsing by name hid every court but one and made price edits
+      // land on an arbitrary court. Callers that want one entry per name (the POS fallback list)
+      // collapse it themselves.
+      return services || [];
     } catch (err) {
       console.error("[ServiceRepository] listPartnerServices error:", err);
       return [];
@@ -655,6 +682,7 @@ export const serviceRepository = {
           s.price,
           s.cost_price as "costPrice",
           s.unit,
+          s.image_url as "imageUrl",
           s.status,
           s.track_inventory as "trackInventory",
           sc.name as "categoryName",
@@ -706,6 +734,7 @@ export const serviceRepository = {
             originalPrice: Number(r.price),
             costPrice: Number(r.costPrice || 0),
             unit: r.unit,
+            imageUrl: r.imageUrl ?? null,
             status: r.status,
             trackInventory: r.trackInventory,
             categoryName: r.categoryName,
@@ -799,7 +828,7 @@ export const serviceRepository = {
 
       return tx.service.findUnique({
         where: { id: service.id },
-        include: { category: true, inventory: true }
+        include: { category: true, inventory: true, court: { select: { id: true, name: true } } }
       });
     });
   },
@@ -839,7 +868,7 @@ export const serviceRepository = {
 
       return tx.service.findUnique({
         where: { id },
-        include: { category: true, inventory: true }
+        include: { category: true, inventory: true, court: { select: { id: true, name: true } } }
       });
     });
   },
@@ -849,57 +878,16 @@ export const serviceRepository = {
     return prisma.service.delete({ where: { id } });
   },
 
-  async seedDefaultPartnerServices(partnerId: string) {
+  /**
+   * A partner owns one row per court for the same product name, so an image uploaded once is
+   * meant for all of them — otherwise the same drink would need re-uploading for every court.
+   * Price, stock and status stay per court; only the picture is shared.
+   */
+  async applyImageToPartnerServices(partnerId: string, name: string, imageUrl: string | null) {
     await ensureServiceTables();
-    const existing = await prisma.service.count({ where: { partnerId } });
-    if (existing > 0) return;
-
-    const categories = await prisma.serviceCategory.findMany();
-    const catMap = new Map(categories.map((c) => [c.slug, c.id]));
-
-    const samples: CreateServiceInput[] = [
-      { name: "Nước suối Aquafina 500ml", categoryId: catMap.get("do-uong"), type: "PRODUCT", price: 10000, costPrice: 4000, unit: "chai", initialStock: 200, minimumStock: 30 },
-      { name: "Coca Cola 330ml", categoryId: catMap.get("do-uong"), type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon", initialStock: 120, minimumStock: 20 },
-      { name: "Pepsi Vị Chanh", categoryId: catMap.get("do-uong"), type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon", initialStock: 120, minimumStock: 20 },
-      { name: "7Up Chanh", categoryId: catMap.get("do-uong"), type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon", initialStock: 100, minimumStock: 20 },
-      { name: "Sting Dâu Đỏ", categoryId: catMap.get("do-uong"), type: "PRODUCT", price: 12000, costPrice: 7000, unit: "chai", initialStock: 100, minimumStock: 20 },
-      { name: "Pocari Sweat Bù Khoáng", categoryId: catMap.get("do-uong"), type: "PRODUCT", price: 15000, costPrice: 9000, unit: "chai", initialStock: 100, minimumStock: 20 },
-      { name: "Redbull (Bò Húc Thái)", categoryId: catMap.get("do-uong"), type: "PRODUCT", price: 18000, costPrice: 10000, unit: "lon", initialStock: 90, minimumStock: 15 },
-      { name: "Trà Đào Cam Sả Tươi", categoryId: catMap.get("do-uong"), type: "PRODUCT", price: 25000, costPrice: 12000, unit: "ly", initialStock: 50, minimumStock: 10 },
-      { name: "Nước Dừa Tươi Ướp Lạnh", categoryId: catMap.get("do-uong"), type: "PRODUCT", price: 25000, costPrice: 15000, unit: "trái", initialStock: 40, minimumStock: 10 },
-      { name: "Hộp Dưa Hấu Ướp Lạnh", categoryId: catMap.get("trai-cay"), type: "PRODUCT", price: 25000, costPrice: 12000, unit: "hộp", initialStock: 30, minimumStock: 5 },
-      { name: "Hộp Xoài Lắc Muối Ớt", categoryId: catMap.get("trai-cay"), type: "PRODUCT", price: 25000, costPrice: 12000, unit: "hộp", initialStock: 30, minimumStock: 5 },
-      { name: "Hộp Ổi Giòn Ngọt", categoryId: catMap.get("trai-cay"), type: "PRODUCT", price: 20000, costPrice: 10000, unit: "hộp", initialStock: 30, minimumStock: 5 },
-      { name: "Hộp Nho Mỹ Không Hạt", categoryId: catMap.get("trai-cay"), type: "PRODUCT", price: 40000, costPrice: 22000, unit: "hộp", initialStock: 20, minimumStock: 5 },
-      { name: "Đĩa Trái Cây Thập Cẩm Lớn", categoryId: catMap.get("trai-cay"), type: "PRODUCT", price: 65000, costPrice: 35000, unit: "đĩa", initialStock: 15, minimumStock: 3 },
-      { name: "Chuối Sứ Thể Thao", categoryId: catMap.get("trai-cay"), type: "PRODUCT", price: 8000, costPrice: 4000, unit: "quả", initialStock: 60, minimumStock: 10 },
-      { name: "Bánh Mì Chả Pate", categoryId: catMap.get("do-an"), type: "PRODUCT", price: 20000, costPrice: 11000, unit: "ổ", initialStock: 30, minimumStock: 5 },
-      { name: "Bánh Mì Ốp La 2 Trứng", categoryId: catMap.get("do-an"), type: "PRODUCT", price: 25000, costPrice: 13000, unit: "ổ", initialStock: 30, minimumStock: 5 },
-      { name: "Mì Ly Cung Đình Bò Hầm", categoryId: catMap.get("do-an"), type: "PRODUCT", price: 15000, costPrice: 8000, unit: "ly", initialStock: 40, minimumStock: 10 },
-      { name: "Xúc Xích Nướng Đức", categoryId: catMap.get("do-an"), type: "PRODUCT", price: 15000, costPrice: 7000, unit: "cây", initialStock: 50, minimumStock: 10 },
-      { name: "Bánh Bao Nhân Thịt Trứng Cút", categoryId: catMap.get("do-an"), type: "PRODUCT", price: 18000, costPrice: 10000, unit: "cái", initialStock: 25, minimumStock: 5 },
-      { name: "Vớ Thể Thao Yonex", categoryId: catMap.get("dung-cu-the-thao"), type: "PRODUCT", price: 25000, costPrice: 12000, unit: "đôi", initialStock: 60, minimumStock: 10 },
-      { name: "Khăn Lạnh Ướp Hương", categoryId: catMap.get("dung-cu-the-thao"), type: "PRODUCT", price: 5000, costPrice: 2000, unit: "cái", initialStock: 200, minimumStock: 30 },
-      { name: "Khăn Bông Thấm Mồ Hôi 100% Cotton", categoryId: catMap.get("dung-cu-the-thao"), type: "PRODUCT", price: 35000, costPrice: 18000, unit: "cái", initialStock: 40, minimumStock: 10 },
-      { name: "Băng Trán / Cổ Tay Thể Thao", categoryId: catMap.get("dung-cu-the-thao"), type: "PRODUCT", price: 20000, costPrice: 9000, unit: "cái", initialStock: 50, minimumStock: 10 },
-      { name: "Bóng Tennis Wilson (Hộp 3 quả)", categoryId: catMap.get("dung-cu-the-thao"), type: "PRODUCT", sportType: "TENNIS", price: 95000, costPrice: 65000, unit: "hộp", initialStock: 25, minimumStock: 5 },
-      { name: "Cầu Lông Ba Sao Đỏ (Ống 12 quả)", categoryId: catMap.get("dung-cu-the-thao"), type: "PRODUCT", sportType: "BADMINTON", price: 240000, costPrice: 170000, unit: "ống", initialStock: 15, minimumStock: 3 },
-      { name: "Bóng Pickleball Franklin X-40 (Quả)", categoryId: catMap.get("dung-cu-the-thao"), type: "PRODUCT", sportType: "PICKLEBALL", price: 45000, costPrice: 28000, unit: "quả", initialStock: 50, minimumStock: 10 },
-      // Cho thuê
-      { name: "Thuê Vợt Tennis Wilson Pro", categoryId: catMap.get("cho-thue-dung-cu"), type: "RENTAL_SERVICE", sportType: "TENNIS", price: 80000, costPrice: 0, unit: "lượt", initialStock: 10, minimumStock: 2 },
-      { name: "Thuê Vợt Cầu Lông Yonex Astrox", categoryId: catMap.get("cho-thue-dung-cu"), type: "RENTAL_SERVICE", sportType: "BADMINTON", price: 40000, costPrice: 0, unit: "lượt", initialStock: 20, minimumStock: 3 },
-      { name: "Thuê Vợt Pickleball Selkirk / JOOLA", categoryId: catMap.get("cho-thue-dung-cu"), type: "RENTAL_SERVICE", sportType: "PICKLEBALL", price: 60000, costPrice: 0, unit: "lượt", initialStock: 15, minimumStock: 2 },
-
-      // Combo Thể Thao (Ưu Đãi)
-      { name: "Combo Đôi Năng Lượng (2 Suối + 1 Hộp Dưa Hấu + 2 Khăn Lạnh)", categoryId: catMap.get("combo-the-thao"), type: "PRODUCT", price: 45000, costPrice: 22000, unit: "combo", initialStock: 50, minimumStock: 10 },
-      { name: "Combo Team 4 Đập Phá (4 Nước Ngọt + 1 Đĩa Trái Cây Lớn + 4 Khăn Lạnh)", categoryId: catMap.get("combo-the-thao"), type: "PRODUCT", price: 110000, costPrice: 58000, unit: "combo", initialStock: 30, minimumStock: 5 },
-      { name: "Combo Thể Lực Tốc Độ (1 Pocari + 1 Redbull + 2 Chuối Sứ)", categoryId: catMap.get("combo-the-thao"), type: "PRODUCT", price: 42000, costPrice: 22000, unit: "combo", initialStock: 40, minimumStock: 10 },
-      { name: "Combo Trọn Gói Pickleball (Thuê 2 Vợt + 2 Bóng + 2 Nước Suối)", categoryId: catMap.get("combo-the-thao"), type: "PRODUCT", sportType: "PICKLEBALL", price: 195000, costPrice: 56000, unit: "combo", initialStock: 25, minimumStock: 5 }
-    ];
-
-    for (const sample of samples) {
-      await this.createService(partnerId, sample);
-    }
-    console.log(`[ServiceRepository] Seeded default services for partner ${partnerId}`);
+    return prisma.service.updateMany({
+      where: { partnerId, name },
+      data: { imageUrl }
+    });
   }
 };

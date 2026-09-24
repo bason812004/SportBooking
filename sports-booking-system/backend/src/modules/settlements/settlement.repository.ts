@@ -17,6 +17,9 @@ const listInclude = {
 export const settlementRepository = {
   create(
     data: {
+      collectedBy?: "PLATFORM" | "PARTNER";
+      status?: string;
+      settledAt?: Date;
       bookingId: string;
       partnerId: string;
       paymentId: string | null;
@@ -34,8 +37,12 @@ export const settlementRepository = {
     return db.settlement.create({ data });
   },
 
-  byBookingId(bookingId: string, db: DbClient = prisma) {
-    return db.settlement.findUnique({ where: { bookingId } });
+  byBookingId(bookingId: string, db: DbClient = prisma, collectedBy = "PLATFORM") {
+    return db.settlement.findUnique({ where: { bookingId_collectedBy: { bookingId, collectedBy } } });
+  },
+
+  bookingForCollection(bookingId: string, db: DbClient) {
+    return db.booking.findUnique({ where: { id: bookingId }, include: { court: { include: { partner: true } } } });
   },
 
   byId(id: string, db: DbClient = prisma) {

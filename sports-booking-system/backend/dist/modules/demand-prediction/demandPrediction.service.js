@@ -21,10 +21,11 @@ async function predictWithMlModel(input) {
                 day_of_week: input.dayOfWeek,
                 is_weekend: input.isWeekend,
                 sport_type: input.sportType,
-                booking_count: input.bookingCount,
-                cancellation_count: input.cancellationCount,
-                voucher_usage_count: input.voucherUsageCount,
-                average_price: input.averagePrice
+                prior_total_bookings: input.priorTotalBookings,
+                prior_avg_comparable_bookings: input.priorAvgComparableBookings,
+                prior_cancellation_count: input.priorCancellationCount,
+                prior_voucher_usage_count: input.priorVoucherUsageCount,
+                prior_average_price: input.priorAveragePrice
             })
         });
         if (!response.ok)
@@ -101,10 +102,11 @@ export const demandPredictionService = {
                 dayOfWeek: new Date(`${input.date}T00:00:00.000Z`).getUTCDay(),
                 isWeekend,
                 sportType: court.category.slug,
-                bookingCount: matchingSlotBookings,
-                cancellationCount,
-                voucherUsageCount: Number(slotStatsRows[0]?.voucherUsageCount ?? 0),
-                averagePrice: slotStatsRows[0]?.averagePrice ?? 0
+                priorTotalBookings: totalHistoricalBookings,
+                priorAvgComparableBookings: averageRows[0]?.average ?? 0,
+                priorCancellationCount: cancellationCount,
+                priorVoucherUsageCount: Number(slotStatsRows[0]?.voucherUsageCount ?? 0),
+                priorAveragePrice: slotStatsRows[0]?.averagePrice ?? 0
             });
             if (mlResult) {
                 result = mlResult;

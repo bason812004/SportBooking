@@ -106,7 +106,7 @@ describe("payment.repository applyWebhook", () => {
         paymentTransaction: { findUnique: async () => null, create: async () => ({}) },
         booking: {
           updateMany: async (args: any) => {
-            bookingUpdateArgs = args;
+            if (args.data.bookingStatus) bookingUpdateArgs = args;
             return { count: 1 };
           }
         }
@@ -150,7 +150,7 @@ describe("payment.repository applyWebhook", () => {
         paymentTransaction: { findUnique: async () => null, create: async () => ({}) },
         booking: {
           updateMany: async (args: any) => {
-            bookingUpdateArgs = args;
+            if (args.data.bookingStatus) bookingUpdateArgs = args;
             return { count: 1 };
           }
         }
@@ -254,7 +254,7 @@ describe("payment.repository expirePendingPayment", () => {
       },
       booking: {
         updateMany: async (args: any) => {
-          bookingUpdateArgs = args;
+          if (args.data.bookingStatus) bookingUpdateArgs = args;
           return { count: 1 };
         }
       }

@@ -58,6 +58,7 @@ export type CalculatedBookingPrice = {
   subtotal: number;
   voucherDiscountAmount: number;
   totalAmount: number;
+  depositBase: number;
   depositAmount: number;
   remainingAmount: number;
   depositPercent: number;
@@ -195,7 +196,8 @@ export async function calculateBookingPrice(input: CalculateBookingPriceInput): 
   }
 
   const totalAmount = Math.max(0, subtotal - voucherDiscountAmount);
-  const depositAmount = calculateMinimumDeposit(totalAmount, depositPercent);
+  const depositBase = Math.max(0, courtSubtotal - voucherDiscountAmount);
+  const depositAmount = calculateMinimumDeposit(depositBase, depositPercent);
   const remainingAmount = Math.max(0, totalAmount - depositAmount);
 
   return {
@@ -210,6 +212,7 @@ export async function calculateBookingPrice(input: CalculateBookingPriceInput): 
     subtotal,
     voucherDiscountAmount,
     totalAmount,
+    depositBase,
     depositAmount,
     remainingAmount,
     depositPercent,

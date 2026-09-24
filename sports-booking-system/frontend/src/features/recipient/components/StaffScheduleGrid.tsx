@@ -8,9 +8,14 @@ import type { WeeklyScheduleSlot } from "../../../types/api";
 import { useSurfaceWeeklySchedule } from "../hooks/useSurfaceWeeklySchedule";
 import { useWalkInBooking } from "./WalkInBookingForm";
 import { BookingServiceSelector } from "../../services/components/BookingServiceSelector";
+import { LiveBookingServiceCatalog } from "../../cashier/components/LiveBookingServicePanel";
+import type { useLiveBookingServices } from "../../cashier/hooks/useLiveBookingServices";
 import { SlotManageModal } from "./SlotManageModal";
 
 type WalkIn = ReturnType<typeof useWalkInBooking>;
+
+/** Which bill the service picker writes to: the guest already playing, or the walk-in draft. */
+export type ServiceTarget = "live" | "walkin";
 
 /**
  * Drop-in replacement for `WalkInScheduleField` on the "Quản lý sân" page —
@@ -23,13 +28,26 @@ export function StaffScheduleGrid({
   surfaceName,
   bookingDate,
   onDateChange,
-  walkIn
+  walkIn,
+  liveBooking = null,
+  liveServices,
+  serviceTarget = "walkin",
+  onServiceTargetChange
 }: {
   courtSurfaceId: string;
   surfaceName: string;
   bookingDate: string;
   onDateChange: (date: string) => void;
   walkIn: WalkIn;
+  /** Guest currently on this surface — enables writing services straight onto their live bill. */
+  liveBooking?: { id: string; customerName: string } | null;
+  /**
+   * Lifted `useLiveBookingServices` result. The bill half of it is rendered by the parent in
+   * another column, and both halves must share one optimistic overlay to stay in step.
+   */
+  liveServices?: ReturnType<typeof useLiveBookingServices>;
+  serviceTarget?: ServiceTarget;
+  onServiceTargetChange?: (target: ServiceTarget) => void;
 }) {
   const {
     isToday,
@@ -102,10 +120,13 @@ export function StaffScheduleGrid({
   if (activeWalkInPayment) return null;
 
   if (showServices) {
-    if (!courtId) return null;
+    // With a guest on court we can always serve them, even when the walk-in flow has no courtId.
+    const target: ServiceTarget = liveBooking && liveServices ? serviceTarget : "walkin";
+    if (target === "walkin" && !courtId) return null;
+
     return (
       <div>
-        <div className="mb-1.5 flex items-center justify-between">
+        <div className="mb-1.5 flex items-center justify-between gap-2">
           <span className="text-xs font-black uppercase tracking-wide text-slate-500">Thêm dịch vụ cho khách</span>
           <button
             type="button"
@@ -115,7 +136,13 @@ export function StaffScheduleGrid({
             Quay lại chọn giờ
           </button>
         </div>
-        <BookingServiceSelector courtId={courtId} selectedServices={selectedServices} onUpdateQuantity={updateServiceQuantity} onClearServices={clearServices} />
+
+        {target === "live" && liveBooking && liveServices ? (
+          // Only the catalog here — the bill for this guest takes over the parent's side column.
+          <LiveBookingServiceCatalog services={liveServices} />
+        ) : (
+          <BookingServiceSelector courtId={courtId!} selectedServices={selectedServices} onUpdateQuantity={updateServiceQuantity} onClearServices={clearServices} maxRows={2} />
+        )}
       </div>
     );
   }
@@ -135,10 +162,15 @@ export function StaffScheduleGrid({
               </button>
             </div>
           ) : null}
-          {courtId ? (
+          {courtId || liveBooking ? (
             <button
               type="button"
-              onClick={() => setShowServices(true)}
+              onClick={() => {
+                // No target tabs any more, so each entry point picks its own bill: this button sits
+                // in the booking-draft area, while "Thêm dịch vụ" beside the guest card serves them.
+                onServiceTargetChange?.(courtId ? "walkin" : "live");
+                setShowServices(true);
+              }}
               className="flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2 py-1 text-xs font-bold text-emerald-700 hover:bg-emerald-50"
             >
               <ShoppingBag className="h-3 w-3" />

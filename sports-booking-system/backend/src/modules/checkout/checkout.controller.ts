@@ -22,7 +22,7 @@ async function getPartnerId(userId: string): Promise<string> {
 export const checkoutController = {
   async getCheckoutByBooking(req: Request, res: Response) {
     const bookingId = req.params.bookingId;
-    const checkoutData = await checkoutService.getOrCreateCheckout(bookingId);
+    const checkoutData = await checkoutService.getOrCreateCheckout(bookingId, req.user!);
     return sendSuccess(res, checkoutData);
   },
 
@@ -33,7 +33,7 @@ export const checkoutController = {
       amount: Number(amount),
       paymentMethod,
       transactionId
-    });
+    }, req.user!);
     return sendSuccess(res, result, 200, "Thanh toán checkout thành công");
   },
 

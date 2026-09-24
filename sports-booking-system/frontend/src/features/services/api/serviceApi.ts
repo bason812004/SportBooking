@@ -21,6 +21,9 @@ export interface ServiceInventory {
 export interface ServiceItem {
   id: string;
   partnerId: string;
+  /** Each court owns a separate row (and stock) for the same product name. */
+  courtId?: string | null;
+  court?: { id: string; name: string } | null;
   categoryId?: string | null;
   name: string;
   description?: string | null;
@@ -53,13 +56,47 @@ export interface CreateServiceInput {
   minimumStock?: number;
 }
 
+/**
+ * A partner owns one services row per court for the same product name, so a partner-wide list
+ * repeats each name once per court. POS-style pickers sell from a single court and want one tile
+ * per product, so they collapse the list with this; stock/pricing screens must not, or they hide
+ * the other courts' rows.
+ */
+export function dedupeServicesByName(services: ServiceItem[] | null | undefined): ServiceItem[] {
+  const seenNames = new Set<string>();
+  return (services || []).filter((svc) => {
+    const key = (svc.name || "").trim().toLowerCase();
+    if (!key || seenNames.has(key)) return false;
+    seenNames.add(key);
+    return true;
+  });
+}
+
 export const serviceApi = {
   async getCategories() {
     const res = await api.get<ApiResponse<ServiceCategory[]>>("/services/categories");
     return res.data.data;
   },
 
-  async getPartnerServices(params?: { categoryId?: string; search?: string }) {
+  /**
+   * The image is shared by every court's row for this product name, so one upload is enough —
+   * the backend copies the url onto the partner's other rows when the service is saved.
+   */
+  async uploadServiceImage(file: File, onProgress?: (percent: number) => void) {
+    const form = new FormData();
+    form.append("image", file);
+    // DO NOT set Content-Type — Axios must auto-generate the multipart boundary.
+    const res = await api.post<ApiResponse<{ url: string; publicId: string }>>("/services/partner/image", form, {
+      onUploadProgress: onProgress
+        ? (e) => {
+            if (e.total) onProgress(Math.round((e.loaded * 100) / e.total));
+          }
+        : undefined
+    });
+    return res.data.data;
+  },
+
+  async getPartnerServices(params?: { categoryId?: string; search?: string; courtId?: string }) {
     const res = await api.get<ApiResponse<ServiceItem[]>>("/services/partner", { params });
     return res.data.data;
   },

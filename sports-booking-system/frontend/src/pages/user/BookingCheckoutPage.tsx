@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { CreditCard, CheckCircle2, QrCode, DollarSign, ArrowLeft, ShieldCheck, Clock, MapPin, Receipt, Sparkles } from "lucide-react";
@@ -11,7 +12,9 @@ import { QrPaymentPanel } from "../../components/payment/QrPaymentPanel";
 export function BookingCheckoutPage() {
   const { bookingId } = useParams<{ bookingId: string }>();
   const navigate = useNavigate();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const { t } = useTranslation("booking");
+  const canCollect = ["PARTNER", "RECIPIENT", "ADMIN"].includes(user?.role ?? "");
 
   const [checkoutData, setCheckoutData] = useState<CheckoutData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,10 +51,14 @@ export function BookingCheckoutPage() {
     };
 
     socket.on("booking:payment-completed", handlePaymentCompleted);
+    socket.on("booking:checkout-ready", handlePaymentCompleted);
+    socket.on("booking:total-updated", handlePaymentCompleted);
 
     return () => {
       socket.emit("booking:unsubscribe", bookingId);
       socket.off("booking:payment-completed", handlePaymentCompleted);
+      socket.off("booking:checkout-ready", handlePaymentCompleted);
+      socket.off("booking:total-updated", handlePaymentCompleted);
     };
   }, [token, bookingId]);
 
@@ -210,6 +217,8 @@ export function BookingCheckoutPage() {
                 Xem đơn đặt sân của tôi
               </Button>
             </div>
+          ) : !canCollect ? (
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-lg">{t("openTab.counterInstructions")}</div>
           ) : (
             <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-lg space-y-5">
               <h2 className="font-black text-slate-900 text-base">Phương Thức Thanh Toán</h2>

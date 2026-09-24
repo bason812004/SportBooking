@@ -1,175 +1,96 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
-import type { TestContext } from "node:test";
-import { createFakePrisma } from "../../shared/testing/fakePrisma.js";
+import { describe, it, mock } from "node:test";
+import { createDynamicFakePrisma } from "../../shared/testing/fakePrisma.js";
 
-let caseId = 0;
+const fake = createDynamicFakePrisma();
+mock.module("../../config/db.js", { namedExports: { prisma: fake.client } });
+let ensureCalls = 0;
+mock.module("../services/service.repository.js", { namedExports: { ensureServiceTables: async () => { ensureCalls += 1; } } });
+const collections: any[] = [];
+mock.module("../settlements/settlement.service.js", { namedExports: { settlementService: { settleForBooking: async () => null, createFromCounterCollection: async (...args: any[]) => collections.push(args) } } });
+const { checkoutRepository } = await import("./checkout.repository.js");
 
-async function loadRepository(t: TestContext, models: Record<string, any>) {
-  const fakePrisma = createFakePrisma(models);
-  t.mock.module("../../config/db.js", { namedExports: { prisma: fakePrisma } });
-  t.mock.module("../services/service.repository.js", { namedExports: { ensureServiceTables: async () => {} } });
-  caseId += 1;
-  const mod = await import(`./checkout.repository.js?case=${caseId}`);
-  return mod.checkoutRepository as typeof import("./checkout.repository.js").checkoutRepository;
+function setup(overrides: any = {}) {
+  const booking: any = { id: "bk1", basePrice: 200000, dynamicAdjustmentAmount: 0, totalPrice: 300000,
+    voucherDiscountAmount: 0, depositAmount: 100000, paymentStatus: "PAID", bookingStatus: "CONFIRMED",
+    bookingServices: [{ quantity: 2, price: 100000, unitPrice: 50000, totalPrice: 100000 }], ...overrides };
+  let checkout: any = null;
+  collections.length = 0;
+  fake.setModels({
+    booking: { findUnique: async () => booking, update: async ({ data }: any) => Object.assign(booking, data) },
+    checkout: {
+      findUnique: async () => checkout,
+      create: async ({ data }: any) => (checkout = { id: "co1", ...data, payments: [] }),
+      update: async ({ data }: any) => Object.assign(checkout, data)
+    },
+    checkoutPayment: { create: async ({ data }: any) => { const p = { id: `p${checkout.payments.length}`, ...data }; checkout.payments.push(p); return p; } }
+  });
+  return { booking, checkout: () => checkout };
 }
 
-function baseBooking(overrides: Partial<any> = {}) {
-  return {
-    id: "bk0001",
-    totalPrice: 200000,
-    voucherDiscountAmount: 0,
-    depositAmount: 0,
-    bookingServices: [],
-    payments: [],
-    ...overrides
-  };
-}
+describe("open-tab checkout", () => {
+  it("skips schema initialization when called with an existing transaction", async () => {
+    setup();
+    const before = ensureCalls;
 
-describe("checkout.repository getOrCreateCheckout", () => {
-  it("creates a new checkout and marks it COMPLETED when deposit already covers the total", async (t) => {
-    let created: any = null;
-    const checkoutRepository = await loadRepository(t, {
-      booking: { findUnique: async () => baseBooking({ totalPrice: 200000, depositAmount: 200000 }) },
-      checkout: {
-        findUnique: async () => null,
-        create: async ({ data }: any) => {
-          created = { id: "co0001", ...data, payments: [] };
-          return created;
-        }
-      }
-    });
+    await checkoutRepository.getOrCreateCheckout("bk1", fake.client);
 
-    const result = await checkoutRepository.getOrCreateCheckout("bk0001");
-
-    assert.equal(created.remainingAmount, 0);
-    assert.equal(created.status, "COMPLETED");
-    assert.equal(result.breakdown.isFullyPaid, true);
-    assert.equal(result.breakdown.totalAmount, 200000);
+    assert.equal(ensureCalls, before);
   });
 
-  it("includes active service totals and voucher discount in the grand total", async (t) => {
-    let created: any = null;
-    const checkoutRepository = await loadRepository(t, {
-      booking: {
-        findUnique: async () =>
-          baseBooking({
-            totalPrice: 200000,
-            voucherDiscountAmount: 20000,
-            depositAmount: 0,
-            bookingServices: [{ totalPrice: 50000 }, { totalPrice: 30000 }]
-          })
-      },
-      checkout: {
-        findUnique: async () => null,
-        create: async ({ data }: any) => {
-          created = { id: "co0002", ...data, payments: [] };
-          return created;
-        }
-      }
-    });
-
-    const result = await checkoutRepository.getOrCreateCheckout("bk0001");
-
-    // courtSubtotal(200000) + serviceSubtotal(50000+30000) - discount(20000) = 260000
-    assert.equal(result.breakdown.totalAmount, 260000);
-    assert.equal(created.status, "PENDING");
-    assert.equal(created.remainingAmount, 260000);
+  it("uses court-only price and applies voucher once, with prepaid services included once", async () => {
+    setup({ totalPrice: 280000, voucherDiscountAmount: 20000 });
+    const result = await checkoutRepository.getOrCreateCheckout("bk1");
+    assert.equal(result.breakdown.subtotalCourt, 200000);
+    assert.equal(result.breakdown.subtotalService, 100000);
+    assert.equal(result.breakdown.totalAmount, 280000);
+    assert.equal(result.breakdown.remainingAmount, 180000);
   });
 
-  it("recalculates remaining amount against prior PAID checkout payments only", async (t) => {
-    let updated: any = null;
-    const checkoutRepository = await loadRepository(t, {
-      booking: { findUnique: async () => baseBooking({ totalPrice: 200000, depositAmount: 0 }) },
-      checkout: {
-        findUnique: async () => ({
-          id: "co0003",
-          payments: [
-            { status: "PAID", amount: 120000 },
-            { status: "PENDING", amount: 999999 }
-          ]
-        }),
-        update: async ({ data }: any) => {
-          updated = { id: "co0003", ...data, payments: [] };
-          return updated;
-        }
-      }
-    });
-
-    const result = await checkoutRepository.getOrCreateCheckout("bk0001");
-
-    assert.equal(updated.amountPaid, 120000);
-    assert.equal(updated.remainingAmount, 80000);
-    assert.equal(updated.status, "PENDING");
-    assert.equal(result.breakdown.remainingAmount, 80000);
-  });
-});
-
-describe("checkout.repository processPayment", () => {
-  it("rejects a zero or negative payment amount", async (t) => {
-    const checkoutRepository = await loadRepository(t, {
-      checkout: {
-        findUnique: async () => ({ id: "co0001", status: "PENDING", remainingAmount: 100000, amountPaid: 0, totalAmount: 100000, bookingId: "bk0001" })
-      }
-    });
-
-    await assert.rejects(() => checkoutRepository.processPayment({ checkoutId: "co0001", amount: 0, paymentMethod: "CASH" }));
+  it("counts legacy NULL/zero totals as unit price times quantity", async () => {
+    setup({ bookingServices: [{ quantity: 3, price: 10000, totalPrice: null, unitPrice: null, status: null }, { quantity: 2, price: 20000, totalPrice: 0, unitPrice: 0 }] });
+    const result = await checkoutRepository.getOrCreateCheckout("bk1");
+    assert.equal(result.breakdown.subtotalService, 70000);
   });
 
-  it("rejects paying a checkout that is already COMPLETED", async (t) => {
-    const checkoutRepository = await loadRepository(t, {
-      checkout: {
-        findUnique: async () => ({ id: "co0001", status: "COMPLETED", remainingAmount: 0, amountPaid: 100000, totalAmount: 100000, bookingId: "bk0001" })
-      }
-    });
-
-    await assert.rejects(() => checkoutRepository.processPayment({ checkoutId: "co0001", amount: 50000, paymentMethod: "CASH" }));
+  it("does not treat an unpaid QR deposit as received money", async () => {
+    setup({ paymentStatus: "PENDING", bookingStatus: "PENDING_PAYMENT" });
+    const result = await checkoutRepository.getOrCreateCheckout("bk1");
+    assert.equal(result.breakdown.depositPaid, 0);
+    assert.equal(result.breakdown.remainingAmount, 300000);
   });
 
-  it("marks the checkout and booking COMPLETED once the full remaining amount is paid", async (t) => {
-    let bookingUpdate: any = null;
-    const checkoutRepository = await loadRepository(t, {
-      checkout: {
-        findUnique: async () => ({ id: "co0001", status: "PENDING", remainingAmount: 50000, amountPaid: 50000, totalAmount: 100000, bookingId: "bk0001" }),
-        update: async ({ data }: any) => ({ id: "co0001", ...data })
-      },
-      checkoutPayment: { create: async ({ data }: any) => ({ id: "cop0001", ...data }) },
-      booking: {
-        update: async ({ data }: any) => {
-          bookingUpdate = data;
-          return { id: "bk0001", ...data };
-        }
-      }
-    });
-
-    const result = await checkoutRepository.processPayment({ checkoutId: "co0001", amount: 50000, paymentMethod: "CASH" });
-
+  it("supports partial payment, completion, reopening and collection of only the difference", async () => {
+    const state = setup();
+    await checkoutRepository.getOrCreateCheckout("bk1");
+    const partial = await checkoutRepository.processPayment({ checkoutId: "co1", amount: 50000, paymentMethod: "CASH" });
+    assert.equal(partial.isCompleted, false);
+    assert.equal(partial.checkout.remainingAmount, 150000);
+    assert.equal(collections.length, 0);
+    await checkoutRepository.processPayment({ checkoutId: "co1", amount: 150000, paymentMethod: "CASH" });
+    assert.equal(state.booking.bookingStatus, "COMPLETED");
+    assert.equal(collections[0][1], 300000);
+    state.booking.bookingServices.push({ quantity: 1, price: 10000, unitPrice: 10000, totalPrice: 10000 });
+    const reopened = await checkoutRepository.getOrCreateCheckout("bk1");
+    assert.equal(reopened.checkout.status, "PENDING");
+    assert.equal(reopened.breakdown.remainingAmount, 10000);
+    assert.equal(state.booking.bookingStatus, "CHECKOUT_PENDING");
+    assert.equal(state.booking.paymentStatus, "PENDING");
+    state.checkout().status = "COMPLETED"; // stale status must not block a positive balance
+    const result = await checkoutRepository.processPayment({ checkoutId: "co1", amount: 10000, paymentMethod: "CASH" });
     assert.equal(result.isCompleted, true);
-    assert.equal(result.checkout.status, "COMPLETED");
-    assert.equal(bookingUpdate.bookingStatus, "COMPLETED");
-    assert.equal(bookingUpdate.paymentStatus, "PAID");
+    assert.equal(collections[1][1], 310000);
+    await checkoutRepository.getOrCreateCheckout("bk1");
+    assert.equal(state.booking.bookingStatus, "COMPLETED");
   });
 
-  it("leaves the booking in CHECKOUT_PENDING when a partial payment is made", async (t) => {
-    let bookingUpdate: any = null;
-    const checkoutRepository = await loadRepository(t, {
-      checkout: {
-        findUnique: async () => ({ id: "co0001", status: "PENDING", remainingAmount: 50000, amountPaid: 50000, totalAmount: 100000, bookingId: "bk0001" }),
-        update: async ({ data }: any) => ({ id: "co0001", ...data })
-      },
-      checkoutPayment: { create: async ({ data }: any) => ({ id: "cop0002", ...data }) },
-      booking: {
-        update: async ({ data }: any) => {
-          bookingUpdate = data;
-          return { id: "bk0001", ...data };
-        }
-      }
-    });
-
-    const result = await checkoutRepository.processPayment({ checkoutId: "co0001", amount: 20000, paymentMethod: "CASH" });
-
-    assert.equal(result.isCompleted, false);
-    assert.equal(result.checkout.remainingAmount, 30000);
-    assert.equal(bookingUpdate.bookingStatus, "CHECKOUT_PENDING");
+  it("rejects nonpositive, nonfinite, excessive and repeated payments", async () => {
+    setup();
+    await checkoutRepository.getOrCreateCheckout("bk1");
+    for (const amount of [0, -1, NaN, Infinity, 200001]) {
+      await assert.rejects(() => checkoutRepository.processPayment({ checkoutId: "co1", amount, paymentMethod: "CASH" }));
+    }
+    await checkoutRepository.processPayment({ checkoutId: "co1", amount: 200000, paymentMethod: "CASH" });
+    await assert.rejects(() => checkoutRepository.processPayment({ checkoutId: "co1", amount: 1, paymentMethod: "CASH" }));
   });
 });

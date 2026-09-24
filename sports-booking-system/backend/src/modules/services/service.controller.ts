@@ -1,28 +1,35 @@
 import type { Request, Response } from "express";
 import { prisma } from "../../config/db.js";
-import { ForbiddenError } from "../../shared/errors/AppError.js";
+import { ForbiddenError, ValidationError } from "../../shared/errors/AppError.js";
 import { sendSuccess } from "../../shared/utils/response.js";
+import { cloudinaryService } from "../../shared/services/cloudinary.service.js";
 import { serviceService } from "./service.service.js";
 import { forceSeedAllServicesToDb } from "./service.repository.js";
 import { createServiceCategorySchema, createServiceSchema, updateServiceSchema } from "./service.validation.js";
 
-async function getPartnerId(userId: string): Promise<string> {
+async function getPartnerScope(userId: string): Promise<{ partnerId: string; managedCourtId: string | null }> {
   const partner = await prisma.partnerProfile.findUnique({
     where: { userId },
     select: { id: true }
   });
-  if (partner) return partner.id;
+  if (partner) return { partnerId: partner.id, managedCourtId: null };
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { partnerId: true, managedCourt: { select: { partnerId: true } } }
+    select: { partnerId: true, managedCourtId: true, managedCourt: { select: { partnerId: true } } }
   });
 
-  if (user?.partnerId) return user.partnerId;
-  if (user?.managedCourt?.partnerId) return user.managedCourt.partnerId;
+  // A receptionist only ever runs one court, so their scope is pinned to it.
+  if (user?.partnerId) return { partnerId: user.partnerId, managedCourtId: user.managedCourtId ?? null };
+  if (user?.managedCourt?.partnerId) return { partnerId: user.managedCourt.partnerId, managedCourtId: user.managedCourtId ?? null };
 
   const firstPartner = await prisma.partnerProfile.findFirst({ select: { id: true } });
-  return firstPartner?.id || "p0001";
+  return { partnerId: firstPartner?.id || "p0001", managedCourtId: null };
+}
+
+async function getPartnerId(userId: string): Promise<string> {
+  const { partnerId } = await getPartnerScope(userId);
+  return partnerId;
 }
 
 export const serviceController = {
@@ -44,15 +51,19 @@ export const serviceController = {
 
   async listPartnerServices(req: Request, res: Response) {
     let partnerId = "";
+    let managedCourtId: string | null = null;
     try {
       if (req.user?.id) {
-        partnerId = await getPartnerId(req.user.id);
+        ({ partnerId, managedCourtId } = await getPartnerScope(req.user.id));
       }
     } catch {}
 
     const categoryId = typeof req.query.categoryId === "string" && req.query.categoryId.trim() !== "" ? req.query.categoryId.trim() : undefined;
     const search = typeof req.query.search === "string" && req.query.search.trim() !== "" ? req.query.search.trim() : undefined;
-    const services = await serviceService.listPartnerServices(partnerId, categoryId, search);
+    // A receptionist sees only the court they manage, whatever courtId the client asks for.
+    const requestedCourtId = typeof req.query.courtId === "string" && req.query.courtId.trim() !== "" ? req.query.courtId.trim() : undefined;
+    const courtId = managedCourtId ?? requestedCourtId;
+    const services = await serviceService.listPartnerServices(partnerId, categoryId, search, courtId);
     return sendSuccess(res, services);
   },
 
@@ -92,5 +103,25 @@ export const serviceController = {
     const partnerId = await getPartnerId(req.user!.id);
     await serviceService.deleteService(partnerId, req.params.id);
     return sendSuccess(res, null, 200, "Xóa dịch vụ thành công");
+  },
+
+  async uploadServiceImage(req: Request, res: Response) {
+    const partnerId = await getPartnerId(req.user!.id);
+    if (!req.file) throw new ValidationError("Vui lòng chọn một file ảnh");
+    const result = await cloudinaryService.uploadServiceImage(req.file, partnerId);
+    return sendSuccess(
+      res,
+      {
+        url: result.imageUrl,
+        publicId: result.publicId,
+        width: result.width,
+        height: result.height,
+        format: result.format,
+        size: result.bytes,
+        fileName: req.file.originalname
+      },
+      201,
+      "Tải ảnh lên thành công"
+    );
   }
 };

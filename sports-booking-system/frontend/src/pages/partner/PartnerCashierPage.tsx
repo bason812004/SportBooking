@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
 import {
   Search,
@@ -17,6 +18,7 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Modal } from "../../components/ui/Modal";
+import { ServiceImage } from "../../components/common/ServiceImage";
 import { cashierApi, type CashierBooking, type CashierBookingDetail, type ActiveBookingService } from "../../features/cashier/api/cashierApi";
 import { serviceApi, type ServiceCategory, type ServiceItem } from "../../features/services/api/serviceApi";
 import { getSocket } from "../../lib/socket";
@@ -24,6 +26,7 @@ import { useAuth } from "../../features/auth/hooks/useAuth";
 import { formatMoney } from "../../utils/formatters";
 
 export function PartnerCashierPage() {
+  const { t } = useTranslation("booking");
   const navigate = useNavigate();
   const { token } = useAuth();
 
@@ -264,8 +267,8 @@ export function PartnerCashierPage() {
         });
       }
       const serviceSubtotal = services.reduce((sum, item) => sum + Number(item.totalPrice || item.price || 0), 0);
-      const totalAmount = prev.courtSubtotal + serviceSubtotal;
-      const remainingAmount = Math.max(0, totalAmount - prev.depositPaid);
+      const totalAmount = prev.totalAmount + serviceSubtotal - prev.serviceSubtotal;
+      const remainingAmount = Math.max(0, prev.remainingAmount + serviceSubtotal - prev.serviceSubtotal);
       return { ...prev, services, serviceSubtotal, totalAmount, remainingAmount };
     });
 
@@ -314,8 +317,8 @@ export function PartnerCashierPage() {
               (s.serviceId || s.id) === serviceId ? { ...s, quantity: newQty, totalPrice: Number(s.unitPrice || s.price) * newQty } : s
             );
       const serviceSubtotal = services.reduce((sum, item) => sum + Number(item.totalPrice || item.price || 0), 0);
-      const totalAmount = prev.courtSubtotal + serviceSubtotal;
-      const remainingAmount = Math.max(0, totalAmount - prev.depositPaid);
+      const totalAmount = prev.totalAmount + serviceSubtotal - prev.serviceSubtotal;
+      const remainingAmount = Math.max(0, prev.remainingAmount + serviceSubtotal - prev.serviceSubtotal);
       return { ...prev, services, serviceSubtotal, totalAmount, remainingAmount };
     });
   };
@@ -458,7 +461,7 @@ export function PartnerCashierPage() {
                         )}
                       </span>
                       <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-extrabold text-emerald-800 uppercase">
-                        {b.bookingStatus}
+                        {!b.checkedInAt ? t("openTab.notCheckedIn") : b.bookingStatus}
                       </span>
                     </div>
 
@@ -567,6 +570,7 @@ export function PartnerCashierPage() {
                           </span>
                         )}
                       </div>
+                      <ServiceImage src={svc.imageUrl} alt={svc.name} className="mt-2 h-28 w-full rounded-xl" />
                       <h3 className="mt-2 font-black text-slate-900 text-sm group-hover:text-[#02712a] transition">
                         {svc.name}
                       </h3>
