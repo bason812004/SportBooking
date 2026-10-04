@@ -3,6 +3,39 @@ import type { AvailabilitySlot } from "../api/types";
 import { colors, radii, spacing, typography } from "../theme/tokens";
 import { formatCurrency } from "../utils/format";
 
+const UNAVAILABLE_LABELS: Partial<Record<AvailabilitySlot["status"], string>> = {
+  PENDING_PAYMENT: "Đang giữ",
+  HELD: "Đang giữ",
+  BLOCKED: "Tạm khóa",
+  MAINTENANCE: "Bảo trì",
+  CLOSED: "Đóng cửa",
+  PASSED: "Đã qua"
+};
+
+export function SurfaceStrip({
+  surfaces,
+  value,
+  onChange
+}: {
+  surfaces: Array<{ id: string; name: string; surface?: string | null }>;
+  value: string | null;
+  onChange: (surfaceId: string) => void;
+}) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dateStrip}>
+      {surfaces.map((item) => {
+        const active = item.id === value;
+        return (
+          <Pressable key={item.id} onPress={() => onChange(item.id)} style={[styles.surfaceChip, active && styles.dateChipActive]}>
+            <Text style={[styles.surfaceName, active && styles.dateActiveText]}>{item.name}</Text>
+            {item.surface ? <Text style={[styles.dateDay, active && styles.dateActiveText]}>{item.surface}</Text> : null}
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
 export function SlotPicker({
   slots,
   selected,
@@ -26,7 +59,7 @@ export function SlotPicker({
           >
             <Text style={[styles.slotTime, active && styles.slotActiveText]}>{slot.startTime} - {slot.endTime}</Text>
             <Text style={[styles.slotPrice, active && styles.slotActiveText]}>{formatCurrency(slot.price)}</Text>
-            {disabled ? <Text style={styles.disabledText}>{slot.status === "PENDING_PAYMENT" ? "Đang giữ" : "Đã đặt"}</Text> : null}
+            {disabled ? <Text style={styles.disabledText}>{UNAVAILABLE_LABELS[slot.status] ?? "Đã đặt"}</Text> : null}
           </Pressable>
         );
       })}
@@ -113,6 +146,22 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 2
+  },
+  surfaceChip: {
+    minHeight: 48,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.surface,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    justifyContent: "center",
+    gap: 2
+  },
+  surfaceName: {
+    color: colors.ink,
+    fontSize: typography.body,
+    fontWeight: "900"
   },
   dateChipActive: {
     borderColor: colors.primary,

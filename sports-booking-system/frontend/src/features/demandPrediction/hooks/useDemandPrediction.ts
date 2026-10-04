@@ -20,3 +20,11 @@ export function usePartnerCourtOverview(courtId?: string) {
     enabled: Boolean(courtId)
   });
 }
+
+export function usePartnerDemandForecast(courtId: string | undefined, date: string) {
+  return useQuery({
+    queryKey: ["partner-demand-forecast", courtId, date],
+    queryFn: () => demandPredictionApi.forecast(courtId!, date),
+    enabled: Boolean(courtId && date)
+  });
+}

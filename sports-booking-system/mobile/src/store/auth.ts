@@ -89,7 +89,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         void authApi
           .me()
           .then((freshUser) => {
-            if (!["USER", "PARTNER"].includes(freshUser.role) || freshUser.status !== "ACTIVE") {
+            if (freshUser.role !== "USER" || freshUser.status !== "ACTIVE") {
               void clearStoredSession();
               set({ user: null, accessToken: null, refreshToken: null });
               return;
@@ -114,7 +114,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       try {
         const user = await fetchWithTimeout;
-        if (!["USER", "PARTNER"].includes(user.role) || user.status !== "ACTIVE") {
+        if (user.role !== "USER" || user.status !== "ACTIVE") {
           await clearStoredSession();
           set({ user: null, accessToken: null, refreshToken: null, bootstrapped: true });
           return;
@@ -139,7 +139,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const session = await authApi.login(payload);
     const accessToken = session.accessToken ?? session.token;
     if (!accessToken) throw new Error("Máy chủ không trả về access token");
-    if (!["USER", "PARTNER"].includes(session.user.role)) throw new Error("Ứng dụng dành cho Khách hàng và Đối tác");
+    if (session.user.role !== "USER") throw new Error("Ứng dụng chỉ dành cho Khách hàng");
     if (session.user.status !== "ACTIVE") throw new Error("Tài khoản của bạn đang bị khóa");
     await get().setSession({ accessToken, refreshToken: session.refreshToken, user: session.user });
   },

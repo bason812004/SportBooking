@@ -50,13 +50,24 @@ export function PasswordInput({ label, error, leftIcon, style, ...props }: Field
   );
 }
 
-export function SearchInput({ value, onChangeText, placeholder = "Tim san, dia chi, bo mon" }: { value: string; onChangeText: (value: string) => void; placeholder?: string }) {
+export function SearchInput({
+  value,
+  onChangeText,
+  onSubmit,
+  placeholder = "Tim san, dia chi, bo mon"
+}: {
+  value: string;
+  onChangeText: (value: string) => void;
+  onSubmit?: () => void;
+  placeholder?: string;
+}) {
   return (
     <View style={styles.searchShell}>
       <Search size={20} color={colors.muted} />
       <TextInput
         value={value}
         onChangeText={onChangeText}
+        onSubmitEditing={onSubmit}
         placeholder={placeholder}
         placeholderTextColor={colors.muted}
         style={styles.searchInput}

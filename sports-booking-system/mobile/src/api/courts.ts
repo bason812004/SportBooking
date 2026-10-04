@@ -1,5 +1,22 @@
 import { api, cleanParams } from "./client";
-import type { ApiResponse, AvailabilitySlot, Category, Court, Paginated } from "./types";
+import type { ApiResponse, Category, Court, Paginated } from "./types";
+
+export type WeeklyScheduleSlot = {
+  date: string;
+  startTime: string;
+  endTime: string;
+  courtSurfaceId?: string | null;
+  courtSurfaceName?: string | null;
+  status: "AVAILABLE" | "BOOKED" | "BLOCKED" | "MAINTENANCE" | "OUTSIDE_HOURS" | "HELD";
+  basePrice: number;
+  finalPrice: number;
+};
+
+export type WeeklySchedule = {
+  weekStart: string;
+  weekEnd: string;
+  days: Array<{ date: string; weekday: number; slots: WeeklyScheduleSlot[] }>;
+};
 
 export type CourtFilters = {
   q?: string;
@@ -31,11 +48,11 @@ export const courtApi = {
     const { data } = await api.get<ApiResponse<Court>>(`/courts/${id}`);
     return data.data;
   },
-  async availability(id: string, date: string) {
-    const { data } = await api.get<ApiResponse<{ courtId: string; date: string; openingTime: string; closingTime: string; slotDurationMinutes: number; slots: AvailabilitySlot[] }>>(
-      `/courts/${id}/availability`,
-      { params: { date } }
-    );
+  // Week grid for one surface (sân con). Without surfaceId the backend merges every surface.
+  async weeklySchedule(id: string, weekStart: string, surfaceId?: string) {
+    const { data } = await api.get<ApiResponse<WeeklySchedule>>(`/courts/${id}/weekly-schedule`, {
+      params: cleanParams({ weekStart, surfaceId })
+    });
     return data.data;
   },
   async categories() {

@@ -3,6 +3,38 @@ import { prisma } from "../../config/db.js";
 import { paymentRepository } from "./payment.repository.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
+import { invalidateWeeklyScheduleCache } from "../weekly-schedule/weeklySchedule.service.js";
+
+function releaseCourtSlots(courtId: string) {
+  invalidateWeeklyScheduleCache(courtId);
+  realtimeService.toCourt(courtId, realtimeEvents.courtAvailabilityUpdated, { courtId });
+}
+
+/**
+ * Cancels bookings whose payment deadline passed. Before this ran, an unpaid booking was only
+ * expired when its owner reopened the payment screen, and until then it kept the slot taken.
+ */
+async function expireOverduePayments() {
+  try {
+    const overdue = await paymentRepository.findExpiredPending();
+    if (!overdue.length) return;
+    const courtIds = new Set<string>();
+    for (const payment of overdue) {
+      await paymentRepository.expirePendingPayment(payment.id);
+      courtIds.add(payment.booking.courtId);
+    }
+    courtIds.forEach(releaseCourtSlots);
+    console.log(`[PaymentExpiry] Expired ${overdue.length} overdue payment(s).`);
+  } catch (error) {
+    console.error("[PaymentExpiry] Sweep error:", error);
+  }
+}
+
+export function startPaymentExpirySweep() {
+  console.log("[PaymentExpiry] Starting overdue payment sweep (every 60s)...");
+  void expireOverduePayments();
+  setInterval(expireOverduePayments, 60_000);
+}
 
 async function pollPayments() {
   try {
@@ -72,16 +104,8 @@ async function pollPayments() {
               }
             } else if (payosStatus === "CANCELLED" || payosStatus === "EXPIRED") {
               console.log(`[Poller] Payment ${payment.id} cancelled/expired on PayOS`);
-              await prisma.$transaction(async (tx) => {
-                await tx.payment.update({
-                  where: { id: payment.id },
-                  data: { status: "CANCELLED" }
-                });
-                await tx.booking.update({
-                  where: { id: payment.bookingId },
-                  data: { bookingStatus: "CANCELLED", paymentStatus: "CANCELLED" }
-                });
-              });
+              await paymentRepository.cancelPendingPayment(payment.id);
+              releaseCourtSlots(payment.booking.courtId);
             }
           }
         } catch (err) {

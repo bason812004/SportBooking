@@ -86,14 +86,24 @@ export default function HomeScreen() {
     onError: (error) => Alert.alert("Không thể nhận", error instanceof Error ? error.message : "Vui lòng thử lại sau.")
   });
 
+  // The courts tab stays mounted; `ts` tells it this is a new jump whose filters must be applied.
+  function openCourts(filters: { q?: string; categoryId?: string }) {
+    router.push({ pathname: "/(tabs)/courts", params: { q: "", categoryId: "", ...filters, ts: String(Date.now()) } });
+  }
+
   async function requestLocation() {
     const permission = await Location.requestForegroundPermissionsAsync();
     if (permission.status !== "granted") {
       Alert.alert("Chưa cấp quyền vị trí", "Bạn vẫn có thể tìm kiếm sân theo quận, thành phố.");
       return;
     }
-    const current = await Location.getCurrentPositionAsync({});
-    setLocation({ latitude: current.coords.latitude, longitude: current.coords.longitude });
+    try {
+      const current = await Location.getCurrentPositionAsync({});
+      setLocation({ latitude: current.coords.latitude, longitude: current.coords.longitude });
+    } catch {
+      // Permission is granted but the device has location services off or no fix.
+      Alert.alert("Không lấy được vị trí", "Hãy bật định vị trên thiết bị rồi thử lại.");
+    }
   }
 
   const claimedIds = new Set(myVouchers.data?.map((item) => item.id));
@@ -115,9 +125,12 @@ export default function HomeScreen() {
       }
     >
       {/* Quick Search */}
-      <Pressable onPress={() => router.push({ pathname: "/(tabs)/courts", params: { q: search } })}>
-        <SearchInput value={search} onChangeText={setSearch} placeholder="Tìm sân, địa điểm, môn thể thao..." />
-      </Pressable>
+      <SearchInput
+        value={search}
+        onChangeText={setSearch}
+        onSubmit={() => openCourts({ q: search.trim() })}
+        placeholder="Tìm sân, địa điểm, môn thể thao..."
+      />
 
       {/* Quick Action Grid */}
       <View style={styles.quickActions}>
@@ -169,7 +182,7 @@ export default function HomeScreen() {
           <Chip
             key={category.id}
             label={category.name}
-            onPress={() => router.push({ pathname: "/(tabs)/courts", params: { categoryId: category.id } })}
+            onPress={() => openCourts({ categoryId: category.id })}
           />
         ))}
       </ScrollView>

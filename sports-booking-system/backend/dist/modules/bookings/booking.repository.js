@@ -106,8 +106,8 @@ export const bookingRepository = {
         }
         return booking;
     },
-    listByUser(userId, page, limit) {
-        const where = { userId };
+    listByUser(userId, page, limit, statuses = []) {
+        const where = { userId, ...(statuses.length ? { bookingStatus: { in: statuses } } : {}) };
         return prisma.$transaction([
             prisma.booking.findMany({
                 where,

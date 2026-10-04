@@ -321,3 +321,16 @@ export async function seedRecipientPostPaymentBookings() {
     bookings: results
   };
 }
+
+// Run with `npm run seed:recipient-test`; this used to be reachable as an unauthenticated API route.
+if (process.argv[1]?.includes("seed_recipient_post_payment_bookings")) {
+  seedRecipientPostPaymentBookings()
+    .then((result) => {
+      console.log(JSON.stringify(result, null, 2));
+      process.exit(0);
+    })
+    .catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
+}

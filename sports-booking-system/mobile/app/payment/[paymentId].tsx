@@ -1,8 +1,10 @@
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect } from "react";
 import { Alert, StyleSheet, Text, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { paymentApi } from "../../src/api/payments";
+import { queryKeys } from "../../src/api/queryKeys";
 import { Button } from "../../src/components/Buttons";
 import { StatusBadge } from "../../src/components/Badges";
 import { Card, Screen } from "../../src/components/Screen";
@@ -26,6 +28,18 @@ export default function PaymentScreen() {
     }
   });
 
+  // Once the payment settles, the booking's status changed on the server: drop the cached copies.
+  const settledStatus = status.data?.status;
+  const bookingId = detail.data?.bookingId ?? status.data?.bookingId;
+  const isSettled = settledStatus != null && ["PAID", "FAILED", "EXPIRED", "CANCELLED"].includes(settledStatus);
+  useEffect(() => {
+    if (!isSettled || !bookingId) return;
+    void queryClient.invalidateQueries({ queryKey: queryKeys.bookings });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.booking(bookingId) });
+    void queryClient.invalidateQueries({ queryKey: ["payment", id] });
+    void queryClient.invalidateQueries({ queryKey: ["court-availability"] });
+  }, [isSettled, bookingId, id, queryClient]);
+
   const devComplete = useMutation({
     mutationFn: () => paymentApi.devComplete(id),
     onSuccess: () => {
@@ -39,7 +53,7 @@ export default function PaymentScreen() {
   if (detail.isError) return <Screen back><ErrorState message={detail.error.message} onRetry={() => void detail.refetch()} /></Screen>;
   if (!detail.data) return <Screen back><ErrorState message="Khong tim thay thanh toan" /></Screen>;
 
-  const currentStatus = status.data?.status ?? detail.data.status;
+  const currentStatus = settledStatus ?? detail.data.status;
 
   return (
     <Screen title="Thanh toan" subtitle={`Ma don ${detail.data.booking.bookingCode}`} back>

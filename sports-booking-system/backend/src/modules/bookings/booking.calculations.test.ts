@@ -7,9 +7,11 @@ import {
   canCreateBookingCheckout,
   checkBookingOverlap,
   expirePendingPaymentAndReleaseSlots,
+  findStartedSlot,
   validateSelectedSlots,
   verifyPaymentWebhookIdempotency
 } from "./booking.calculations.js";
+import { vietnamNow } from "../../shared/utils/time.js";
 
 test("adjacent slots do not overlap", () => {
   assert.equal(checkBookingOverlap({ startTime: "18:00", endTime: "19:00" }, { startTime: "19:00", endTime: "20:00" }), false);
@@ -63,4 +65,29 @@ test("services are deferred and only discounted court charges require a deposit"
   const quote = calculateBookingQuote([{ startTime: "18:00", endTime: "19:00", price: 200000 }], 20000, 100000, 50);
   assert.equal(quote.minimumDepositAmount, 90000);
   assert.equal(quote.remainingAmount, 190000);
+});
+
+test("online booking closes at the slot's start, in Vietnam time", () => {
+  const slots = [{ date: "2026-10-01", startTime: "18:00" }];
+  assert.equal(findStartedSlot(slots, new Date("2026-10-01T17:59:59+07:00")), undefined);
+  assert.deepEqual(findStartedSlot(slots, new Date("2026-10-01T18:00:00+07:00")), slots[0]);
+  assert.deepEqual(findStartedSlot(slots, new Date("2026-10-01T18:30:00+07:00")), slots[0]);
+  // 18:00 Vietnam is 11:00 UTC; a server reading the wall clock as UTC would wrongly accept this.
+  assert.deepEqual(findStartedSlot(slots, new Date("2026-10-01T11:00:00Z")), slots[0]);
+});
+
+test("only the slots that have started are flagged, across days", () => {
+  const now = new Date("2026-10-01T09:30:00+07:00");
+  const slots = [
+    { date: "2026-10-02", startTime: "06:00" },
+    { date: "2026-10-01", startTime: "10:00" },
+    { date: "2026-10-01", startTime: "09:00" }
+  ];
+  assert.deepEqual(findStartedSlot(slots, now), slots[2]);
+  assert.equal(findStartedSlot(slots.slice(0, 2), now), undefined);
+});
+
+test("vietnamNow rolls the date over at Vietnam midnight, not UTC midnight", () => {
+  assert.deepEqual(vietnamNow(new Date("2026-09-30T17:30:00Z")), { date: "2026-10-01", time: "00:30" });
+  assert.deepEqual(vietnamNow(new Date("2026-10-01T16:59:00Z")), { date: "2026-10-01", time: "23:59" });
 });

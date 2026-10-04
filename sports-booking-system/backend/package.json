@@ -13,6 +13,9 @@
     "prisma:seed": "tsx prisma/seed.ts",
     "seed:services": "tsx src/scripts/seed_all_services.ts",
     "seed:inventory": "tsx src/scripts/seed_inventory_data.ts",
+    "seed:cashier-test": "tsx src/scripts/reset_and_seed_test_bookings.ts",
+    "seed:recipient-test": "tsx src/scripts/seed_recipient_post_payment_bookings.ts",
+    "seed:demand-history": "tsx src/scripts/seed_demand_history.ts",
     "db:migrate": "node migrate_db.cjs"
   },
   "prisma": {

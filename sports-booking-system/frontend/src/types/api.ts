@@ -572,6 +572,32 @@ export type PartnerDemandCourtOverview = {
   courtId: string;
   totalHistoricalBookings: number;
   status: "READY" | "INSUFFICIENT_DATA";
+  ruleBasedMinHistory: number;
+  mlMinHistory: number;
+  mlReady: boolean;
+};
+
+export type DemandPredictionModelVersion = "rule-based-v1" | "ml-random-forest-v1";
+
+export type PartnerDemandForecastSlot = {
+  startTime: string;
+  endTime: string;
+  status: "GENERATED" | "INSUFFICIENT_DATA" | "FAILED";
+  predictionLevel: "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH" | null;
+  predictedDemandScore: number | null;
+  predictedOccupancyRate: number | null;
+  confidenceScore: number;
+  modelVersion: DemandPredictionModelVersion | null;
+};
+
+export type PartnerDemandForecast = {
+  courtId: string;
+  date: string;
+  totalHistoricalBookings: number;
+  ruleBasedMinHistory: number;
+  mlMinHistory: number;
+  mlConfigured: boolean;
+  slots: PartnerDemandForecastSlot[];
 };
 
 export type DynamicPricingRuleType = "PEAK_HOUR" | "OFF_PEAK_HOUR" | "WEEKEND" | "HOLIDAY" | "HIGH_DEMAND" | "LOW_DEMAND" | "CUSTOM";
@@ -784,6 +810,7 @@ export type WeeklyScheduleSlot = {
   predictionLevel: "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH" | null;
   predictionStatus: "INSUFFICIENT_DATA" | "GENERATED" | "FAILED";
   predictedOccupancyRate: number | null;
+  predictionModel?: DemandPredictionModelVersion | null;
   blockReason: string | null;
   bookingCode: string | null;
   /** Staff-only fields (StaffScheduleGrid) — undefined on the customer-facing calendar. */

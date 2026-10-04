@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { MessageCircle, Send, X } from "lucide-react-native";
+import type { ConfirmBookingResult } from "../../api/chatbot";
 import { useAuthStore } from "../../store/auth";
 import { useChatbot, type ChatDisplayMessage } from "../../hooks/useChatbot";
 import { colors, radii, spacing, typography } from "../../theme/tokens";
@@ -9,6 +11,7 @@ import { PendingBookingCard } from "./PendingBookingCard";
 import { QuickSuggestions } from "./QuickSuggestions";
 
 export function ChatFab() {
+  const router = useRouter();
   const user = useAuthStore((state) => state.user);
   const insets = useSafeAreaInsets();
   const [isOpen, setIsOpen] = useState(false);
@@ -25,6 +28,12 @@ export function ChatFab() {
     if (!text || isSending) return;
     sendMessage(text);
     setDraft("");
+  };
+
+  const handleBookingConfirmed = (result: ConfirmBookingResult) => {
+    clearPendingBooking();
+    setIsOpen(false);
+    router.push(result.paymentId ? `/payment/${result.paymentId}` : `/bookings/${result.bookingId}`);
   };
 
   return (
@@ -68,7 +77,7 @@ export function ChatFab() {
                   {isSending ? (
                     <View style={styles.typing}><ActivityIndicator size="small" color={colors.primary} /><Text style={styles.typingText}>Đang trả lời...</Text></View>
                   ) : null}
-                  {pendingBooking ? <PendingBookingCard pendingBooking={pendingBooking} onDismiss={clearPendingBooking} /> : null}
+                  {pendingBooking ? <PendingBookingCard pendingBooking={pendingBooking} onDismiss={clearPendingBooking} onConfirmed={handleBookingConfirmed} /> : null}
                   {error ? <Text style={styles.error}>{error.message || "Có lỗi xảy ra, vui lòng thử lại."}</Text> : null}
                 </>
               }

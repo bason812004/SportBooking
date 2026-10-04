@@ -1,69 +1,136 @@
 import { env } from "../../config/env.js";
 import { ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { calculateDemandScore, type DemandScoreResult } from "../../shared/utils/businessRules.js";
-import { dayTypeFor, timeToMinutes } from "../../shared/utils/time.js";
+import { dayTypeFor, timeToMinutes, vietnamNow } from "../../shared/utils/time.js";
 import { trackEvent } from "../analytics/analytics.service.js";
+import {
+  fromMlResponse,
+  historyCutoff,
+  isPeakHour,
+  ML_MODEL_VERSION,
+  resolveSlotDemand,
+  RULE_BASED_MIN_HISTORY,
+  RULE_BASED_MODEL_VERSION,
+  slotKey,
+  slotPatternKey,
+  toMlRequestRow,
+  type DemandHistoryBundle,
+  type MlPredictResponse,
+  type MlRequestRow,
+  type SlotPatternStats
+} from "./demandPrediction.features.js";
 import { demandPredictionRepository } from "./demandPrediction.repository.js";
 
-const RULE_BASED_MODEL_VERSION = "rule-based-v1";
-const ML_MODEL_VERSION = "ml-random-forest-v1";
+type SlotInput = { date: string; startTime: string };
 
-type MlPredictResponse = {
-  predicted_demand_score: number;
-  predicted_occupancy_rate: number;
-  prediction_level: "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH";
-  confidence_score: number;
-};
-
-async function predictWithMlModel(input: {
-  hourOfDay: number;
-  dayOfWeek: number;
-  isWeekend: boolean;
-  sportType: string;
-  priorTotalBookings: number;
-  priorAvgComparableBookings: number;
-  priorCancellationCount: number;
-  priorVoucherUsageCount: number;
-  priorAveragePrice: number;
-}): Promise<DemandScoreResult | null> {
-  if (!env.ML_SERVICE_URL) return null;
+async function requestMlBatch(rows: MlRequestRow[]): Promise<MlPredictResponse[] | null> {
+  if (!env.ML_SERVICE_URL || rows.length === 0) return null;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), env.ML_SERVICE_TIMEOUT_MS);
 
   try {
-    const response = await fetch(`${env.ML_SERVICE_URL}/predict`, {
+    const response = await fetch(`${env.ML_SERVICE_URL}/predict/batch`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
-      body: JSON.stringify({
-        hour_of_day: input.hourOfDay,
-        day_of_week: input.dayOfWeek,
-        is_weekend: input.isWeekend,
-        sport_type: input.sportType,
-        prior_total_bookings: input.priorTotalBookings,
-        prior_avg_comparable_bookings: input.priorAvgComparableBookings,
-        prior_cancellation_count: input.priorCancellationCount,
-        prior_voucher_usage_count: input.priorVoucherUsageCount,
-        prior_average_price: input.priorAveragePrice
-      })
+      body: JSON.stringify({ items: rows })
     });
     if (!response.ok) return null;
 
-    const body = (await response.json()) as MlPredictResponse;
-    return {
-      status: "GENERATED",
-      predictedDemandScore: body.predicted_demand_score,
-      predictedOccupancyRate: body.predicted_occupancy_rate,
-      predictionLevel: body.prediction_level,
-      confidenceScore: body.confidence_score
-    };
+    const body = (await response.json()) as { predictions?: MlPredictResponse[] };
+    if (!Array.isArray(body.predictions) || body.predictions.length !== rows.length) return null;
+    return body.predictions;
   } catch {
     // ML service unavailable or timed out: caller falls back to rule-based prediction.
     return null;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/**
+ * Scores the given slots with the ML service in one batch call. Returns an empty
+ * map (= use rule-based) when ML is not configured, the court has too little
+ * history, a slot pattern has never been seen, or the service fails.
+ */
+async function mlPredictSlots(input: {
+  courtId: string;
+  sportType: string;
+  totalHistoricalBookings: number;
+  slots: SlotInput[];
+}): Promise<Map<string, DemandScoreResult>> {
+  const predictions = new Map<string, DemandScoreResult>();
+  if (!env.ML_SERVICE_URL || input.totalHistoricalBookings < env.ML_MIN_HISTORY || input.slots.length === 0) return predictions;
+
+  try {
+    // Features only use weeks before the predicted week, exactly like training.
+    const today = vietnamNow().date;
+    const cutoffs = [...new Set(input.slots.map((slot) => historyCutoff(slot.date, today)))];
+    const statsByCutoff = new Map<string, Map<string, SlotPatternStats>>();
+    await Promise.all(
+      cutoffs.map(async (cutoff) => {
+        const rows = await demandPredictionRepository.slotPatternStats(input.courtId, cutoff);
+        statsByCutoff.set(cutoff, new Map(rows.map((row) => [slotPatternKey(row.dow, row.hour), row])));
+      })
+    );
+
+    const keys: string[] = [];
+    const rows: MlRequestRow[] = [];
+    for (const slot of input.slots) {
+      const row = toMlRequestRow({
+        date: slot.date,
+        startTime: slot.startTime,
+        sportType: input.sportType,
+        statsByPattern: statsByCutoff.get(historyCutoff(slot.date, today)) ?? new Map()
+      });
+      if (!row) continue;
+      keys.push(slotKey(slot.date, slot.startTime));
+      rows.push(row);
+    }
+
+    const responses = await requestMlBatch(rows);
+    responses?.forEach((body, index) => predictions.set(keys[index], fromMlResponse(body)));
+  } catch (error) {
+    if (process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line no-console
+      console.warn("[demand-prediction] ML scoring failed, using rule-based", input.courtId, error);
+    }
+  }
+  return predictions;
+}
+
+async function buildDemandBundle(court: { id: string; category: { slug: string } }, slots: SlotInput[]): Promise<DemandHistoryBundle> {
+  const [totalHistoricalBookings, cancellationCount, matchingCounts, averageRows] = await Promise.all([
+    demandPredictionRepository.totalHistoricalBookings(court.id),
+    demandPredictionRepository.cancellationCount(court.id),
+    demandPredictionRepository.bookingCountsByStartTime(court.id),
+    demandPredictionRepository.averageComparableSlotBookings(court.id)
+  ]);
+  const mlPredictions = await mlPredictSlots({ courtId: court.id, sportType: court.category.slug, totalHistoricalBookings, slots });
+
+  return {
+    totalHistoricalBookings,
+    cancellationCount,
+    averageBookingsPerComparableSlot: Number(averageRows[0]?.average ?? 0),
+    // Map keyed by `${startTime}-${endTime}` for O(1) lookup per slot.
+    matchingCountsByWindow: matchingCounts.reduce<Record<string, number>>((acc, row) => {
+      acc[`${row.startTime}-${row.endTime}`] = row.count;
+      return acc;
+    }, {}),
+    mlPredictions: Object.fromEntries(mlPredictions)
+  };
+}
+
+function hourlySlots(openingTime: Date, closingTime: Date) {
+  const open = timeToMinutes(openingTime.toISOString().slice(11, 16));
+  const close = timeToMinutes(closingTime.toISOString().slice(11, 16));
+  const fmt = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+  const slots: Array<{ startTime: string; endTime: string }> = [];
+  for (let minute = open; minute < close; minute += 60) {
+    slots.push({ startTime: fmt(minute), endTime: fmt(Math.min(minute + 60, close)) });
+  }
+  return slots;
 }
 
 const messages = {
@@ -89,11 +156,6 @@ const messages = {
   }
 };
 
-function isPeakHour(startTime: string) {
-  const minutes = timeToMinutes(startTime);
-  return minutes >= timeToMinutes("17:00") && minutes < timeToMinutes("21:00");
-}
-
 async function partnerProfile(userId: string) {
   const profile = await demandPredictionRepository.partnerProfile(userId);
   if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
@@ -106,46 +168,32 @@ export const demandPredictionService = {
     const court = await demandPredictionRepository.court(courtId);
     if (!court) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
 
-    const [totalHistoricalBookings, matchingSlotBookings, cancellationCount, averageRows, slotStatsRows] = await Promise.all([
+    const [totalHistoricalBookings, matchingSlotBookings, cancellationCount, averageRows] = await Promise.all([
       demandPredictionRepository.totalHistoricalBookings(courtId),
       demandPredictionRepository.matchingSlotBookings(courtId, input.startTime, input.endTime),
       demandPredictionRepository.cancellationCount(courtId),
-      demandPredictionRepository.averageComparableSlotBookings(courtId),
-      demandPredictionRepository.slotPriceAndVoucherStats(courtId, input.startTime, input.endTime)
+      demandPredictionRepository.averageComparableSlotBookings(courtId)
     ]);
 
-    const isWeekend = dayTypeFor(input.date) === "WEEKEND";
-    let modelVersion = RULE_BASED_MODEL_VERSION;
-    let result: DemandScoreResult | null = null;
-
-    if (totalHistoricalBookings >= env.ML_MIN_HISTORY) {
-      const mlResult = await predictWithMlModel({
-        hourOfDay: Math.floor(timeToMinutes(input.startTime) / 60),
-        dayOfWeek: new Date(`${input.date}T00:00:00.000Z`).getUTCDay(),
-        isWeekend,
-        sportType: court.category.slug,
-        priorTotalBookings: totalHistoricalBookings,
-        priorAvgComparableBookings: averageRows[0]?.average ?? 0,
-        priorCancellationCount: cancellationCount,
-        priorVoucherUsageCount: Number(slotStatsRows[0]?.voucherUsageCount ?? 0),
-        priorAveragePrice: slotStatsRows[0]?.averagePrice ?? 0
-      });
-      if (mlResult) {
-        result = mlResult;
-        modelVersion = ML_MODEL_VERSION;
-      }
-    }
-
-    if (!result) {
-      result = calculateDemandScore({
+    const mlPredictions = await mlPredictSlots({
+      courtId,
+      sportType: court.category.slug,
+      totalHistoricalBookings,
+      slots: [{ date: input.date, startTime: input.startTime }]
+    });
+    const mlResult = mlPredictions.get(slotKey(input.date, input.startTime));
+    const modelVersion = mlResult ? ML_MODEL_VERSION : RULE_BASED_MODEL_VERSION;
+    const result =
+      mlResult ??
+      calculateDemandScore({
         totalHistoricalBookings,
         matchingSlotBookings,
         averageBookingsPerComparableSlot: averageRows[0]?.average ?? 0,
-        isWeekend,
+        isWeekend: dayTypeFor(input.date) === "WEEKEND",
         isPeakHour: isPeakHour(input.startTime),
-        cancellationCount
+        cancellationCount,
+        minHistory: RULE_BASED_MIN_HISTORY
       });
-    }
 
     await demandPredictionRepository.savePrediction({
       courtId,
@@ -181,35 +229,46 @@ export const demandPredictionService = {
   },
 
   /**
-   * Bulk demand-resolution for a whole week. Fetches every aggregate we
-   * need with three queries (court + per-court historical counts + a per-
-   * start_time breakdown of matching bookings across the court), then
-   * computes the prediction level for every slot in memory. This replaces
-   * the previous per-slot path which executed ~6 queries + 1 insert per
-   * slot (≈ 700+ DB hits per request) and choked the Supabase pooler.
+   * Bulk demand-resolution for a whole week. Fetches every aggregate once
+   * (plus a single ML batch call when enabled); the caller then scores every
+   * slot in memory with `resolveSlotDemand`. This replaces the previous
+   * per-slot path which executed ~6 queries + 1 insert per slot (≈ 700+ DB
+   * hits per request) and choked the Supabase pooler.
    */
-  async predictForWeek(input: { courtId: string; weekStart: string; weekEnd: string }) {
+  async predictForWeek(input: { courtId: string; weekStart: string; weekEnd: string; slots: SlotInput[] }) {
     const court = await demandPredictionRepository.court(input.courtId);
     if (!court) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
+    return buildDemandBundle(court, input.slots);
+  },
 
-    const [totalHistoricalBookings, cancellationCount, matchingCounts, averageRows] = await Promise.all([
-      demandPredictionRepository.totalHistoricalBookings(input.courtId),
-      demandPredictionRepository.cancellationCount(input.courtId),
-      demandPredictionRepository.bookingCountsByStartTime(input.courtId),
-      demandPredictionRepository.averageComparableSlotBookings(input.courtId)
-    ]);
+  async partnerForecast(userId: string, courtId: string, date: string) {
+    const profile = await partnerProfile(userId);
+    const court = await demandPredictionRepository.partnerCourtWithCategory(courtId, profile.id);
+    if (!court) throw new ForbiddenError("Chi duoc xem du doan cho san cua ban");
+
+    const slots = hourlySlots(court.openingTime, court.closingTime);
+    const bundle = await buildDemandBundle(court, slots.map((slot) => ({ date, startTime: slot.startTime })));
 
     return {
-      courtId: input.courtId,
-      partnerId: court.partnerId,
-      totalHistoricalBookings,
-      cancellationCount,
-      averageBookingsPerComparableSlot: Number(averageRows[0]?.average ?? 0),
-      // Map keyed by `${startTime}-${endTime}` for O(1) lookup per slot.
-      matchingCountsByWindow: matchingCounts.reduce<Record<string, number>>((acc, row) => {
-        acc[`${row.startTime}-${row.endTime}`] = row.count;
-        return acc;
-      }, {})
+      courtId,
+      date,
+      totalHistoricalBookings: bundle.totalHistoricalBookings,
+      ruleBasedMinHistory: RULE_BASED_MIN_HISTORY,
+      mlMinHistory: env.ML_MIN_HISTORY,
+      mlConfigured: Boolean(env.ML_SERVICE_URL),
+      slots: slots.map((slot) => {
+        const { result, modelVersion } = resolveSlotDemand(bundle, date, slot.startTime, slot.endTime);
+        return {
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          status: result.status,
+          predictionLevel: result.predictionLevel,
+          predictedDemandScore: result.predictedDemandScore,
+          predictedOccupancyRate: result.predictedOccupancyRate,
+          confidenceScore: result.confidenceScore,
+          modelVersion: result.status === "GENERATED" ? modelVersion : null
+        };
+      })
     };
   },
 
@@ -231,7 +290,14 @@ export const demandPredictionService = {
     const court = await demandPredictionRepository.partnerCourt(courtId, profile.id);
     if (!court) throw new ForbiddenError("Chi duoc xem du doan cho san cua ban");
     const totalHistoricalBookings = await demandPredictionRepository.totalHistoricalBookings(courtId);
-    return { courtId, totalHistoricalBookings, status: totalHistoricalBookings >= 20 ? "READY" : "INSUFFICIENT_DATA" };
+    return {
+      courtId,
+      totalHistoricalBookings,
+      status: totalHistoricalBookings >= RULE_BASED_MIN_HISTORY ? "READY" : "INSUFFICIENT_DATA",
+      ruleBasedMinHistory: RULE_BASED_MIN_HISTORY,
+      mlMinHistory: env.ML_MIN_HISTORY,
+      mlReady: Boolean(env.ML_SERVICE_URL) && totalHistoricalBookings >= env.ML_MIN_HISTORY
+    };
   },
 
   async peakHours(userId: string) {

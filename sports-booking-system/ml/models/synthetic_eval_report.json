@@ -1,0 +1,13 @@
+{
+  "methodology": "Chronological backtest: model trained on earlier weeks, evaluated on the most recent weeks it never saw. Target is the actual booking count observed in that later week, not a formula over the same row's features.",
+  "training_data_path": "ml\\models\\demand_training_data.csv",
+  "total_rows": 4793,
+  "test_rows": 1281,
+  "test_week_range": [
+    "2026-08-03",
+    "2026-09-07"
+  ],
+  "mae": 21.128024980483996,
+  "rmse": 30.551903597435793,
+  "level_accuracy": 0.6697892271662763
+}

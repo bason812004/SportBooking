@@ -1,3 +1,4 @@
+import type { BookingCheckoutResult } from "./bookings";
 import { api } from "./client";
 import type { ApiResponse } from "./types";
 
@@ -32,16 +33,8 @@ export type SendMessageResult = {
   pendingBooking: PendingBookingSummary | null;
 };
 
-export type ConfirmBookingResult = {
-  bookingId: string;
-  bookingStatus: string;
-  paymentStatus: string;
-  paymentType: "DEPOSIT" | "FULL_PAYMENT" | "PAY_AT_COURT";
-  totalAmount: number;
-  paymentAmount: number;
-  remainingAmount: number;
-  qrCodeUrl?: string | null;
-};
+// Backend confirms through the same checkout path as the booking screen.
+export type ConfirmBookingResult = BookingCheckoutResult;
 
 export const chatbotApi = {
   async sendMessage(payload: SendMessagePayload) {

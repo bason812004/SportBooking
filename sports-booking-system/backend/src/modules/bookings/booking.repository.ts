@@ -1,4 +1,4 @@
-import type { PaymentMethod, PaymentType, PaymentStatus, Prisma } from "@prisma/client";
+import type { BookingStatus, PaymentMethod, PaymentType, PaymentStatus, Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 import { ValidationError } from "../../shared/errors/AppError.js";
 import { timeToDate, toDbDate } from "../../shared/utils/time.js";
@@ -118,8 +118,8 @@ export const bookingRepository = {
     return booking;
   },
 
-  listByUser(userId: string, page: number, limit: number) {
-    const where: Prisma.BookingWhereInput = { userId };
+  listByUser(userId: string, page: number, limit: number, statuses: BookingStatus[] = []) {
+    const where: Prisma.BookingWhereInput = { userId, ...(statuses.length ? { bookingStatus: { in: statuses } } : {}) };
     return prisma.$transaction([
       prisma.booking.findMany({
         where,

@@ -22,9 +22,18 @@ import { Card, SectionHeader } from "../../../src/components/Screen";
 import { ErrorState, LoadingState } from "../../../src/components/StateViews";
 import { useAuthStore } from "../../../src/store/auth";
 import { colors, radii, spacing, typography } from "../../../src/theme/tokens";
-import { formatDate } from "../../../src/utils/format";
+import { formatClock, formatDate } from "../../../src/utils/format";
 
-const QUICK_REACTIONS = ["👍", "❤️", "😂", "🔥", "👏"];
+// The backend stores reactions as these codes (see ALLOWED_REACTIONS in teamPost.validation.ts).
+const REACTION_EMOJI: Record<string, string> = {
+  like: "👍",
+  love: "❤️",
+  laugh: "😂",
+  wow: "😮",
+  sad: "😢",
+  clap: "👏",
+  fire: "🔥"
+};
 
 export default function TeamGroupChatScreen() {
   const router = useRouter();
@@ -35,7 +44,7 @@ export default function TeamGroupChatScreen() {
 
   const [inputMessage, setInputMessage] = useState("");
   const [infoModalOpen, setInfoModalOpen] = useState(false);
-  const flatListRef = useRef<FlatList>(null);
+  const flatListRef = useRef<FlatList<TeamPostMessage>>(null);
 
   const post = useQuery({
     queryKey: queryKeys.teamPost(id),
@@ -157,13 +166,13 @@ export default function TeamGroupChatScreen() {
                 </Text>
                 <View style={styles.bubbleFooter}>
                   <Text style={[styles.timeText, isMe && styles.myTimeText]}>
-                    {(item.createdAt || "").slice(11, 16)}
+                    {formatClock(item.createdAt)}
                   </Text>
                   {/* Reactions view */}
                   {item.reactions && item.reactions.length > 0 && (
                     <View style={styles.reactionsRow}>
                       {item.reactions.map((r, i) => (
-                        <Text key={i} style={styles.reactionEmoji}>{r.reaction}</Text>
+                        <Text key={i} style={styles.reactionEmoji}>{REACTION_EMOJI[r.reaction] ?? r.reaction}</Text>
                       ))}
                     </View>
                   )}

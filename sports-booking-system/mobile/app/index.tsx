@@ -6,16 +6,11 @@ import { useAuthStore } from "../src/store/auth";
 export default function Index() {
   const router = useRouter();
   const bootstrapped = useAuthStore((s) => s.bootstrapped);
-  const user = useAuthStore((s) => s.user);
 
   useEffect(() => {
     if (!bootstrapped) return;
-    if (user && user.role === "PARTNER") {
-      router.replace("/partner");
-    } else {
-      router.replace("/(tabs)");
-    }
-  }, [bootstrapped, user, router]);
+    router.replace("/(tabs)");
+  }, [bootstrapped, router]);
 
   return (
     <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#022c22" }}>

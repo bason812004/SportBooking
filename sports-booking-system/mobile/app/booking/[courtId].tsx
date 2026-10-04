@@ -2,7 +2,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useMemo, useState, useEffect } from "react";
 import { Alert, StyleSheet, Text, View, ScrollView, TouchableOpacity } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { bookingApi } from "../../src/api/bookings";
+import { bookingApi, type BookingSlotPayload } from "../../src/api/bookings";
 import { courtApi } from "../../src/api/courts";
 import { queryKeys } from "../../src/api/queryKeys";
 import type { AvailabilitySlot } from "../../src/api/types";
@@ -10,9 +10,10 @@ import { Button, Chip } from "../../src/components/Buttons";
 import { FormInput } from "../../src/components/Forms";
 import { QuantityStepper } from "../../src/components/QuantityStepper";
 import { Card, Screen, SectionHeader } from "../../src/components/Screen";
-import { DateStrip, SlotPicker } from "../../src/components/SlotPicker";
+import { DateStrip, SlotPicker, SurfaceStrip } from "../../src/components/SlotPicker";
 import { ErrorState, LoadingState } from "../../src/components/StateViews";
 import { StickyBottomAction } from "../../src/components/StickyBottomAction";
+import { useCourtSchedule } from "../../src/hooks/useCourtSchedule";
 import { useAuthStore } from "../../src/store/auth";
 import { useBookingStore, getSlotKey } from "../../src/store/useBookingStore";
 import { useLanguageStore } from "../../src/i18n";
@@ -25,10 +26,11 @@ export default function BookingScreen() {
   const queryClient = useQueryClient();
   const user = useAuthStore((state) => state.user);
   const { t } = useLanguageStore();
-  const params = useLocalSearchParams<{ courtId: string; date?: string }>();
+  const params = useLocalSearchParams<{ courtId: string; date?: string; surfaceId?: string }>();
   const courtId = Array.isArray(params.courtId) ? params.courtId[0] : params.courtId;
-  
+
   const [date, setDate] = useState(params.date ?? todayKey());
+  const [pickedSurfaceId, setPickedSurfaceId] = useState<string | null>(params.surfaceId ?? null);
   const [serviceQuantities, setServiceQuantities] = useState<Record<string, number>>({});
   const [voucherCodeInput, setVoucherCodeInput] = useState("");
   const [voucherCode, setVoucherCode] = useState<string | undefined>(undefined);
@@ -56,12 +58,12 @@ export default function BookingScreen() {
     staleTime: 2 * 60 * 1000
   });
 
-  const availability = useQuery({
-    queryKey: queryKeys.courtAvailability(courtId, date),
-    queryFn: () => courtApi.availability(courtId, date),
-    enabled: Boolean(courtId),
-    staleTime: 30 * 1000
-  });
+  // Until the customer picks one, the first surface (sân con) is the one the backend books by default.
+  const surfaces = court.data?.surfaces ?? [];
+  const surfaceId = pickedSurfaceId ?? surfaces[0]?.id ?? null;
+  const surfaceName = surfaces.find((item) => item.id === surfaceId)?.name ?? null;
+
+  const availability = useCourtSchedule(courtId, date, surfaceId, court.isSuccess);
 
   const services = useMemo(
     () => Object.entries(serviceQuantities).filter(([, quantity]) => quantity > 0).map(([serviceId, quantity]) => ({ serviceId, quantity })),
@@ -69,9 +71,13 @@ export default function BookingScreen() {
   );
 
   const daysPayload = useMemo(() => {
-    const grouped: Record<string, { startTime: string; endTime: string }[]> = {};
+    const grouped: Record<string, BookingSlotPayload[]> = {};
     for (const s of selectedSlots) {
-      (grouped[s.date] ??= []).push({ startTime: s.startTime, endTime: s.endTime });
+      (grouped[s.date] ??= []).push({
+        startTime: s.startTime,
+        endTime: s.endTime,
+        ...(s.courtSurfaceId ? { courtSurfaceId: s.courtSurfaceId } : {})
+      });
     }
     return Object.entries(grouped)
       .sort(([a], [b]) => a.localeCompare(b))
@@ -107,7 +113,8 @@ export default function BookingScreen() {
     onSuccess: async (result) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.bookings }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.courtAvailability(courtId, date) })
+        // Every selected day changed, not just the one on screen.
+        queryClient.invalidateQueries({ queryKey: ["court-availability", courtId] })
       ]);
       clearSlots();
       if (result.paymentId) {
@@ -118,6 +125,28 @@ export default function BookingScreen() {
     },
     onError: (error) => Alert.alert(t.common.error, error instanceof Error ? error.message : t.common.error)
   });
+
+  const handleToggleSlot = (slot: AvailabilitySlot) => {
+    toggleSlot({
+      courtId,
+      date,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      price: slot.price ?? 0,
+      courtName: court.data?.name,
+      courtSurfaceId: surfaceId,
+      courtSurfaceName: surfaceName
+    });
+  };
+
+  const currentDaySelectedKeys = useMemo(
+    () => new Set(selectedSlots.filter((s) => s.date === date).map((s) => `${s.startTime}-${s.endTime}`)),
+    [selectedSlots, date]
+  );
+
+  const selectedAvailabilitySlots = selectedSlots
+    .filter((s) => s.date === date && (s.courtSurfaceId ?? null) === surfaceId)
+    .map((s) => ({ startTime: s.startTime, endTime: s.endTime, status: "AVAILABLE" as const, price: s.price, bookingId: null }));
 
   if (!user) {
     return (
@@ -132,42 +161,29 @@ export default function BookingScreen() {
     );
   }
 
-  const handleToggleSlot = (slot: AvailabilitySlot) => {
-    toggleSlot({
-      courtId,
-      date,
-      startTime: slot.startTime,
-      endTime: slot.endTime,
-      price: slot.price ?? 0,
-      courtName: court.data?.name
-    });
-  };
-
-  const currentDaySelectedKeys = useMemo(
-    () => new Set(selectedSlots.filter((s) => s.date === date).map((s) => `${s.startTime}-${s.endTime}`)),
-    [selectedSlots, date]
-  );
-
-  const selectedAvailabilitySlots = selectedSlots
-    .filter((s) => s.date === date)
-    .map((s) => ({ startTime: s.startTime, endTime: s.endTime, status: "AVAILABLE" as const, price: s.price, bookingId: null }));
-
   return (
     <View style={{ flex: 1 }}>
-      <Screen title={t.courts.selectSchedule} subtitle={court.data ? `${court.data.name} · ${shortAddress(court.data)}` : ""} back>
+      <Screen title={t.courts.selectSchedule} subtitle={court.data ? `${court.data.name} · ${shortAddress(court.data)}` : ""} back fixedHeader>
         {court.isLoading ? <LoadingState /> : court.isError ? <ErrorState message={court.error.message} onRetry={() => void court.refetch()} /> : null}
+
+        {surfaces.length > 1 ? (
+          <>
+            <SectionHeader title="Chọn sân con" />
+            <SurfaceStrip surfaces={surfaces} value={surfaceId} onChange={setPickedSurfaceId} />
+          </>
+        ) : null}
 
         <SectionHeader title="Chọn ngày chơi" />
         <DateStrip value={date} onChange={(nextDate) => setDate(nextDate)} />
 
-        <SectionHeader title={`Lịch sân ngày ${formatDate(date)}`} />
+        <SectionHeader title={surfaceName && surfaces.length > 1 ? `Lịch ${surfaceName} ngày ${formatDate(date)}` : `Lịch sân ngày ${formatDate(date)}`} />
         {availability.isLoading ? (
           <LoadingState label="Đang tải lịch sân..." />
         ) : availability.isError ? (
-          <ErrorState message={availability.error.message} onRetry={() => void availability.refetch()} />
+          <ErrorState message={availability.error?.message ?? "Không tải được lịch sân."} onRetry={() => void availability.refetch()} />
         ) : (
           <SlotPicker
-            slots={availability.data?.slots ?? []}
+            slots={availability.slots}
             selected={selectedAvailabilitySlots}
             onToggle={handleToggleSlot}
           />
@@ -184,6 +200,7 @@ export default function BookingScreen() {
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontWeight: "800", color: colors.ink, fontSize: typography.body }}>
                         {formatDate(s.date)} · {s.startTime} - {s.endTime}
+                        {s.courtSurfaceName && surfaces.length > 1 ? ` · ${s.courtSurfaceName}` : ""}
                       </Text>
                     </View>
                     <TouchableOpacity onPress={() => removeSlot(key)} style={{ padding: 4 }}>

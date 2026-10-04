@@ -115,10 +115,9 @@ export const contentApi = {
     }
   ) {
     const { data } = await api.post<ApiResponse<TeamPostMessage | TeamPostMessage[]>>(`/team-posts/${id}/messages`, payload);
-    if (Array.isArray(data.data)) {
-      return data.data[data.data.length - 1];
-    }
-    return data.data;
+    const message = Array.isArray(data.data) ? data.data[data.data.length - 1] : data.data;
+    if (!message) throw new Error("Máy chủ không trả về tin nhắn");
+    return message;
   },
   async reactToMessage(postId: string, payload: { messageId: string; reaction: string }) {
     const { data } = await api.post<ApiResponse<{ reaction: string; createdAt: string }>>(

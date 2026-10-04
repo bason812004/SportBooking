@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { NotFoundError } from "../../shared/errors/AppError.js";
-import { calculateDemandScore, calculateDynamicPrice } from "../../shared/utils/businessRules.js";
-import { dayTypeFor, timeToMinutes } from "../../shared/utils/time.js";
+import { calculateDynamicPrice } from "../../shared/utils/businessRules.js";
+import { dayTypeFor, timeToMinutes, vietnamNow } from "../../shared/utils/time.js";
 import { prisma } from "../../config/db.js";
 import {
   WEEKLY_DEFAULT_CLOSE,
@@ -22,11 +22,7 @@ import {
 } from "./weeklySchedule.repository.js";
 import { voucherRepository, type VoucherRow } from "../vouchers/voucher.repository.js";
 import { evaluateVoucherEligibility } from "../vouchers/voucher.eligibility.js";
-
-function isPeakHour(startTime: string) {
-  const minutes = timeToMinutes(startTime);
-  return minutes >= timeToMinutes("17:00") && minutes < timeToMinutes("21:00");
-}
+import { resolveSlotDemand, type DemandHistoryBundle } from "../demand-prediction/demandPrediction.features.js";
 
 // ---------------------------------------------------------------------------
 // Short-lived response cache.
@@ -226,32 +222,20 @@ type WeekPricingBundle = Awaited<
   ReturnType<typeof import("../dynamic-pricing/dynamicPricing.service.js").dynamicPricingService.calculateForWeek>
 >;
 
-type WeekDemandBundle = Awaited<
-  ReturnType<typeof import("../demand-prediction/demandPrediction.service.js").demandPredictionService.predictForWeek>
->;
-
 function predictHour(
-  bundle: WeekDemandBundle,
+  bundle: DemandHistoryBundle,
   date: string,
   startTime: string,
   endTime: string
 ) {
-  const matchingKey = `${startTime}-${endTime}`;
-  const matchingSlotBookings = bundle?.matchingCountsByWindow?.[matchingKey] ?? 0;
-  const result = calculateDemandScore({
-    totalHistoricalBookings: bundle?.totalHistoricalBookings ?? 0,
-    matchingSlotBookings,
-    averageBookingsPerComparableSlot: bundle?.averageBookingsPerComparableSlot ?? 0,
-    isWeekend: dayTypeFor(date) === "WEEKEND",
-    isPeakHour: isPeakHour(startTime),
-    cancellationCount: bundle?.cancellationCount ?? 0
-  });
+  const { result, modelVersion } = resolveSlotDemand(bundle, date, startTime, endTime);
 
   return {
     predictedOccupancyRate: result.predictedOccupancyRate ?? null,
     predictionLevel: result.predictionLevel ?? null,
     predictionStatus: result.status,
-    confidenceScore: result.status === "INSUFFICIENT_DATA" ? null : result.confidenceScore
+    confidenceScore: result.status === "INSUFFICIENT_DATA" ? null : result.confidenceScore,
+    predictionModel: result.status === "GENERATED" ? modelVersion : null
   };
 }
 
@@ -271,6 +255,7 @@ function projectSlot(slot: InternalWeeklySlot): WeeklySlotRow {
     predictionLevel: slot.predictionLevel,
     predictionStatus: slot.predictionStatus,
     predictedOccupancyRate: slot.predictedOccupancyRate,
+    predictionModel: slot.predictionModel ?? null,
     blockReason: slot.blockReason,
     bookingCode: slot.bookingCode
   };
@@ -311,10 +296,15 @@ async function loadPricingBundle(
   } as WeekPricingBundle;
 }
 
-async function loadDemandBundle(courtId: string, weekStart: string, weekEnd: string): Promise<WeekDemandBundle> {
+async function loadDemandBundle(
+  courtId: string,
+  weekStart: string,
+  weekEnd: string,
+  slots: Array<{ date: string; startTime: string }>
+): Promise<DemandHistoryBundle> {
   try {
     const { demandPredictionService } = await import("../demand-prediction/demandPrediction.service.js");
-    const bundle = await demandPredictionService.predictForWeek({ courtId, weekStart, weekEnd });
+    const bundle = await demandPredictionService.predictForWeek({ courtId, weekStart, weekEnd, slots });
     if (bundle) return bundle;
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
@@ -323,13 +313,12 @@ async function loadDemandBundle(courtId: string, weekStart: string, weekEnd: str
     }
   }
   return {
-    courtId,
-    partnerId: "",
     totalHistoricalBookings: 0,
     cancellationCount: 0,
     averageBookingsPerComparableSlot: 0,
-    matchingCountsByWindow: {}
-  } as WeekDemandBundle;
+    matchingCountsByWindow: {},
+    mlPredictions: {}
+  };
 }
 
 function buildVoucherEntry(row: VoucherRow): WeeklyVoucherEntry {
@@ -383,7 +372,7 @@ export const weeklyScheduleService = {
       weeklyScheduleRepository.bookings(courtId, monday, sunday, surfaceId),
       weeklyScheduleRepository.bookingSlots(courtId, monday, sunday, surfaceId),
       loadPricingBundle(courtId, court, monday, sunday, slotShape.openMins, slotShape.closeMins),
-      loadDemandBundle(courtId, monday, sunday)
+      loadDemandBundle(courtId, monday, sunday, slotShape.slots)
     ]);
 
     // Batch-fetch payments for all pending bookings in ONE query.
@@ -491,12 +480,14 @@ export const weeklyScheduleService = {
         | "GENERATED"
         | "FAILED";
       slot.confidenceScore = demand.confidenceScore;
+      slot.predictionModel = demand.predictionModel;
     }
 
-    // 5. Hide past dates.
-    const today = new Date().toISOString().slice(0, 10);
+    // 5. Hide past dates and the hours of today that have already started (Vietnam time),
+    //    matching the rule booking quote/checkout enforces.
+    const now = vietnamNow();
     for (const slot of slotShape.slots) {
-      if (slot.date < today) slot.status = "OUTSIDE_HOURS";
+      if (slot.date < now.date || (slot.date === now.date && slot.startTime <= now.time)) slot.status = "OUTSIDE_HOURS";
     }
 
     // Build per-day buckets.

@@ -2,52 +2,67 @@ import { useLocalSearchParams } from "expo-router";
 import { SlidersHorizontal } from "lucide-react-native";
 import { useEffect, useMemo, useState } from "react";
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { nextPageParam } from "../../src/api/client";
 import { courtApi, type CourtFilters } from "../../src/api/courts";
 import { queryKeys } from "../../src/api/queryKeys";
 import { Chip } from "../../src/components/Buttons";
 import { CourtCard } from "../../src/components/Cards";
 import { SearchInput } from "../../src/components/Forms";
 import { Screen } from "../../src/components/Screen";
-import { EmptyState, ErrorState, SkeletonCard } from "../../src/components/StateViews";
+import { EmptyState, ErrorState, LoadMoreFooter, SkeletonCard } from "../../src/components/StateViews";
 import { colors, spacing, typography } from "../../src/theme/tokens";
 
 const SORT_OPTIONS = [
   { key: "newest", label: "Mới nhất" },
   { key: "rating", label: "Đánh giá cao" },
   { key: "price_asc", label: "Giá thấp" }
-];
+] as const;
 
 export default function CourtsScreen() {
-  const params = useLocalSearchParams<{ q?: string; categoryId?: string }>();
+  const params = useLocalSearchParams<{ q?: string; categoryId?: string; ts?: string }>();
   const [keyword, setKeyword] = useState(params.q ?? "");
   const [debounced, setDebounced] = useState(params.q ?? "");
   const [categoryId, setCategoryId] = useState(params.categoryId ?? "");
   const [sortIndex, setSortIndex] = useState(0);
+
+  // This tab stays mounted, so a later jump from Home (new `ts`) has to re-apply its filters.
+  useEffect(() => {
+    if (!params.ts) return;
+    setKeyword(params.q ?? "");
+    setDebounced(params.q ?? "");
+    setCategoryId(params.categoryId ?? "");
+  }, [params.ts, params.q, params.categoryId]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebounced(keyword), 300);
     return () => clearTimeout(timer);
   }, [keyword]);
 
-  const currentSort = SORT_OPTIONS[sortIndex];
+  const currentSort = SORT_OPTIONS[sortIndex] ?? SORT_OPTIONS[0];
 
   const filters: CourtFilters = useMemo(
     () => ({
       q: debounced,
       categoryId,
       sortBy: currentSort.key,
-      page: 1,
       limit: 20
     }),
     [debounced, categoryId, currentSort.key]
   );
 
-  const courts = useQuery({
+  const courts = useInfiniteQuery({
     queryKey: queryKeys.courts(filters),
-    queryFn: () => courtApi.list(filters),
+    queryFn: ({ pageParam }) => courtApi.list({ ...filters, page: pageParam }),
+    initialPageParam: 1,
+    getNextPageParam: nextPageParam,
     staleTime: 60 * 1000
   });
+  const courtItems = useMemo(() => courts.data?.pages.flatMap((page) => page.items) ?? [], [courts.data]);
+
+  const loadMore = () => {
+    if (courts.hasNextPage && !courts.isFetchingNextPage) void courts.fetchNextPage();
+  };
 
   const categories = useQuery({
     queryKey: queryKeys.categories,
@@ -92,7 +107,7 @@ export default function CourtsScreen() {
         <ErrorState message={courts.error.message} onRetry={() => void courts.refetch()} />
       ) : (
         <FlatList
-          data={courts.data?.items ?? []}
+          data={courtItems}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => <CourtCard court={item} />}
           ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
@@ -101,8 +116,11 @@ export default function CourtsScreen() {
           maxToRenderPerBatch={6}
           windowSize={5}
           initialNumToRender={5}
-          refreshing={courts.isRefetching}
+          refreshing={courts.isRefetching && !courts.isFetchingNextPage}
           onRefresh={() => void courts.refetch()}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={<LoadMoreFooter hasMore={courts.hasNextPage} loading={courts.isFetchingNextPage} onPress={loadMore} />}
           ListEmptyComponent={
             <EmptyState
               title="Không tìm thấy sân phù hợp"

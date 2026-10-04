@@ -13,29 +13,33 @@ type ScreenProps = PropsWithChildren<{
   onRefresh?: () => void;
   right?: React.ReactNode;
   back?: boolean;
+  /** Keep the title row (and back button) pinned above the scrolling content. */
+  fixedHeader?: boolean;
   contentStyle?: StyleProp<ViewStyle>;
 }>;
 
-export function Screen({ title, subtitle, children, scroll = true, refreshing = false, onRefresh, right, back, contentStyle }: ScreenProps) {
+export function Screen({ title, subtitle, children, scroll = true, refreshing = false, onRefresh, right, back, fixedHeader = false, contentStyle }: ScreenProps) {
   const router = useRouter();
+  const header = title ? (
+    <View style={styles.header}>
+      <View style={styles.headerLeft}>
+        {back ? (
+          <Pressable accessibilityLabel="Quay lai" onPress={() => router.back()} style={styles.backButton}>
+            <ArrowLeft size={20} color={colors.ink} />
+          </Pressable>
+        ) : null}
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>{title}</Text>
+          {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+        </View>
+      </View>
+      {right}
+    </View>
+  ) : null;
+  const pinHeader = fixedHeader && header !== null;
   const content = (
     <View style={[styles.content, contentStyle]}>
-      {title ? (
-        <View style={styles.header}>
-          <View style={styles.headerLeft}>
-            {back ? (
-              <Pressable accessibilityLabel="Quay lai" onPress={() => router.back()} style={styles.backButton}>
-                <ArrowLeft size={20} color={colors.ink} />
-              </Pressable>
-            ) : null}
-            <View style={{ flex: 1 }}>
-              <Text style={styles.title}>{title}</Text>
-              {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
-            </View>
-          </View>
-          {right}
-        </View>
-      ) : null}
+      {pinHeader ? null : header}
       {children}
     </View>
   );
@@ -43,6 +47,7 @@ export function Screen({ title, subtitle, children, scroll = true, refreshing = 
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.safe}>
       <Stack.Screen options={{ headerShown: false }} />
+      {pinHeader ? <View style={styles.fixedHeader}>{header}</View> : null}
       {scroll ? (
         <ScrollView
           keyboardShouldPersistTaps="handled"
@@ -84,6 +89,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
     gap: spacing.lg
+  },
+  fixedHeader: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
+    backgroundColor: colors.canvas,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line
   },
   header: {
     flexDirection: "row",

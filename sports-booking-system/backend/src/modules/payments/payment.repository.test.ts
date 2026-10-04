@@ -268,3 +268,146 @@ describe("payment.repository expirePendingPayment", () => {
     assert.equal(bookingUpdateArgs.data.paymentStatus, "EXPIRED");
   });
 });
+
+describe("payment.repository findExpiredPending", () => {
+  it("asks only for unpaid payments whose deadline has passed", async (t) => {
+    let findManyArgs: any = null;
+    const now = new Date("2026-10-01T10:00:00Z");
+    const paymentRepository = await loadRepository(t, {
+      payment: {
+        findMany: async (args: any) => {
+          findManyArgs = args;
+          return [{ id: "pay1", booking: { courtId: "c1" } }];
+        }
+      }
+    });
+
+    const result = await paymentRepository.findExpiredPending(25, now);
+
+    assert.deepEqual(result, [{ id: "pay1", booking: { courtId: "c1" } }]);
+    assert.deepEqual(findManyArgs.where.status.in, ["PENDING", "UNPAID"]);
+    assert.equal(findManyArgs.where.expiresAt.lte, now);
+    assert.equal(findManyArgs.take, 25);
+  });
+});
+
+describe("payment.repository cancelPendingPayment", () => {
+  it("cancels every booking of a multi-day order, not just the one holding the payment", async (t) => {
+    let bookingUpdateArgs: any = null;
+    let paymentUpdateArgs: any = null;
+    const paymentRepository = await loadRepository(t, {
+      payment: {
+        findUnique: async () => ({
+          id: "pay1",
+          status: "PENDING",
+          bookingId: "bk1",
+          bookingOrder: { bookings: [{ id: "bk1" }, { id: "bk2" }, { id: "bk3" }] }
+        }),
+        update: async (args: any) => {
+          paymentUpdateArgs = args;
+          return { id: "pay1", ...args.data };
+        }
+      },
+      booking: {
+        updateMany: async (args: any) => {
+          bookingUpdateArgs = args;
+          return { count: 3 };
+        }
+      }
+    });
+
+    const result = await paymentRepository.cancelPendingPayment("pay1");
+
+    assert.equal((result as any).status, "CANCELLED");
+    assert.deepEqual(bookingUpdateArgs.where.id.in, ["bk1", "bk2", "bk3"]);
+    assert.deepEqual(bookingUpdateArgs.data, { bookingStatus: "CANCELLED", paymentStatus: "CANCELLED" });
+    assert.equal(paymentUpdateArgs.data.status, "CANCELLED");
+  });
+
+  it("leaves a payment that was already paid alone", async (t) => {
+    let touched = false;
+    const paymentRepository = await loadRepository(t, {
+      payment: {
+        findUnique: async () => ({ id: "pay1", status: "PAID", bookingId: "bk1", bookingOrder: null }),
+        update: async () => {
+          touched = true;
+          return {};
+        }
+      },
+      booking: {
+        updateMany: async () => {
+          touched = true;
+          return { count: 0 };
+        }
+      }
+    });
+
+    const result = await paymentRepository.cancelPendingPayment("pay1");
+
+    assert.equal((result as any).status, "PAID");
+    assert.equal(touched, false);
+  });
+});
+
+describe("payment.repository applyWebhook for money that arrives after expiry", () => {
+  async function runLatePayment(t: TestContext, payment: any) {
+    let bookingUpdateArgs: any = null;
+    let settleCalled = false;
+    let transactionCreated = false;
+    const paymentRepository = await loadRepository(
+      t,
+      {
+        payment: {
+          findUnique: async () => payment,
+          update: async ({ data }: any) => ({ ...payment, ...data })
+        },
+        paymentTransaction: {
+          findUnique: async () => null,
+          create: async () => {
+            transactionCreated = true;
+            return {};
+          }
+        },
+        booking: {
+          updateMany: async (args: any) => {
+            bookingUpdateArgs = args;
+            return { count: 1 };
+          }
+        }
+      },
+      { createFromPaidBooking: async () => (settleCalled = true) }
+    );
+    const result: any = await paymentRepository.applyWebhook({
+      provider: "sepay",
+      externalOrderId: "ORDER-1",
+      externalTransactionId: "TX-LATE",
+      status: "PAID",
+      amount: 200000,
+      rawPayload: {}
+    });
+    return { result, bookingUpdateArgs, settleCalled, transactionCreated };
+  }
+
+  it("keeps an expired booking cancelled, records the money and flags it for refund", async (t) => {
+    const { result, bookingUpdateArgs, settleCalled, transactionCreated } = await runLatePayment(t, basePayment({ status: "EXPIRED" }));
+
+    assert.equal(transactionCreated, true);
+    assert.equal(result.payment.status, "PAID");
+    assert.deepEqual(result.lateRefund, { amount: 200000 });
+    assert.deepEqual(bookingUpdateArgs.where.id.in, ["bk0001"]);
+    assert.equal(bookingUpdateArgs.data.bookingStatus, "CANCELLED");
+    assert.equal(bookingUpdateArgs.data.paymentStatus, "PAID");
+    assert.match(bookingUpdateArgs.data.cancelReason, /hoàn tiền/);
+    assert.equal(settleCalled, false);
+  });
+
+  it("flags every day of a cancelled multi-day order", async (t) => {
+    const order = { bookings: [{ id: "bk0001", bookingCode: "BK1" }, { id: "bk0002", bookingCode: "BK2" }] };
+    const { result, bookingUpdateArgs, settleCalled } = await runLatePayment(t, basePayment({ status: "CANCELLED", bookingOrder: order }));
+
+    assert.deepEqual(bookingUpdateArgs.where.id.in, ["bk0001", "bk0002"]);
+    assert.equal(bookingUpdateArgs.data.bookingStatus, "CANCELLED");
+    assert.equal(result.bookings.length, 2);
+    assert.equal(settleCalled, false);
+  });
+});

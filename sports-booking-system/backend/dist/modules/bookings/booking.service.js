@@ -6,7 +6,7 @@ import { bookingStartsAt, dayTypeFor, durationHours, parseLimit, parsePage, time
 import { courtRepository } from "../courts/court.repository.js";
 import { paymentProvider } from "../payments/providers/index.js";
 import { bookingRepository } from "./booking.repository.js";
-import { canCreateBookingCheckout } from "./booking.calculations.js";
+import { canCreateBookingCheckout, findStartedSlot } from "./booking.calculations.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { invalidateWeeklyScheduleCache } from "../weekly-schedule/weeklySchedule.service.js";
@@ -16,6 +16,13 @@ import { checkoutRepository } from "../checkout/checkout.repository.js";
 function bookingCode() {
     const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
     return `BK${stamp}${Math.floor(Math.random() * 900 + 100)}`;
+}
+function assertSlotsNotStarted(slots) {
+    const started = findStartedSlot(slots);
+    if (!started)
+        return;
+    const [year, month, day] = started.date.slice(0, 10).split("-");
+    throw new ValidationError(`Khung giờ ${started.startTime.slice(0, 5)} ngày ${day}/${month}/${year} đã qua, vui lòng chọn khung giờ khác`);
 }
 function notifyCourtAvailabilityUpdated(courtId) {
     invalidateWeeklyScheduleCache(courtId);
@@ -36,6 +43,8 @@ export const bookingService = {
             startTime: s.startTime,
             endTime: s.endTime
         })));
+        // Checkout and the chatbot both go through quote(), so this one check covers every online booking path.
+        assertSlotsNotStarted(flatSlots);
         const calculated = await calculateBookingPrice({
             courtId: input.courtId,
             slots: flatSlots,
@@ -293,6 +302,7 @@ export const bookingService = {
         if (timeToMinutes(input.startTime) >= timeToMinutes(input.endTime)) {
             throw new ValidationError("Gio bat dau phai nho hon gio ket thuc");
         }
+        assertSlotsNotStarted([{ date: input.bookingDate, startTime: input.startTime }]);
         const conflict = await courtRepository.findConflict(input.courtId, input.bookingDate, input.startTime, input.endTime);
         if (conflict) {
             throw new ConflictError("Khung gio nay da co nguoi dat.", "BOOKING_CONFLICT");
@@ -359,7 +369,9 @@ export const bookingService = {
     async listForUser(userId, query) {
         const page = parsePage(query.page);
         const limit = parseLimit(query.limit);
-        const [items, total] = await bookingRepository.listByUser(userId, page, limit);
+        // Already checked against BookingStatus by myBookingsQuerySchema.
+        const statuses = (query.status ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+        const [items, total] = await bookingRepository.listByUser(userId, page, limit, statuses);
         return { items, meta: paginationMeta(page, limit, total) };
     },
     async cancel(userId, bookingId, cancelReason) {

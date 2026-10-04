@@ -107,7 +107,11 @@ export async function calculateBookingPrice(input: CalculateBookingPriceInput): 
     const date = slot.date;
     const startTime = slot.startTime.slice(0, 5);
     const endTime = slot.endTime.slice(0, 5);
-    const surfaceId = slot.courtSurfaceId || slot.courtSubId || defaultSurfaceId;
+    const requestedSurfaceId = slot.courtSurfaceId || slot.courtSubId;
+    if (requestedSurfaceId && !surfaceMap.has(requestedSurfaceId)) {
+      throw new ValidationError("Sân con không thuộc sân này hoặc đang tạm ngưng");
+    }
+    const surfaceId = requestedSurfaceId || defaultSurfaceId;
     const surfaceName = surfaceId ? surfaceMap.get(surfaceId) || defaultSurfaceName : defaultSurfaceName;
 
     // Pure pricing resolution for this date & time slot

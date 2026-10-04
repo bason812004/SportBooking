@@ -3,7 +3,7 @@ import { Button } from "../Buttons";
 import { colors, radii, shadows, spacing, typography } from "../../theme/tokens";
 import { formatCurrency, formatDate } from "../../utils/format";
 import { useConfirmPendingBooking } from "../../hooks/useChatbot";
-import type { PendingBookingSummary } from "../../api/chatbot";
+import type { ConfirmBookingResult, PendingBookingSummary } from "../../api/chatbot";
 
 const PAYMENT_LABEL: Record<PendingBookingSummary["paymentType"], string> = {
   DEPOSIT: "Đặt cọc",
@@ -11,12 +11,20 @@ const PAYMENT_LABEL: Record<PendingBookingSummary["paymentType"], string> = {
   PAY_AT_COURT: "Thanh toán tại sân"
 };
 
-export function PendingBookingCard({ pendingBooking, onDismiss }: { pendingBooking: PendingBookingSummary; onDismiss: () => void }) {
+export function PendingBookingCard({
+  pendingBooking,
+  onDismiss,
+  onConfirmed
+}: {
+  pendingBooking: PendingBookingSummary;
+  onDismiss: () => void;
+  onConfirmed?: (result: ConfirmBookingResult) => void;
+}) {
   const confirmMutation = useConfirmPendingBooking();
   const isExpired = new Date(pendingBooking.expiresAt).getTime() < Date.now();
 
   const confirm = () => {
-    if (!isExpired) confirmMutation.mutate(pendingBooking.pendingBookingId);
+    if (!isExpired) confirmMutation.mutate(pendingBooking.pendingBookingId, { onSuccess: onConfirmed });
   };
 
   return (

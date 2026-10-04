@@ -1,5 +1,5 @@
 import { api } from "../../../lib/axios";
-import type { ApiResponse, DemandPrediction, PartnerDemandCourtOverview, PartnerDemandOverview } from "../../../types/api";
+import type { ApiResponse, DemandPrediction, PartnerDemandCourtOverview, PartnerDemandForecast, PartnerDemandOverview } from "../../../types/api";
 
 export type DemandPredictionParams = {
   courtId: string;
@@ -21,6 +21,12 @@ export const demandPredictionApi = {
   },
   async courtOverview(courtId: string) {
     const { data } = await api.get<ApiResponse<PartnerDemandCourtOverview>>(`/partner/demand-prediction/courts/${courtId}`);
+    return data.data;
+  },
+  async forecast(courtId: string, date: string) {
+    const { data } = await api.get<ApiResponse<PartnerDemandForecast>>(`/partner/demand-prediction/courts/${courtId}/forecast`, {
+      params: { date }
+    });
     return data.data;
   }
 };

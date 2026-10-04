@@ -3,7 +3,7 @@ import { app } from "./app.js";
 import { env } from "./config/env.js";
 import { prisma } from "./config/db.js";
 import { initRealtime } from "./modules/realtime/realtime.server.js";
-import { startPaymentPoller } from "./modules/payments/payment.poller.js";
+import { startPaymentExpirySweep, startPaymentPoller } from "./modules/payments/payment.poller.js";
 import { startBookingReminderScheduler } from "./modules/booking-reminders/bookingReminder.scheduler.js";
 import { ensureTeamChatTables } from "./modules/team-posts/teamPost.repository.js";
 import { ensureReviewTables } from "./modules/reviews/review.repository.js";
@@ -25,6 +25,7 @@ server.listen(env.PORT, "0.0.0.0", async () => {
     console.error("Failed to initialize database tables:", err);
   } finally {
     startPaymentPoller();
+    startPaymentExpirySweep();
     startBookingReminderScheduler();
   }
 });

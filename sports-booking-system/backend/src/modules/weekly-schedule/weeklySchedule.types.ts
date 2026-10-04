@@ -28,6 +28,8 @@ export type WeeklySlotRow = {
   predictionLevel: "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH" | null;
   predictionStatus: "INSUFFICIENT_DATA" | "GENERATED" | "FAILED";
   predictedOccupancyRate: number | null;
+  /** Which model produced the prediction (`rule-based-v1` / `ml-random-forest-v1`); null when not generated. */
+  predictionModel?: string | null;
   blockReason: string | null;
   bookingCode: string | null;
 };

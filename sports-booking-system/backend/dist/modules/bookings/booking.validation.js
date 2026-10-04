@@ -16,7 +16,8 @@ export const createBookingSchema = z.object({
 const bookingSlotSchema = z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     startTime: fullHourTime,
-    endTime: fullHourTime
+    endTime: fullHourTime,
+    courtSurfaceId: z.string().min(1).optional()
 });
 const bookingServiceSchema = z.object({
     serviceId: z.string().min(1),

@@ -1,7 +1,7 @@
 import { api } from "./client";
 import type { ApiResponse, Booking, Paginated } from "./types";
 
-export type BookingSlotPayload = { date?: string; startTime: string; endTime: string };
+export type BookingSlotPayload = { date?: string; startTime: string; endTime: string; courtSurfaceId?: string };
 export type BookingServicePayload = { serviceId: string; quantity: number };
 export type BookingDayPayload = { bookingDate: string; slots: BookingSlotPayload[] };
 
@@ -69,8 +69,9 @@ export const bookingApi = {
     const { data } = await api.post<ApiResponse<BookingCheckoutResult>>("/bookings/checkout", payload);
     return data.data;
   },
-  async listMine() {
-    const { data } = await api.get<ApiResponse<Paginated<Booking>>>("/users/me/bookings");
+  async listMine(page = 1, statuses?: string[]) {
+    const params = { page, limit: 20, ...(statuses?.length ? { status: statuses.join(",") } : {}) };
+    const { data } = await api.get<ApiResponse<Paginated<Booking>>>("/users/me/bookings", { params });
     return data.data;
   },
   async detail(id: string) {

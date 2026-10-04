@@ -31,12 +31,7 @@ export default function LoginScreen() {
   const onSubmit = handleSubmit(async (values) => {
     try {
       await login(values);
-      const user = useAuthStore.getState().user;
-      if (user?.role === "PARTNER") {
-        router.replace("/partner");
-      } else {
-        router.replace((params.returnTo as any) || "/(tabs)");
-      }
+      router.replace((params.returnTo as any) || "/(tabs)");
     } catch (error) {
       Alert.alert(t.auth.loginTitle, error instanceof Error ? error.message : t.common.error);
     }
@@ -98,12 +93,6 @@ export default function LoginScreen() {
             {t.auth.noAccount} {t.auth.registerTitle}
           </Button>
         </Card>
-
-        <View style={{ padding: 14, borderRadius: 16, backgroundColor: "#f0fdf4", borderWidth: 1, borderColor: "#bbf7d0", marginTop: 16 }}>
-          <Text style={{ color: "#166534", fontWeight: "700", fontSize: typography.small, textAlign: "center" }}>
-            Đăng nhập cho cả Khách hàng (User) & Đối tác quản lý sân (Partner).
-          </Text>
-        </View>
       </Screen>
     </KeyboardAvoidingView>
   );

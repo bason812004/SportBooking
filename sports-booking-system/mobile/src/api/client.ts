@@ -126,7 +126,9 @@ api.interceptors.response.use(
     }
 
     const original = error.config as (InternalAxiosRequestConfig & { __isRetryRequest?: boolean }) | undefined;
-    if (error.response?.status === 401 && original && !original.__isRetryRequest && refreshToken) {
+    // A rejected refresh call must not wait on refreshPromise: that promise is the refresh call itself.
+    const isRefreshCall = Boolean(original?.url?.includes("/auth/refresh-token"));
+    if (error.response?.status === 401 && original && !original.__isRetryRequest && !isRefreshCall && refreshToken) {
       refreshPromise ??= api
         .post<ApiResponse<{ accessToken?: string; token?: string; refreshToken: string; user?: User }>>("/auth/refresh-token", { refreshToken })
         .then((response) => {
@@ -161,6 +163,11 @@ api.interceptors.response.use(
     return Promise.reject(new Error(message));
   }
 );
+
+// getNextPageParam for infinite queries over the backend's { items, meta } lists.
+export function nextPageParam(lastPage: { meta: { page: number; totalPages: number } }) {
+  return lastPage.meta.page < lastPage.meta.totalPages ? lastPage.meta.page + 1 : undefined;
+}
 
 export function cleanParams(params: Record<string, unknown>) {
   return Object.fromEntries(Object.entries(params).filter(([, value]) => value !== "" && value !== undefined && value !== null));

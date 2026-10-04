@@ -39,13 +39,21 @@ export default function BookingDetailScreen() {
   if (!booking.data) return <Screen back><ErrorState message="Không tìm thấy đơn đặt sân." /></Screen>;
 
   const data = booking.data;
-  const canCancel = !["COMPLETED", "NO_SHOW", "CANCELLED"].includes(data.bookingStatus);
-  const canPay = !["PAID", "REFUNDED"].includes(data.paymentStatus);
+  const isClosed = ["COMPLETED", "NO_SHOW", "CANCELLED", "REJECTED", "EXPIRED"].includes(data.bookingStatus);
+  const canCancel = !isClosed;
+  const canPay = !isClosed && !["PAID", "REFUNDED"].includes(data.paymentStatus);
   const canReview = data.bookingStatus === "COMPLETED" && !data.review;
-  const paymentId = data.payments?.[0]?.id;
+  // A multi-day order has one payment, attached to its first day only; the other days reach it through the order.
+  const paymentId = data.payments?.[0]?.id ?? data.bookingOrder?.payment?.id;
 
   return (
-    <Screen title="Chi Tiết Đơn Đặt" subtitle={`Mã đơn: #${data.bookingCode}`} back>
+    <Screen
+      title="Chi Tiết Đơn Đặt"
+      subtitle={`Mã đơn: #${data.bookingCode}`}
+      back
+      refreshing={booking.isRefetching}
+      onRefresh={() => void booking.refetch()}
+    >
       {/* Court Info Card */}
       <Card>
         <View style={styles.rowBetween}>

@@ -39,7 +39,6 @@ export function AppProviders({ children }: PropsWithChildren) {
             staleTime: 60 * 1000, // Keep data fresh for 1 minute before re-fetching
             gcTime: 10 * 60 * 1000, // Keep in memory for 10 minutes
             refetchOnWindowFocus: false, // Prevent lag when returning to app
-            refetchOnMount: false,
             refetchOnReconnect: true
           },
           mutations: { retry: false }

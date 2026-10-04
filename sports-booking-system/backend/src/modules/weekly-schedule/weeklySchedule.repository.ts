@@ -98,7 +98,7 @@ export const weeklyScheduleRepository = {
         prices: { select: { price: true } },
         images: { take: 1, orderBy: { sortOrder: "asc" }, select: { imageUrl: true } },
         category: { select: { name: true } },
-        surfaces: { select: { id: true, name: true, surface: true, code: true }, orderBy: { sortOrder: "asc" } }
+        surfaces: { where: { status: "ACTIVE" }, select: { id: true, name: true, surface: true, code: true }, orderBy: { sortOrder: "asc" } }
       }
     });
     if (!court) return null;
@@ -112,7 +112,8 @@ export const weeklyScheduleRepository = {
         courtId,
         blockDate: { gte: toDbDate(fromDate), lte: toDbDate(toDate) },
         status: "ACTIVE",
-        ...(surfaceId ? { courtSurfaceId: surfaceId } : {})
+        // A row without a surface covers the whole court, so it applies to every surface.
+        ...(surfaceId ? { OR: [{ courtSurfaceId: surfaceId }, { courtSurfaceId: null }] } : {})
       },
       select: { id: true, blockDate: true, startTime: true, endTime: true, reason: true, courtSurfaceId: true }
     });
@@ -124,7 +125,7 @@ export const weeklyScheduleRepository = {
         courtId,
         bookingDate: { gte: toDbDate(fromDate), lte: toDbDate(toDate) },
         bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] },
-        ...(surfaceId ? { courtSurfaceId: surfaceId } : {})
+        ...(surfaceId ? { OR: [{ courtSurfaceId: surfaceId }, { courtSurfaceId: null }] } : {})
       },
       select: {
         id: true,
@@ -145,7 +146,7 @@ export const weeklyScheduleRepository = {
         courtId,
         bookingDate: { gte: toDbDate(fromDate), lte: toDbDate(toDate) },
         booking: { bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] } },
-        ...(surfaceId ? { court_surface_id: surfaceId } : {})
+        ...(surfaceId ? { OR: [{ court_surface_id: surfaceId }, { court_surface_id: null }] } : {})
       },
       select: {
         id: true,

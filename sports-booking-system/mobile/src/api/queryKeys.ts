@@ -1,10 +1,12 @@
 export const queryKeys = {
   courts: (filters: unknown) => ["courts", filters] as const,
   court: (id: string) => ["court", id] as const,
-  courtAvailability: (id: string, date: string) => ["court-availability", id, date] as const,
+  courtSchedule: (id: string, weekStart: string, surfaceId?: string | null) => ["court-availability", id, weekStart, surfaceId ?? "ALL"] as const,
   categories: ["categories"] as const,
   sportTypes: ["sport-types"] as const,
+  // Prefix of every booking list; invalidate this to refresh all status tabs at once.
   bookings: ["bookings"] as const,
+  bookingList: (filterKey: string) => ["bookings", filterKey] as const,
   booking: (id: string) => ["booking", id] as const,
   vouchers: ["vouchers"] as const,
   voucher: (id: string) => ["voucher", id] as const,

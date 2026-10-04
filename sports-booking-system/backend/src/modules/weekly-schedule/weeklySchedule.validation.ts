@@ -6,5 +6,5 @@ const weekStartSchema = z
   .optional();
 
 export const weeklyScheduleQuerySchema = z.object({
-  query: z.object({ weekStart: weekStartSchema })
+  query: z.object({ weekStart: weekStartSchema, surfaceId: z.string().min(1).optional() })
 });

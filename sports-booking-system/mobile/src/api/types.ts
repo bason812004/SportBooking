@@ -67,7 +67,7 @@ export type Court = {
 export type AvailabilitySlot = {
   startTime: string;
   endTime: string;
-  status: "AVAILABLE" | "BOOKED" | "PENDING_PAYMENT" | "BLOCKED" | "MAINTENANCE" | "CLOSED";
+  status: "AVAILABLE" | "BOOKED" | "PENDING_PAYMENT" | "HELD" | "BLOCKED" | "MAINTENANCE" | "CLOSED" | "PASSED";
   price: number;
   finalPrice?: number;
   courtSurfaceId?: string | null;
@@ -118,6 +118,7 @@ export type Booking = {
     voucher: { id: string; code: string; title: string; discountType: "PERCENTAGE" | "FIXED_AMOUNT"; discountValue: number };
   } | null;
   payments?: Array<{ id: string; status: string; amount: string | number; paymentMethod: string; paymentType: string; expiresAt?: string | null; createdAt: string }>;
+  bookingOrder?: { payment?: { id: string; status: string } | null } | null;
   review?: { id: string; rating: number; comment?: string | null; createdAt: string } | null;
 };
 

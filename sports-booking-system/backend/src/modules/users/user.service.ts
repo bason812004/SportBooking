@@ -14,7 +14,7 @@ export const userService = {
     if (!user) throw new NotFoundError("Khong tim thay tai khoan");
     return omitPassword(user);
   },
-  bookings(userId: string, query: { page?: string; limit?: string }) {
+  bookings(userId: string, query: { page?: string; limit?: string; status?: string }) {
     return bookingService.listForUser(userId, query);
   },
   bookingDetail(userId: string, bookingId: string) {

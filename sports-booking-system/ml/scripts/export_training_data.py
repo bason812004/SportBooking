@@ -56,7 +56,10 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
 
     events = load_raw_events()
-    frame = build_training_frame(events)
+    # Real data: only label weeks that already ended (Vietnam time); the current week is still filling up.
+    # Synthetic data is a closed historical dataset, so every week counts.
+    as_of = None if os.environ.get("SYNTHETIC_EVENTS_PATH") else pd.Timestamp.now(tz="Asia/Ho_Chi_Minh").tz_localize(None)
+    frame = build_training_frame(events, as_of=as_of)
     if frame.empty:
         raise SystemExit("No training rows could be built -- every slot pattern only has a single observed week so far.")
 

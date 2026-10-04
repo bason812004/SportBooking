@@ -7,6 +7,8 @@ export type SelectedSlot = {
   endTime: string;
   price: number;
   courtName?: string;
+  courtSurfaceId?: string | null;
+  courtSurfaceName?: string | null;
 };
 
 type BookingStoreState = {
@@ -25,8 +27,9 @@ type BookingStoreState = {
   setAppliedVoucher: (voucher: { code: string; discountAmount: number; minBookingAmount?: number } | null) => void;
 };
 
-export const getSlotKey = (s: { date: string; startTime: string; endTime: string }) =>
-  `${s.date}|${s.startTime}|${s.endTime}`;
+// The same hour on two surfaces is two different slots.
+export const getSlotKey = (s: { date: string; startTime: string; endTime: string; courtSurfaceId?: string | null }) =>
+  `${s.date}|${s.courtSurfaceId ?? ""}|${s.startTime}|${s.endTime}`;
 
 export const useBookingStore = create<BookingStoreState>((set, get) => ({
   courtId: null,

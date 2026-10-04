@@ -16,14 +16,10 @@ export async function resetAndSeed5TestBookings() {
   const todayStr = new Date().toISOString().slice(0, 10);
   const todayDate = new Date(`${todayStr}T00:00:00.000Z`);
 
-  // 1. Dọn dẹp tất cả đơn test BK-TEST- hoặc đơn của ngày hôm nay bằng SQL trực tiếp
+  // 1. Dọn dẹp các đơn test BK-TEST- do chính script này tạo. Không đụng tới đơn thật của khách,
+  //    kể cả đơn có ngày hôm nay.
   const existingBookings = await prisma.booking.findMany({
-    where: {
-      OR: [
-        { bookingCode: { startsWith: "BK-TEST-" } },
-        { bookingDate: todayDate }
-      ]
-    },
+    where: { bookingCode: { startsWith: "BK-TEST-" } },
     select: { id: true }
   });
 

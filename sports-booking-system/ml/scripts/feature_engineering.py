@@ -12,6 +12,12 @@ independently observed outcome. This module fixes that: the label for a given
 count realized in week W, while the features are rolling aggregates computed only
 from weeks strictly before W. That is a genuine forecasting task and it also makes
 a chronological (not random) train/test split meaningful.
+
+Weeks in which a slot pattern had no booking are part of the frame as zero-demand
+rows (see `_with_empty_weeks`), so the label is effectively "how likely is this hour
+on this weekday to be booked" and `prior_avg_comparable_bookings` is the slot's
+historical weekly booking rate. The backend rebuilds the same features at request
+time in demandPrediction.repository.ts `slotPatternStats` -- keep them in sync.
 """
 
 from __future__ import annotations
@@ -46,13 +52,39 @@ def level(score: float) -> str:
     return "LOW"
 
 
-def build_training_frame(events: pd.DataFrame) -> pd.DataFrame:
+def _with_empty_weeks(group: pd.DataFrame, last_week: pd.Timestamp) -> pd.DataFrame:
+    """
+    Adds the weeks in which this slot pattern had no booking event at all, from its
+    first observed week up to `last_week`, as zero-booking rows. Without them the
+    frame only contains weeks where the slot was booked: a slot pattern is one hour
+    on one weekday, so its weekly count is almost always 0 or 1, and dropping the 0
+    weeks left ~92% of labels at the maximum score -- the model then predicted
+    "very high" for nearly every slot.
+    """
+    first_week = group[WEEK_COLUMN].min()
+    if last_week < first_week:
+        return group.iloc[0:0]
+    all_weeks = pd.date_range(first_week, last_week, freq="7D")
+    filled = group.set_index(WEEK_COLUMN).reindex(all_weeks)
+    filled.index.name = WEEK_COLUMN
+    for column in SLOT_KEY:
+        filled[column] = group[column].iloc[0]
+    for column in ["booking_count", "cancellation_count", "voucher_usage_count"]:
+        filled[column] = filled[column].fillna(0)
+    # average_price stays NaN for empty weeks, so the rolling mean only averages weeks that had bookings.
+    return filled.reset_index()
+
+
+def build_training_frame(events: pd.DataFrame, as_of: pd.Timestamp | None = None) -> pd.DataFrame:
     """
     events: one row per individual booking, columns:
       court_id, sport_type, booking_date, hour_of_day, booking_status,
       total_price, has_voucher
+    as_of: when given, only weeks that ended on or before this date are labeled, so a
+      week still in progress is not mistaken for a week with zero bookings.
     Returns one row per (slot pattern, week) with rolling-history features and a
-    target_demand_score label taken from that week's real outcome.
+    target_demand_score label taken from that week's real outcome. Weeks with no
+    booking for a slot pattern are included as zero-demand rows.
     """
     events = events.copy()
     events["booking_date"] = pd.to_datetime(events["booking_date"])
@@ -72,8 +104,15 @@ def build_training_frame(events: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
 
+    # Each court's data ends at its last observed week (or the last complete week before `as_of`).
+    last_week_by_court = weekly.groupby("court_id")[WEEK_COLUMN].max()
+    if as_of is not None:
+        last_complete_week = pd.Timestamp(as_of).normalize().to_period("W").start_time - pd.Timedelta(days=7)
+        last_week_by_court = last_week_by_court.clip(upper=last_complete_week)
+
     rows: list[dict] = []
     for _, group in weekly.groupby(SLOT_KEY):
+        group = _with_empty_weeks(group, last_week_by_court[group["court_id"].iloc[0]])
         group = group.sort_values(WEEK_COLUMN).reset_index(drop=True)
         for i in range(1, len(group)):
             history = group.iloc[:i]

@@ -9,5 +9,6 @@ export const demandPredictionController = {
     }))),
     overview: asyncHandler(async (req, res) => sendSuccess(res, await demandPredictionService.overview(req.user.id))),
     courtOverview: asyncHandler(async (req, res) => sendSuccess(res, await demandPredictionService.courtOverview(req.user.id, req.params.courtId))),
+    forecast: asyncHandler(async (req, res) => sendSuccess(res, await demandPredictionService.partnerForecast(req.user.id, req.params.courtId, String(req.query.date)))),
     peakHours: asyncHandler(async (req, res) => sendSuccess(res, await demandPredictionService.peakHours(req.user.id)))
 };

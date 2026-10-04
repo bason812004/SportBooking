@@ -1,4 +1,4 @@
-import { isFullHour, timeToMinutes } from "../../shared/utils/time.js";
+import { isFullHour, timeToMinutes, vietnamWallClock } from "../../shared/utils/time.js";
 
 export type SlotInput = {
   date?: string;
@@ -70,6 +70,11 @@ export function canCreateBookingCheckout(input: { totalAmount: number; paymentTy
   if (input.paymentType === "DEPOSIT") return requiresDeposit;
   if (input.paymentType === "PAY_AT_COURT") return !requiresDeposit;
   return false;
+}
+
+/** First slot whose start time has already been reached; online booking closes at the slot's start. */
+export function findStartedSlot<T extends { date: string; startTime: string }>(slots: T[], now = new Date()) {
+  return slots.find((slot) => vietnamWallClock(slot.date, slot.startTime).getTime() <= now.getTime());
 }
 
 export function expirePendingPaymentAndReleaseSlots(expiresAt: Date, now = new Date()) {

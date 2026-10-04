@@ -1,13 +1,17 @@
 {
-  "methodology": "Chronological backtest: model trained on earlier weeks, evaluated on the most recent weeks it never saw. Target is the actual booking count observed in that later week, not a formula over the same row's features.",
+  "methodology": "Chronological backtest: model trained on earlier weeks, evaluated on the most recent weeks it never saw. Target is the actual booking count observed in that later week (weeks with no booking included as zero), not a formula over the same row's features.",
   "training_data_path": "ml\\models\\demand_training_data.csv",
-  "total_rows": 4793,
-  "test_rows": 1281,
+  "total_rows": 2565,
+  "test_rows": 1155,
   "test_week_range": [
-    "2026-08-03",
-    "2026-09-07"
+    "2026-08-31",
+    "2026-09-21"
   ],
-  "mae": 21.128024980483996,
-  "rmse": 30.551903597435793,
-  "level_accuracy": 0.6697892271662763
+  "mae": 32.8289039364165,
+  "rmse": 40.69620638351455,
+  "level_accuracy": 0.5904761904761905,
+  "brier_score": 0.16561812140096113,
+  "baseline_constant_brier_score": 0.19214788380473966,
+  "roc_auc_booked": 0.7320038758478417,
+  "actual_booked_rate": 0.25887445887445887
 }

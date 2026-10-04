@@ -2,7 +2,7 @@ import { Image } from "expo-image";
 import * as Linking from "expo-linking";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { MapPin, Phone, Share2, Star, Clock, Layers } from "lucide-react-native";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import { courtApi } from "../../src/api/courts";
@@ -11,9 +11,11 @@ import { queryKeys } from "../../src/api/queryKeys";
 import { Button, Chip } from "../../src/components/Buttons";
 import { CourtCard } from "../../src/components/Cards";
 import { Card, Screen, SectionHeader } from "../../src/components/Screen";
-import { DateStrip, SlotPicker } from "../../src/components/SlotPicker";
+import { DateStrip, SlotPicker, SurfaceStrip } from "../../src/components/SlotPicker";
 import { ErrorState, LoadingState } from "../../src/components/StateViews";
 import { StickyBottomAction } from "../../src/components/StickyBottomAction";
+import { useCourtSchedule } from "../../src/hooks/useCourtSchedule";
+import { useBookingStore } from "../../src/store/useBookingStore";
 import { colors, radii, spacing, typography } from "../../src/theme/tokens";
 import { formatCurrency, shortAddress, stripHtml, timeText, todayKey } from "../../src/utils/format";
 
@@ -24,8 +26,14 @@ export default function CourtDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const courtId = Array.isArray(id) ? id[0] : id;
   const [date, setDate] = useState(todayKey());
-  const [selectedSlots, setSelectedSlots] = useState<AvailabilitySlot[]>([]);
   const [selectedSurfaceId, setSelectedSurfaceId] = useState<string | null>(null);
+  const storeSlots = useBookingStore((state) => state.selectedSlots);
+  const setCourtId = useBookingStore((state) => state.setCourtId);
+  const toggleStoreSlot = useBookingStore((state) => state.toggleSlot);
+
+  useEffect(() => {
+    if (courtId) setCourtId(courtId);
+  }, [courtId, setCourtId]);
 
   const court = useQuery({
     queryKey: queryKeys.court(courtId),
@@ -34,19 +42,29 @@ export default function CourtDetailScreen() {
     staleTime: 2 * 60 * 1000
   });
 
-  const availability = useQuery({
-    queryKey: queryKeys.courtAvailability(courtId, date),
-    queryFn: () => courtApi.availability(courtId, date),
-    enabled: Boolean(courtId),
-    staleTime: 30 * 1000
-  });
+  // Until the customer picks one, the first surface (sân con) is the one the backend books by default.
+  const surfaces = court.data?.surfaces ?? [];
+  const surfaceId = selectedSurfaceId ?? surfaces[0]?.id ?? null;
+  const surfaceName = surfaces.find((item) => item.id === surfaceId)?.name ?? null;
+
+  const availability = useCourtSchedule(courtId, date, surfaceId, court.isSuccess);
+
+  // Shared with the booking screen, so slots picked here are still selected there.
+  const selectedSlots = storeSlots.filter((slot) => slot.courtId === courtId);
+  const selectedSlotsForDate = selectedSlots
+    .filter((slot) => slot.date === date && (slot.courtSurfaceId ?? null) === surfaceId)
+    .map((slot) => ({ startTime: slot.startTime, endTime: slot.endTime, status: "AVAILABLE" as const, price: slot.price, bookingId: null }));
 
   function toggleSlot(slot: AvailabilitySlot) {
-    setSelectedSlots((current) => {
-      const exists = current.some((item) => item.startTime === slot.startTime && item.endTime === slot.endTime);
-      return exists
-        ? current.filter((item) => item.startTime !== slot.startTime || item.endTime !== slot.endTime)
-        : [...current, slot].sort((a, b) => a.startTime.localeCompare(b.startTime));
+    toggleStoreSlot({
+      courtId,
+      date,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      price: slot.price ?? 0,
+      courtName: court.data?.name,
+      courtSurfaceId: surfaceId,
+      courtSurfaceName: surfaceName
     });
   }
 
@@ -64,7 +82,7 @@ export default function CourtDetailScreen() {
 
   return (
     <View style={{ flex: 1 }}>
-      <Screen title={data.name} subtitle={shortAddress(data)} back>
+      <Screen title={data.name} subtitle={shortAddress(data)} back fixedHeader>
         {/* Images Carousel */}
         <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} contentContainerStyle={styles.gallery}>
           {images.map((imgUri, index) => (
@@ -110,26 +128,6 @@ export default function CourtDetailScreen() {
           </View>
         </Card>
 
-        {/* Surfaces (Sân con) */}
-        {data.surfaces && data.surfaces.length > 0 && (
-          <>
-            <SectionHeader title={`Danh sách sân con (${data.surfaces.length})`} />
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
-              {data.surfaces.map((s) => (
-                <View
-                  key={s.id}
-                  style={[styles.surfaceCard, selectedSurfaceId === s.id && styles.surfaceCardActive]}
-                >
-                  <Text style={[styles.surfaceName, selectedSurfaceId === s.id && styles.surfaceNameActive]}>
-                    {s.name}
-                  </Text>
-                  {s.surface ? <Text style={styles.surfaceType}>{s.surface}</Text> : null}
-                </View>
-              ))}
-            </ScrollView>
-          </>
-        )}
-
         {/* Description */}
         <SectionHeader title="Mô tả sân" />
         <Card>
@@ -162,15 +160,16 @@ export default function CourtDetailScreen() {
         </Card>
 
         {/* Interactive Slots Picker */}
-        <SectionHeader title="Chọn ngày & Khung giờ" />
-        <DateStrip value={date} onChange={(nextDate) => { setDate(nextDate); setSelectedSlots([]); }} />
+        <SectionHeader title={surfaces.length > 1 ? "Chọn sân con, ngày & khung giờ" : "Chọn ngày & Khung giờ"} />
+        {surfaces.length > 1 ? <SurfaceStrip surfaces={surfaces} value={surfaceId} onChange={setSelectedSurfaceId} /> : null}
+        <DateStrip value={date} onChange={setDate} />
 
         {availability.isLoading ? (
           <LoadingState label="Đang tải khung giờ trống..." />
         ) : availability.isError ? (
-          <ErrorState message={availability.error.message} onRetry={() => void availability.refetch()} />
+          <ErrorState message={availability.error?.message ?? "Không tải được lịch sân."} onRetry={() => void availability.refetch()} />
         ) : (
-          <SlotPicker slots={availability.data?.slots ?? []} selected={selectedSlots} onToggle={toggleSlot} />
+          <SlotPicker slots={availability.slots} selected={selectedSlotsForDate} onToggle={toggleSlot} />
         )}
 
         {/* Reviews */}
@@ -221,7 +220,8 @@ export default function CourtDetailScreen() {
                 pathname: "/booking/[courtId]",
                 params: {
                   courtId: data.id,
-                  date
+                  date,
+                  ...(surfaceId ? { surfaceId } : {})
                 }
               });
             }}
@@ -303,31 +303,6 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     fontWeight: "800",
     fontSize: typography.small
-  },
-  surfaceCard: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radii.lg,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.line,
-    gap: 2
-  },
-  surfaceCardActive: {
-    backgroundColor: colors.primarySoft,
-    borderColor: colors.primary
-  },
-  surfaceName: {
-    fontSize: typography.body,
-    fontWeight: "900",
-    color: colors.ink
-  },
-  surfaceNameActive: {
-    color: colors.primaryDark
-  },
-  surfaceType: {
-    fontSize: typography.tiny,
-    color: colors.muted
   },
   bottom: {
     flexDirection: "row",
