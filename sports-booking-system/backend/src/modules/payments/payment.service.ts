@@ -82,8 +82,9 @@ export const paymentService = {
   },
 
   async webhook(provider: string, payload: unknown, headers: Record<string, string | string[] | undefined>) {
-    if (!provider) throw new ForbiddenError("Provider thanh toan khong hop le");
+    if (!provider || provider.toUpperCase() !== env.PAYMENT_PROVIDER.toUpperCase()) throw new ForbiddenError("Provider thanh toán không hợp lệ");
     const verified = await paymentProvider.verifyWebhook(payload, headers);
+    if (verified.verificationOnly) return { ok: true, verification: true };
     const result = await paymentRepository.applyWebhook({
       ...verified,
       rawPayload: verified.rawPayload as any

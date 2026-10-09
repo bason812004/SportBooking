@@ -365,12 +365,12 @@ export function TeamGroupChatPage() {
 
   async function removeMember(memberId: string) {
     if (!id) return;
-    if (!confirm("Ban co chac muon xoa thanh vien nay khoi nhom?")) return;
+    if (!confirm("Bạn có chắc muốn xóa thành viên này khỏi nhóm?")) return;
     try {
       await contentApi.removeMember(id, memberId);
       toast.success("Đã xóa thành viên.");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Khong the xoa thanh vien.");
+      toast.error(error instanceof Error ? error.message : "Không thể xóa thành viên.");
     }
   }
 

@@ -46,7 +46,7 @@ api.interceptors.response.use(
       }
     }
 
-    const message = error.response?.data?.message ?? error.response?.data?.error?.message ?? "Khong the ket noi may chu";
+    const message = error.response?.data?.message ?? error.response?.data?.error?.message ?? "Không thể kết nối máy chủ";
     const rejected = new Error(message) as Error & { code?: string };
     rejected.code = error.response?.data?.error?.code ?? error.response?.data?.code;
     return Promise.reject(rejected);

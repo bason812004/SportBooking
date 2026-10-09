@@ -1,7 +1,7 @@
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect } from "react";
-import { Alert, StyleSheet, Text, View } from "react-native";
+import { Alert, Linking, StyleSheet, Text, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { paymentApi } from "../../src/api/payments";
 import { queryKeys } from "../../src/api/queryKeys";
@@ -11,8 +11,10 @@ import { Card, Screen } from "../../src/components/Screen";
 import { ErrorState, LoadingState } from "../../src/components/StateViews";
 import { colors, spacing, typography } from "../../src/theme/tokens";
 import { formatCurrency, formatDateTime } from "../../src/utils/format";
+import { useLanguageStore } from "../../src/i18n";
 
 export default function PaymentScreen() {
+  const { t } = useLanguageStore();
   const router = useRouter();
   const queryClient = useQueryClient();
   const { paymentId } = useLocalSearchParams<{ paymentId: string }>();
@@ -54,6 +56,11 @@ export default function PaymentScreen() {
   if (!detail.data) return <Screen back><ErrorState message="Khong tim thay thanh toan" /></Screen>;
 
   const currentStatus = settledStatus ?? detail.data.status;
+  const isPayos = detail.data.provider === "PAYOS";
+  const qrUrl = isPayos
+    ? detail.data.qrPayload ? `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(detail.data.qrPayload)}` : null
+    : detail.data.qrCodeUrl;
+  const canPay = !["PAID", "FAILED", "EXPIRED", "CANCELLED"].includes(currentStatus);
 
   return (
     <Screen title="Thanh toan" subtitle={`Ma don ${detail.data.booking.bookingCode}`} back>
@@ -63,18 +70,24 @@ export default function PaymentScreen() {
           <StatusBadge status={currentStatus} kind="payment" />
         </View>
         <Text style={styles.meta}>Han thanh toan: {formatDateTime(detail.data.expiresAt)}</Text>
-        <Text style={styles.meta}>Noi dung: {detail.data.paymentReference}</Text>
+        {!isPayos && <Text style={styles.meta}>Noi dung: {detail.data.paymentReference}</Text>}
       </Card>
 
-      {detail.data.qrCodeUrl ? (
+      {canPay && (qrUrl ? (
         <Card>
-          <Image source={{ uri: detail.data.qrCodeUrl }} style={styles.qr} contentFit="contain" />
+          <Image source={{ uri: qrUrl }} style={styles.qr} contentFit="contain" />
           <Text style={styles.meta}>Quet QR bang ung dung ngan hang, sau do man hinh se tu cap nhat trang thai.</Text>
         </Card>
       ) : (
         <Card>
           <Text style={styles.meta}>Provider thanh toan chua cau hinh QR. Vui long lien he san hoac chon tra tai san neu duoc ho tro.</Text>
         </Card>
+      ))}
+
+      {canPay && isPayos && detail.data.qrCodeUrl && (
+        <Button onPress={() => Linking.openURL(detail.data!.qrCodeUrl!).catch(() => Alert.alert(t.common.error))}>
+          {t.payment.openPayos}
+        </Button>
       )}
 
       {currentStatus === "PAID" ? (

@@ -12,6 +12,13 @@ export interface CheckoutPayment {
 }
 
 export interface CheckoutData {
+  bankTransfer?: {
+    bankName: string;
+    accountNumber: string;
+    accountHolder: string | null;
+    paymentReference: string;
+    qrCodeUrl: string | null;
+  } | null;
   checkout: {
     id: string;
     bookingId: string;

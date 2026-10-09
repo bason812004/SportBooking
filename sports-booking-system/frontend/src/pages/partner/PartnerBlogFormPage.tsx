@@ -61,12 +61,12 @@ export function PartnerBlogFormPage() {
     if (!file) return;
 
     if (!ALLOWED_TYPES.includes(file.type)) {
-      toast.error("Chi chap nhan anh JPEG, PNG hoac WebP");
+      toast.error("Chỉ chấp nhận ảnh JPEG, PNG hoặc WebP");
       return;
     }
 
     if (file.size > MAX_FILE_SIZE) {
-      toast.error("Anh toi da 5MB");
+      toast.error("Ảnh tối đa 5MB");
       return;
     }
 
@@ -87,9 +87,9 @@ export function PartnerBlogFormPage() {
         headers: { "Content-Type": "multipart/form-data" }
       });
       setCoverImageUrl(data.data.url);
-      toast.success("Tai anh thanh cong");
+      toast.success("Tải ảnh thành công");
     } catch (error: any) {
-      toast.error(error.response?.data?.message || "Khong the tai anh len");
+      toast.error(error.response?.data?.message || "Không thể tải ảnh lên");
       setCoverImagePreview("");
     } finally {
       setIsUploading(false);
@@ -107,7 +107,7 @@ export function PartnerBlogFormPage() {
   const save = useMutation({
     mutationFn: (values: Values) => {
       if (!coverImageUrl) {
-        throw new Error("Vui long tai len anh bia");
+        throw new Error("Vui lòng tải lên ảnh bìa");
       }
 
       const payload = {
@@ -120,7 +120,7 @@ export function PartnerBlogFormPage() {
       return id ? partnerApi.updateBlog(id, payload) : partnerApi.createBlog(payload);
     },
     onSuccess: async () => {
-      toast.success("Da luu bai viet");
+      toast.success("Đã lưu bài viết");
       await queryClient.invalidateQueries({ queryKey: ["partner-blogs"] });
       navigate("/partner/blogs");
     },
@@ -133,24 +133,24 @@ export function PartnerBlogFormPage() {
   return (
     <form className="space-y-5 rounded-2xl border bg-white p-6" onSubmit={form.handleSubmit((values) => save.mutate(values))}>
       <div>
-        <h1 className="text-3xl font-bold">{id ? "Sua bai viet" : "Viet bai moi"}</h1>
-        <p className="mt-2 text-sm font-semibold text-slate-600">Luu ban nhap truoc, sau do gui admin duyet de xuat ban.</p>
+        <h1 className="text-3xl font-bold">{id ? "Sửa bài viết" : "Viết bài mới"}</h1>
+        <p className="mt-2 text-sm font-semibold text-slate-600">Lưu bản nháp trước, sau đó gửi admin duyệt để xuất bản.</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <Input label="Tieu de" {...form.register("title", { required: true })} />
+        <Input label="Tiêu đề" {...form.register("title", { required: true })} />
         <Select
-          label="Hien thi"
+          label="Hiển thị"
           options={[
-            { value: "PUBLIC", label: "Cong khai sau khi duyet" },
-            { value: "PRIVATE", label: "Rieng tu" }
+            { value: "PUBLIC", label: "Công khai sau khi duyệt" },
+            { value: "PRIVATE", label: "Riêng tư" }
           ]}
           {...form.register("visibility")}
         />
 
         {/* Cover Image Upload */}
         <div className="md:col-span-2">
-          <label className="mb-1 block text-sm font-bold text-slate-700">Anh bia</label>
+          <label className="mb-1 block text-sm font-bold text-slate-700">Ảnh bìa</label>
           <div className="flex flex-col gap-3">
             {coverImagePreview ? (
               <div className="relative w-full overflow-hidden rounded-lg border border-slate-200">
@@ -171,8 +171,8 @@ export function PartnerBlogFormPage() {
               <label className="flex h-48 w-full cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 transition-colors hover:border-emerald-500 hover:bg-emerald-50">
                 <div className="flex flex-col items-center gap-2 text-slate-500">
                   <Image className="h-10 w-10" />
-                  <span className="text-sm font-medium">Chon anh tu may tinh</span>
-                  <span className="text-xs">JPEG, PNG, WebP - Toi da 5MB</span>
+                  <span className="text-sm font-medium">Chọn ảnh từ máy tính</span>
+                  <span className="text-xs">JPEG, PNG, WebP - Tối đa 5MB</span>
                 </div>
                 <input
                   ref={fileInputRef}
@@ -187,7 +187,7 @@ export function PartnerBlogFormPage() {
             {isUploading && (
               <div className="flex items-center gap-2 text-sm text-emerald-600">
                 <Upload className="h-4 w-4 animate-pulse" />
-                <span>Dang tai anh...</span>
+                <span>Đang tải ảnh...</span>
               </div>
             )}
           </div>
@@ -196,24 +196,24 @@ export function PartnerBlogFormPage() {
         <label className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-bold text-slate-700 md:col-span-2">
           <span className="flex items-center gap-3">
             {allowComments ? <MessageCircle className="h-5 w-5 text-emerald-700" /> : <MessageCircleOff className="h-5 w-5 text-amber-700" />}
-            Cho phep binh luan
+            Cho phép bình luận
           </span>
           <input type="checkbox" className="h-5 w-5 rounded border-slate-300 text-emerald-700" {...form.register("allowComments")} />
         </label>
         <label className="grid gap-1 md:col-span-2">
-          Tom tat
+          Tóm tắt
           <textarea className="min-h-20 rounded-md border p-3" {...form.register("excerpt")} />
         </label>
         <label className="grid gap-1 md:col-span-2">
-          Noi dung
+          Nội dung
           <textarea className="min-h-80 rounded-md border p-3" {...form.register("content", { required: true, minLength: 20 })} />
         </label>
       </div>
       <div className="flex gap-2">
         <Button disabled={save.isPending || isUploading}>
-          {save.isPending ? "Dang luu..." : "Luu ban nhap"}
+          {save.isPending ? "Đang lưu..." : "Lưu bản nháp"}
         </Button>
-        <Button type="button" variant="secondary" onClick={() => navigate("/partner/blogs")}>Huy</Button>
+        <Button type="button" variant="secondary" onClick={() => navigate("/partner/blogs")}>Hủy</Button>
       </div>
     </form>
   );

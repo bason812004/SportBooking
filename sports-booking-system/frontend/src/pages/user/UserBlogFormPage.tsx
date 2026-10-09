@@ -62,12 +62,12 @@ export function UserBlogFormPage() {
     if (!file) return;
 
     if (!ALLOWED_TYPES.includes(file.type)) {
-      toast.error("Chi chap nhan anh JPEG, PNG hoac WebP");
+      toast.error("Chỉ chấp nhận ảnh JPEG, PNG hoặc WebP");
       return;
     }
 
     if (file.size > MAX_FILE_SIZE) {
-      toast.error("Anh toi da 5MB");
+      toast.error("Ảnh tối đa 5MB");
       return;
     }
 
@@ -89,9 +89,9 @@ export function UserBlogFormPage() {
         headers: { "Content-Type": "multipart/form-data" }
       });
       update("coverImageUrl", data.data.url);
-      toast.success("Tai anh thanh cong");
+      toast.success("Tải ảnh thành công");
     } catch (error: any) {
-      toast.error(error.response?.data?.message || "Khong the tai anh len");
+      toast.error(error.response?.data?.message || "Không thể tải ảnh lên");
       setCoverImagePreview(form.coverImageUrl || "");
     } finally {
       setIsUploading(false);
@@ -110,11 +110,11 @@ export function UserBlogFormPage() {
     event.preventDefault();
     if (saving || isUploading) return;
     if (!form.title.trim() || !form.content.trim()) {
-      toast.error("Vui long nhap tieu de va noi dung bai blog.");
+      toast.error("Vui lòng nhập tiêu đề và nội dung bài blog.");
       return;
     }
     if (!form.coverImageUrl) {
-      toast.error("Vui long tai len anh bia.");
+      toast.error("Vui lòng tải lên ảnh bìa.");
       return;
     }
     setSaving(true);
@@ -129,10 +129,10 @@ export function UserBlogFormPage() {
       };
       if (editing && id) {
         await contentApi.updateBlog(id, payload);
-        toast.success("Da gui bai cap nhat de admin duyet.");
+        toast.success("Đã gửi bài cập nhật để admin duyệt.");
       } else {
         await contentApi.createBlog(payload);
-        toast.success("Da gui bai blog de admin duyet.");
+        toast.success("Đã gửi bài blog để admin duyệt.");
       }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["my-blogs"] }),
@@ -140,7 +140,7 @@ export function UserBlogFormPage() {
       ]);
       navigate("/user/blogs", { replace: true });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Khong the luu bai blog.");
+      toast.error(error instanceof Error ? error.message : "Không thể lưu bài blog.");
     } finally {
       setSaving(false);
     }
@@ -154,14 +154,14 @@ export function UserBlogFormPage() {
       <div className="mx-auto max-w-5xl">
         <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-slate-200 md:p-8">
           <p className="text-sm font-black uppercase tracking-[0.16em] text-emerald-700">Blog</p>
-          <h1 className="mt-2 text-4xl font-black">{editing ? "Chinh sua bai blog" : "Viet bai blog"}</h1>
+          <h1 className="mt-2 text-4xl font-black">{editing ? "Chỉnh sửa bài blog" : "Viết bài blog"}</h1>
           <p className="mt-3 max-w-2xl text-sm font-semibold text-slate-600">
-            Bai viet cong khai chi xuat hien sau khi admin duyet. Neu chinh sua noi dung bai da dang, bai se quay lai trang thai cho duyet.
+            Bài viết công khai chỉ xuất hiện sau khi admin duyệt. Nếu chỉnh sửa nội dung bài đã đăng, bài sẽ quay lại trạng thái chờ duyệt.
           </p>
 
           <form onSubmit={handleSubmit} className="mt-8 grid gap-5">
             <label className={labelClass}>
-              <span>Tieu de</span>
+              <span>Tiêu đề</span>
               <input value={form.title} onChange={(event) => update("title", event.target.value)} className={inputClass} />
             </label>
 
@@ -169,7 +169,7 @@ export function UserBlogFormPage() {
             <div className="grid gap-5 md:grid-cols-[1fr_220px]">
               <div>
                 <label className={labelClass}>
-                  <span>Anh bia</span>
+                  <span>Ảnh bìa</span>
                   {coverImagePreview ? (
                     <div className="relative overflow-hidden rounded-xl border border-slate-200">
                       <img src={coverImagePreview} alt="Cover preview" className="h-40 w-full object-cover" />
@@ -185,8 +185,8 @@ export function UserBlogFormPage() {
                     <label className="flex h-40 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 transition-colors hover:border-emerald-500 hover:bg-emerald-50">
                       <div className="flex flex-col items-center gap-2 text-slate-500">
                         <Image className="h-8 w-8" />
-                        <span className="text-sm font-medium">Chon anh tu may tinh</span>
-                        <span className="text-xs">JPEG, PNG, WebP - Toi da 5MB</span>
+                        <span className="text-sm font-medium">Chọn ảnh từ máy tính</span>
+                        <span className="text-xs">JPEG, PNG, WebP - Tối đa 5MB</span>
                       </div>
                       <input
                         ref={fileInputRef}
@@ -201,16 +201,16 @@ export function UserBlogFormPage() {
                   {isUploading && (
                     <div className="mt-2 flex items-center gap-2 text-sm text-emerald-600">
                       <Upload className="h-4 w-4 animate-pulse" />
-                      <span>Dang tai anh...</span>
+                      <span>Đang tải ảnh...</span>
                     </div>
                   )}
                 </label>
               </div>
               <label className={labelClass}>
-                <span>Hien thi</span>
+                <span>Hiển thị</span>
                 <select value={form.visibility} onChange={(event) => update("visibility", event.target.value as BlogWriteInput["visibility"])} className={inputClass}>
-                  <option value="PUBLIC">Cong khai sau khi duyet</option>
-                  <option value="PRIVATE">Rieng tu</option>
+                  <option value="PUBLIC">Công khai sau khi duyệt</option>
+                  <option value="PRIVATE">Riêng tư</option>
                 </select>
               </label>
             </div>
@@ -219,8 +219,8 @@ export function UserBlogFormPage() {
               <span className="flex min-w-0 items-center gap-3">
                 {form.allowComments ? <MessageCircle className="h-5 w-5 shrink-0 text-emerald-700" /> : <MessageCircleOff className="h-5 w-5 shrink-0 text-amber-700" />}
                 <span>
-                  <span className="block">Cho phep binh luan</span>
-                  <span className="block text-xs font-semibold text-slate-500">Co the tat khi dang bai hoac doi lai trong trang Blog cua toi.</span>
+                  <span className="block">Cho phép bình luận</span>
+                  <span className="block text-xs font-semibold text-slate-500">Có thể tắt khi đăng bài hoặc đổi lại trong trang Blog của tôi.</span>
                 </span>
               </span>
               <input
@@ -232,12 +232,12 @@ export function UserBlogFormPage() {
             </label>
 
             <label className={labelClass}>
-              <span>Tom tat</span>
+              <span>Tóm tắt</span>
               <textarea value={form.excerpt ?? ""} onChange={(event) => update("excerpt", event.target.value)} className={`${inputClass} min-h-24 py-3`} />
             </label>
 
             <label className={labelClass}>
-              <span>Noi dung</span>
+              <span>Nội dung</span>
               <textarea value={form.content} onChange={(event) => update("content", event.target.value)} className={`${inputClass} min-h-80 py-3 leading-7`} />
             </label>
 
@@ -246,7 +246,7 @@ export function UserBlogFormPage() {
                 disabled={saving || isUploading}
                 className="rounded-xl bg-emerald-700 px-6 py-3 text-sm font-black text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {saving ? "Dang luu..." : isUploading ? "Dang tai anh..." : editing ? "Gui duyet ban cap nhat" : "Gui duyet bai blog"}
+                {saving ? "Đang lưu..." : isUploading ? "Đang tải ảnh..." : editing ? "Gửi duyệt bản cập nhật" : "Gửi duyệt bài blog"}
               </button>
             </div>
           </form>

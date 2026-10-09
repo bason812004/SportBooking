@@ -1,4 +1,10 @@
 {
+  "qrPanel": {
+    "unavailable": "No QR code is available. Contact staff or check the transfer details below.",
+    "details": "Payment details",
+    "payosHint": "Scan the code or open payOS and use the transaction details provided. Payment updates after confirmation from payOS.",
+    "transferHint": "Check the recipient and amount before transferring. Counter payments are confirmed by staff after receiving the money."
+  },
   "title": "Book court",
   "date": "Booking date",
   "startTime": "Start time",

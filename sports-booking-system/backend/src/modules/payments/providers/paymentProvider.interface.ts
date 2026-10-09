@@ -23,6 +23,7 @@ export type VerifiedPaymentWebhook = {
   amount: number;
   rawPayload: unknown;
   paymentReference?: string;
+  verificationOnly?: boolean;
 };
 
 export type PaymentStatusResult = {

@@ -123,11 +123,13 @@ export function AppRoutes() {
           <Route path="courts/:id" element={<CourtDetailPage />} />
           <Route path="policies" element={<PoliciesPage />} />
           <Route path="support" element={<SupportPage />} />
+          <Route element={<ProtectedRoute roles={["USER", "PARTNER", "RECIPIENT"]} />}>
+            <Route path="booking/:bookingId/checkout" element={<BookingCheckoutPage />} />
+          </Route>
           <Route element={<ProtectedRoute roles={["USER"]} />}>
             <Route path="teammates/create" element={<TeammateCreatePage />} />
             <Route path="user/teammates/:id/edit" element={<TeammateCreatePage />} />
             <Route path="booking/:courtId" element={<BookingPage />} />
-            <Route path="booking/:bookingId/checkout" element={<BookingCheckoutPage />} />
             <Route path="payment/:paymentId" element={<PaymentPage />} />
             <Route path="user/profile" element={<UserProfilePage />} />
             <Route path="user/bookings" element={<UserBookingsPage />} />
@@ -176,7 +178,6 @@ export function AppRoutes() {
             <Route path="partner/cashier" element={<PartnerCashierPage />} />
             <Route path="partner/pos/:bookingId" element={<CashierBookingPosPage />} />
             <Route path="partner/checkouts" element={<PartnerCheckoutsPage />} />
-            <Route path="booking/:bookingId/checkout" element={<BookingCheckoutPage />} />
             <Route path="partner/settings" element={<PartnerSettingsPage />} />
             <Route path="partner/staff" element={<PartnerStaffPage />} />
           </Route>
@@ -192,7 +193,6 @@ export function AppRoutes() {
             <Route path="recipient/inventory" element={<PartnerInventoryPage />} />
             <Route path="recipient/purchases" element={<PartnerPurchasesPage />} />
             <Route path="recipient/checkouts" element={<PartnerCheckoutsPage />} />
-            <Route path="booking/:bookingId/checkout" element={<BookingCheckoutPage />} />
             <Route path="recipient/bookings" element={<RecipientBookingsPage />} />
             <Route path="recipient/calendar" element={<Navigate to="/recipient/bookings?view=calendar" replace />} />
             <Route path="recipient/court-surfaces" element={<RecipientCourtSurfacesPage />} />

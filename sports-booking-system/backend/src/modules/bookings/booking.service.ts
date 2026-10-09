@@ -1,4 +1,5 @@
 import { BookingStatus } from "@prisma/client";
+import { env } from "../../config/env.js";
 import { prisma } from "../../config/db.js";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
@@ -210,7 +211,7 @@ export const bookingService = {
       // QR_TRANSFER / DEPOSIT / FULL_PAYMENT
       const extOrderId = Date.now().toString();
       const ref = `BK${extOrderId.slice(-6)}`;
-      const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+      const expiresAt = new Date(Date.now() + env.PAYMENT_QR_EXPIRES_MINUTES * 60 * 1000);
       const providerResult = await paymentProvider.createQrPayment({
         amount: paymentAmount,
         currency: "VND",
@@ -314,7 +315,7 @@ export const bookingService = {
     // Multi-day QR payment
     const extOrderId = Date.now().toString();
     const ref = `BO${extOrderId.slice(-6)}`;
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + env.PAYMENT_QR_EXPIRES_MINUTES * 60 * 1000);
     const providerResult = await paymentProvider.createQrPayment({
       amount: paymentAmount,
       currency: "VND",

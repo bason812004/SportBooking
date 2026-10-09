@@ -298,7 +298,9 @@ export function BookingCheckoutPage() {
                     payment={{
                       id: booking.id,
                       provider: "LOCAL_QR",
-                      paymentReference: `SPPAY${booking.bookingCode.replace(/[^A-Z0-9]/gi, "")}`,
+                      qrCodeUrl: checkoutData.bankTransfer?.qrCodeUrl,
+                      bankTransfer: checkoutData.bankTransfer,
+                      paymentReference: checkoutData.bankTransfer?.paymentReference ?? `SPPAY${booking.bookingCode.replace(/[^A-Z0-9]/gi, "")}`,
                       amount: breakdown.remainingAmount,
                       expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString()
                     }}

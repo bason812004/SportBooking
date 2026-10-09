@@ -106,6 +106,7 @@ export const vi = {
     demandPrediction: "Dự đoán nhu cầu đặt sân"
   },
   payment: {
+    openPayos: "Mở trang thanh toán payOS",
     title: "Thanh toán chuyển khoản",
     instruction: "Quét mã QR bằng ứng dụng ngân hàng của bạn để hoàn tất thanh toán",
     amount: "Số tiền cần chuyển",

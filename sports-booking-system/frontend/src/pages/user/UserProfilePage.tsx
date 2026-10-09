@@ -43,11 +43,11 @@ export function UserProfilePage() {
     const file = event.target.files?.[0];
     if (!file) return;
     if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-      toast.error("Chi chap nhan anh JPEG, PNG hoac WebP");
+      toast.error("Chỉ chấp nhận ảnh JPEG, PNG hoặc WebP");
       return;
     }
     if (file.size > MAX_AVATAR_SIZE) {
-      toast.error("Anh toi da 5MB");
+      toast.error("Ảnh tối đa 5MB");
       return;
     }
     setAvatarPreview(URL.createObjectURL(file));
@@ -61,7 +61,7 @@ export function UserProfilePage() {
       await queryClient.invalidateQueries({ queryKey: ["user-profile"] });
       toast.success("Đã cập nhật ảnh đại diện.");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Khong the tai anh len.");
+      toast.error(error instanceof Error ? error.message : "Không thể tải ảnh lên.");
     } finally {
       setUploadingAvatar(false);
       if (fileInputRef.current) fileInputRef.current.value = "";

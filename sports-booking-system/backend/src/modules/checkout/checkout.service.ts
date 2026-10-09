@@ -8,7 +8,19 @@ export const checkoutService = {
   async getOrCreateCheckout(bookingId: string, actor: CheckoutActor) {
     await checkoutAccessRepository.assertBooking(bookingId, actor);
     const data = await checkoutRepository.getOrCreateCheckout(bookingId);
-    return data;
+    const partner = data.booking.court.partner;
+    const paymentReference = `SPPAY${data.booking.bookingCode.replace(/[^A-Z0-9]/gi, "")}`;
+    const bankTransfer = partner?.bankName && partner.bankAccountNumber ? {
+      bankName: partner.bankName,
+      accountNumber: partner.bankAccountNumber,
+      accountHolder: partner.bankAccountHolder,
+      paymentReference,
+      // Free-text bank names may not be VietQR identifiers; show manual details in that case.
+      qrCodeUrl: /^[a-z0-9]+$/i.test(partner.bankName) && /^\d+$/.test(partner.bankAccountNumber)
+        ? `https://img.vietqr.io/image/${encodeURIComponent(partner.bankName)}-${encodeURIComponent(partner.bankAccountNumber)}-compact.jpg?amount=${data.breakdown.remainingAmount}&addInfo=${encodeURIComponent(paymentReference)}`
+        : null
+    } : null;
+    return { ...data, bankTransfer };
   },
 
   async processPayment(input: ProcessCheckoutPaymentInput, actor: CheckoutActor) {

@@ -108,6 +108,7 @@ export const en: typeof vi = {
     demandPrediction: "Demand Prediction"
   },
   payment: {
+    openPayos: "Open payOS checkout",
     title: "QR Payment Transfer",
     instruction: "Scan the QR code using your banking app to complete payment",
     amount: "Transfer Amount",

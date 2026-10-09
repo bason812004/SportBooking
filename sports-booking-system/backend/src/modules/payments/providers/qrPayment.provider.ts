@@ -23,28 +23,24 @@ export class QrPaymentProvider implements PaymentProvider {
     const providerConfigured = Boolean(env.PAYMENT_API_KEY && env.PAYMENT_SECRET_KEY);
 
     if (provider === "PAYOS") {
-      const fallbackQrUrl = `https://img.vietqr.io/image/${(env.PAYMENT_BANK_ID || "mbbank").toLowerCase()}-${env.PAYMENT_BANK_ACCOUNT || "0986966745"}-compact.jpg?amount=${input.amount}&addInfo=${encodeURIComponent(input.paymentReference)}&t=${input.orderId}`;
-      if (!providerConfigured) {
-        return {
-          provider: "PAYOS",
-          externalOrderId: input.orderId,
-          qrCodeUrl: fallbackQrUrl,
-          qrPayload: input.paymentReference,
-          providerConfigured: true
-        };
+      if (!providerConfigured || !env.PAYMENT_WEBHOOK_SECRET) {
+        throw new ValidationError("Chưa cấu hình đầy đủ Client ID, API Key và Checksum Key của payOS");
       }
 
-      const orderCode = Number.parseInt(input.orderId, 10);
-      if (Number.isNaN(orderCode)) {
+      const orderCode = Number(input.orderId);
+      if (!/^\d+$/.test(input.orderId) || !Number.isSafeInteger(orderCode) || orderCode <= 0) {
         throw new ValidationError("PayOS orderCode must be a number");
       }
+      if (!Number.isSafeInteger(input.amount) || input.amount <= 0 || !Number.isFinite(input.expiresAt.getTime()) || input.expiresAt.getTime() <= Date.now()) {
+        throw new ValidationError("Số tiền hoặc thời hạn thanh toán payOS không hợp lệ");
+      }
 
-      // PayOS description: Max 25 alphanumeric chars, no accents/special chars (spaces allowed)
-      const cleanDescription = input.description
+      // Nine characters also works for bank accounts not linked through payOS.
+      const cleanDescription = input.paymentReference
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
         .replace(/[^a-zA-Z0-9 ]/g, "")
-        .substring(0, 25)
+        .substring(0, 9)
         .trim();
 
       const cancelUrl = env.PAYMENT_RETURN_URL || "http://localhost:5173/user/bookings";
@@ -59,6 +55,7 @@ export class QrPaymentProvider implements PaymentProvider {
         description: cleanDescription,
         cancelUrl,
         returnUrl,
+        expiredAt: Math.floor(input.expiresAt.getTime() / 1000),
         signature
       };
 
@@ -70,13 +67,17 @@ export class QrPaymentProvider implements PaymentProvider {
             "x-api-key": env.PAYMENT_SECRET_KEY || "",
             "Content-Type": "application/json"
           },
-          body: JSON.stringify(body)
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(15000)
         });
 
         const resData = await response.json() as any;
         if (!response.ok || resData.code !== "00") {
           console.error("PayOS Create Payment Error:", resData);
           throw new ValidationError(`Lỗi kết nối cổng thanh toán PayOS: ${resData.desc || "Không rõ nguyên nhân"}`);
+        }
+        if (!resData.data?.checkoutUrl || !resData.data?.qrCode || Number(resData.data.orderCode) !== orderCode || Number(resData.data.amount) !== input.amount) {
+          throw new ValidationError("Thông tin thanh toán trả về từ payOS không hợp lệ");
         }
 
         return {
@@ -129,8 +130,8 @@ export class QrPaymentProvider implements PaymentProvider {
 
     if (provider === "PAYOS") {
       const body = payload as any;
-      const data = body.data;
-      if (!data) throw new ValidationError("Payload webhook PayOS không hợp lệ");
+      const data = body?.data;
+      if (!data || typeof data !== "object" || Array.isArray(data)) throw new ValidationError("Payload webhook PayOS không hợp lệ");
 
       if (!env.PAYMENT_WEBHOOK_SECRET) {
         throw new ForbiddenError("Chưa cấu hình mật mã bảo mật webhook (PAYMENT_WEBHOOK_SECRET)");
@@ -146,17 +147,22 @@ export class QrPaymentProvider implements PaymentProvider {
         .join("&");
 
       const signature = crypto.createHmac("sha256", env.PAYMENT_WEBHOOK_SECRET).update(signString).digest("hex");
-      if (signature !== body.signature) {
+      if (typeof body.signature !== "string" || !/^[a-f0-9]{64}$/i.test(body.signature) || !crypto.timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(body.signature, "hex"))) {
         throw new ForbiddenError("Chữ ký webhook PayOS không hợp lệ");
+      }
+      if (!Number.isSafeInteger(data.orderCode) || data.orderCode <= 0 || !Number.isSafeInteger(data.amount) || data.amount <= 0 || typeof data.reference !== "string" || !data.reference) {
+        throw new ValidationError("Payload webhook PayOS không hợp lệ");
       }
 
       return {
         provider: "PAYOS",
         externalOrderId: String(data.orderCode),
-        externalTransactionId: data.reference || `PAYOS_TX_${Date.now()}`,
+        externalTransactionId: data.reference,
         status: data.code === "00" ? "PAID" : "FAILED",
         amount: data.amount,
-        rawPayload: payload
+        rawPayload: payload,
+        // Only acknowledge the documented, signed verification sample without a DB write.
+        verificationOnly: data.orderCode === 123 && data.amount === 3000 && data.reference === "TF230204212323" && data.description === "VQRIO123"
       };
     }
 

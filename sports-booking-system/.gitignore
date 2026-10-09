@@ -3,6 +3,7 @@
 .env.*
 **/.env
 **/.env.*
+!backend/.env.gmail-payos.example
 !backend/.env.example
 
 # Dependencies

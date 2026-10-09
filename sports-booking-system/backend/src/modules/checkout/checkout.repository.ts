@@ -24,7 +24,7 @@ export const checkoutRepository = {
           bookingServices: { where: { OR: [{ status: "ACTIVE" }, { status: null }] }, include: { service: true } },
           payments: { where: { status: "PAID" } },
           user: { select: { id: true, fullName: true, phone: true, email: true } },
-          court: { select: { id: true, name: true, address: true, partnerId: true } }
+          court: { select: { id: true, name: true, address: true, partnerId: true, partner: { select: { bankName: true, bankAccountNumber: true, bankAccountHolder: true } } } }
         }
       });
 
