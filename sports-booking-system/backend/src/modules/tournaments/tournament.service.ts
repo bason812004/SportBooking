@@ -3,7 +3,6 @@ import { ConflictError, ForbiddenError, ValidationError } from "../../shared/err
 import { isTournamentRegistrationAllowed } from "../../shared/utils/businessRules.js";
 import { uniqueSlug } from "../../shared/utils/slug.js";
 import { trackEvent } from "../analytics/analytics.service.js";
-import { notificationService } from "../notifications/notification.service.js";
 import { tournamentRepository } from "./tournament.repository.js";
 
 export const tournamentService = {
@@ -50,12 +49,7 @@ export const tournamentService = {
     if (!(await tournamentRepository.partnerCourt(input.courtId, profile.id))) throw new ForbiddenError("Chi duoc tao giai cho san cua ban");
     const tournament = await tournamentRepository.createPartner(profile.id, uniqueSlug(input.title), input);
     await trackEvent({ partnerId: profile.id, eventType: "TOURNAMENT_CREATED", entityType: "TOURNAMENT", entityId: tournament.id });
-    await notificationService.notifyAdmins({
-      title: "Giải đấu mới cần duyệt",
-      content: `${profile.businessName} vừa tạo giải đấu "${tournament.title}", cần duyệt.`,
-      type: "TOURNAMENT_CREATED",
-      metadata: { tournamentId: tournament.id }
-    });
+    // Admin review notification is queued by the database transaction.
     return tournament;
   },
 

@@ -5,7 +5,7 @@ import type { CourtListQuery } from "./court.types.js";
 
 const courtInclude = {
   category: true,
-  images: { orderBy: { sortOrder: "asc" as const } },
+  images: { orderBy: [{ sortOrder: "asc" as const }, { id: "asc" as const }] },
   surfaces: { where: { status: "ACTIVE" as const }, orderBy: { sortOrder: "asc" as const } },
   amenities: true,
   prices: true,

@@ -1,4 +1,7 @@
 import { useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { CourtImageRequests } from "../../features/court-images/components/CourtImageRequests";
+import { courtImageApi } from "../../features/court-images/api/courtImageApi";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { Link, useParams } from "react-router-dom";
@@ -73,6 +76,13 @@ const serviceStatusLabel: Record<string, string> = { ACTIVE: "Hoạt động", I
 export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services" | "images" | "blocks" }) {
   const { id = "" } = useParams();
   const queryClient = useQueryClient();
+  const { t } = useTranslation("partner");
+  const imageRequests = useQuery({
+    queryKey: ["court-image-requests", id],
+    queryFn: () => courtImageApi.list(id),
+    enabled: mode === "images"
+  });
+  const pendingReplacement = imageRequests.data?.some((request) => request.status === "PENDING" && request.replaceImageId);
   const court = useQuery({ queryKey: ["partner-court", id], queryFn: () => partnerApi.courtDetail(id) });
   const [gridDate, setGridDate] = useState(todayIso());
   const grid = useQuery({
@@ -101,8 +111,10 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
   const [serviceFormOpen, setServiceFormOpen] = useState(false);
   const [imageDragOver, setImageDragOver] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const replacementInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["court-image-requests", id] });
     await queryClient.invalidateQueries({ queryKey: ["partner-court", id] });
     await queryClient.invalidateQueries({ queryKey: ["partner-courts"] });
   };
@@ -192,8 +204,15 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
   const uploadImages = useMutation({
     mutationFn: ({ files, baseOrder }: { files: File[]; baseOrder: number }) =>
       Promise.all(files.map((file, index) => partnerApi.addCourtImage(id, file, baseOrder + index))),
-    onSuccess: async (_result, { files }) => { toast.success(`Đã tải lên ${files.length} ảnh`); await refresh(); },
+    onSuccess: async () => { toast.success(t("images.submitted")); await refresh(); },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["court-image-requests", id] }),
     onError: (error: any) => toast.error(error.message || "Không thể tải ảnh lên")
+  });
+
+  const replaceImage = useMutation({
+    mutationFn: ({ file, imageId }: { file: File; imageId: string }) => partnerApi.addCourtImage(id, file, 0, imageId),
+    onSuccess: async () => { toast.success(t("images.submitted")); await refresh(); },
+    onError: (error: Error) => toast.error(error.message)
   });
 
   if (court.isLoading) return <LoadingState />;
@@ -201,7 +220,7 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
   const data = court.data!;
 
   const moveImage = (index: number, offset: number) => {
-    const ids = data.images.map((image) => image.id);
+    const ids = [...data.images].sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id)).map((image) => image.id);
     const target = index + offset;
     if (target < 0 || target >= ids.length) return;
     [ids[index], ids[target]] = [ids[target], ids[index]];
@@ -564,6 +583,21 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
 
       {mode === "images" && (
         <>
+          <CourtImageRequests courtId={id} />
+          {data.images.length > 0 && <div className="flex flex-wrap items-center gap-3">
+            <Button variant="secondary" disabled={replaceImage.isPending || pendingReplacement || imageRequests.isLoading || imageRequests.isError} onClick={() => replacementInputRef.current?.click()}>
+              {t("images.replaceCover")}
+            </Button>
+            <p className="text-sm text-slate-500">{t("images.help")}</p>
+            <input ref={replacementInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (!file) return;
+              if (file.size > 3 * 1024 * 1024) { toast.error(t("images.tooLarge")); return; }
+              const cover = [...data.images].sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id))[0];
+              replaceImage.mutate({ file, imageId: cover.id });
+            }} />
+          </div>}
           <p className="text-sm text-slate-500">Ảnh đầu tiên là ảnh đại diện khách hàng thấy khi tìm kiếm — kéo thả hoặc bấm vào ô bên dưới để thêm ảnh mới (tối đa 3MB/ảnh).</p>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -608,7 +642,7 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
               </div>
             )}
 
-            {data.images.sort((a, b) => a.sortOrder - b.sortOrder).map((image, index) => (
+            {[...data.images].sort((a, b) => a.sortOrder - b.sortOrder || a.id.localeCompare(b.id)).map((image, index) => (
             <div key={image.id} className="group overflow-hidden rounded-2xl border border-line bg-white shadow-sm transition hover:shadow-md">
               <div className="relative aspect-[4/3] overflow-hidden">
                 <img className="h-full w-full object-cover transition duration-300 group-hover:scale-105" src={image.imageUrl} alt={data.name} />
@@ -624,14 +658,14 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
               </div>
               <div className="flex items-center justify-between p-3">
                 <div className="flex gap-1">
-                  <button type="button" disabled={index === 0} className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40" title="Đưa lên trước" onClick={() => moveImage(index, -1)}>
+                  <button type="button" disabled={index === 0 || pendingReplacement || reorder.isPending} className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40" title="Đưa lên trước" onClick={() => moveImage(index, -1)}>
                     <ArrowUp className="h-4 w-4" />
                   </button>
-                  <button type="button" disabled={index === data.images.length - 1} className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40" title="Đưa xuống sau" onClick={() => moveImage(index, 1)}>
+                  <button type="button" disabled={index === data.images.length - 1 || pendingReplacement || reorder.isPending} className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40" title="Đưa xuống sau" onClick={() => moveImage(index, 1)}>
                     <ArrowDown className="h-4 w-4" />
                   </button>
                 </div>
-                <button type="button" className="rounded-full p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600" title="Xóa ảnh" onClick={() => setRemoveTarget({ type: "image", resourceId: image.id })}>
+                <button type="button" disabled={imageRequests.data?.some((request) => request.status === "PENDING" && request.replaceImageId === image.id)} className="rounded-full p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40" title="Xóa ảnh" onClick={() => setRemoveTarget({ type: "image", resourceId: image.id })}>
                   <Trash2 className="h-4 w-4" />
                 </button>
               </div>

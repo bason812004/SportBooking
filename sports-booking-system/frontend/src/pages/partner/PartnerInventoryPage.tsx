@@ -53,6 +53,9 @@ export function PartnerInventoryPage() {
   // Adjust Modal
   const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
+  // "Nhập nhanh" from a reorder suggestion reuses this modal but creates a purchase order,
+  // so the restock shows up in the purchase history instead of as a bare stock adjustment.
+  const [reorderMode, setReorderMode] = useState(false);
   const [adjustForm, setAdjustForm] = useState({
     type: "IMPORT",
     quantity: 10,
@@ -95,20 +98,25 @@ export function PartnerInventoryPage() {
     placeholderData: keepPreviousData
   });
 
+  // Each court (cụm sân) restocks on its own: the court filter narrows history and suggestions too.
+  // The server pins a receptionist to their court, so only a partner's choice is sent.
+  const scopedCourtId = isPartner ? courtId || undefined : undefined;
   const transactionsQuery = useQuery({
-    queryKey: ["inventory-transactions"],
-    queryFn: () => inventoryApi.getTransactions(50)
+    queryKey: ["inventory-transactions", { courtId: scopedCourtId }],
+    queryFn: () => inventoryApi.getTransactions(50, scopedCourtId)
   });
   // Heavier consumption-velocity query, kept separate so it never holds up the stock table.
   const suggestionsQuery = useQuery({
-    queryKey: ["inventory-suggestions"],
-    queryFn: inventoryApi.getReorderSuggestions
+    queryKey: ["inventory-suggestions", { courtId: scopedCourtId }],
+    queryFn: () => inventoryApi.getReorderSuggestions(scopedCourtId)
   });
   const categoriesQuery = useQuery({ queryKey: ["service-categories"], queryFn: serviceApi.getCategories });
   // /api/partner/* is PARTNER-only, and this page is also mounted at /recipient/inventory.
   // A receptionist runs exactly one court and the server already pins their queries to it, so the
   // court filter is both forbidden and pointless for them.
   const courtsQuery = useQuery({ queryKey: ["partner-courts"], queryFn: partnerApi.courts, enabled: isPartner });
+  // Same product names repeat across courts, so the court tells suggestion rows apart when viewing all of them.
+  const showSuggestionCourt = isPartner && !courtId;
 
   const summary = stockQuery.data?.summary ?? null;
   const items = stockQuery.data?.items ?? [];
@@ -125,6 +133,7 @@ export function PartnerInventoryPage() {
 
   const handleOpenAdjust = (item: InventoryItem) => {
     setSelectedItem(item);
+    setReorderMode(false);
     setAdjustForm({
       type: "IMPORT",
       quantity: 10,
@@ -134,9 +143,35 @@ export function PartnerInventoryPage() {
     setIsAdjustModalOpen(true);
   };
 
+  const handleReorderSubmit = async (status: "ORDERED" | "COMPLETED") => {
+    if (!selectedItem) return;
+    try {
+      const po = await inventoryApi.createPurchaseOrder({
+        note: adjustForm.note,
+        items: [{ serviceId: selectedItem.serviceId, quantity: Number(adjustForm.quantity), unitCost: Number(adjustForm.unitCost) }],
+        status
+      });
+      setIsAdjustModalOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["inventory-transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["inventory-suggestions"] });
+      queryClient.invalidateQueries({ queryKey: ["partner-inventory"] });
+      toast.success(
+        status === "COMPLETED"
+          ? `Đã nhập kho theo đơn ${po.orderCode}.`
+          : `Đã tạo đơn đặt hàng ${po.orderCode}. Xác nhận nhận hàng ở mục Nhập hàng & NCC.`
+      );
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Lỗi tạo đơn nhập hàng");
+    }
+  };
+
   const handleAdjustSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedItem) return;
+    if (reorderMode) {
+      const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
+      return handleReorderSubmit(submitter?.value === "ORDERED" ? "ORDERED" : "COMPLETED");
+    }
     try {
       const result = await inventoryApi.adjustStock({
         serviceId: selectedItem.serviceId,
@@ -193,6 +228,7 @@ export function PartnerInventoryPage() {
       stockValue: 0,
       status: "LOW_STOCK"
     });
+    setReorderMode(true);
     setAdjustForm({
       type: "IMPORT",
       quantity: s.suggestedQuantity,
@@ -529,11 +565,34 @@ export function PartnerInventoryPage() {
       )}
 
       {activeTab === "SUGGESTIONS" && (
+        <div className="space-y-3">
+          {isPartner ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="text-xs font-bold uppercase text-slate-700">Cụm sân</label>
+              <select
+                className="rounded-xl border border-slate-300 p-2 text-sm font-semibold focus:border-green-600 focus:outline-none"
+                value={courtId}
+                onChange={(e) => {
+                  setPage(1);
+                  setCourtId(e.target.value);
+                }}
+              >
+                <option value="">Tất cả cụm sân</option>
+                {courts.map((court) => (
+                  <option key={court.id} value={court.id}>{court.name}</option>
+                ))}
+              </select>
+              <span className="text-xs font-medium text-slate-500">
+                Mỗi cụm sân nhập hàng riêng — tạo đơn nháp theo cụm ở mục Nhập hàng & NCC.
+              </span>
+            </div>
+          ) : null}
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <table className="w-full text-left text-sm text-slate-700">
             <thead className="bg-slate-50 text-xs uppercase font-extrabold text-slate-600 border-b border-slate-200">
               <tr>
                 <th className="p-4">Sản phẩm</th>
+                {showSuggestionCourt ? <th className="p-4">Cụm sân</th> : null}
                 <th className="p-4">Tồn hiện tại</th>
                 <th className="p-4">Tốc độ bán/ngày</th>
                 <th className="p-4">Dự kiến hết trong</th>
@@ -544,7 +603,7 @@ export function PartnerInventoryPage() {
             <tbody className="divide-y divide-slate-100 font-semibold">
               {suggestions.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-8 text-center text-slate-500 font-normal">
+                  <td colSpan={showSuggestionCourt ? 7 : 6} className="p-8 text-center text-slate-500 font-normal">
                     Chưa có sản phẩm nào cần nhập thêm.
                   </td>
                 </tr>
@@ -552,6 +611,7 @@ export function PartnerInventoryPage() {
                 suggestions.map((s) => (
                   <tr key={s.serviceId} className="hover:bg-slate-50/80 transition">
                     <td className="p-4 font-bold text-slate-900">{s.serviceName}</td>
+                    {showSuggestionCourt ? <td className="p-4 text-xs text-slate-600">{s.courtName ?? "—"}</td> : null}
                     <td className="p-4">
                       {s.quantity} <span className="text-xs text-slate-500">{s.unit}</span>
                     </td>
@@ -575,12 +635,15 @@ export function PartnerInventoryPage() {
                       {s.suggestedQuantity} {s.unit}
                     </td>
                     <td className="p-4 text-right">
-                      <button
-                        onClick={() => handleQuickReorder(s)}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-1.5 text-xs font-extrabold text-[#02712a] transition hover:bg-[#02712a] hover:text-white hover:border-[#02712a] shadow-sm active:scale-95"
-                      >
-                        <PackagePlus className="h-3.5 w-3.5" /> Nhập nhanh
-                      </button>
+                      {/* Creating purchase orders is partner-only; receptionists just see the suggestion. */}
+                      {isPartner ? (
+                        <button
+                          onClick={() => handleQuickReorder(s)}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-1.5 text-xs font-extrabold text-[#02712a] transition hover:bg-[#02712a] hover:text-white hover:border-[#02712a] shadow-sm active:scale-95"
+                        >
+                          <PackagePlus className="h-3.5 w-3.5" /> Nhập nhanh
+                        </button>
+                      ) : null}
                     </td>
                   </tr>
                 ))
@@ -588,43 +651,52 @@ export function PartnerInventoryPage() {
             </tbody>
           </table>
         </div>
+        </div>
       )}
 
       {/* Adjust Stock Modal */}
       <Modal
         isOpen={isAdjustModalOpen}
         onClose={() => setIsAdjustModalOpen(false)}
-        title={`Điều Chỉnh Tồn Kho - ${selectedItem?.serviceName}`}
+        title={reorderMode ? `Nhập Hàng Theo Gợi Ý - ${selectedItem?.serviceName}` : `Điều Chỉnh Tồn Kho - ${selectedItem?.serviceName}`}
       >
         <form onSubmit={handleAdjustSubmit} className="space-y-4 pt-2">
-          <div>
-            <label className="block text-xs font-bold uppercase text-slate-700 mb-1">Loại thao tác (*)</label>
-            <select
-              className="w-full rounded-xl border border-slate-300 p-2.5 text-sm font-semibold focus:border-green-600 focus:outline-none"
-              value={adjustForm.type}
-              onChange={(e) => setAdjustForm({ ...adjustForm, type: e.target.value })}
-            >
-              <option value="IMPORT">Nhập thêm kho (Kèm điều chỉnh giá nhập)</option>
-              <option value="ADJUSTMENT">Thay đổi đặt trực tiếp số lượng tồn</option>
-              <option value="SALE">Xuất bán thủ công</option>
-              <option value="DAMAGED">Ghi nhận Hỏng hóc</option>
-              <option value="LOST">Ghi nhận Thất thoát / Mất</option>
-            </select>
-          </div>
+          {reorderMode ? (
+            <p className="rounded-xl bg-emerald-50 p-3 text-xs font-semibold text-[#02712a]">
+              Thao tác này tạo một đơn nhập hàng. Chọn <b>Nhập kho ngay</b> nếu hàng đã có tại sân, hoặc <b>Tạo đơn đặt hàng</b> để
+              xác nhận nhận hàng sau ở mục Nhập hàng & NCC.
+            </p>
+          ) : (
+            <div>
+              <label className="block text-xs font-bold uppercase text-slate-700 mb-1">Loại thao tác (*)</label>
+              <select
+                className="w-full rounded-xl border border-slate-300 p-2.5 text-sm font-semibold focus:border-green-600 focus:outline-none"
+                value={adjustForm.type}
+                onChange={(e) => setAdjustForm({ ...adjustForm, type: e.target.value })}
+              >
+                <option value="IMPORT">Nhập thêm kho (Kèm điều chỉnh giá nhập)</option>
+                <option value="ADJUSTMENT">Thay đổi đặt trực tiếp số lượng tồn</option>
+                <option value="SALE">Xuất bán thủ công</option>
+                <option value="DAMAGED">Ghi nhận Hỏng hóc</option>
+                <option value="LOST">Ghi nhận Thất thoát / Mất</option>
+              </select>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-bold uppercase text-slate-700 mb-1">Số lượng (*)</label>
+              <label className="block text-xs font-bold uppercase text-slate-700 mb-1">{reorderMode ? "Số lượng nhập (*)" : "Số lượng (*)"}</label>
               <Input
                 type="number"
                 required
-                min={0}
+                min={reorderMode ? 1 : 0}
+                step={1}
                 value={adjustForm.quantity}
                 onChange={(e) => setAdjustForm({ ...adjustForm, quantity: Number(e.target.value) })}
               />
             </div>
             <div>
-              <label className="block text-xs font-bold uppercase text-slate-700 mb-1">Giá vốn mới (VNĐ)</label>
+              <label className="block text-xs font-bold uppercase text-slate-700 mb-1">{reorderMode ? "Giá nhập (VNĐ)" : "Giá vốn mới (VNĐ)"}</label>
               <Input
                 type="number"
                 min={0}
@@ -649,9 +721,20 @@ export function PartnerInventoryPage() {
             <Button type="button" variant="secondary" onClick={() => setIsAdjustModalOpen(false)}>
               Hủy
             </Button>
-            <Button type="submit" className="bg-[#02712a] text-white">
-              Cập nhật kho
-            </Button>
+            {reorderMode ? (
+              <>
+                <Button type="submit" value="ORDERED" variant="secondary">
+                  Tạo đơn đặt hàng
+                </Button>
+                <Button type="submit" value="COMPLETED" className="bg-[#02712a] text-white">
+                  Nhập kho ngay
+                </Button>
+              </>
+            ) : (
+              <Button type="submit" className="bg-[#02712a] text-white">
+                Cập nhật kho
+              </Button>
+            )}
           </div>
         </form>
       </Modal>

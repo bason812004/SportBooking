@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { Bell } from "lucide-react";
 import { formatDateTime } from "../../lib/format";
@@ -20,6 +21,18 @@ function resolveNotificationRoute(item: NotificationItem, role?: Role): string |
       return null;
     case "BLOG_UPDATE_REQUESTED":
       return role === "ADMIN" ? "/admin/blogs/pending" : null;
+    case "COURT_APPROVAL_REQUESTED":
+      return role === "ADMIN" ? "/admin/courts/pending" : null;
+    case "COURT_IMAGE_SUBMITTED":
+      return role === "ADMIN" ? "/admin/courts" : null;
+    case "PARTNER_APPROVAL_REQUESTED":
+      return role === "ADMIN" ? "/admin/partners" : null;
+    case "REPORT_CREATED":
+      return role === "ADMIN" ? "/admin/reports" : null;
+    case "WITHDRAWAL_CREATED":
+      return role === "ADMIN" ? "/admin/withdrawals" : null;
+    case "PAYMENT_LATE_REFUND":
+      return role === "ADMIN" ? "/admin/bookings" : role === "USER" ? "/user/bookings" : null;
     case "TOURNAMENT_CREATED":
       return role === "ADMIN" ? "/admin/tournaments/pending" : null;
     case "TOURNAMENT_APPROVED":
@@ -31,18 +44,21 @@ function resolveNotificationRoute(item: NotificationItem, role?: Role): string |
 }
 
 export function NotificationBell() {
+  const { t } = useTranslation("common");
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | null>(null);
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const { data } = useMyNotifications();
+  const { data, isLoading, isError, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } = useMyNotifications();
   const markRead = useMarkNotificationRead();
   const markAllRead = useMarkAllNotificationsRead();
 
-  const items = data?.items ?? [];
-  const unreadCount = items.filter((item) => !item.isRead).length;
+  const items = [...new Map((data?.pages.flatMap((page) => page.items) ?? []).map((item) => [item.id, item])).values()];
+  const unreadCount = data?.pages[0]?.unreadCount ?? 0;
+
+  useEffect(() => { setOpen(false); }, [user?.id]);
 
   useEffect(() => {
     function handleClick(event: MouseEvent) {
@@ -100,7 +116,9 @@ export function NotificationBell() {
           )}
         </div>
         <div className="max-h-96 overflow-y-auto">
-          {items.length === 0 ? (
+          {isLoading ? <p className="p-4 text-sm" role="status">{t("notifications.loading")}</p> : isError ? (
+            <button className="p-4 text-sm text-rose-700" onClick={() => void refetch()}>{t("notifications.retry")}</button>
+          ) : items.length === 0 ? (
             <p className="px-4 py-8 text-center text-sm font-semibold text-slate-400">Không có thông báo</p>
           ) : (
             items.map((item) => (
@@ -130,6 +148,7 @@ export function NotificationBell() {
             ))
           )}
         </div>
+        {hasNextPage && <button className="w-full border-t p-3 text-sm font-semibold text-teal-700" disabled={isFetchingNextPage} onClick={() => void fetchNextPage()}>{t(isFetchingNextPage ? "notifications.loading" : "notifications.more")}</button>}
       </div>
     </div>
   );

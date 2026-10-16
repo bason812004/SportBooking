@@ -59,6 +59,7 @@ export default function VouchersScreen() {
     <Screen
       title="Kho Voucher"
       subtitle="Nhận mã giảm giá và quản lý ưu đãi của bạn."
+      back
       scroll={false}
       right={
         tab === "public" && user ? (

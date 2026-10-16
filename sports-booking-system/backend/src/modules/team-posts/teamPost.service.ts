@@ -70,6 +70,11 @@ export const teamPostService = {
     return post;
   },
 
+  async membership(id: string, userId: string) {
+    await this.detail(id);
+    return { isMember: await teamPostRepository.isMember(id, userId) };
+  },
+
   async members(id: string, userId: string) {
     const isMember = await teamPostRepository.isMember(id, userId);
     if (!isMember) throw new ForbiddenError("Ban can tham gia nhom de xem danh sach thanh vien");

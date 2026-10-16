@@ -24,7 +24,12 @@ export function Screen({ title, subtitle, children, scroll = true, refreshing = 
     <View style={styles.header}>
       <View style={styles.headerLeft}>
         {back ? (
-          <Pressable accessibilityLabel="Quay lai" onPress={() => router.back()} style={styles.backButton}>
+          <Pressable
+            accessibilityLabel="Quay lai"
+            // Fall back to Home when there is no history (e.g. screen opened after a reload).
+            onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
+            style={styles.backButton}
+          >
             <ArrowLeft size={20} color={colors.ink} />
           </Pressable>
         ) : null}

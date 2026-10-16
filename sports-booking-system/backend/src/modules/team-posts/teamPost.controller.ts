@@ -21,6 +21,8 @@ export const teamPostController = {
 
   members: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.members(req.params.id, req.user!.id))),
 
+  membership: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.membership(req.params.id, req.user!.id))),
+
   messages: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.messages(req.params.id, req.user!.id))),
 
   createMessage: asyncHandler(async (req, res) =>

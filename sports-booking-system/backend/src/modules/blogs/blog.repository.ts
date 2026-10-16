@@ -127,8 +127,8 @@ export const blogRepository = {
     const viewCountSelect = hasViewCount ? Prisma.sql`coalesce(b.view_count, 0)::int` : Prisma.sql`0::int`;
     const allowCommentsSelect = hasAllowComments ? Prisma.sql`coalesce(b.allow_comments, true)` : Prisma.sql`true`;
     const orderBy = hasViewCount
-      ? Prisma.sql`coalesce(b.view_count, 0) desc, coalesce(b.published_at, b.created_at) desc`
-      : Prisma.sql`coalesce(b.published_at, b.created_at) desc`;
+      ? Prisma.sql`coalesce(b.published_at, b.created_at) desc, coalesce(b.view_count, 0) desc, b.id desc`
+      : Prisma.sql`coalesce(b.published_at, b.created_at) desc, b.id desc`;
     const pattern = search ? `%${search}%` : null;
     const normalizedPattern = search ? `%${normalizeSearchText(search)}%` : null;
 

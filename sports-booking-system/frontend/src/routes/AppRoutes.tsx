@@ -41,6 +41,7 @@ const CashierBookingPosPage = lazy(() => import("../pages/cashier/CashierBooking
 const PartnerStaffPage = lazy(() => import("../pages/partner/PartnerStaffPage").then((m) => ({ default: m.PartnerStaffPage })));
 const PartnerDashboardPage = lazy(() => import("../pages/partner/PartnerDashboardPage").then((m) => ({ default: m.PartnerDashboardPage })));
 const PartnerCourtsPage = lazy(() => import("../pages/partner/PartnerCourtsPage").then((m) => ({ default: m.PartnerCourtsPage })));
+const PartnerCourtSurfacesPage = lazy(() => import("../pages/partner/PartnerCourtSurfacesPage").then((m) => ({ default: m.PartnerCourtSurfacesPage })));
 const PartnerCourtFormPage = lazy(() => import("../pages/partner/PartnerCourtFormPage").then((m) => ({ default: m.PartnerCourtFormPage })));
 const PartnerBookingsPage = lazy(() => import("../pages/partner/PartnerBookingsPage").then((m) => ({ default: m.PartnerBookingsPage })));
 const PartnerStatisticsPage = lazy(() => import("../pages/partner/PartnerStatisticsPage").then((m) => ({ default: m.PartnerStatisticsPage })));
@@ -150,6 +151,7 @@ export function AppRoutes() {
             <Route path="partner/courts" element={<PartnerCourtsPage />} />
             <Route path="partner/courts/create" element={<PartnerCourtFormPage />} />
             <Route path="partner/courts/:id/edit" element={<PartnerCourtFormPage />} />
+            <Route path="partner/courts/:id/surfaces" element={<PartnerCourtSurfacesPage />} />
             <Route path="partner/courts/:id/prices" element={<PartnerCourtResourcesPage mode="prices" />} />
             <Route path="partner/courts/:id/services" element={<PartnerCourtResourcesPage mode="services" />} />
             <Route path="partner/courts/:id/images" element={<PartnerCourtResourcesPage mode="images" />} />

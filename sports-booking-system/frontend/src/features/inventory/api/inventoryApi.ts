@@ -61,24 +61,65 @@ export interface Supplier {
   address?: string | null;
 }
 
+/**
+ * DRAFT (a court's receptionist proposes, or the partner drafts) -> ORDERED (partner approves and orders)
+ * -> COMPLETED (goods counted in at the court, stock added by the received quantity); DRAFT/ORDERED -> CANCELLED.
+ */
+export type PurchaseOrderStatus = "DRAFT" | "ORDERED" | "COMPLETED" | "CANCELLED";
+
+export interface PurchaseOrderInput {
+  supplierId?: string;
+  note?: string;
+  items: Array<{ serviceId: string; quantity: number; unitCost: number }>;
+}
+
+export interface PurchaseOrderPerson {
+  id: string;
+  fullName: string;
+}
+
+export interface PurchaseOrderItem {
+  id: string;
+  serviceId: string;
+  quantity: number;
+  /** Counted on receipt; null until the order is received. */
+  receivedQuantity: number | null;
+  unitCost: number;
+  totalPrice: number;
+  service: { name: string; unit: string };
+}
+
 export interface PurchaseOrder {
   id: string;
   partnerId: string;
+  /** Every order restocks one court (cụm sân); null only on orders created before courts were tracked. */
+  courtId: string | null;
+  court?: { id: string; name: string; address: string } | null;
   supplierId?: string | null;
   orderCode: string;
   totalAmount: number;
-  status: string;
+  /** Value of what actually arrived; set once the order is received. */
+  receivedAmount: number | null;
+  status: PurchaseOrderStatus;
   note?: string | null;
+  receiveNote?: string | null;
   createdAt: string;
+  updatedAt: string;
+  orderedAt: string | null;
+  receivedAt: string | null;
+  cancelledAt: string | null;
+  createdBy?: PurchaseOrderPerson | null;
+  orderedBy?: PurchaseOrderPerson | null;
+  receivedBy?: PurchaseOrderPerson | null;
+  cancelledBy?: PurchaseOrderPerson | null;
   supplier?: Supplier | null;
-  items: Array<{
-    id: string;
-    serviceId: string;
-    quantity: number;
-    unitCost: number;
-    totalPrice: number;
-    service: { name: string; unit: string };
-  }>;
+  items: PurchaseOrderItem[];
+}
+
+export interface PurchaseOrderReceipt {
+  /** Lines left out are taken as received in full. */
+  items?: Array<{ itemId: string; receivedQuantity: number }>;
+  note?: string;
 }
 
 export interface InventoryPagination {
@@ -101,6 +142,8 @@ export interface ReorderSuggestion {
   serviceId: string;
   serviceName: string;
   unit: string;
+  courtId: string | null;
+  courtName: string | null;
   costPrice: number;
   quantity: number;
   minimumStock: number;
@@ -119,13 +162,14 @@ export const inventoryApi = {
     return res.data.data;
   },
 
-  async getLowStockAlerts(limit?: number) {
-    const res = await api.get<ApiResponse<LowStockAlert[]>>("/partner/inventory/alerts", { params: { limit } });
+  // `courtId` narrows a partner's view to one court; a receptionist always gets their own court.
+  async getLowStockAlerts(limit?: number, courtId?: string) {
+    const res = await api.get<ApiResponse<LowStockAlert[]>>("/partner/inventory/alerts", { params: { limit, courtId } });
     return res.data.data;
   },
 
-  async getReorderSuggestions() {
-    const res = await api.get<ApiResponse<ReorderSuggestion[]>>("/partner/inventory/reorder-suggestions");
+  async getReorderSuggestions(courtId?: string) {
+    const res = await api.get<ApiResponse<ReorderSuggestion[]>>("/partner/inventory/reorder-suggestions", { params: { courtId } });
     return res.data.data;
   },
 
@@ -134,8 +178,8 @@ export const inventoryApi = {
     return res.data.data;
   },
 
-  async getTransactions(limit = 50) {
-    const res = await api.get<ApiResponse<InventoryTransaction[]>>("/partner/inventory/transactions", { params: { limit } });
+  async getTransactions(limit = 50, courtId?: string) {
+    const res = await api.get<ApiResponse<InventoryTransaction[]>>("/partner/inventory/transactions", { params: { limit, courtId } });
     return res.data.data;
   },
 
@@ -149,13 +193,42 @@ export const inventoryApi = {
     return res.data.data;
   },
 
-  async getPurchaseOrders() {
-    const res = await api.get<ApiResponse<PurchaseOrder[]>>("/partner/inventory/purchase-orders");
+  async getPurchaseOrders(params?: { courtId?: string; status?: PurchaseOrderStatus }) {
+    const res = await api.get<ApiResponse<PurchaseOrder[]>>("/partner/inventory/purchase-orders", { params });
     return res.data.data;
   },
 
-  async createPurchaseOrder(data: { supplierId?: string; note?: string; items: Array<{ serviceId: string; quantity: number; unitCost: number }> }) {
+  /** Without `courtId` the court is inferred from the products, which must all belong to one court. A receptionist's order is always a draft. */
+  async createPurchaseOrder(data: PurchaseOrderInput & { courtId?: string; status?: Exclude<PurchaseOrderStatus, "CANCELLED"> }) {
     const res = await api.post<ApiResponse<PurchaseOrder>>("/partner/inventory/purchase-orders", data);
+    return res.data.data;
+  },
+
+  /** Gathers one court's reorder suggestions into a single draft for review. */
+  async createDraftFromSuggestions(courtId?: string) {
+    const res = await api.post<ApiResponse<PurchaseOrder>>("/partner/inventory/purchase-orders/from-suggestions", { courtId });
+    return res.data.data;
+  },
+
+  /** Only allowed while the order is still a draft. */
+  async updatePurchaseOrder(id: string, data: PurchaseOrderInput) {
+    const res = await api.put<ApiResponse<PurchaseOrder>>(`/partner/inventory/purchase-orders/${id}`, data);
+    return res.data.data;
+  },
+
+  async orderPurchaseOrder(id: string) {
+    const res = await api.post<ApiResponse<PurchaseOrder>>(`/partner/inventory/purchase-orders/${id}/order`);
+    return res.data.data;
+  },
+
+  /** Records the counted goods; this is the step that adds them to stock (by the received quantity). */
+  async receivePurchaseOrder(id: string, receipt: PurchaseOrderReceipt = {}) {
+    const res = await api.post<ApiResponse<PurchaseOrder>>(`/partner/inventory/purchase-orders/${id}/receive`, receipt);
+    return res.data.data;
+  },
+
+  async cancelPurchaseOrder(id: string) {
+    const res = await api.post<ApiResponse<PurchaseOrder>>(`/partner/inventory/purchase-orders/${id}/cancel`);
     return res.data.data;
   }
 };

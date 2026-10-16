@@ -25,6 +25,12 @@ export function useRealtime() {
     const invalidateNotifications = () => {
       void queryClient.invalidateQueries({ queryKey: ["my-notifications"] });
     };
+    const invalidateBlogs = () => {
+      void queryClient.invalidateQueries({ queryKey: ["public-blogs"] });
+      void queryClient.invalidateQueries({ queryKey: ["public-blog"] });
+      void queryClient.invalidateQueries({ queryKey: ["my-blogs"] });
+      void queryClient.invalidateQueries({ queryKey: ["partner-blogs"] });
+    };
     const invalidateWalletData = () => {
       void queryClient.invalidateQueries({ queryKey: ["partner-wallet"] });
       void queryClient.invalidateQueries({ queryKey: ["partner-settlements"] });
@@ -41,6 +47,11 @@ export function useRealtime() {
     socket.on("booking:cancelled", invalidateBookings);
     socket.on("court:availability-updated", invalidateAvailability);
     socket.on("notification:new", invalidateNotifications);
+    socket.on("blog:updated", invalidateBlogs);
+    socket.on("connect", invalidateBlogs);
+    if (socket.connected) invalidateBlogs();
+    socket.on("connect", invalidateNotifications);
+    if (socket.connected) invalidateNotifications();
     socket.on("settlement:updated", invalidateWalletData);
     socket.on("wallet:updated", invalidateWalletData);
     socket.on("withdrawal:created", invalidateWalletData);
@@ -52,6 +63,9 @@ export function useRealtime() {
       socket.off("booking:cancelled", invalidateBookings);
       socket.off("court:availability-updated", invalidateAvailability);
       socket.off("notification:new", invalidateNotifications);
+      socket.off("blog:updated", invalidateBlogs);
+      socket.off("connect", invalidateBlogs);
+      socket.off("connect", invalidateNotifications);
       socket.off("settlement:updated", invalidateWalletData);
       socket.off("wallet:updated", invalidateWalletData);
       socket.off("withdrawal:created", invalidateWalletData);

@@ -1,13 +1,19 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../auth/hooks/useAuth";
 import { notificationApi } from "../api/notificationApi";
 
 export function useMyNotifications() {
-  const { isAuthenticated } = useAuth();
-  return useQuery({
-    queryKey: ["my-notifications"],
-    queryFn: notificationApi.listMine,
-    enabled: isAuthenticated
+  const { isAuthenticated, user } = useAuth();
+  return useInfiniteQuery({
+    queryKey: ["my-notifications", user?.id],
+    queryFn: ({ pageParam }) => notificationApi.listMine(pageParam),
+    initialPageParam: 1,
+    getNextPageParam: (last) => last.meta.page < last.meta.totalPages ? last.meta.page + 1 : undefined,
+    enabled: isAuthenticated,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchInterval: 30000
   });
 }
 

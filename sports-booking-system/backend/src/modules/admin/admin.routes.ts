@@ -4,6 +4,8 @@ import { authMiddleware } from "../../middlewares/auth.middleware.js";
 import { requireRole } from "../../middlewares/role.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
 import { adminController } from "./admin.controller.js";
+import { courtImageController } from "../court-images/courtImage.controller.js";
+import { imageReviewSchema } from "../court-images/courtImage.validation.js";
 import {
   adminCourtQuerySchema,
   adminCourtRequestUpdateSchema,
@@ -31,6 +33,8 @@ import {
 export const adminRoutes = Router();
 
 adminRoutes.use(authMiddleware, requireRole(UserRole.ADMIN));
+adminRoutes.get("/court-image-requests", courtImageController.pending);
+adminRoutes.post("/court-image-requests/:id/review", validate(imageReviewSchema), courtImageController.review);
 adminRoutes.get("/dashboard", adminController.dashboard);
 adminRoutes.get("/users", validate(userQuerySchema), adminController.users);
 adminRoutes.put("/users/:id/lock", adminController.lockUser);

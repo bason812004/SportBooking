@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { surfaceCode, surfaceName, normalizedSurfaceCode } from "../shared/utils/courtSurface.js";
 
 const prisma = new PrismaClient();
 
@@ -33,29 +34,25 @@ export async function seedRealSubCourts() {
         sizeType = "Tiêu chuẩn (15m x 28m)";
       }
 
-      for (let i = 1; i <= 3; i++) {
-        const code = `S0${i}`;
-        const surfaceName = `${courtName} - Sân 0${i}`;
-        const customId = `csf_${court.id}_0${i}`;
-
-        await prisma.$executeRawUnsafe(
-          `INSERT INTO court_surfaces (id, court_id, code, name, capacity, surface, size, status, sort_order, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'ACTIVE', $8, NOW())
-           ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, status = 'ACTIVE';`,
-          customId,
-          court.id,
-          code,
-          surfaceName,
-          capacityType,
-          surfaceType,
-          sizeType,
-          i
-        ).catch(async (e) => {
-          console.error(`[Insert Surface Error for ${customId}]:`, e?.message || e);
-        });
-
-        createdCount++;
-      }
+      createdCount += await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM courts WHERE id = ${court.id} FOR UPDATE`;
+        const existing = await tx.courtSurface.findMany({ where: { courtId: court.id } });
+        const codes = new Set(existing.map((row) => normalizedSurfaceCode(row.code)));
+        let added = 0;
+        let sortOrder = existing.reduce((max, row) => Math.max(max, row.sortOrder), -1) + 1;
+        for (let i = 1; i <= 3; i++) {
+          const code = surfaceCode(i);
+          if (codes.has(code)) continue;
+          await tx.courtSurface.create({ data: {
+            courtId: court.id, code, name: surfaceName(courtName, i),
+            capacity: capacityType, surface: surfaceType, size: sizeType, sortOrder: sortOrder++
+          } });
+          codes.add(code);
+          added++;
+        }
+        await tx.court.update({ where: { id: court.id }, data: { courtCount: existing.length + added } });
+        return added;
+      });
     }
     console.log(`=== SUCCESS! Seeded ${createdCount} sub-courts (Sân 01, Sân 02, Sân 03) into \`court_surfaces\` table! ===`);
   } catch (err) {

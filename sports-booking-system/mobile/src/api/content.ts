@@ -98,6 +98,10 @@ export const contentApi = {
     const { data } = await api.get<ApiResponse<TeamPostMessage[]>>(`/team-posts/${id}/messages`);
     return data.data;
   },
+  async teamPostMembership(id: string) {
+    const { data } = await api.get<ApiResponse<{ isMember: boolean }>>(`/team-posts/${id}/membership`);
+    return data.data;
+  },
   async teamPostMembers(id: string) {
     const { data } = await api.get<ApiResponse<GroupMember[]>>(`/team-posts/${id}/members`);
     return data.data;

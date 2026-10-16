@@ -21,6 +21,7 @@ export const queryKeys = {
   teamPost: (id: string) => ["team-post", id] as const,
   myTeamPosts: ["my-team-posts"] as const,
   joinedTeamPosts: ["joined-team-posts"] as const,
+  teamPostMembership: (id: string, userId?: string) => ["team-post-membership", id, userId] as const,
   teamPostMessages: (id: string) => ["team-post-messages", id] as const,
   teamPostMembers: (id: string) => ["team-post-members", id] as const,
   profile: ["profile"] as const,

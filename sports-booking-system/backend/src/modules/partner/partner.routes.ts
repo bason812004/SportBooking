@@ -9,6 +9,8 @@ import {
   courtStatusSchema,
   courtSurfaceStatusSchema,
   courtSurfaceUpdateSchema,
+  courtSurfaceCreateSchema,
+  courtSurfaceParamsSchema,
   courtBlockWriteSchema,
   courtBlockParamsSchema,
   courtBlockBulkWriteSchema,
@@ -27,6 +29,8 @@ import {
   recipientUpdateSchema
 } from "./partner.validation.js";
 import { partnerController } from "./partner.controller.js";
+import { courtImageController } from "../court-images/courtImage.controller.js";
+import { imageCourtParams, imageRequestParams } from "../court-images/courtImage.validation.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 3 * 1024 * 1024 } });
 export const partnerRoutes = Router();
@@ -39,6 +43,8 @@ partnerRoutes.get("/courts", partnerController.courts);
 partnerRoutes.post("/courts", validate(courtWriteSchema), partnerController.createCourt);
 partnerRoutes.get("/courts/:id", partnerController.courtDetail);
 partnerRoutes.get("/courts/:id/surfaces", partnerController.courtSurfaces);
+partnerRoutes.post("/courts/:id/surfaces", validate(courtSurfaceCreateSchema), partnerController.createCourtSurface);
+partnerRoutes.delete("/courts/:id/surfaces/:surfaceId", validate(courtSurfaceParamsSchema), partnerController.deleteCourtSurface);
 partnerRoutes.put("/courts/:id/surfaces/:surfaceId/status", validate(courtSurfaceStatusSchema), partnerController.updateCourtSurfaceStatus);
 partnerRoutes.put("/courts/:id/surfaces/:surfaceId", validate(courtSurfaceUpdateSchema), partnerController.updateCourtSurface);
 partnerRoutes.put("/courts/:id", validate(courtWriteSchema.partial()), partnerController.updateCourt);
@@ -50,6 +56,8 @@ partnerRoutes.post("/courts/:id/blocks", validate(courtBlockWriteSchema), partne
 partnerRoutes.post("/courts/:id/blocks/bulk", validate(courtBlockBulkWriteSchema), partnerController.createCourtBlockBulk);
 partnerRoutes.delete("/courts/:id/blocks/:blockId", validate(courtBlockParamsSchema), partnerController.cancelCourtBlock);
 partnerRoutes.post("/courts/:id/images", upload.single("image"), validate(imageSchema), partnerController.addImage);
+partnerRoutes.get("/courts/:id/image-requests", validate(imageCourtParams), courtImageController.partnerList);
+partnerRoutes.post("/image-requests/:id/cancel", validate(imageRequestParams), courtImageController.cancel);
 partnerRoutes.delete("/images/:imageId", partnerController.deleteImage);
 partnerRoutes.put("/courts/:id/images/order", validate(imageOrderSchema), partnerController.reorderImages);
 partnerRoutes.post("/courts/:id/prices", validate(priceWriteSchema), partnerController.addPrice);

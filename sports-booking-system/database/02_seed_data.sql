@@ -164,9 +164,9 @@ insert into courts (id, partner_id, category_id, name, slug, description, addres
 -- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 insert into court_surfaces (court_id, code, name, capacity, surface, size, image_url, sort_order)
-select id, '01', name || ' 01', 'San 7', 'Co nhan tao', '55m x 35m', 'https://images.unsplash.com/photo-1526232761682-d26e03ac148e?auto=format&fit=crop&w=500&q=80', 1 from courts union all
-select id, '02', name || ' 02', 'San 7', 'Co nhan tao', '55m x 35m', 'https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=500&q=80', 2 from courts where court_count >= 2 union all
-select id, '03', name || ' 03', 'San 11', 'Co nhan tao', '90m x 45m', 'https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?auto=format&fit=crop&w=500&q=80', 3 from courts where court_count >= 3;
+select id, 'S01', left(name, 151) || ' - Sân 01', 'San 7', 'Co nhan tao', '55m x 35m', 'https://images.unsplash.com/photo-1526232761682-d26e03ac148e?auto=format&fit=crop&w=500&q=80', 1 from courts union all
+select id, 'S02', left(name, 151) || ' - Sân 02', 'San 7', 'Co nhan tao', '55m x 35m', 'https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=500&q=80', 2 from courts where court_count >= 2 union all
+select id, 'S03', left(name, 151) || ' - Sân 03', 'San 11', 'Co nhan tao', '90m x 45m', 'https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?auto=format&fit=crop&w=500&q=80', 3 from courts where court_count >= 3;
 
 insert into court_images (court_id, image_url, sort_order)
 select id, 'https://images.unsplash.com/photo-1526232761682-d26e03ac148e?auto=format&fit=crop&w=1200&q=80', 1 from courts;
@@ -213,9 +213,9 @@ insert into team_recruitment_posts (
   current_players, max_players, playing_date, start_time, end_time,
   price_per_person, extra_services, note, zalo_group_link, zalo_qr_image, status
 ) values
-('tp0001','u0021','c0001','Cáº§n tuyá»ƒn 3 báº¡n Ä‘Ã¡ bÃ³ng sÃ¢n 5 tá»‘i thá»© 7','BÃ³ng Ä‘Ã¡','SÃ¢n bÃ³ng Mini BÃ¬nh Tháº¡nh','25 Nguyá»…n XÃ­, BÃ¬nh Tháº¡nh, TP.HCM',7,10,'2026-06-15','19:00','21:00',70000,'Ão bib, nÆ°á»›c uá»‘ng, gá»­i xe','Æ¯u tiÃªn cÃ¡c báº¡n Ä‘i Ä‘Ãºng giá», Ä‘Ã¡ vui váº», khÃ´ng quÃ¡ cÄƒng.','https://zalo.me/g/example-football','https://quickchart.io/qr?text=https%3A%2F%2Fzalo.me%2Fg%2Fexample-football&size=260','OPEN'),
+('tp0001','u0021','c0001','Cần tuyển 3 bạn đá bóng sân 5 tối thứ 7','Bóng đá','Sân bóng Mini Bình Thạnh','25 Nguyễn Xí, Bình Thạnh, TP.HCM',7,10,'2026-06-15','19:00','21:00',70000,'Áo bib, nước uống, gửi xe','Ưu tiên các bạn đi đúng giờ, đá vui vẻ, không quá căng.','https://zalo.me/g/example-football','https://quickchart.io/qr?text=https%3A%2F%2Fzalo.me%2Fg%2Fexample-football&size=260','OPEN'),
 ('tp0002','u0022','c0012','Tim them 2 ban danh cau long buoi sang','Cau long','San cau long Tan Phu','88 Luy Ban Bich, Tan Phu, TP.HCM',2,4,'2026-06-16','06:00','08:00',50000,'Thue vot, nuoc uong','Trinh do trung binh, choi ren suc khoe la chinh.',null,'https://quickchart.io/qr?text=badminton-morning-group&size=260','OPEN'),
-('tp0003','u0023','c0015','Tuyá»ƒn ngÆ°á»i chÆ¡i bÃ³ng chuyá»n cuá»‘i tuáº§n','BÃ³ng chuyá»n','SÃ¢n bÃ³ng chuyá»n PhÃº Nhuáº­n','12 Hoa PhÆ°á»£ng, PhÃº Nhuáº­n, TP.HCM',8,12,'2026-06-20','17:00','19:00',40000,'NÆ°á»›c uá»‘ng, gá»­i xe','ChÆ¡i giao lÆ°u, vui váº», cÃ³ thá»ƒ tham gia lÃ¢u dÃ i.','https://zalo.me/g/example-volleyball',null,'OPEN');
+('tp0003','u0023','c0015','Tuyển người chơi bóng chuyền cuối tuần','Bóng chuyền','Sân bóng chuyền Phú Nhuận','12 Hoa Phượng, Phú Nhuận, TP.HCM',8,12,'2026-06-20','17:00','19:00',40000,'Nước uống, gửi xe','Chơi giao lưu, vui vẻ, có thể tham gia lâu dài.','https://zalo.me/g/example-volleyball',null,'OPEN');
 
 -- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 -- 7. BOOKINGS â€“ chÃ­nh (b0001 â€“ b0014)

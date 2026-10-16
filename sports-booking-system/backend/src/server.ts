@@ -9,6 +9,7 @@ import { ensureTeamChatTables } from "./modules/team-posts/teamPost.repository.j
 import { ensureReviewTables } from "./modules/reviews/review.repository.js";
 import { ensureBookingTables } from "./modules/bookings/booking.repository.js";
 import { ensureServiceTables } from "./modules/services/service.repository.js";
+import { startAdminNotificationWorker } from "./modules/notifications/notificationOutbox.service.js";
 
 const server = http.createServer(app);
 initRealtime(server);
@@ -27,6 +28,7 @@ server.listen(env.PORT, "0.0.0.0", async () => {
     startPaymentPoller();
     startPaymentExpirySweep();
     startBookingReminderScheduler();
+    startAdminNotificationWorker();
   }
 });
 

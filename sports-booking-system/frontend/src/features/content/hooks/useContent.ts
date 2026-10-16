@@ -8,7 +8,11 @@ export function useVouchers() {
 }
 
 export function useBlogs(search = "") {
-  return useQuery({ queryKey: ["public-blogs", search], queryFn: () => contentApi.blogs({ search }), ...realtimeQuery });
+  return useQuery({
+    queryKey: ["public-blogs", search], queryFn: () => contentApi.blogs({ search }),
+    ...realtimeQuery, staleTime: 0, refetchOnMount: "always", refetchOnWindowFocus: true,
+    refetchOnReconnect: true, refetchInterval: 30000
+  });
 }
 
 export function useBlog(slug?: string) {

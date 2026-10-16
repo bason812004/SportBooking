@@ -14,7 +14,8 @@ export const notificationRepository = {
         skip: (page - 1) * limit,
         take: limit
       }),
-      prisma.notification.count({ where })
+      prisma.notification.count({ where }),
+      prisma.notification.count({ where: { ...where, isRead: false } })
     ]);
   },
   markRead(id: string, userId: string) {

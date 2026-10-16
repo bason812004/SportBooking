@@ -9,6 +9,7 @@ import { Card, Screen, SectionHeader } from "../../src/components/Screen";
 import { ErrorState, LoadingState } from "../../src/components/StateViews";
 import { StickyBottomAction } from "../../src/components/StickyBottomAction";
 import { useAuthStore } from "../../src/store/auth";
+import { useTeamMembership } from "../../src/hooks/useTeamMembership";
 import { colors, radii, spacing, typography } from "../../src/theme/tokens";
 import { formatCurrency, formatDate } from "../../src/utils/format";
 
@@ -25,17 +26,21 @@ export default function TeammateDetailScreen() {
     enabled: Boolean(id)
   });
 
-  const members = useQuery({
-    queryKey: queryKeys.teamPostMembers(id),
-    queryFn: () => contentApi.teamPostMembers(id),
-    enabled: Boolean(id)
-  });
+  const membership = useTeamMembership(id, user?.id);
+  const isMember = Boolean(user && membership.data?.isMember && !membership.isError && !membership.isFetching);
 
-  const isMember = (members.data ?? []).some((m) => m.userId === user?.id) || post.data?.createdBy?.id === user?.id;
+  const members = useQuery({
+    queryKey: [...queryKeys.teamPostMembers(id), user?.id],
+    queryFn: () => contentApi.teamPostMembers(id),
+    enabled: Boolean(id) && isMember,
+    retry: false
+  });
 
   const joinMutation = useMutation({
     mutationFn: () => contentApi.joinTeamPost(id),
     onSuccess: async () => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.teamPostMembership(id, user?.id) });
+      queryClient.setQueryData(queryKeys.teamPostMembership(id, user?.id), { isMember: true });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.teamPost(id) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.teamPostMembers(id) }),
@@ -134,7 +139,15 @@ export default function TeammateDetailScreen() {
         {/* Members List */}
         <SectionHeader title={`Thành viên tham gia (${members.data?.length ?? data.currentPlayers})`} />
         <Card style={{ gap: spacing.sm }}>
-          {members.isLoading ? (
+          {membership.isFetching ? (
+            <LoadingState label="Đang kiểm tra tư cách thành viên..." />
+          ) : membership.isError ? (
+            <ErrorState message={membership.error.message} onRetry={() => void membership.refetch()} />
+          ) : !isMember ? (
+            <Text style={styles.meta}>Tham gia nhóm để xem danh sách thành viên.</Text>
+          ) : members.isError ? (
+            <ErrorState message={members.error.message} onRetry={() => void members.refetch()} />
+          ) : members.isLoading ? (
             <LoadingState label="Đang tải danh sách thành viên..." />
           ) : members.data?.length ? (
             members.data.map((member) => (
@@ -178,7 +191,7 @@ export default function TeammateDetailScreen() {
           ) : (
             <Button
               variant="primary"
-              disabled={isFull || joinMutation.isPending}
+              disabled={isFull || joinMutation.isPending || membership.isFetching || membership.isError}
               loading={joinMutation.isPending}
               onPress={() => {
                 if (!user) {

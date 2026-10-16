@@ -3,6 +3,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { BadgeCheck, Eye, Lock, Megaphone, Star, Unlock } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
+import { CourtImageRequests } from "../../features/court-images/components/CourtImageRequests";
 import type { AdminCourt } from "../../types/api";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
@@ -105,6 +106,7 @@ export function AdminCourtsPage() {
         <Select label="Featured" value={filters.featured} onChange={(event) => updateFilter(setPage, setFilters, "featured", event.target.value)} options={booleanOptions} />
       </div>
 
+      <CourtImageRequests />
       <SharedTable minWidth="1120px">
         <THead>
           <tr>

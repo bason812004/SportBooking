@@ -62,6 +62,10 @@ export const teamPostService = {
         realtimeService.toTeamPost(id, realtimeEvents.teamPostMemberJoined, post);
         return post;
     },
+    async membership(id, userId) {
+        await this.detail(id);
+        return { isMember: await teamPostRepository.isMember(id, userId) };
+    },
     async members(id, userId) {
         const isMember = await teamPostRepository.isMember(id, userId);
         if (!isMember)

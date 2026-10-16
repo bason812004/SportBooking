@@ -45,6 +45,16 @@ export type PartnerCourtBlock = {
   status: "ACTIVE" | "INACTIVE";
 };
 
+export type PartnerSurfaceInput = {
+  code: string;
+  name: string;
+  capacity?: string | null;
+  surface?: string | null;
+  size?: string | null;
+  openingTime?: string | null;
+  closingTime?: string | null;
+};
+
 export type PartnerSurfaceSlot = {
   startTime: string;
   endTime: string;
@@ -144,10 +154,11 @@ export const partnerApi = {
     const { data } = await api.get<ApiResponse<Court>>(`/partner/courts/${id}`);
     return data.data;
   },
-  async addCourtImage(courtId: string, image: File, sortOrder = 0) {
+  async addCourtImage(courtId: string, image: File, sortOrder = 0, replaceImageId?: string) {
     const formData = new FormData();
     formData.append("image", image);
     formData.append("sortOrder", String(sortOrder));
+    if (replaceImageId) formData.append("replaceImageId", replaceImageId);
     const { data } = await api.post<ApiResponse<unknown>>(
       `/partner/courts/${courtId}/images`,
       formData
@@ -217,7 +228,15 @@ export const partnerApi = {
     const { data } = await api.put<ApiResponse<PartnerCourtSurface>>(`/partner/courts/${courtId}/surfaces/${surfaceId}/status`, { status });
     return data.data;
   },
-  async updateCourtSurface(courtId: string, surfaceId: string, payload: { openingTime?: string | null; closingTime?: string | null }) {
+  async createCourtSurface(courtId: string, payload: PartnerSurfaceInput) {
+    const { data } = await api.post<ApiResponse<PartnerCourtSurface>>(`/partner/courts/${courtId}/surfaces`, payload);
+    return data.data;
+  },
+  async deleteCourtSurface(courtId: string, surfaceId: string) {
+    const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/courts/${courtId}/surfaces/${surfaceId}`);
+    return data.data;
+  },
+  async updateCourtSurface(courtId: string, surfaceId: string, payload: Partial<PartnerSurfaceInput>) {
     const { data } = await api.put<ApiResponse<PartnerCourtSurface>>(`/partner/courts/${courtId}/surfaces/${surfaceId}`, payload);
     return data.data;
   },

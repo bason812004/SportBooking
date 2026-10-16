@@ -19,8 +19,9 @@ import { queryKeys } from "../../../src/api/queryKeys";
 import type { TeamPostMessage } from "../../../src/api/types";
 import { Button } from "../../../src/components/Buttons";
 import { Card, SectionHeader } from "../../../src/components/Screen";
-import { ErrorState, LoadingState } from "../../../src/components/StateViews";
+import { EmptyState, ErrorState, LoadingState } from "../../../src/components/StateViews";
 import { useAuthStore } from "../../../src/store/auth";
+import { useTeamMembership } from "../../../src/hooks/useTeamMembership";
 import { colors, radii, spacing, typography } from "../../../src/theme/tokens";
 import { formatClock, formatDate } from "../../../src/utils/format";
 
@@ -44,6 +45,7 @@ export default function TeamGroupChatScreen() {
 
   const [inputMessage, setInputMessage] = useState("");
   const [infoModalOpen, setInfoModalOpen] = useState(false);
+  const [leaveMutationPending, setLeaveMutationPending] = useState(false);
   const flatListRef = useRef<FlatList<TeamPostMessage>>(null);
 
   const post = useQuery({
@@ -52,24 +54,29 @@ export default function TeamGroupChatScreen() {
     enabled: Boolean(id)
   });
 
+  const membership = useTeamMembership(id, user?.id);
+  const isMember = Boolean(user && membership.data?.isMember && !membership.isError && !membership.isFetching && !leaveMutationPending);
+
   const members = useQuery({
-    queryKey: queryKeys.teamPostMembers(id),
+    queryKey: [...queryKeys.teamPostMembers(id), user?.id],
     queryFn: () => contentApi.teamPostMembers(id),
-    enabled: Boolean(id)
+    enabled: Boolean(id) && isMember,
+    retry: false
   });
 
   const messages = useQuery({
-    queryKey: queryKeys.teamPostMessages(id),
+    queryKey: [...queryKeys.teamPostMessages(id), user?.id],
     queryFn: () => contentApi.teamPostMessages(id),
-    enabled: Boolean(id),
-    refetchInterval: 4000 // Poll every 4 seconds for fresh chat messages
+    enabled: Boolean(id) && isMember && !members.isError,
+    retry: false,
+    refetchInterval: (query) => query.state.status === "error" ? false : 4000
   });
 
   const sendMutation = useMutation({
     mutationFn: (text: string) => contentApi.createTeamPostMessage(id, { content: text, messageType: "TEXT" }),
     onSuccess: (newMessage) => {
       setInputMessage("");
-      queryClient.setQueryData<TeamPostMessage[]>(queryKeys.teamPostMessages(id), (old = []) => [...old, newMessage]);
+      queryClient.setQueryData<TeamPostMessage[]>([...queryKeys.teamPostMessages(id), user?.id], (old = []) => [...old, newMessage]);
       setTimeout(() => {
         flatListRef.current?.scrollToEnd({ animated: true });
       }, 100);
@@ -87,14 +94,31 @@ export default function TeamGroupChatScreen() {
 
   const leaveMutation = useMutation({
     mutationFn: () => contentApi.leaveGroup(id),
+    onMutate: async () => {
+      setLeaveMutationPending(true);
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: queryKeys.teamPostMessages(id) }),
+        queryClient.cancelQueries({ queryKey: queryKeys.teamPostMembers(id) }),
+        queryClient.cancelQueries({ queryKey: queryKeys.teamPostMembership(id, user?.id) })
+      ]);
+    },
     onSuccess: () => {
+      queryClient.setQueryData(queryKeys.teamPostMembership(id, user?.id), { isMember: false });
+      queryClient.removeQueries({ queryKey: queryKeys.teamPostMembers(id) });
+      queryClient.removeQueries({ queryKey: queryKeys.teamPostMessages(id) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.joinedTeamPosts });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.teamPost(id) });
       Alert.alert("Đã rời nhóm", "Bạn đã rời khỏi nhóm này.");
       router.replace("/(tabs)/teammates");
+    },
+    onError: (error) => {
+      setLeaveMutationPending(false);
+      Alert.alert("Không thể rời nhóm", error.message);
     }
   });
 
   function handleSend() {
-    if (!inputMessage.trim() || sendMutation.isPending) return;
+    if (!isMember || !inputMessage.trim() || sendMutation.isPending) return;
     sendMutation.mutate(inputMessage.trim());
   }
 
@@ -112,6 +136,17 @@ export default function TeamGroupChatScreen() {
   if (post.isLoading) return <LoadingState label="Đang tải phòng chat..." />;
   if (post.isError) return <ErrorState message={post.error.message} onRetry={() => void post.refetch()} />;
   if (!post.data) return <ErrorState message="Không tìm thấy nhóm chat." />;
+  if (leaveMutationPending) return <LoadingState label="Đang rời nhóm..." />;
+  if (membership.isFetching) return <LoadingState label="Đang kiểm tra tư cách thành viên..." />;
+  if (membership.isError) return <ErrorState message={membership.error.message} onRetry={() => void membership.refetch()} />;
+  if (!isMember) return <EmptyState title="Chưa tham gia nhóm" message="Bạn cần tham gia nhóm để vào phòng chat." actionLabel="Xem thông tin nhóm" onAction={() => router.replace(`/teammates/${id}`)} />;
+  if (members.isError || messages.isError) return <ErrorState message={members.error?.message ?? messages.error?.message ?? "Không thể tải phòng chat."} onRetry={() => {
+    void membership.refetch().then((result) => {
+      if (result.isError || !result.data?.isMember) return;
+      void members.refetch();
+      void messages.refetch();
+    });
+  }} />;
 
   const group = post.data;
 

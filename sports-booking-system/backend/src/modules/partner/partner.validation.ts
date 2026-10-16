@@ -44,8 +44,10 @@ export const serviceWriteSchema = z.object({
 });
 
 export const imageSchema = z.object({
+  params: z.object({ id }),
   body: z.object({
     imageUrl: z.string().url().optional(),
+    replaceImageId: id.optional(),
     sortOrder: z.coerce.number().int().min(0).optional()
   })
 });
@@ -154,12 +156,24 @@ export const courtSurfaceStatusSchema = z.object({
   })
 });
 
+const surfaceFields = z.object({
+  code: z.string().trim().min(1).max(40),
+  name: z.string().trim().min(1).max(160),
+  capacity: z.string().trim().max(80).nullable().optional(),
+  surface: z.string().trim().max(120).nullable().optional(),
+  size: z.string().trim().max(120).nullable().optional(),
+  openingTime: z.union([flexTime, z.null()]).optional(),
+  closingTime: z.union([flexTime, z.null()]).optional()
+});
+export type CourtSurfaceInput = z.infer<typeof surfaceFields>;
+export const courtSurfaceCreateSchema = z.object({
+  params: z.object({ id }),
+  body: surfaceFields.strict()
+});
+export const courtSurfaceParamsSchema = z.object({ params: z.object({ id, surfaceId: id }) });
 export const courtSurfaceUpdateSchema = z.object({
   params: z.object({ id, surfaceId: id }),
-  body: z.object({
-    openingTime: z.union([flexTime, z.null()]).optional(),
-    closingTime: z.union([flexTime, z.null()]).optional()
-  })
+  body: surfaceFields.partial().strict().refine((value) => Object.keys(value).length > 0)
 });
 
 export const courtBlockWriteSchema = z.object({

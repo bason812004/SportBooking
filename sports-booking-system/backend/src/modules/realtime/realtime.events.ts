@@ -11,6 +11,7 @@ export const realtimeEvents = {
   paymentFailed: "payment:failed",
   paymentExpired: "payment:expired",
   notificationNew: "notification:new",
+  blogUpdated: "blog:updated",
   voucherClaimed: "voucher:claimed",
   voucherUsed: "voucher:used",
   voucherNew: "voucher:new",
