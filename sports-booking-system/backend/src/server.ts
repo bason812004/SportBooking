@@ -37,8 +37,8 @@ process.on("SIGINT", async () => {
   server.close(() => process.exit(0));
 });
 
-// Trigger reload for realtime court and schedule enhancements + slug resolution
-// Reloaded at 2026-10-22 12:20:00
+// Trigger reload for Google Auth configuration
+// Reloaded at 2026-10-22 21:02:00
 
 
 

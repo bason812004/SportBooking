@@ -18,7 +18,8 @@ import {
   verifyRefreshToken
 } from "./auth.security.js";
 
-const googleClient = new OAuth2Client(env.GOOGLE_CLIENT_ID);
+const DEFAULT_GOOGLE_CLIENT_ID = "235786600045-sn6mqht28l6v4fuf0mpiu24inhfnlch3.apps.googleusercontent.com";
+const googleClient = new OAuth2Client(env.GOOGLE_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID);
 const OTP_EXPIRES_IN_SECONDS = 600;
 const RESEND_COOLDOWN_SECONDS = 60;
 const MAX_RESENDS = 5;
@@ -243,11 +244,11 @@ export const authService = {
   },
 
   async google(input: { credential: string; accountType?: "USER" | "PARTNER" }) {
-    if (!env.GOOGLE_CLIENT_ID) throw new ValidationError("GOOGLE_CLIENT_ID chua duoc cau hinh");
+    const clientId = env.GOOGLE_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID;
 
     const ticket = await googleClient.verifyIdToken({
       idToken: input.credential,
-      audience: env.GOOGLE_CLIENT_ID
+      audience: clientId
     });
     const payload = ticket.getPayload();
     if (!payload?.email || !payload.sub) throw new AuthError("Google token khong hop le");

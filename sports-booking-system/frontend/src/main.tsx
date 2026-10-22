@@ -10,10 +10,14 @@ import { LanguageProvider } from "./lib/i18n";
 import { queryClient } from "./lib/queryClient";
 import "./index.css";
 
+const GOOGLE_CLIENT_ID =
+  import.meta.env.VITE_GOOGLE_CLIENT_ID ||
+  "235786600045-sn6mqht28l6v4fuf0mpiu24inhfnlch3.apps.googleusercontent.com";
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>
-      <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID ?? ""}>
+      <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
         <QueryClientProvider client={queryClient}>
           <LanguageProvider>
             <AuthProvider>
