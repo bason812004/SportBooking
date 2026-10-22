@@ -106,13 +106,15 @@ export const authService = {
   async requestRegistrationCode(input: { fullName: string; email: string; phone?: string; password: string }) {
     const email = input.email.trim().toLowerCase();
     const existing = await authRepository.findByEmail(email);
-    if (existing?.emailVerified) throw new ConflictError("Email da duoc su dung", "EMAIL_EXISTS");
-    if (existing && existing.role !== "USER") throw new ConflictError("Email da duoc su dung", "EMAIL_EXISTS");
+    if (existing?.emailVerified) throw new ConflictError("Email đã được sử dụng", "EMAIL_EXISTS");
+    if (existing && existing.role !== "USER") throw new ConflictError("Email đã được sử dụng", "EMAIL_EXISTS");
 
     const pending = await authRepository.findRegistrationVerification(email);
-    const pendingSeconds = pending && pending.accountType === "USER" ? activePendingResult(pending) : null;
-    if (pendingSeconds) return { email, expiresInSeconds: pendingSeconds, verificationPending: true };
-    if (pending && !pending.verifiedAt) assertCanResend(pending.lastSentAt, pending.resendCount);
+    const isExpired = pending ? pending.expiresAt.getTime() <= Date.now() : true;
+
+    if (pending && !pending.verifiedAt && !isExpired) {
+      assertCanResend(pending.lastSentAt, pending.resendCount);
+    }
 
     const passwordHash = await hashPassword(input.password);
     await createAndSendRegistrationCode({
@@ -120,7 +122,7 @@ export const authService = {
       email,
       phone: input.phone?.trim() || undefined,
       passwordHash,
-      resendCount: pending ? pending.resendCount + 1 : 0,
+      resendCount: pending && !isExpired ? pending.resendCount + 1 : 0,
       accountType: "USER"
     });
 
@@ -136,7 +138,7 @@ export const authService = {
     if (!verification) throw new NotFoundError("Không tìm thấy yêu cầu xác thực đăng ký");
     if (verification.verifiedAt) throw new ConflictError("Mã xác thực đã được sử dụng", "OTP_ALREADY_USED");
     if (verification.expiresAt.getTime() <= Date.now()) {
-      throw new AppError(400, "OTP_EXPIRED", "Mã xác thực đã hết hạn.");
+      throw new AppError(400, "OTP_EXPIRED", "Mã xác thực đã hết hạn. Vui lòng nhấn gửi lại mã.");
     }
     if (verification.attemptCount >= verification.maxAttempts) {
       throw new AppError(429, "OTP_MAX_ATTEMPTS", "Bạn đã nhập sai quá số lần cho phép. Vui lòng gửi lại mã.");
@@ -159,6 +161,23 @@ export const authService = {
     }
     const pending = await authRepository.findRegistrationVerification(email);
     if (!pending || pending.verifiedAt) throw new NotFoundError("Không có yêu cầu xác thực đang chờ cho email này");
+
+    const isExpired = pending.expiresAt.getTime() <= Date.now();
+    if (isExpired) {
+      await createAndSendRegistrationCode({
+        fullName: pending.fullName,
+        email,
+        phone: pending.phone ?? undefined,
+        passwordHash: pending.passwordHash,
+        resendCount: 0,
+        accountType: pending.accountType,
+        businessName: pending.businessName ?? undefined,
+        address: pending.address ?? undefined,
+        verificationDocumentUrl: pending.verificationDocumentUrl ?? undefined
+      });
+      return { email, expiresInSeconds: OTP_EXPIRES_IN_SECONDS };
+    }
+
     assertCanResend(pending.lastSentAt, pending.resendCount);
 
     await createAndSendRegistrationCode({
@@ -186,13 +205,15 @@ export const authService = {
   }) {
     const email = input.email.trim().toLowerCase();
     const existing = await authRepository.findByEmail(email);
-    if (existing?.emailVerified) throw new ConflictError("Email da duoc su dung", "EMAIL_EXISTS");
-    if (existing && existing.role !== "PARTNER") throw new ConflictError("Email da duoc su dung", "EMAIL_EXISTS");
+    if (existing?.emailVerified) throw new ConflictError("Email đã được sử dụng", "EMAIL_EXISTS");
+    if (existing && existing.role !== "PARTNER") throw new ConflictError("Email đã được sử dụng", "EMAIL_EXISTS");
 
     const pending = await authRepository.findRegistrationVerification(email);
-    const pendingSeconds = pending && pending.accountType === "PARTNER" ? activePendingResult(pending) : null;
-    if (pendingSeconds) return { email, expiresInSeconds: pendingSeconds, verificationPending: true };
-    if (pending && !pending.verifiedAt) assertCanResend(pending.lastSentAt, pending.resendCount);
+    const isExpired = pending ? pending.expiresAt.getTime() <= Date.now() : true;
+
+    if (pending && !pending.verifiedAt && !isExpired) {
+      assertCanResend(pending.lastSentAt, pending.resendCount);
+    }
 
     const passwordHash = await hashPassword(input.password);
     await createAndSendRegistrationCode({
@@ -200,7 +221,7 @@ export const authService = {
       email,
       phone: input.phone?.trim() || undefined,
       passwordHash,
-      resendCount: pending ? pending.resendCount + 1 : 0,
+      resendCount: pending && !isExpired ? pending.resendCount + 1 : 0,
       accountType: "PARTNER",
       businessName: input.businessName.trim(),
       address: input.address.trim(),

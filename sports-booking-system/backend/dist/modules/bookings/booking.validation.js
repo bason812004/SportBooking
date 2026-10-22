@@ -14,8 +14,10 @@ export const createBookingSchema = z.object({
     })
 });
 const bookingSlotSchema = z.object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     startTime: fullHourTime,
-    endTime: fullHourTime
+    endTime: fullHourTime,
+    courtSurfaceId: z.string().min(1).optional()
 });
 const bookingServiceSchema = z.object({
     serviceId: z.string().min(1),
@@ -48,4 +50,17 @@ export const bookingCheckoutSchema = z.object({
 export const cancelBookingSchema = z.object({
     params: z.object({ id: z.string().min(1) }),
     body: z.object({ cancelReason: z.string().min(3).optional() })
+});
+export const addBookingServiceSchema = z.object({
+    params: z.object({ id: z.string().min(1) }),
+    body: z.object({
+        serviceId: z.string().min(1),
+        quantity: z.number().int().positive().max(99)
+    })
+});
+export const updateBookingServiceSchema = z.object({
+    params: z.object({ id: z.string().min(1), serviceId: z.string().min(1) }),
+    body: z.object({
+        quantity: z.number().int().positive().max(99)
+    })
 });

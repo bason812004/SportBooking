@@ -153,6 +153,24 @@ function BookingCard({ booking }: { booking: Booking }) {
             <Info icon={CreditCard} label="Thanh toán" value={paymentMethodLabel(booking.paymentMethod)} />
           </div>
 
+          {booking.bookingSlots && booking.bookingSlots.length > 0 && (
+            <div className="mt-3 border-t border-slate-100 pt-2">
+              <p className="text-[11px] font-black uppercase tracking-wide text-slate-500 mb-1.5">
+                Các khung giờ chi tiết ({booking.bookingSlots.length}):
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {booking.bookingSlots.map((slot: any) => (
+                  <span key={slot.id || `${slot.bookingDate}-${slot.startTime}`} className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-800">
+                    <Clock3 className="h-3 w-3" />
+                    {slot.bookingDate ? `${formatDate(slot.bookingDate)} · ` : ""}
+                    {timeText(slot.startTime)} - {timeText(slot.endTime)}
+                    {slot.slotPrice != null && <span className="text-[10px] text-emerald-600">({formatCurrency(Number(slot.slotPrice))})</span>}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
             {voucher && (
               <div className="flex items-center gap-2 rounded-xl bg-emerald-50 px-3 py-2 font-bold text-emerald-700">

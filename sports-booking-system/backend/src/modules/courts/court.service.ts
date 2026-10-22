@@ -14,7 +14,13 @@ async function attachReviews<T extends { id: string }>(court: T): Promise<CourtW
 }
 
 async function attachReviewsList<T extends { id: string }>(courts: T[]): Promise<Array<CourtWithReviews<T>>> {
-  return Promise.all(courts.map((court) => attachReviews(court)));
+  if (courts.length === 0) return [];
+  const courtIds = courts.map((c) => c.id);
+  const reviewsMap = await reviewRepository.byCourts(courtIds);
+  return courts.map((court) => ({
+    ...court,
+    reviews: reviewsMap.get(court.id) ?? []
+  }));
 }
 
 function summarizeCourt<T extends { latitude?: unknown; longitude?: unknown; reviews?: { rating: number }[]; prices: { price: unknown }[] }>(
@@ -51,18 +57,50 @@ export const courtService = {
     const limit = parseLimit(query.limit);
     const latitude = Number(query.latitude);
     const longitude = Number(query.longitude);
-    const radiusKm = Number(query.radiusKm || 25);
+    const radiusKmInput = query.radiusKm ? Number(query.radiusKm) : undefined;
+    const hasRadiusFilter = Number.isFinite(radiusKmInput) && (radiusKmInput as number) > 0;
+    const radiusKm = hasRadiusFilter ? (radiusKmInput as number) : undefined;
+
     const userLocation = Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude, longitude } : undefined;
     const { items, total } = await courtRepository.list(query, page, limit);
-    const itemsWithReviews = await attachReviewsList(items);
-    let summarized = itemsWithReviews.map((item) => summarizeCourt(item, userLocation));
-    if (userLocation) summarized = summarized.filter((item) => item.distanceKm === null || item.distanceKm <= radiusKm);
-    if (query.sortBy === "distance" && userLocation) {
-      summarized.sort((left, right) => (left.distanceKm ?? Number.MAX_SAFE_INTEGER) - (right.distanceKm ?? Number.MAX_SAFE_INTEGER));
+
+    // Lightweight in-memory distance calculation and summary
+    let summarized = items.map((item) => summarizeCourt(item, userLocation));
+
+    // Only filter by distance radius IF explicitly passed by user
+    if (userLocation && hasRadiusFilter && radiusKm) {
+      summarized = summarized.filter((item) => item.distanceKm === null || item.distanceKm <= radiusKm);
     }
+
+    const sortMode = query.sort || query.sortBy;
+    if (sortMode === "distance" && userLocation) {
+      summarized.sort((left, right) => (left.distanceKm ?? Number.MAX_SAFE_INTEGER) - (right.distanceKm ?? Number.MAX_SAFE_INTEGER));
+    } else if (sortMode === "price_asc") {
+      summarized.sort((left, right) => (left.minPrice || 0) - (right.minPrice || 0));
+    } else if (sortMode === "price_desc") {
+      summarized.sort((left, right) => (right.minPrice || 0) - (left.minPrice || 0));
+    } else if (sortMode === "popular" || sortMode === "rating") {
+      summarized.sort((left, right) => {
+        const ratingDiff = (right.averageRating || 0) - (left.averageRating || 0);
+        if (Math.abs(ratingDiff) > 0.1) return ratingDiff;
+        return (right.reviewCount || 0) - (left.reviewCount || 0);
+      });
+    }
+
+    const needsCustomPagination = Boolean(
+      userLocation ||
+      hasRadiusFilter ||
+      ["distance", "price_asc", "price_desc", "popular", "rating"].includes(sortMode || "")
+    );
+    const effectiveTotal = needsCustomPagination ? summarized.length : total;
     const start = (page - 1) * limit;
-    const paged = userLocation || query.sortBy === "distance" ? summarized.slice(start, start + limit) : summarized;
-    return { items: paged, meta: paginationMeta(page, limit, userLocation || query.sortBy === "distance" ? summarized.length : total) };
+    const pagedCandidates = needsCustomPagination ? summarized.slice(start, start + limit) : summarized;
+
+    // Attach reviews ONLY to the paged items (dramatically faster!)
+    const itemsWithReviews = await attachReviewsList(pagedCandidates);
+    const paged = itemsWithReviews.map((item) => summarizeCourt(item, userLocation));
+
+    return { items: paged, meta: paginationMeta(page, limit, effectiveTotal) };
   },
 
   async detail(id: string) {

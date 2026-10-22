@@ -3,17 +3,68 @@ import { app } from "./app.js";
 import { env } from "./config/env.js";
 import { prisma } from "./config/db.js";
 import { initRealtime } from "./modules/realtime/realtime.server.js";
-import { startPaymentPoller } from "./modules/payments/payment.poller.js";
+import { startPaymentExpirySweep, startPaymentPoller } from "./modules/payments/payment.poller.js";
+import { startBookingReminderScheduler } from "./modules/booking-reminders/bookingReminder.scheduler.js";
+import { ensureTeamChatTables } from "./modules/team-posts/teamPost.repository.js";
+import { ensureReviewTables } from "./modules/reviews/review.repository.js";
+import { ensureBookingTables } from "./modules/bookings/booking.repository.js";
+import { ensureServiceTables } from "./modules/services/service.repository.js";
+import { startAdminNotificationWorker } from "./modules/notifications/notificationOutbox.service.js";
 
 const server = http.createServer(app);
 initRealtime(server);
 
-server.listen(env.PORT, () => {
-  console.log(`API listening on http://localhost:${env.PORT}`);
-  startPaymentPoller();
+server.listen(env.PORT, "0.0.0.0", async () => {
+  console.log(`API listening on http://0.0.0.0:${env.PORT} (LAN: http://192.168.1.12:${env.PORT})`);
+  try {
+    await ensureTeamChatTables().catch((e) => console.warn("[DB Init] teamChat:", e?.message));
+    await ensureReviewTables().catch((e) => console.warn("[DB Init] review:", e?.message));
+    await ensureBookingTables().catch((e) => console.warn("[DB Init] booking:", e?.message));
+    await ensureServiceTables().catch((e) => console.warn("[DB Init] service:", e?.message));
+    console.log("Database schema helpers ready");
+  } catch (err) {
+    console.error("Failed to initialize database tables:", err);
+  } finally {
+    startPaymentPoller();
+    startPaymentExpirySweep();
+    startBookingReminderScheduler();
+    startAdminNotificationWorker();
+  }
 });
 
 process.on("SIGINT", async () => {
   await prisma.$disconnect();
   server.close(() => process.exit(0));
 });
+
+// Trigger reload for realtime court and schedule enhancements + slug resolution
+// Reloaded at 2026-10-22 12:20:00
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

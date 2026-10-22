@@ -45,8 +45,18 @@ export function dayTypeFor(date: string) {
   return day === 0 || day === 6 ? DayType.WEEKEND : DayType.WEEKDAY;
 }
 
+/** Booking dates/times are Vietnam wall-clock values; pin +07:00 so the result does not depend on server TZ. */
+export function vietnamWallClock(date: string, time: string) {
+  return new Date(`${date.slice(0, 10)}T${time.slice(0, 5)}:00+07:00`);
+}
+
+/** Today's date (YYYY-MM-DD) and clock time (HH:mm) in Vietnam. */
+export function vietnamNow(now = new Date()) {
+  const shifted = new Date(now.getTime() + 7 * 60 * 60 * 1000).toISOString();
+  return { date: shifted.slice(0, 10), time: shifted.slice(11, 16) };
+}
+
+/** The instant a booking's DATE + TIME columns refer to. Also used with endTime for "after the booking ended". */
 export function bookingStartsAt(date: Date, time: Date) {
-  const datePart = date.toISOString().slice(0, 10);
-  const timePart = time.toISOString().slice(11, 16);
-  return new Date(`${datePart}T${timePart}:00`);
+  return vietnamWallClock(date.toISOString().slice(0, 10), time.toISOString().slice(11, 16));
 }

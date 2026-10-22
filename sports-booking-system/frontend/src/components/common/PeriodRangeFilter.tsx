@@ -1,15 +1,27 @@
+import { useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
+import { format } from "date-fns";
+import { vi, enUS } from "date-fns/locale";
 import { Button } from "../ui/Button";
-import { Input } from "../ui/Input";
+import { DatePicker } from "../ui/DatePicker";
+import { DayPickerCalendar } from "../ui/DayPickerCalendar";
 import { Overlay } from "./Overlay";
 import { rangeModeLabel, type PeriodRange } from "../../hooks/usePeriodRange";
-import { formatYmd } from "../../features/bookings/components/BookingCalendar/utils";
+import { useClickOutside } from "../../hooks/useClickOutside";
+import { useLanguage } from "../../lib/i18n";
 
 /**
  * Toggle "Ngày | Tuần | Tháng | Tuỳ chỉnh" + điều hướng theo khoảng thời gian
  * đang chọn. Dùng chung với hook `usePeriodRange`.
  */
 export function PeriodRangeFilter({ period }: { period: PeriodRange }) {
+  const { language } = useLanguage();
+  const locale = language === "vi" ? vi : enUS;
+
+  const [dayPickerOpen, setDayPickerOpen] = useState(false);
+  const [dayPickerMonth, setDayPickerMonth] = useState(period.periodAnchor);
+  const dayPickerRef = useClickOutside<HTMLSpanElement>(dayPickerOpen, () => setDayPickerOpen(false));
+
   return (
     <div>
       <div className="flex overflow-hidden rounded-lg border border-emerald-200 text-xs font-bold w-fit">
@@ -27,8 +39,8 @@ export function PeriodRangeFilter({ period }: { period: PeriodRange }) {
 
       {period.rangeMode === "custom" ? (
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <Input label="Từ ngày" type="date" value={period.customFrom} onChange={(e) => period.setCustomFrom(e.target.value)} />
-          <Input label="Đến ngày" type="date" value={period.customTo} onChange={(e) => period.setCustomTo(e.target.value)} />
+          <DatePicker label="Từ ngày" value={period.customFrom} onChange={period.setCustomFrom} />
+          <DatePicker label="Đến ngày" value={period.customTo} onChange={period.setCustomTo} />
         </div>
       ) : (
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -43,20 +55,31 @@ export function PeriodRangeFilter({ period }: { period: PeriodRange }) {
             Hôm nay
           </Button>
           {period.rangeMode === "day" || period.rangeMode === "week" ? (
-            <span className="relative inline-flex">
-              <Button variant="secondary" onClick={() => period.openPicker(period.periodDateInputRef.current)} title="Chọn ngày">
+            <span className="relative inline-flex" ref={dayPickerRef}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setDayPickerMonth(period.periodAnchor);
+                  setDayPickerOpen((o) => !o);
+                }}
+                title="Chọn ngày"
+              >
                 <CalendarDays className="h-4 w-4" />
                 Chọn ngày
               </Button>
-              <input
-                ref={period.periodDateInputRef}
-                type="date"
-                value={formatYmd(period.periodAnchor)}
-                onChange={(e) => period.selectDay(e.target.value)}
-                className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
-                tabIndex={-1}
-                aria-hidden="true"
-              />
+              {dayPickerOpen && (
+                <DayPickerCalendar
+                  required
+                  selected={period.periodAnchor}
+                  onSelect={(date) => {
+                    period.selectDay(format(date, "yyyy-MM-dd"));
+                    setDayPickerOpen(false);
+                  }}
+                  month={dayPickerMonth}
+                  onMonthChange={setDayPickerMonth}
+                  locale={locale}
+                />
+              )}
             </span>
           ) : (
             <Button variant="secondary" onClick={period.openMonthPicker} title="Chọn tháng">

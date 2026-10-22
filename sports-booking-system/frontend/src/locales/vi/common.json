@@ -1,4 +1,5 @@
 {
+  "notifications": { "loading": "Đang tải thông báo…", "retry": "Không tải được thông báo. Bấm để thử lại.", "more": "Xem thêm thông báo" },
   "language": {
     "label": "Ngôn ngữ",
     "vietnamese": "Tiếng Việt",

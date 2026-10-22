@@ -24,9 +24,9 @@ insert into courts (id, partner_id, category_id, name, slug, description, addres
 on conflict (id) do nothing;
 
 insert into court_surfaces (court_id, code, name, capacity, surface, size, image_url, sort_order)
-select id, '01', name || ' 01', 'Sân tiêu chuẩn', 'Mặt sân tổng hợp', 'Theo môn thi đấu', 'https://images.unsplash.com/photo-1526232761682-d26e03ac148e?auto=format&fit=crop&w=500&q=80', 1
+select id, 'S01', left(name, 151) || ' - Sân 01', 'Sân tiêu chuẩn', 'Mặt sân tổng hợp', 'Theo môn thi đấu', 'https://images.unsplash.com/photo-1526232761682-d26e03ac148e?auto=format&fit=crop&w=500&q=80', 1
 from courts where id between 'c0021' and 'c0040'
-  and not exists (select 1 from court_surfaces cs where cs.court_id = courts.id and cs.code = '01');
+  and not exists (select 1 from court_surfaces cs where cs.court_id = courts.id and upper(cs.code) in ('01', 'S01'));
 
 insert into court_images (court_id, image_url, sort_order)
 select id, 'https://images.unsplash.com/photo-1526232761682-d26e03ac148e?auto=format&fit=crop&w=1200&q=80', 1 from courts where id between 'c0021' and 'c0040'

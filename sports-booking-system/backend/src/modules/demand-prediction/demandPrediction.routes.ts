@@ -4,7 +4,7 @@ import { authMiddleware } from "../../middlewares/auth.middleware.js";
 import { requireRole } from "../../middlewares/role.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
 import { demandPredictionController } from "./demandPrediction.controller.js";
-import { demandPredictionQuerySchema, partnerCourtPredictionParamsSchema } from "./demandPrediction.validation.js";
+import { demandPredictionQuerySchema, partnerCourtPredictionParamsSchema, partnerDemandForecastSchema } from "./demandPrediction.validation.js";
 
 export const publicDemandPredictionRoutes = Router({ mergeParams: true });
 publicDemandPredictionRoutes.get("/", validate(demandPredictionQuerySchema), demandPredictionController.predict);
@@ -13,4 +13,5 @@ export const partnerDemandPredictionRoutes = Router();
 partnerDemandPredictionRoutes.use(authMiddleware, requireRole(UserRole.PARTNER));
 partnerDemandPredictionRoutes.get("/overview", demandPredictionController.overview);
 partnerDemandPredictionRoutes.get("/courts/:courtId", validate(partnerCourtPredictionParamsSchema), demandPredictionController.courtOverview);
+partnerDemandPredictionRoutes.get("/courts/:courtId/forecast", validate(partnerDemandForecastSchema), demandPredictionController.forecast);
 partnerDemandPredictionRoutes.get("/peak-hours", demandPredictionController.peakHours);

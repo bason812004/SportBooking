@@ -1,6 +1,8 @@
+import { Prisma } from "@prisma/client";
 import { NotFoundError } from "../../shared/errors/AppError.js";
-import { calculateDemandScore, calculateDynamicPrice } from "../../shared/utils/businessRules.js";
-import { dayTypeFor, timeToMinutes } from "../../shared/utils/time.js";
+import { calculateDynamicPrice } from "../../shared/utils/businessRules.js";
+import { dayTypeFor, timeToMinutes, vietnamNow } from "../../shared/utils/time.js";
+import { prisma } from "../../config/db.js";
 import {
   WEEKLY_DEFAULT_CLOSE,
   WEEKLY_DEFAULT_OPEN,
@@ -20,11 +22,7 @@ import {
 } from "./weeklySchedule.repository.js";
 import { voucherRepository, type VoucherRow } from "../vouchers/voucher.repository.js";
 import { evaluateVoucherEligibility } from "../vouchers/voucher.eligibility.js";
-
-function isPeakHour(startTime: string) {
-  const minutes = timeToMinutes(startTime);
-  return minutes >= timeToMinutes("17:00") && minutes < timeToMinutes("21:00");
-}
+import { resolveSlotDemand, type DemandHistoryBundle } from "../demand-prediction/demandPrediction.features.js";
 
 // ---------------------------------------------------------------------------
 // Short-lived response cache.
@@ -39,8 +37,8 @@ function isPeakHour(startTime: string) {
 const responseCache = new Map<string, { expiresAt: number; data: WeeklyScheduleResponse }>();
 const RESPONSE_TTL_MS = 30_000;
 
-function cacheKey(courtId: string, weekStart: string) {
-  return `${courtId}__${weekStart}`;
+function cacheKey(courtId: string, weekStart: string, surfaceId?: string) {
+  return `${courtId}__${weekStart}__${surfaceId || "ALL"}`;
 }
 
 function readCache(key: string) {
@@ -59,42 +57,102 @@ function writeCache(key: string, data: WeeklyScheduleResponse) {
 }
 
 export function invalidateWeeklyScheduleCache(courtId?: string, weekStart?: string) {
-  if (!courtId) {
-    responseCache.clear();
-    return;
-  }
-  if (weekStart) {
-    responseCache.delete(cacheKey(courtId, weekStart));
-    return;
-  }
-  for (const key of responseCache.keys()) {
-    if (key.startsWith(`${courtId}__`)) responseCache.delete(key);
-  }
+  responseCache.clear();
 }
 
 
-function isPendingButExpired(booking: {
-  bookingStatus: string;
-  payments?: Array<{ expiresAt: Date | null; status: string } | null> | null;
-}) {
-  const isPending = booking.bookingStatus === "PENDING" || booking.bookingStatus === "PENDING_PAYMENT";
-  if (!isPending) return false;
-  const payments = (booking.payments ?? []).filter(Boolean) as Array<{ expiresAt: Date | null; status: string }>;
-  const activePayment = payments.find((p) => p.status === "PENDING" || p.status === "UNPAID");
-  if (!activePayment) return false;
-  return !activePayment.expiresAt || activePayment.expiresAt.getTime() > Date.now();
+/**
+ * Batch-fetch all pending booking payments in ONE query instead of N queries
+ * (one per pending booking/booking-slot).  Result is keyed by bookingId.
+ */
+async function fetchPendingPayments(bookingIds: string[]): Promise<Map<string, { expiresAt: Date | null; status: string }[]>> {
+  if (bookingIds.length === 0) return new Map();
+  const rows = await prisma.payment.findMany({
+    where: {
+      OR: [
+        { bookingId: { in: bookingIds } },
+        { bookingOrder: { bookings: { some: { id: { in: bookingIds } } } } }
+      ],
+      status: { in: ["PENDING", "UNPAID"] }
+    },
+    select: {
+      bookingId: true,
+      expiresAt: true,
+      status: true,
+      bookingOrder: {
+        select: {
+          bookings: { select: { id: true } }
+        }
+      }
+    }
+  });
+  const map = new Map<string, { expiresAt: Date | null; status: string }[]>();
+  for (const row of rows) {
+    const paymentInfo = { expiresAt: row.expiresAt, status: row.status };
+    if (row.bookingId) {
+      const list = map.get(row.bookingId) ?? [];
+      list.push(paymentInfo);
+      map.set(row.bookingId, list);
+    }
+    if (row.bookingOrder?.bookings) {
+      for (const b of row.bookingOrder.bookings) {
+        const list = map.get(b.id) ?? [];
+        list.push(paymentInfo);
+        map.set(b.id, list);
+      }
+    }
+  }
+  return map;
 }
 
-function toIsoTime(value: Date | string | null | undefined) {
+/**
+ * Check if a booking blocks the slot on the calendar.
+ * CONFIRMED and COMPLETED bookings ALWAYS block.
+ * PENDING or PENDING_PAYMENT bookings block as long as their payment is active / not expired.
+ */
+function hasActivePayment(
+  bookingId: string,
+  bookingStatus: string,
+  paymentMap: Map<string, { expiresAt: Date | null; status: string }[]>
+): boolean {
+  if (bookingStatus === "CONFIRMED" || bookingStatus === "COMPLETED") {
+    return true;
+  }
+  if (bookingStatus === "PENDING" || bookingStatus === "PENDING_PAYMENT") {
+    const payments = paymentMap.get(bookingId);
+    if (!payments || payments.length === 0) {
+      return true;
+    }
+    const activePayment = payments.find((p) => p.status === "PENDING" || p.status === "UNPAID");
+    if (!activePayment) {
+      return true;
+    }
+    return !activePayment.expiresAt || activePayment.expiresAt.getTime() > Date.now();
+  }
+  return false;
+}
+
+function toIsoTime(value: Date | string | null | undefined): string {
   if (!value) return "";
-  if (typeof value === "string") return value.length >= 5 ? value.slice(0, 5) : value;
-  return value.toISOString().slice(11, 16);
+  if (typeof value === "string") {
+    if (value.includes("T")) return value.slice(11, 16);
+    return value.length >= 5 ? value.slice(0, 5) : value;
+  }
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return "";
+    return value.toISOString().slice(11, 16);
+  }
+  return "";
 }
 
-function toIsoDate(value: Date | string | null | undefined) {
+function toIsoDate(value: Date | string | null | undefined): string {
   if (!value) return "";
   if (typeof value === "string") return value.length >= 10 ? value.slice(0, 10) : value;
-  return value.toISOString().slice(0, 10);
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return "";
+    return value.toISOString().slice(0, 10);
+  }
+  return "";
 }
 
 function addDays(date: string, days: number) {
@@ -121,14 +179,18 @@ function dynamicPriceForHour(
   endTime: string
 ) {
   const dayType = dayTypeFor(date);
+  const basePrices = bundle?.basePrices ?? [];
+  const legacyPrices = bundle?.legacyPrices ?? [];
+  const rules = bundle?.rules ?? [];
+
   const basePriceRow =
-    bundle.basePrices.find(
+    basePrices.find(
       (row) =>
         row.dayType === dayType &&
         timeToMinutes(row.startTime) <= timeToMinutes(startTime) &&
         timeToMinutes(row.endTime) >= timeToMinutes(endTime)
     ) ??
-    bundle.legacyPrices.find(
+    legacyPrices.find(
       (row) =>
         row.dayType === dayType &&
         timeToMinutes(row.startTime) <= timeToMinutes(startTime) &&
@@ -139,7 +201,7 @@ function dynamicPriceForHour(
     ? "basePrice" in basePriceRow
       ? basePriceRow.basePrice
       : basePriceRow.price
-    : bundle.fallbackBasePrice;
+    : (bundle?.fallbackBasePrice ?? 0);
   if (basePrice <= 0) {
     return {
       basePrice: 0,
@@ -150,7 +212,7 @@ function dynamicPriceForHour(
     };
   }
 
-  const applicableRules = bundle.rules.filter((rule) => {
+  const applicableRules = rules.filter((rule) => {
     if (rule.dayType && rule.dayType !== dayType) return false;
     if (rule.startTime && rule.endTime) {
       return timeToMinutes(rule.startTime) <= timeToMinutes(startTime) && timeToMinutes(rule.endTime) >= timeToMinutes(endTime);
@@ -182,32 +244,20 @@ type WeekPricingBundle = Awaited<
   ReturnType<typeof import("../dynamic-pricing/dynamicPricing.service.js").dynamicPricingService.calculateForWeek>
 >;
 
-type WeekDemandBundle = Awaited<
-  ReturnType<typeof import("../demand-prediction/demandPrediction.service.js").demandPredictionService.predictForWeek>
->;
-
 function predictHour(
-  bundle: WeekDemandBundle,
+  bundle: DemandHistoryBundle,
   date: string,
   startTime: string,
   endTime: string
 ) {
-  const matchingKey = `${startTime}-${endTime}`;
-  const matchingSlotBookings = bundle.matchingCountsByWindow[matchingKey] ?? 0;
-  const result = calculateDemandScore({
-    totalHistoricalBookings: bundle.totalHistoricalBookings,
-    matchingSlotBookings,
-    averageBookingsPerComparableSlot: bundle.averageBookingsPerComparableSlot,
-    isWeekend: dayTypeFor(date) === "WEEKEND",
-    isPeakHour: isPeakHour(startTime),
-    cancellationCount: bundle.cancellationCount
-  });
+  const { result, modelVersion } = resolveSlotDemand(bundle, date, startTime, endTime);
 
   return {
     predictedOccupancyRate: result.predictedOccupancyRate ?? null,
     predictionLevel: result.predictionLevel ?? null,
     predictionStatus: result.status,
-    confidenceScore: result.status === "INSUFFICIENT_DATA" ? null : result.confidenceScore
+    confidenceScore: result.status === "INSUFFICIENT_DATA" ? null : result.confidenceScore,
+    predictionModel: result.status === "GENERATED" ? modelVersion : null
   };
 }
 
@@ -216,6 +266,8 @@ function projectSlot(slot: InternalWeeklySlot): WeeklySlotRow {
     date: slot.date,
     startTime: slot.startTime,
     endTime: slot.endTime,
+    courtSurfaceId: (slot as any).courtSurfaceId ?? null,
+    courtSurfaceName: (slot as any).courtSurfaceName ?? null,
     status: slot.status,
     basePrice: slot.basePrice,
     finalPrice: slot.finalPrice,
@@ -225,6 +277,7 @@ function projectSlot(slot: InternalWeeklySlot): WeeklySlotRow {
     predictionLevel: slot.predictionLevel,
     predictionStatus: slot.predictionStatus,
     predictedOccupancyRate: slot.predictedOccupancyRate,
+    predictionModel: slot.predictionModel ?? null,
     blockReason: slot.blockReason,
     bookingCode: slot.bookingCode
   };
@@ -265,10 +318,15 @@ async function loadPricingBundle(
   } as WeekPricingBundle;
 }
 
-async function loadDemandBundle(courtId: string, weekStart: string, weekEnd: string): Promise<WeekDemandBundle> {
+async function loadDemandBundle(
+  courtId: string,
+  weekStart: string,
+  weekEnd: string,
+  slots: Array<{ date: string; startTime: string }>
+): Promise<DemandHistoryBundle> {
   try {
     const { demandPredictionService } = await import("../demand-prediction/demandPrediction.service.js");
-    const bundle = await demandPredictionService.predictForWeek({ courtId, weekStart, weekEnd });
+    const bundle = await demandPredictionService.predictForWeek({ courtId, weekStart, weekEnd, slots });
     if (bundle) return bundle;
   } catch (error) {
     if (process.env.NODE_ENV !== "production") {
@@ -277,13 +335,12 @@ async function loadDemandBundle(courtId: string, weekStart: string, weekEnd: str
     }
   }
   return {
-    courtId,
-    partnerId: "",
     totalHistoricalBookings: 0,
     cancellationCount: 0,
     averageBookingsPerComparableSlot: 0,
-    matchingCountsByWindow: {}
-  } as WeekDemandBundle;
+    matchingCountsByWindow: {},
+    mlPredictions: {}
+  };
 }
 
 function buildVoucherEntry(row: VoucherRow): WeeklyVoucherEntry {
@@ -312,25 +369,46 @@ function buildVoucherEntry(row: VoucherRow): WeeklyVoucherEntry {
 }
 
 export const weeklyScheduleService = {
-  async build(courtId: string, weekStart?: string) {
+  async build(courtId: string, weekStart?: string, surfaceId?: string) {
     const baseDate = weekStart ?? new Date().toISOString().slice(0, 10);
     const monday = startOfWeek(baseDate);
-    const key = cacheKey(courtId, monday);
+    const key = cacheKey(courtId, monday, surfaceId);
     const cached = readCache(key);
     if (cached) return cached;
 
     const court = await weeklyScheduleRepository.court(courtId);
     if (!court) throw new NotFoundError("Sân không tồn tại hoặc chưa được duyệt");
+    const canonicalCourtId = court.id;
     const sunday = addDays(monday, 6);
     const slotShape = weeklyScheduleRepository.buildSlots(court, monday, sunday);
 
+    const currentSurfaceId = surfaceId || (court.surfaces?.[0]?.id ?? null);
+    const currentSurfaceName = court.surfaces?.find((s: any) => s.id === currentSurfaceId)?.name || court.name;
+
+    for (const slot of slotShape.slots) {
+      (slot as any).courtSurfaceId = currentSurfaceId;
+      (slot as any).courtSurfaceName = currentSurfaceName;
+    }
+
     const [blocks, bookings, bookingSlots, pricingBundle, demandBundle] = await Promise.all([
-      weeklyScheduleRepository.availabilityBlocks(courtId, monday, sunday),
-      weeklyScheduleRepository.bookings(courtId, monday, sunday),
-      weeklyScheduleRepository.bookingSlots(courtId, monday, sunday),
-      loadPricingBundle(courtId, court, monday, sunday, slotShape.openMins, slotShape.closeMins),
-      loadDemandBundle(courtId, monday, sunday)
+      weeklyScheduleRepository.availabilityBlocks(canonicalCourtId, monday, sunday, surfaceId),
+      weeklyScheduleRepository.bookings(canonicalCourtId, monday, sunday, surfaceId),
+      weeklyScheduleRepository.bookingSlots(canonicalCourtId, monday, sunday, surfaceId),
+      loadPricingBundle(canonicalCourtId, court, monday, sunday, slotShape.openMins, slotShape.closeMins),
+      loadDemandBundle(canonicalCourtId, monday, sunday, slotShape.slots)
     ]);
+
+    // Batch-fetch payments for all pending bookings in ONE query.
+    // This eliminates N+1: previously each pending booking triggered a nested SELECT.
+    const pendingBookingIds = [
+      ...bookings
+        .filter((b) => b && (b.bookingStatus === "PENDING" || b.bookingStatus === "PENDING_PAYMENT"))
+        .map((b) => b.id),
+      ...bookingSlots
+        .filter((bs) => bs?.booking && (bs.booking.bookingStatus === "PENDING" || bs.booking.bookingStatus === "PENDING_PAYMENT"))
+        .map((bs) => bs.bookingId)
+    ].filter((id): id is string => Boolean(id));
+    const paymentMap = await fetchPendingPayments([...new Set(pendingBookingIds)]);
 
     function applyToMatchingSlots(
       dateKey: string,
@@ -352,7 +430,7 @@ export const weeklyScheduleService = {
       const startKey = toIsoTime(booking.startTime);
       const endKey = toIsoTime(booking.endTime);
       if (!startKey || !endKey) continue;
-      const blocksSlot = isPendingButExpired(booking);
+      const blocksSlot = hasActivePayment(booking.id, booking.bookingStatus, paymentMap);
       applyToMatchingSlots(dateKey, startKey, endKey, (slot) => {
         if (blocksSlot) {
           slot.status = "BOOKED";
@@ -367,11 +445,12 @@ export const weeklyScheduleService = {
 
     // 2. Granular booking slots.
     for (const bs of bookingSlots) {
+      if (!bs || !bs.booking) continue;
       const dateKey = toIsoDate(bs.bookingDate);
       const startKey = toIsoTime(bs.startTime);
       const endKey = toIsoTime(bs.endTime);
       if (!startKey || !endKey) continue;
-      const blocksSlot = isPendingButExpired(bs.booking);
+      const blocksSlot = hasActivePayment(bs.bookingId, bs.booking.bookingStatus, paymentMap);
       applyToMatchingSlots(dateKey, startKey, endKey, (slot) => {
         if (blocksSlot) {
           slot.status = "BOOKED";
@@ -424,12 +503,14 @@ export const weeklyScheduleService = {
         | "GENERATED"
         | "FAILED";
       slot.confidenceScore = demand.confidenceScore;
+      slot.predictionModel = demand.predictionModel;
     }
 
-    // 5. Hide past dates.
-    const today = new Date().toISOString().slice(0, 10);
+    // 5. Hide past dates and the hours of today that have already started (Vietnam time),
+    //    matching the rule booking quote/checkout enforces.
+    const now = vietnamNow();
     for (const slot of slotShape.slots) {
-      if (slot.date < today) slot.status = "OUTSIDE_HOURS";
+      if (slot.date < now.date || (slot.date === now.date && slot.startTime <= now.time)) slot.status = "OUTSIDE_HOURS";
     }
 
     // Build per-day buckets.
@@ -477,7 +558,7 @@ export const weeklyScheduleService = {
 
     // Build flat booking list (only those that currently block).
     const bookingEntries: WeeklyBookingEntry[] = bookings
-      .filter((b) => isPendingButExpired(b))
+      .filter((b) => hasActivePayment(b.id, b.bookingStatus, paymentMap))
       .map((b) => ({
         id: b.id,
         bookingCode: b.bookingCode,
@@ -495,7 +576,7 @@ export const weeklyScheduleService = {
       const candidateDays = days;
       for (const row of rows) {
         // Court-restricted voucher not for this court -> skip.
-        if (row.courtId && row.courtId !== courtId) continue;
+        if (row.courtId && row.courtId !== canonicalCourtId) continue;
 
         let applicableSomewhere = false;
         let bestSlot: WeeklySlotRow | null = null;
@@ -506,7 +587,7 @@ export const weeklyScheduleService = {
               bookingDate: slot.date,
               startTime: slot.startTime,
               endTime: slot.endTime,
-              courtId,
+              courtId: canonicalCourtId,
               subtotal: slot.finalPrice
             });
             if (result.eligible) {
@@ -552,6 +633,9 @@ export const weeklyScheduleService = {
     };
 
     writeCache(key, response);
+    if (courtId !== canonicalCourtId) {
+      writeCache(cacheKey(canonicalCourtId, monday, surfaceId), response);
+    }
     return response;
   }
 };

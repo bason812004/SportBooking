@@ -36,6 +36,12 @@ export const paymentApi = {
   async status(paymentId: string) {
     const { data } = await api.get<ApiResponse<PaymentStatus>>(`/payments/${paymentId}/status`);
     return data.data;
+  },
+  // Dev-only shortcut (backend rejects this outside development) so testers can complete a
+  // booking payment without scanning a real QR code.
+  async devComplete(paymentId: string) {
+    const { data } = await api.post<ApiResponse<{ ok: boolean }>>(`/payments/${paymentId}/dev-complete`);
+    return data.data;
   }
 };
 

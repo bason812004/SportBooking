@@ -14,8 +14,8 @@ export function StatusBadge({ status, kind = "booking" }: { status: string; kind
 
 function statusTone(status: string) {
   if (["COMPLETED", "PAID", "ACTIVE", "CLAIMED", "AVAILABLE"].includes(status)) return { bg: colors.successSoft, fg: colors.success };
-  if (["CONFIRMED", "PENDING_PAYMENT", "PENDING", "UNPAID"].includes(status)) return { bg: colors.warningSoft, fg: colors.warning };
-  if (["CANCELLED", "NO_SHOW", "FAILED", "EXPIRED", "USED"].includes(status)) return { bg: colors.dangerSoft, fg: colors.danger };
+  if (["CONFIRMED", "DEPOSIT_PAID", "IN_PROGRESS", "CHECKOUT_PENDING", "PENDING_PAYMENT", "PENDING", "UNPAID"].includes(status)) return { bg: colors.warningSoft, fg: colors.warning };
+  if (["CANCELLED", "REJECTED", "NO_SHOW", "FAILED", "EXPIRED", "USED"].includes(status)) return { bg: colors.dangerSoft, fg: colors.danger };
   return { bg: colors.surfaceAlt, fg: colors.muted };
 }
 

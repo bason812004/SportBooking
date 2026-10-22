@@ -13,4 +13,5 @@ voucherRoutes.post("/validate", authMiddleware, requireRole(UserRole.USER), vouc
 voucherRoutes.post("/:id/click", validate(voucherIdParamsSchema), voucherController.click);
 voucherRoutes.get("/:id", voucherController.detail);
 voucherRoutes.post("/:id/claim", authMiddleware, requireRole(UserRole.USER), validate(voucherIdParamsSchema), voucherController.claim);
+voucherRoutes.post("/claim-all", authMiddleware, requireRole(UserRole.USER), voucherController.claimAll);
 voucherRoutes.post("/claim-all-platform", authMiddleware, requireRole(UserRole.USER), voucherController.claimAllPlatform);

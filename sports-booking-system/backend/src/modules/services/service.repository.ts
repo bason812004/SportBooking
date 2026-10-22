@@ -1,1 +1,922 @@
-export const serviceRepository = {};
+import crypto from "crypto";
+import { prisma } from "../../config/db.js";
+import type { CreateServiceCategoryInput, CreateServiceInput, UpdateServiceInput } from "./service.types.js";
+
+type SportFlags = {
+  isBadminton: boolean;
+  isTennis: boolean;
+  isPickleball: boolean;
+  isFootball: boolean;
+  isBasketball: boolean;
+  isVolleyball: boolean;
+};
+
+// Brand names used by the seed data to tag gear to a specific sport (e.g. "Vớ Thể Thao Yonex"
+// carries no literal sport word but Yonex is only ever used for badminton items in this catalog).
+function detectSportFromText(text: string): SportFlags {
+  const t = text.toLowerCase();
+  return {
+    isBadminton: t.includes("cầu lông") || t.includes("badminton") || t.includes("yonex"),
+    isTennis: t.includes("tennis") || t.includes("wilson") || t.includes("babolat"),
+    isPickleball: t.includes("pickleball") || t.includes("selkirk") || t.includes("franklin"),
+    isFootball: t.includes("bóng đá") || t.includes("football") || t.includes("futsal") || t.includes("soccer"),
+    isBasketball: t.includes("bóng rổ") || t.includes("basketball") || t.includes("molten"),
+    isVolleyball: t.includes("bóng chuyền") || t.includes("volleyball") || t.includes("mikasa")
+  };
+}
+
+function hasAnySport(sport: SportFlags) {
+  return sport.isBadminton || sport.isTennis || sport.isPickleball || sport.isFootball || sport.isBasketball || sport.isVolleyball;
+}
+
+function sportsIntersect(a: SportFlags, b: SportFlags) {
+  return (
+    (a.isBadminton && b.isBadminton) ||
+    (a.isTennis && b.isTennis) ||
+    (a.isPickleball && b.isPickleball) ||
+    (a.isFootball && b.isFootball) ||
+    (a.isBasketball && b.isBasketball) ||
+    (a.isVolleyball && b.isVolleyball)
+  );
+}
+
+// A service whose name implies a specific sport (by keyword or brand) only belongs on courts of
+// that sport. Items with no detectable sport (drinks, food, generic combos) are always allowed,
+// and a court whose own sport we couldn't detect is left unfiltered rather than hiding everything.
+function isServiceAllowedForSport(serviceName: string, courtSport: SportFlags) {
+  const itemSport = detectSportFromText(serviceName);
+  const isRacketItem = serviceName.toLowerCase().includes("vợt");
+  if (!hasAnySport(itemSport) && !isRacketItem) return true;
+  if (!hasAnySport(courtSport)) return true;
+  if (isRacketItem && !hasAnySport(itemSport)) {
+    return courtSport.isBadminton || courtSport.isTennis || courtSport.isPickleball;
+  }
+  return sportsIntersect(itemSport, courtSport);
+}
+
+let initPromise: Promise<void> | null = null;
+
+async function runServiceTableInit() {
+  try {
+    const statements = [
+      `CREATE EXTENSION IF NOT EXISTS "pgcrypto";`,
+      `ALTER TABLE courts ADD COLUMN IF NOT EXISTS require_deposit BOOLEAN DEFAULT FALSE;`,
+      `ALTER TABLE services ADD COLUMN IF NOT EXISTS court_id VARCHAR(50);`,
+      `CREATE SEQUENCE IF NOT EXISTS seq_services;`,
+      `CREATE TABLE IF NOT EXISTS service_categories (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(100) NOT NULL,
+        slug VARCHAR(100) UNIQUE NOT NULL,
+        description TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );`,
+      `CREATE TABLE IF NOT EXISTS services (
+        id VARCHAR(20) PRIMARY KEY DEFAULT ('sv' || lpad(nextval('seq_services')::text, 4, '0')),
+        partner_id VARCHAR(50) NOT NULL,
+        category_id UUID REFERENCES service_categories(id) ON DELETE SET NULL,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        type VARCHAR(50) DEFAULT 'PRODUCT',
+        sport_type VARCHAR(50),
+        price DECIMAL(12, 2) NOT NULL DEFAULT 0,
+        original_price DECIMAL(12, 2),
+        cost_price DECIMAL(12, 2) DEFAULT 0,
+        unit VARCHAR(20) DEFAULT 'lon',
+        image_url TEXT,
+        status VARCHAR(20) DEFAULT 'ACTIVE',
+        track_inventory BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );`,
+      `CREATE TABLE IF NOT EXISTS court_services (
+        id VARCHAR(20) PRIMARY KEY,
+        court_id VARCHAR(20) NOT NULL,
+        service_id VARCHAR(20) REFERENCES services(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        price DECIMAL(12, 2) NOT NULL DEFAULT 0,
+        price_override DECIMAL(12, 2),
+        is_available BOOLEAN DEFAULT TRUE,
+        status VARCHAR(20) DEFAULT 'ACTIVE',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );`,
+      `DO $$
+       BEGIN
+         IF EXISTS (
+           SELECT 1
+           FROM information_schema.columns
+           WHERE table_schema = current_schema()
+             AND table_name = 'booking_services'
+             AND column_name = 'service_id'
+             AND (data_type <> 'character varying' OR character_maximum_length IS DISTINCT FROM 100)
+         ) THEN
+           ALTER TABLE booking_services ALTER COLUMN service_id TYPE VARCHAR(100);
+         END IF;
+       END $$;`,
+      `DO $$
+       BEGIN
+         IF EXISTS (
+           SELECT 1
+           FROM information_schema.columns
+           WHERE table_schema = current_schema()
+             AND table_name = 'booking_services'
+             AND column_name = 'court_service_id'
+             AND (data_type <> 'character varying' OR character_maximum_length IS DISTINCT FROM 100)
+         ) THEN
+           ALTER TABLE booking_services ALTER COLUMN court_service_id TYPE VARCHAR(100);
+         END IF;
+       END $$;`,
+      `ALTER TABLE booking_services DROP CONSTRAINT IF EXISTS booking_services_service_id_fkey;`,
+      `CREATE INDEX IF NOT EXISTS idx_services_court_id ON services(court_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_court_services_court_id ON court_services(court_id);`
+    ];
+
+    for (const statement of statements) {
+      await prisma.$executeRawUnsafe(statement);
+    }
+
+    console.log("[ServiceRepository] Schema & categories checked/initialized.");
+  } catch (err) {
+    initPromise = null;
+    console.error("[ServiceRepository] Table setup failed:", err);
+    throw err;
+  }
+}
+
+export function ensureServiceTables(): Promise<void> {
+  if (!initPromise) initPromise = runServiceTableInit();
+  return initPromise;
+}
+
+export async function forceSeedAllServicesToDb() {
+  try {
+    console.log("[ServiceRepository] Starting clean service redistribution across courts...");
+    
+    // Ensure columns and types match
+    await prisma.$executeRawUnsafe(`ALTER TABLE services ALTER COLUMN type TYPE VARCHAR(50) USING type::text;`).catch(() => {});
+    await prisma.$executeRawUnsafe(`ALTER TABLE services ADD COLUMN IF NOT EXISTS court_id VARCHAR(50);`).catch(() => {});
+
+    // 1. Ensure categories exist
+    const categories = [
+      { name: "Đồ uống", slug: "do-uong", description: "Các loại nước giải khát, nước suối, nước tăng lực, bù khoáng" },
+      { name: "Đồ ăn", slug: "do-an", description: "Bánh mì, bánh ngọt, đồ ăn nhẹ, mì cốc" },
+      { name: "Trái cây", slug: "trai-cay", description: "Trái cây tươi đóng hộp ướp lạnh" },
+      { name: "Phụ kiện thể thao", slug: "dung-cu-the-thao", description: "Bóng, cầu lông, vớ, khăn tập, băng trán" },
+      { name: "Cho thuê dụng cụ", slug: "cho-thue-dung-cu", description: "Cho thuê vợt Tennis, Cầu lông, Pickleball" },
+      { name: "Combo thể thao", slug: "combo-the-thao", description: "Các gói Combo tiết kiệm cho cá nhân và nhóm/đội" },
+      { name: "Dịch vụ khác", slug: "dich-vu-khac", description: "Các dịch vụ tiện ích bổ sung tại sân" }
+    ];
+
+    for (const cat of categories) {
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO service_categories (id, name, slug, description, created_at, updated_at)
+         VALUES (gen_random_uuid(), $1, $2, $3, NOW(), NOW())
+         ON CONFLICT (slug) DO NOTHING;`,
+        cat.name, cat.slug, cat.description
+      ).catch(() => {});
+    }
+
+    const catRows: any = await prisma.$queryRawUnsafe(`SELECT id, slug FROM service_categories;`).catch(() => []);
+    const catMap = new Map<string, string>();
+    if (Array.isArray(catRows)) {
+      for (const r of catRows) {
+        catMap.set(r.slug, r.id);
+      }
+    }
+
+    // Master sample services pool with high quality preview images
+    const masterServices = [
+      { name: "Nước suối Aquafina 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 10000, costPrice: 4000, unit: "chai", imageUrl: "https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=500&auto=format&fit=crop&q=60" },
+      { name: "Coca Cola 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon", imageUrl: "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=500&auto=format&fit=crop&q=60" },
+      { name: "Pepsi Vị Chanh 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon", imageUrl: "https://images.unsplash.com/photo-1553456558-aff63285bdd1?w=500&auto=format&fit=crop&q=60" },
+      { name: "7Up Vị Chanh 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon", imageUrl: "https://images.unsplash.com/photo-1625772299848-391b6a87d7b3?w=500&auto=format&fit=crop&q=60" },
+      { name: "Sting Dâu Đỏ 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "chai", imageUrl: "https://images.unsplash.com/photo-1527960471264-932f39eb5846?w=500&auto=format&fit=crop&q=60" },
+      { name: "Pocari Sweat Bù Khoáng 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 15000, costPrice: 9000, unit: "chai", imageUrl: "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=500&auto=format&fit=crop&q=60" },
+      { name: "Redbull (Bò Húc Thái)", categorySlug: "do-uong", type: "PRODUCT", price: 18000, costPrice: 10000, unit: "lon", imageUrl: "https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=500&auto=format&fit=crop&q=60" },
+      { name: "Trà Đào Cam Sả Tươi", categorySlug: "do-uong", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "ly", imageUrl: "https://images.unsplash.com/photo-1556679343-c7306c1976bc?w=500&auto=format&fit=crop&q=60" },
+      { name: "Nước Dừa Tươi Ướp Lạnh", categorySlug: "do-uong", type: "PRODUCT", price: 25000, costPrice: 15000, unit: "trái", imageUrl: "https://images.unsplash.com/photo-1525385133512-2f3bdd039054?w=500&auto=format&fit=crop&q=60" },
+      { name: "Revive Chanh Muối 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "chai", imageUrl: "https://images.unsplash.com/photo-1534353473418-4cfa6c56fd38?w=500&auto=format&fit=crop&q=60" },
+
+      { name: "Hộp Dưa Hấu Ướp Lạnh", categorySlug: "trai-cay", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1587049352846-4a222e784d38?w=500&auto=format&fit=crop&q=60" },
+      { name: "Hộp Xoài Lắc Muối Ớt", categorySlug: "trai-cay", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1553279768-865429fa0078?w=500&auto=format&fit=crop&q=60" },
+      { name: "Hộp Ổi Giòn Ngọt", categorySlug: "trai-cay", type: "PRODUCT", price: 20000, costPrice: 10000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1536511135898-1b2c4e51be9b?w=500&auto=format&fit=crop&q=60" },
+      { name: "Hộp Nho Mỹ Không Hạt", categorySlug: "trai-cay", type: "PRODUCT", price: 40000, costPrice: 22000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1537640538966-79f369143f8f?w=500&auto=format&fit=crop&q=60" },
+      { name: "Đĩa Trái Cây Thập Cẩm Lớn", categorySlug: "trai-cay", type: "PRODUCT", price: 65000, costPrice: 35000, unit: "đĩa", imageUrl: "https://images.unsplash.com/photo-1619566636858-adf3ef46400b?w=500&auto=format&fit=crop&q=60" },
+      { name: "Chuối Sứ Thể Thao", categorySlug: "trai-cay", type: "PRODUCT", price: 8000, costPrice: 4000, unit: "quả", imageUrl: "https://images.unsplash.com/photo-1571771894821-ce9b6c11b08e?w=500&auto=format&fit=crop&q=60" },
+
+      { name: "Bánh Mì Chả Pate", categorySlug: "do-an", type: "PRODUCT", price: 20000, costPrice: 11000, unit: "ổ", imageUrl: "https://images.unsplash.com/photo-1626074353765-517a681e40be?w=500&auto=format&fit=crop&q=60" },
+      { name: "Bánh Mì Ốp La 2 Trứng", categorySlug: "do-an", type: "PRODUCT", price: 25000, costPrice: 13000, unit: "ổ", imageUrl: "https://images.unsplash.com/photo-1525351484163-7529414344d8?w=500&auto=format&fit=crop&q=60" },
+      { name: "Mì Ly Cung Đình Bò Hầm", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "ly", imageUrl: "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=500&auto=format&fit=crop&q=60" },
+      { name: "Xúc Xích Nướng Đức", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 7000, unit: "cây", imageUrl: "https://images.unsplash.com/photo-1541592106381-b31e9677c0e5?w=500&auto=format&fit=crop&q=60" },
+      { name: "Bánh Bao Nhân Thịt Trứng Cút", categorySlug: "do-an", type: "PRODUCT", price: 18000, costPrice: 10000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1541696432-82c6da8ce7bf?w=500&auto=format&fit=crop&q=60" },
+      { name: "Bánh Ngọt Croissant Bơ Tươi", categorySlug: "do-an", type: "PRODUCT", price: 22000, costPrice: 12000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1555507036-ab1f4038808a?w=500&auto=format&fit=crop&q=60" },
+      { name: "Gói Snack Lay's Vị Tự Nhiên", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 9000, unit: "gói", imageUrl: "https://images.unsplash.com/photo-1566478989037-eec170784d0b?w=500&auto=format&fit=crop&q=60" },
+      { name: "Mì Cốc Hảo Hảo Tôm Chua Cay", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "cốc", imageUrl: "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=500&auto=format&fit=crop&q=60" },
+
+      { name: "Vớ Thể Thao Yonex", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1586350977771-b3b0abd50c82?w=600&auto=format&fit=crop&q=80" },
+      { name: "Khăn Lạnh Ướp Hương", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 5000, costPrice: 2000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1616627547584-bf28cee262db?w=600&auto=format&fit=crop&q=80" },
+      { name: "Khăn Bông Thấm Mồ Hôi 100% Cotton", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 18000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1616627547584-bf28cee262db?w=600&auto=format&fit=crop&q=80" },
+      { name: "Băng Trán / Cổ Tay Thể Thao", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 20000, costPrice: 9000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=600&auto=format&fit=crop&q=80" },
+      { name: "Bóng Tennis Wilson (Hộp 3 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 95000, costPrice: 65000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1554068865-24cecd4e34b8?w=600&auto=format&fit=crop&q=80" },
+      { name: "Cầu Lông Ba Sao Đỏ (Ống 12 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 240000, costPrice: 170000, unit: "ống", imageUrl: "https://images.unsplash.com/photo-1599474924187-334a4ae5bd3c?w=600&auto=format&fit=crop&q=80" },
+      { name: "Bóng Pickleball Franklin X-40", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 45000, costPrice: 28000, unit: "quả", imageUrl: "https://images.unsplash.com/photo-1560012057-4372e14c5085?w=600&auto=format&fit=crop&q=80" },
+      { name: "Quả Cầu Lông Thành Công (Hộp 12)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 250000, costPrice: 180000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1599474924187-334a4ae5bd3c?w=600&auto=format&fit=crop&q=80" },
+      { name: "Bóng Tennis Wilson US Open", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 110000, costPrice: 75000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1554068865-24cecd4e34b8?w=600&auto=format&fit=crop&q=80" },
+      { name: "Vớ Thể Thao Cổ Cao Yonex", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 20000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1586350977771-b3b0abd50c82?w=600&auto=format&fit=crop&q=80" },
+      { name: "Khăn Bông Tắm Thể Thao", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 45000, costPrice: 25000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1616627547584-bf28cee262db?w=600&auto=format&fit=crop&q=80" },
+
+      { name: "Thuê Vợt Tennis Wilson Pro", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 80000, costPrice: 0, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?w=600&auto=format&fit=crop&q=80" },
+      { name: "Thuê Vợt Cầu Lông Yonex Astrox", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 40000, costPrice: 0, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?w=600&auto=format&fit=crop&q=80" },
+      { name: "Thuê Vợt Pickleball Selkirk", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 60000, costPrice: 0, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1560012057-4372e14c5085?w=600&auto=format&fit=crop&q=80" },
+      { name: "Cho Thuê Vợt Tennis Babolat", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 100000, costPrice: 20000, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?w=600&auto=format&fit=crop&q=80" },
+      { name: "Cho Thuê Vợt Cầu Lông Cao Cấp", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 50000, costPrice: 10000, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?w=600&auto=format&fit=crop&q=80" },
+
+      { name: "Combo Đôi Năng Lượng (2 Suối + 1 Dưa Hấu + 2 Khăn)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 45000, costPrice: 22000, unit: "combo", imageUrl: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=600&auto=format&fit=crop&q=80" },
+      { name: "Combo Team 4 Đập Phá (4 Nước Ngọt + 1 Đĩa Trái Cây + 4 Khăn)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 110000, costPrice: 58000, unit: "combo", imageUrl: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=600&auto=format&fit=crop&q=80" },
+      { name: "Combo Thể Lực Tốc Độ (1 Pocari + 1 Redbull + 2 Chuối Sứ)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 42000, costPrice: 22000, unit: "combo", imageUrl: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=600&auto=format&fit=crop&q=80" }
+    ];
+
+    // Fetch all courts
+    let courts: any = await prisma.$queryRawUnsafe(`SELECT id, partner_id, name FROM courts ORDER BY id;`).catch(() => []);
+    if (!Array.isArray(courts) || courts.length === 0) {
+      courts = [
+        { id: "c0001", partner_id: "p0001", name: "Sân Cầu Lông / Pickleball 01" },
+        { id: "c0002", partner_id: "p0001", name: "Sân Cầu Lông / Pickleball 02" },
+        { id: "c0003", partner_id: "p0001", name: "Sân Cầu Lông / Pickleball 03" },
+        { id: "c0004", partner_id: "p0001", name: "Sân Cầu Lông / Pickleball 04" },
+        { id: "c0005", partner_id: "p0001", name: "Sân Cầu Lông / Pickleball 05" },
+        { id: "c0006", partner_id: "p0001", name: "Sân Cầu Lông / Pickleball 06" }
+      ];
+    }
+
+    // Clean old duplicate records
+    await prisma.$executeRawUnsafe(`DELETE FROM court_services;`).catch(() => {});
+    await prisma.$executeRawUnsafe(`DELETE FROM service_inventories;`).catch(() => {});
+    await prisma.$executeRawUnsafe(`DELETE FROM services;`).catch(() => {});
+
+    let totalServicesSeeded = 0;
+    let totalLinksSeeded = 0;
+
+    // Distribute services evenly among courts
+    for (let cIdx = 0; cIdx < courts.length; cIdx++) {
+      const court = courts[cIdx];
+      const courtId = court.id;
+      const partnerId = court.partner_id || "p0001";
+
+      const assignedServices = masterServices.filter((_, sIdx) => {
+        return (sIdx + cIdx) % 2 === 0 || (sIdx % 3 === cIdx % 3);
+      });
+
+      for (const svc of assignedServices) {
+        const catId = catMap.get(svc.categorySlug) ?? null;
+
+        let serviceId = "";
+        const inserted: any = await prisma.$queryRawUnsafe(
+          // id stays DEFAULT: services.id is VARCHAR(20) fed by seq_services ('svNNNN'), so a
+          // 36-char gen_random_uuid() would not fit the column.
+          `INSERT INTO services (id, court_id, partner_id, category_id, name, type, price, cost_price, unit, image_url, status, track_inventory, created_at, updated_at)
+           VALUES (DEFAULT, $1, $2, CASE WHEN $3::text IS NULL OR $3::text = '' THEN NULL ELSE $3::uuid END, $4, $5, $6, $7, $8, $9, 'ACTIVE', TRUE, NOW(), NOW())
+           RETURNING id;`,
+          courtId, partnerId, catId, svc.name, svc.type, svc.price, svc.costPrice, svc.unit, svc.imageUrl || null
+        ).catch(async (err) => {
+          console.error("[ServiceRepository] Direct insert error:", err);
+          return [];
+        });
+
+        if (Array.isArray(inserted) && inserted.length > 0) {
+          serviceId = inserted[0].id;
+          totalServicesSeeded++;
+        } else {
+          await prisma.$executeRawUnsafe(
+            `INSERT INTO services (id, court_id, partner_id, category_id, name, type, price, cost_price, unit, image_url, status, track_inventory, created_at, updated_at)
+             VALUES (DEFAULT, $1, $2, CASE WHEN $3::text IS NULL OR $3::text = '' THEN NULL ELSE $3::uuid END, $4, $5, $6, $7, $8, $9, 'ACTIVE', TRUE, NOW(), NOW())
+             ON CONFLICT DO NOTHING;`,
+            courtId, partnerId, catId, svc.name, svc.type, svc.price, svc.costPrice, svc.unit, svc.imageUrl || null
+          ).catch(() => {});
+
+          const existing: any = await prisma.$queryRawUnsafe(
+            `SELECT id FROM services WHERE court_id = $1 AND name = $2 LIMIT 1;`,
+            courtId, svc.name
+          ).catch(() => []);
+          if (Array.isArray(existing) && existing.length > 0) {
+            serviceId = existing[0].id;
+            totalServicesSeeded++;
+            if (svc.imageUrl) {
+              await prisma.$executeRawUnsafe(
+                `UPDATE services SET image_url = $1 WHERE id = $2 AND (image_url IS NULL OR image_url = '');`,
+                svc.imageUrl, serviceId
+              ).catch(() => {});
+            }
+          }
+        }
+
+        if (serviceId) {
+          const csCustomId = `cs_${courtId}_${serviceId.slice(0, 8)}`;
+          await prisma.$executeRawUnsafe(
+            `INSERT INTO court_services (id, court_id, service_id, name, price, is_available, status, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, TRUE, 'ACTIVE', NOW(), NOW())
+             ON CONFLICT (id) DO UPDATE SET price = EXCLUDED.price, status = 'ACTIVE';`,
+            csCustomId, courtId, serviceId, svc.name, svc.price
+          ).catch(() => {});
+          totalLinksSeeded++;
+
+          await prisma.$executeRawUnsafe(
+            `INSERT INTO service_inventories (id, service_id, quantity, reserved_quantity, minimum_stock, unit, last_purchase_price, created_at, updated_at)
+             VALUES (gen_random_uuid(), $1, 50, 0, 5, $2, $3, NOW(), NOW())
+             ON CONFLICT (service_id) DO UPDATE 
+             SET quantity = GREATEST(service_inventories.quantity, 50),
+                 minimum_stock = 5,
+                 unit = EXCLUDED.unit,
+                 last_purchase_price = EXCLUDED.last_purchase_price,
+                 updated_at = NOW();`,
+            serviceId, svc.unit, svc.costPrice
+          ).catch(() => {});
+        }
+      }
+    }
+
+    console.log(`[ServiceRepository] Redistributed services across ${courts.length} courts: ${totalServicesSeeded} services created, ${totalLinksSeeded} court-service links.`);
+  } catch (err) {
+    console.error("[ServiceRepository] forceSeedAllServicesToDb warning:", err);
+  }
+}
+
+const seededCourtSet = new Set<string>();
+
+async function ensureCourtServicesSeededInDb(courtId: string) {
+  if (!courtId || seededCourtSet.has(courtId)) return;
+
+  try {
+    const courtInfoRows: any = await prisma.$queryRawUnsafe(
+      `SELECT c.id, c.partner_id as "partnerId", c.name, cat.name as "categoryName", cat.slug as "categorySlug"
+       FROM courts c
+       LEFT JOIN court_categories cat ON c.category_id = cat.id
+       WHERE c.id = $1 LIMIT 1;`,
+      courtId
+    ).catch(() => []);
+
+    if (!Array.isArray(courtInfoRows) || courtInfoRows.length === 0) return;
+
+    const partnerId = courtInfoRows[0].partnerId || "p0001";
+    const courtName = String(courtInfoRows[0].name || "").toLowerCase();
+    const fullText = `${courtName} ${String(courtInfoRows[0].categoryName || "")} ${String(courtInfoRows[0].categorySlug || "")}`;
+    const sport = detectSportFromText(fullText);
+    const { isBadminton, isTennis, isPickleball, isFootball, isBasketball, isVolleyball } = sport;
+
+    // If court is NOT a racket sport, clean up any mistakenly seeded racket rental services
+    if (!isBadminton && !isTennis && !isPickleball) {
+      await prisma.$executeRawUnsafe(
+        `DELETE FROM services WHERE court_id = $1 AND (LOWER(name) LIKE '%vợt%' OR type = 'RENTAL_SERVICE');`,
+        courtId
+      ).catch(() => {});
+    }
+
+    // Check if sport-specific items need to be seeded
+    let needsSportItems = false;
+    if (isVolleyball) {
+      const existing: any = await prisma.$queryRawUnsafe(`SELECT COUNT(*)::int as c FROM services WHERE court_id = $1 AND LOWER(name) LIKE '%mikasa%';`, courtId).catch(() => []);
+      needsSportItems = !Array.isArray(existing) || Number(existing[0]?.c || 0) === 0;
+    } else if (isFootball) {
+      const existing: any = await prisma.$queryRawUnsafe(`SELECT COUNT(*)::int as c FROM services WHERE court_id = $1 AND LOWER(name) LIKE '%động lực%';`, courtId).catch(() => []);
+      needsSportItems = !Array.isArray(existing) || Number(existing[0]?.c || 0) === 0;
+    } else if (isBasketball) {
+      const existing: any = await prisma.$queryRawUnsafe(`SELECT COUNT(*)::int as c FROM services WHERE court_id = $1 AND LOWER(name) LIKE '%molten%';`, courtId).catch(() => []);
+      needsSportItems = !Array.isArray(existing) || Number(existing[0]?.c || 0) === 0;
+    } else if (isBadminton || isTennis || isPickleball) {
+      const existing: any = await prisma.$queryRawUnsafe(`SELECT COUNT(*)::int as c FROM services WHERE court_id = $1 AND LOWER(name) LIKE '%vợt%';`, courtId).catch(() => []);
+      needsSportItems = !Array.isArray(existing) || Number(existing[0]?.c || 0) === 0;
+    }
+
+    const countRows: any = await prisma.$queryRawUnsafe(
+      `SELECT COUNT(*)::int as count FROM services WHERE court_id = $1;`,
+      courtId
+    ).catch(() => []);
+
+    const count = Array.isArray(countRows) && countRows.length > 0 ? Number(countRows[0].count) : 0;
+    if (count > 0 && !needsSportItems) {
+      seededCourtSet.add(courtId);
+      return;
+    }
+
+    const masterServices = [
+      // Drinks
+      { name: "Nước suối Aquafina 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 10000, costPrice: 4000, unit: "chai", imageUrl: "https://images.unsplash.com/photo-1616118132534-381148898bb4?w=600&auto=format&fit=crop&q=80" },
+      { name: "Coca Cola 330ml", categorySlug: "do-uong", type: "PRODUCT", price: 12000, costPrice: 7000, unit: "lon", imageUrl: "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=500&auto=format&fit=crop&q=60" },
+      { name: "Pocari Sweat Bù Khoáng 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 15000, costPrice: 9000, unit: "chai", imageUrl: "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=500&auto=format&fit=crop&q=60" },
+      { name: "Redbull (Bò Húc Thái)", categorySlug: "do-uong", type: "PRODUCT", price: 18000, costPrice: 10000, unit: "lon", imageUrl: "https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=500&auto=format&fit=crop&q=60" },
+      { name: "Revive Chanh Muối 500ml", categorySlug: "do-uong", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "chai", imageUrl: "https://images.unsplash.com/photo-1534353473418-4cfa6c56fd38?w=500&auto=format&fit=crop&q=60" },
+
+      // Fresh Fruit
+      { name: "Hộp Dưa Hấu Ướp Lạnh", categorySlug: "trai-cay", type: "PRODUCT", price: 25000, costPrice: 12000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1587049352846-4a222e784d38?w=500&auto=format&fit=crop&q=60" },
+      { name: "Chuối Sứ Thể Thao", categorySlug: "trai-cay", type: "PRODUCT", price: 8000, costPrice: 4000, unit: "quả", imageUrl: "https://images.unsplash.com/photo-1571771894821-ce9b6c11b08e?w=500&auto=format&fit=crop&q=60" },
+
+      // Food & Snacks
+      { name: "Bánh Mì Chả Pate", categorySlug: "do-an", type: "PRODUCT", price: 20000, costPrice: 11000, unit: "ổ", imageUrl: "https://images.unsplash.com/photo-1626074353765-517a681e40be?w=500&auto=format&fit=crop&q=60" },
+      { name: "Mì Ly Cung Đình Bò Hầm", categorySlug: "do-an", type: "PRODUCT", price: 15000, costPrice: 8000, unit: "ly", imageUrl: "https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=500&auto=format&fit=crop&q=60" },
+      { name: "Bánh Bao Nhân Thịt Trứng Cút", categorySlug: "do-an", type: "PRODUCT", price: 18000, costPrice: 10000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1541696432-82c6da8ce7bf?w=500&auto=format&fit=crop&q=60" },
+
+      // Common Gear
+      { name: "Khăn Lạnh Ướp Hương", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 5000, costPrice: 2000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1616627547584-bf28cee262db?w=600&auto=format&fit=crop&q=80" },
+      { name: "Khăn Bông Thấm Mồ Hôi 100% Cotton", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 18000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1616627547584-bf28cee262db?w=600&auto=format&fit=crop&q=80" },
+
+      // 🎾 1. BADMINTON (Cầu lông - Có thuê vợt)
+      ...(isBadminton ? [
+        { name: "Thuê Vợt Cầu Lông Yonex Astrox", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 40000, costPrice: 0, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?w=600&auto=format&fit=crop&q=80" },
+        { name: "Cho Thuê Vợt Cầu Lông Cao Cấp", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 50000, costPrice: 10000, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?w=600&auto=format&fit=crop&q=80" },
+        { name: "Cầu Lông Ba Sao Đỏ (Ống 12 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 240000, costPrice: 170000, unit: "ống", imageUrl: "https://images.unsplash.com/photo-1599474924187-334a4ae5bd3c?w=600&auto=format&fit=crop&q=80" },
+        { name: "Quả Cầu Lông Thành Công (Hộp 12)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 250000, costPrice: 180000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1599474924187-334a4ae5bd3c?w=600&auto=format&fit=crop&q=80" },
+        { name: "Quấn Cán Vợt Cầu Lông Yonex", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 20000, costPrice: 8000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=600&auto=format&fit=crop&q=80" },
+        { name: "Vớ Thể Thao Yonex Chống Trượt", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 30000, costPrice: 15000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1586350977771-b3b0abd50c82?w=600&auto=format&fit=crop&q=80" }
+      ] : []),
+
+      // 🎾 2. TENNIS (Tennis - Có thuê vợt)
+      ...(isTennis ? [
+        { name: "Thuê Vợt Tennis Wilson Pro", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 80000, costPrice: 0, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?w=600&auto=format&fit=crop&q=80" },
+        { name: "Cho Thuê Vợt Tennis Babolat", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 100000, costPrice: 20000, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?w=600&auto=format&fit=crop&q=80" },
+        { name: "Bóng Tennis Wilson (Hộp 3 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 95000, costPrice: 65000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1554068865-24cecd4e34b8?w=500&auto=format&fit=crop&q=60" },
+        { name: "Bóng Tennis Wilson US Open", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 110000, costPrice: 75000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1554068865-24cecd4e34b8?w=500&auto=format&fit=crop&q=60" },
+        { name: "Quấn Cán Vợt Tennis Babolat", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 25000, costPrice: 10000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=600&auto=format&fit=crop&q=80" },
+        { name: "Vớ Thể Thao Tennis Cotton", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 18000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1586350977771-b3b0abd50c82?w=600&auto=format&fit=crop&q=80" }
+      ] : []),
+
+      // 🎾 3. PICKLEBALL (Pickleball - Có thuê vợt)
+      ...(isPickleball ? [
+        { name: "Thuê Vợt Pickleball Selkirk", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 60000, costPrice: 0, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1560012057-4372e14c5085?w=600&auto=format&fit=crop&q=80" },
+        { name: "Cho Thuê Vợt Pickleball Franklin", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 50000, costPrice: 10000, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1560012057-4372e14c5085?w=600&auto=format&fit=crop&q=80" },
+        { name: "Bóng Pickleball Franklin X-40", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 45000, costPrice: 28000, unit: "quả", imageUrl: "https://images.unsplash.com/photo-1560012057-4372e14c5085?w=600&auto=format&fit=crop&q=80" },
+        { name: "Bóng Pickleball Diadem (Hộp 3 quả)", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 120000, costPrice: 80000, unit: "hộp", imageUrl: "https://images.unsplash.com/photo-1560012057-4372e14c5085?w=600&auto=format&fit=crop&q=80" },
+        { name: "Vớ Thể Thao Pickleball Chống Trượt", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 30000, costPrice: 15000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1586350977771-b3b0abd50c82?w=600&auto=format&fit=crop&q=80" }
+      ] : []),
+
+      // ⚽ 4. FOOTBALL (Bóng đá - Không thuê vợt!)
+      ...(isFootball ? [
+        { name: "Cho Thuê Bóng Đá Động Lực Số 5", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 30000, costPrice: 0, unit: "trận", imageUrl: "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=500&auto=format&fit=crop&q=60" },
+        { name: "Băng Bọc Ống Quyển Chống Chấn Thương", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 45000, costPrice: 22000, unit: "cặp", imageUrl: "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=500&auto=format&fit=crop&q=60" },
+        { name: "Vớ Đá Bóng Cổ Cao Dày 100% Cotton", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 16000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" },
+        { name: "Vớ Chống Trượt Đá Bóng Fox-Socks", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 40000, costPrice: 20000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" },
+        { name: "Thuê Bộ 10 Áo Bít Phân Đội Đá Bóng", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 50000, costPrice: 10000, unit: "bộ", imageUrl: "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=500&auto=format&fit=crop&q=60" }
+      ] : []),
+
+      // 🏀 5. BASKETBALL (Bóng rổ - Không thuê vợt!)
+      ...(isBasketball ? [
+        { name: "Cho Thuê Bóng Rổ Molten Da Thật", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 30000, costPrice: 0, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1519766304817-4f37bda74a29?w=500&auto=format&fit=crop&q=60" },
+        { name: "Băng Bọc Cổ Tay & Ngón Tay Thể Thao", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 20000, costPrice: 9000, unit: "cái", imageUrl: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=500&auto=format&fit=crop&q=60" },
+        { name: "Vớ Bóng Rổ Cổ Cao Đệm Dày Chống Trượt", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 40000, costPrice: 18000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" },
+        { name: "Băng Đệm Bảo Vệ Đầu Gối / Khuỷu Tay", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 50000, costPrice: 25000, unit: "cặp", imageUrl: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=500&auto=format&fit=crop&q=60" }
+      ] : []),
+
+      // 🏐 6. VOLLEYBALL (Bóng chuyền - Không thuê vợt!)
+      ...(isVolleyball ? [
+        { name: "Cho Thuê Bóng Chuyền Mikasa Da Thật", categorySlug: "cho-thue-dung-cu", type: "RENTAL_SERVICE", price: 30000, costPrice: 0, unit: "lượt", imageUrl: "https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?w=500&auto=format&fit=crop&q=60" },
+        { name: "Băng Đệm Bảo Vệ Đầu Gối Thi Đấu", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 60000, costPrice: 30000, unit: "cặp", imageUrl: "https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?w=500&auto=format&fit=crop&q=60" },
+        { name: "Băng Bảo Vệ Cổ Tay / Cánh Tay", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 35000, costPrice: 16000, unit: "cặp", imageUrl: "https://images.unsplash.com/photo-1612872087720-bb876e2e67d1?w=500&auto=format&fit=crop&q=60" },
+        { name: "Vớ Thể Thao Chuyên Dụng Thi Đấu", categorySlug: "dung-cu-the-thao", type: "PRODUCT", price: 30000, costPrice: 15000, unit: "đôi", imageUrl: "https://images.unsplash.com/photo-1608231387042-66d1773070a5?w=500&auto=format&fit=crop&q=60" }
+      ] : []),
+
+      // Combos
+      { name: "Combo Đôi Năng Lượng (2 Suối + 1 Dưa Hấu + 2 Khăn)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 45000, costPrice: 22000, unit: "combo", imageUrl: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=500&auto=format&fit=crop&q=60" },
+      { name: "Combo Team 4 Đập Phá (4 Nước Ngọt + 1 Đĩa Trái Cây + 4 Khăn)", categorySlug: "combo-the-thao", type: "PRODUCT", price: 110000, costPrice: 58000, unit: "combo", imageUrl: "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?w=500&auto=format&fit=crop&q=60" }
+    ];
+
+    const catRows: any = await prisma.$queryRawUnsafe(`SELECT id, slug FROM service_categories;`).catch(() => []);
+    const catMap = new Map<string, string>();
+    if (Array.isArray(catRows)) {
+      for (const r of catRows) catMap.set(r.slug, r.id);
+    }
+
+    for (const svc of masterServices) {
+      const categoryId = catMap.get(svc.categorySlug) || null;
+      const res: any = await prisma.$queryRawUnsafe(
+        `INSERT INTO services (id, partner_id, court_id, category_id, name, description, type, price, cost_price, unit, image_url, status, track_inventory, created_at, updated_at)
+         VALUES (DEFAULT, $1, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10, 'ACTIVE', true, NOW(), NOW())
+         ON CONFLICT DO NOTHING
+         RETURNING id;`,
+        partnerId, courtId, categoryId, svc.name, `${svc.name} phục vụ tại ${courtInfoRows[0].name}`, svc.type, svc.price, svc.costPrice, svc.unit, svc.imageUrl || null
+      ).catch(() => []);
+
+      let serviceId = Array.isArray(res) && res.length > 0 && res[0].id ? res[0].id : null;
+      if (!serviceId) {
+        const existRows: any = await prisma.$queryRawUnsafe(
+          `SELECT id FROM services WHERE court_id = $1 AND name = $2 LIMIT 1;`,
+          courtId, svc.name
+        ).catch(() => []);
+        if (Array.isArray(existRows) && existRows.length > 0) {
+          serviceId = existRows[0].id;
+          if (svc.imageUrl) {
+            await prisma.$executeRawUnsafe(
+              `UPDATE services SET image_url = $1 WHERE id = $2 AND (image_url IS NULL OR image_url = '');`,
+              svc.imageUrl, serviceId
+            ).catch(() => {});
+          }
+        }
+      }
+
+      if (serviceId) {
+        await prisma.$executeRawUnsafe(
+          `INSERT INTO service_inventories (id, service_id, quantity, reserved_quantity, minimum_stock, unit, last_purchase_price, created_at, updated_at)
+           VALUES (gen_random_uuid(), $1, 50, 0, 5, $2, $3, NOW(), NOW())
+           ON CONFLICT (service_id) DO NOTHING;`,
+          serviceId, svc.unit, svc.costPrice
+        ).catch(() => {});
+      }
+    }
+    seededCourtSet.add(courtId);
+  } catch (err) {
+    console.error("[ServiceRepository] ensureCourtServicesSeededInDb error:", err);
+  }
+}
+
+export const serviceRepository = {
+  async listCategories() {
+    try {
+      await ensureServiceTables();
+      const rows: any = await prisma.$queryRawUnsafe(
+        `SELECT id, name, slug, description FROM service_categories ORDER BY name ASC;`
+      ).catch(() => []);
+
+      if (Array.isArray(rows) && rows.length > 0) return rows;
+
+      const defaultCategories = [
+        { name: "Đồ uống", slug: "do-uong", description: "Các loại nước giải khát, nước suối, nước tăng lực, bù khoáng" },
+        { name: "Đồ ăn", slug: "do-an", description: "Bánh mì, bánh ngọt, đồ ăn nhẹ, mì cốc" },
+        { name: "Trái cây", slug: "trai-cay", description: "Trái cây tươi đóng hộp ướp lạnh" },
+        { name: "Phụ kiện thể thao", slug: "dung-cu-the-thao", description: "Bóng, cầu lông, vớ, khăn tập, băng trán" },
+        { name: "Cho thuê dụng cụ", slug: "cho-thue-dung-cu", description: "Cho thuê vợt Tennis, Cầu lông, Pickleball" },
+        { name: "Combo thể thao", slug: "combo-the-thao", description: "Các gói Combo tiết kiệm cho cá nhân và nhóm/đội" },
+        { name: "Dịch vụ khác", slug: "dich-vu-khac", description: "Các dịch vụ tiện ích bổ sung tại sân" }
+      ];
+
+      for (const cat of defaultCategories) {
+        await prisma.$executeRawUnsafe(
+          `INSERT INTO service_categories (id, name, slug, description) VALUES (gen_random_uuid(), $1, $2, $3) ON CONFLICT (slug) DO NOTHING;`,
+          cat.name, cat.slug, cat.description
+        ).catch(() => {});
+      }
+
+      const fresh: any = await prisma.$queryRawUnsafe(
+        `SELECT id, name, slug, description FROM service_categories ORDER BY name ASC;`
+      ).catch(() => []);
+
+      return Array.isArray(fresh) ? fresh : [];
+    } catch (err) {
+      console.error("[ServiceRepository] listCategories error:", err);
+      return [];
+    }
+  },
+
+  async createCategory(data: CreateServiceCategoryInput) {
+    await ensureServiceTables();
+    const slug = data.name
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)+/g, "");
+    return prisma.serviceCategory.create({
+      data: {
+        name: data.name,
+        slug,
+        description: data.description
+      }
+    });
+  },
+
+  async findServiceById(id: string) {
+    await ensureServiceTables();
+    return prisma.service.findUnique({
+      where: { id },
+      include: {
+        category: true,
+        inventory: true,
+        court: { select: { id: true, name: true } }
+      }
+    });
+  },
+
+  async listPartnerServices(partnerId: string, categoryId?: string, search?: string, courtId?: string) {
+    await ensureServiceTables();
+    try {
+      const validCategoryId = categoryId && categoryId.trim() !== "" ? categoryId.trim() : undefined;
+      const validSearch = search && search.trim() !== "" ? search.trim() : undefined;
+      const validCourtId = courtId && courtId.trim() !== "" ? courtId.trim() : undefined;
+
+      const where: any = {
+        ...(partnerId ? { partnerId } : {}),
+        ...(validCourtId ? { courtId: validCourtId } : {}),
+        ...(validCategoryId ? { categoryId: validCategoryId } : {}),
+        ...(validSearch
+          ? {
+              OR: [
+                { name: { contains: validSearch, mode: "insensitive" } },
+                { description: { contains: validSearch, mode: "insensitive" } }
+              ]
+            }
+          : {})
+      };
+
+      let services: any[] = await prisma.service.findMany({
+        where,
+        include: {
+          category: true,
+          inventory: true,
+          court: { select: { id: true, name: true } }
+        },
+        orderBy: { createdAt: "desc" }
+      });
+
+      if (!Array.isArray(services) || services.length === 0) {
+        const rawSvcs: any = await prisma.$queryRawUnsafe(`
+          SELECT 
+            s.id,
+            s.partner_id as "partnerId",
+            s.category_id as "categoryId",
+            s.name,
+            s.description,
+            s.type,
+            s.sport_type as "sportType",
+            s.price,
+            s.cost_price as "costPrice",
+            s.unit,
+            s.image_url as "imageUrl",
+            s.status,
+            s.track_inventory as "trackInventory",
+            c.name as "categoryName",
+            s.court_id as "courtId",
+            ct.name as "courtName",
+            COALESCE(si.quantity, 0) as quantity,
+            COALESCE(si.minimum_stock, 5) as "minimumStock"
+          FROM services s
+          LEFT JOIN service_categories c ON s.category_id = c.id
+          LEFT JOIN courts ct ON ct.id = s.court_id
+          LEFT JOIN service_inventories si ON s.id = si.service_id
+          WHERE ($1::text IS NULL OR $1::text = '' OR s.partner_id = $1)
+            AND ($2::text IS NULL OR $2::text = '' OR s.court_id = $2)
+          ORDER BY s.created_at DESC;
+        `, partnerId || "", validCourtId || "").catch(() => []);
+
+        if (Array.isArray(rawSvcs) && rawSvcs.length > 0) {
+          services = rawSvcs.map((r: any) => ({
+            id: r.id,
+            partnerId: r.partnerId,
+            categoryId: r.categoryId,
+            name: r.name,
+            description: r.description,
+            type: r.type,
+            sportType: r.sportType,
+            price: Number(r.price),
+            costPrice: Number(r.costPrice || 0),
+            unit: r.unit,
+            imageUrl: r.imageUrl,
+            status: r.status,
+            trackInventory: r.trackInventory,
+            courtId: r.courtId ?? null,
+            court: r.courtId ? { id: r.courtId, name: r.courtName } : null,
+            category: r.categoryName ? { id: r.categoryId, name: r.categoryName } : null,
+            inventory: {
+              quantity: Number(r.quantity || 0),
+              minimumStock: Number(r.minimumStock || 5)
+            }
+          })) as any;
+        }
+      }
+
+      // No name-based dedupe: a partner owns one services row (with its own stock) per court for
+      // the same product name, so collapsing by name hid every court but one and made price edits
+      // land on an arbitrary court. Callers that want one entry per name (the POS fallback list)
+      // collapse it themselves.
+      return services || [];
+    } catch (err) {
+      console.error("[ServiceRepository] listPartnerServices error:", err);
+      return [];
+    }
+  },
+
+  async listServicesForCourt(courtId: string, categoryId?: string) {
+    try {
+      await ensureServiceTables();
+      await ensureCourtServicesSeededInDb(courtId);
+
+      const rows: any = await prisma.$queryRawUnsafe(`
+        SELECT
+          s.id,
+          s.court_id as "courtId",
+          s.partner_id as "partnerId",
+          s.category_id as "categoryId",
+          s.name,
+          s.description,
+          s.type,
+          s.price,
+          s.cost_price as "costPrice",
+          s.unit,
+          s.image_url as "imageUrl",
+          s.status,
+          s.track_inventory as "trackInventory",
+          sc.name as "categoryName",
+          sc.slug as "categorySlug",
+          si.id as "inventoryId",
+          COALESCE(si.quantity, 0) as "inventoryQuantity",
+          si.reserved_quantity as "inventoryReservedQuantity",
+          COALESCE(si.minimum_stock, 5) as "inventoryMinimumStock",
+          si.unit as "inventoryUnit",
+          si.last_purchase_price as "inventoryLastPurchasePrice",
+          c.name as "courtName",
+          cc.name as "courtCategoryName",
+          cc.slug as "courtCategorySlug"
+        FROM services s
+        LEFT JOIN service_categories sc ON s.category_id = sc.id
+        LEFT JOIN service_inventories si ON si.service_id = s.id
+        LEFT JOIN courts c ON c.id = s.court_id
+        LEFT JOIN court_categories cc ON cc.id = c.category_id
+        -- Strictly this court's rows: after migrate_fix_orphan_service_owner.sql no service is
+        -- court-less, and matching NULL court_id would show one partner's leftovers on every court.
+        WHERE s.court_id = $1 AND (s.status = 'ACTIVE' OR s.status IS NULL)
+        ORDER BY sc.name ASC, s.name ASC;
+      `, courtId).catch(() => []);
+
+      if (!Array.isArray(rows) || rows.length === 0) return [];
+
+      const sport = detectSportFromText(
+        `${rows[0].courtName || ""} ${rows[0].courtCategoryName || ""} ${rows[0].courtCategorySlug || ""}`
+      );
+
+      let filtered = rows.filter((r: any) => isServiceAllowedForSport(String(r.name || ""), sport));
+      if (categoryId) {
+        filtered = filtered.filter((r: any) => r.categoryId === categoryId);
+      }
+
+      const seenNames = new Set<string>();
+      const uniqueRows: any[] = [];
+      for (const r of filtered) {
+        const key = r && r.name ? String(r.name).trim().toLowerCase() : "";
+        if (key && !seenNames.has(key)) {
+          seenNames.add(key);
+          uniqueRows.push({
+            id: r.id,
+            courtId: r.courtId || courtId,
+            partnerId: r.partnerId,
+            categoryId: r.categoryId,
+            name: r.name,
+            description: r.description,
+            type: r.type,
+            price: Number(r.price),
+            originalPrice: Number(r.price),
+            costPrice: Number(r.costPrice || 0),
+            unit: r.unit,
+            imageUrl: r.imageUrl ?? null,
+            status: r.status,
+            trackInventory: r.trackInventory,
+            categoryName: r.categoryName,
+            categorySlug: r.categorySlug,
+            category: r.categoryId ? { id: r.categoryId, name: r.categoryName, slug: r.categorySlug } : null,
+            inventory: {
+              id: r.inventoryId,
+              serviceId: r.id,
+              quantity: Number(r.inventoryQuantity ?? 0),
+              reservedQuantity: Number(r.inventoryReservedQuantity ?? 0),
+              minimumStock: Number(r.inventoryMinimumStock ?? 5),
+              unit: r.unit,
+              lastPurchasePrice: Number(r.inventoryLastPurchasePrice ?? 0)
+            }
+          });
+        }
+      }
+
+      return uniqueRows;
+    } catch (err) {
+      console.error("[ServiceRepository] listServicesForCourt error:", err);
+      return [];
+    }
+  },
+
+  async createService(partnerId: string, data: CreateServiceInput) {
+    await ensureServiceTables();
+    return prisma.$transaction(async (tx) => {
+      const cleanCategoryId = data.categoryId && data.categoryId.trim() !== "" && data.categoryId !== "ALL" ? data.categoryId.trim() : null;
+      const cleanImageUrl = data.imageUrl && data.imageUrl.trim() !== "" ? data.imageUrl.trim() : null;
+
+      const service = await tx.service.create({
+        data: {
+          partnerId,
+          categoryId: cleanCategoryId,
+          name: data.name,
+          description: data.description ?? null,
+          type: data.type,
+          sportType: data.sportType ?? "ALL",
+          price: data.price,
+          costPrice: data.costPrice ?? 0,
+          unit: data.unit ?? "cái",
+          imageUrl: cleanImageUrl,
+          trackInventory: data.trackInventory ?? true
+        }
+      });
+
+      const initialQty = data.initialStock ?? 50;
+      if (data.trackInventory) {
+        await tx.serviceInventory.create({
+          data: {
+            serviceId: service.id,
+            quantity: initialQty,
+            minimumStock: data.minimumStock ?? 5,
+            unit: data.unit ?? "cái",
+            lastPurchasePrice: data.costPrice ?? 0
+          }
+        });
+
+        if (initialQty > 0) {
+          await tx.inventoryTransaction.create({
+            data: {
+              serviceId: service.id,
+              type: "IMPORT",
+              quantity: initialQty,
+              unitCost: data.costPrice ?? 0,
+              referenceType: "INITIAL_STOCK",
+              note: "Tồn kho khởi tạo ban đầu"
+            }
+          });
+        }
+      }
+
+      // Map new service to court_services for all courts
+      const courts: any = await tx.$queryRawUnsafe(
+        `SELECT id FROM courts WHERE partner_id = $1 OR partner_id = 'p0001';`,
+        partnerId
+      ).catch(() => []);
+
+      if (Array.isArray(courts) && courts.length > 0) {
+        for (const court of courts) {
+          const customId = `cs_${court.id}_${service.id.slice(0, 8)}`;
+          await tx.$executeRawUnsafe(
+            `INSERT INTO court_services (id, court_id, service_id, name, price, is_available, status, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, TRUE, 'ACTIVE', NOW(), NOW())
+             ON CONFLICT (id) DO UPDATE SET price = EXCLUDED.price, status = 'ACTIVE';`,
+            customId, court.id, service.id, service.name, service.price
+          ).catch(() => {});
+        }
+      }
+
+      return tx.service.findUnique({
+        where: { id: service.id },
+        include: { category: true, inventory: true, court: { select: { id: true, name: true } } }
+      });
+    });
+  },
+
+  async updateService(id: string, data: UpdateServiceInput) {
+    await ensureServiceTables();
+    return prisma.$transaction(async (tx) => {
+      const updated = await tx.service.update({
+        where: { id },
+        data: {
+          ...(data.categoryId !== undefined ? { categoryId: data.categoryId } : {}),
+          ...(data.name !== undefined ? { name: data.name } : {}),
+          ...(data.description !== undefined ? { description: data.description } : {}),
+          ...(data.type !== undefined ? { type: data.type } : {}),
+          ...(data.sportType !== undefined ? { sportType: data.sportType } : {}),
+          ...(data.price !== undefined ? { price: data.price } : {}),
+          ...(data.costPrice !== undefined ? { costPrice: data.costPrice } : {}),
+          ...(data.unit !== undefined ? { unit: data.unit } : {}),
+          ...(data.imageUrl !== undefined ? { imageUrl: data.imageUrl } : {}),
+          ...(data.status !== undefined ? { status: data.status } : {}),
+          ...(data.trackInventory !== undefined ? { trackInventory: data.trackInventory } : {})
+        }
+      });
+
+      if (data.minimumStock !== undefined) {
+        await tx.serviceInventory.upsert({
+          where: { serviceId: id },
+          update: { minimumStock: data.minimumStock },
+          create: {
+            serviceId: id,
+            minimumStock: data.minimumStock,
+            quantity: 0,
+            unit: data.unit ?? "cái"
+          }
+        });
+      }
+
+      return tx.service.findUnique({
+        where: { id },
+        include: { category: true, inventory: true, court: { select: { id: true, name: true } } }
+      });
+    });
+  },
+
+  async deleteService(id: string) {
+    await ensureServiceTables();
+    return prisma.service.delete({ where: { id } });
+  },
+
+  /**
+   * A partner owns one row per court for the same product name, so an image uploaded once is
+   * meant for all of them — otherwise the same drink would need re-uploading for every court.
+   * Price, stock and status stay per court; only the picture is shared.
+   */
+  async applyImageToPartnerServices(partnerId: string, name: string, imageUrl: string | null) {
+    await ensureServiceTables();
+    return prisma.service.updateMany({
+      where: { partnerId, name },
+      data: { imageUrl }
+    });
+  }
+};

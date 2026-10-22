@@ -1,25 +1,36 @@
 import { Prisma, type ApprovalStatus, type BookingStatus } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+import { normalizeBookingServices } from "../../shared/utils/bookingServices.js";
+import { ConflictError, NotFoundError } from "../../shared/errors/AppError.js";
+import { surfaceCode, surfaceName, normalizedSurfaceCode } from "../../shared/utils/courtSurface.js";
 
-const columnExistsCache = new Map<string, boolean>();
+const columnExistsCache = new Map<string, boolean>([
+  ["blog_posts.allow_comments", true],
+  ["courts.deposit_percent", true]
+]);
 
 async function columnExists(tableName: string, columnName: string) {
   const cacheKey = `${tableName}.${columnName}`;
   const cached = columnExistsCache.get(cacheKey);
   if (cached !== undefined) return cached;
 
-  const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
-    select exists(
-      select 1
-      from information_schema.columns
-      where table_schema = 'public'
-        and table_name = ${tableName}
-        and column_name = ${columnName}
-    ) as "exists"
-  `;
-  const exists = Boolean(row?.exists);
-  columnExistsCache.set(cacheKey, exists);
-  return exists;
+  try {
+    const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+      select exists(
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = ${tableName}
+          and column_name = ${columnName}
+      ) as "exists"
+    `;
+    const exists = Boolean(row?.exists);
+    columnExistsCache.set(cacheKey, exists);
+    return exists;
+  } catch (err) {
+    columnExistsCache.set(cacheKey, true);
+    return true;
+  }
 }
 
 function bookingOrderBy(sortBy?: string, sortOrder?: string): Prisma.BookingOrderByWithRelationInput[] {
@@ -88,30 +99,27 @@ async function attachCourtDeposits<T extends { id: string }>(courts: T[]) {
 }
 
 async function ensureCourtSurfaces<T extends { id: string; courtCount: number; surfaces: Array<{ code: string; sortOrder: number }> }>(court: T): Promise<T> {
-  const target = court.courtCount ?? 1;
-  const existing = court.surfaces ?? [];
-  if (existing.length >= target) return court;
-
-  const existingCodes = new Set(existing.map((surface) => surface.code));
-  const nextSortOrder = existing.reduce((max, surface) => Math.max(max, surface.sortOrder), -1) + 1;
-  const rowsToCreate: Prisma.CourtSurfaceUncheckedCreateInput[] = [];
-  let candidate = existing.length + 1;
-  while (rowsToCreate.length < target - existing.length) {
-    const code = String(candidate).padStart(2, "0");
-    if (!existingCodes.has(code)) {
-      rowsToCreate.push({
-        courtId: court.id,
-        code,
-        name: `Sân ${candidate}`,
-        sortOrder: nextSortOrder + rowsToCreate.length
-      });
-      existingCodes.add(code);
+  // Serialize legacy auto-fill with explicit add/delete operations. Re-read the
+  // count after locking so a stale detail request cannot recreate a deleted row.
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM courts WHERE id = ${court.id} FOR UPDATE`;
+    const current = await tx.court.findUniqueOrThrow({ where: { id: court.id } });
+    const existing = await tx.courtSurface.findMany({ where: { courtId: court.id }, orderBy: [{ sortOrder: "asc" }, { code: "asc" }] });
+    const target = current.courtCount;
+    const codes = new Set(existing.map((row) => normalizedSurfaceCode(row.code)));
+    let candidate = 1;
+    let sortOrder = existing.reduce((max, row) => Math.max(max, row.sortOrder), -1) + 1;
+    while (existing.length < target) {
+      const number = candidate++;
+      const code = surfaceCode(number);
+      if (codes.has(code)) continue;
+      existing.push(await tx.courtSurface.create({ data: {
+        courtId: court.id, code, name: surfaceName(current.name, number), sortOrder: sortOrder++
+      } }));
+      codes.add(code);
     }
-    candidate += 1;
-  }
-
-  const created = await prisma.$transaction(rowsToCreate.map((data) => prisma.courtSurface.create({ data })));
-  return { ...court, surfaces: [...existing, ...created] };
+    return { ...court, courtCount: target, surfaces: existing };
+  });
 }
 
 export const partnerRepository = {
@@ -127,7 +135,7 @@ export const partnerRepository = {
     const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
     const previousMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
-    return prisma.$transaction([
+    return Promise.all([
       prisma.court.count({ where: { partnerId, activeStatus: "ACTIVE" } }),
       prisma.booking.count({ where: { court: { partnerId }, bookingDate: today } }),
       prisma.commissionTransaction.aggregate({
@@ -179,7 +187,20 @@ export const partnerRepository = {
   async listCourts(partnerId: string) {
     const courts = await prisma.court.findMany({
       where: { partnerId },
-      include: { category: true, images: true, prices: true, services: true, _count: { select: { surfaces: true } } },
+      select: {
+        id: true,
+        name: true,
+        district: true,
+        city: true,
+        openingTime: true,
+        closingTime: true,
+        approvalStatus: true,
+        activeStatus: true,
+        verified: true,
+        category: { select: { name: true } },
+        images: { select: { imageUrl: true }, take: 1, orderBy: { sortOrder: "asc" } },
+        _count: { select: { surfaces: true } }
+      },
       orderBy: { createdAt: "desc" }
     });
     return attachCourtDeposits(courts);
@@ -195,9 +216,18 @@ export const partnerRepository = {
   },
 
   async createCourt(data: Prisma.CourtUncheckedCreateInput, depositPercent?: number | null) {
-    const court = await prisma.court.create({ data, include: { category: true } });
-    await this.updateCourtDeposit(court.id, depositPercent);
-    return attachCourtDeposit(court);
+    await ensureCourtDepositColumn();
+    const normalized = depositPercent && depositPercent > 0 ? depositPercent : null;
+    return prisma.$transaction(async (tx) => {
+      const court = await tx.court.create({
+        data: { ...data, courtCount: 1, deposit_percent: normalized },
+        include: { category: true }
+      });
+      const surface = await tx.courtSurface.create({
+        data: { courtId: court.id, code: surfaceCode(1), name: surfaceName(court.name, 1), sortOrder: 0, status: "ACTIVE" }
+      });
+      return { ...court, surfaces: [surface], depositPercent: normalized };
+    });
   },
 
   async updateCourt(id: string, data: Prisma.CourtUpdateInput, depositPercent?: number | null) {
@@ -225,15 +255,27 @@ export const partnerRepository = {
   },
 
   deleteImage(imageId: string) {
-    return prisma.courtImage.delete({ where: { id: imageId } });
+    return prisma.$transaction(async (tx) => {
+      const image = await tx.courtImage.findUnique({ where: { id: imageId } });
+      if (!image) throw new NotFoundError("Không tìm thấy ảnh sân");
+      await tx.$queryRaw`SELECT id FROM courts WHERE id = ${image.courtId} FOR UPDATE`;
+      if (await tx.courtImageRequest.findFirst({ where: { replaceImageId: imageId, status: "PENDING" } })) {
+        throw new ConflictError("Ảnh đang chờ thay thế. Hãy hủy yêu cầu thay ảnh trước khi xóa.");
+      }
+      return tx.courtImage.delete({ where: { id: imageId } });
+    });
   },
 
   async reorderImages(courtId: string, imageIds: string[]) {
-    return prisma.$transaction(
-      imageIds.map((id, sortOrder) =>
-        prisma.courtImage.updateMany({ where: { id, courtId }, data: { sortOrder } })
-      )
-    );
+    return prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM courts WHERE id = ${courtId} FOR UPDATE`;
+      if (await tx.courtImageRequest.findFirst({ where: { courtId, replaceImageId: { not: null }, status: "PENDING" } })) {
+        throw new ConflictError("Hãy đợi duyệt hoặc hủy yêu cầu thay ảnh trước khi sắp xếp.");
+      }
+      for (const [sortOrder, id] of imageIds.entries()) {
+        await tx.courtImage.updateMany({ where: { id, courtId }, data: { sortOrder } });
+      }
+    });
   },
 
   addPrice(data: Prisma.CourtPriceUncheckedCreateInput) {
@@ -298,27 +340,31 @@ export const partnerRepository = {
     });
   },
 
-  bookingsByOrderIds(partnerId: string, orderIds: string[]) {
-    return prisma.booking.findMany({
+  async bookingsByOrderIds(partnerId: string, orderIds: string[]) {
+    const bookings = await prisma.booking.findMany({
       where: { court: { partnerId }, bookingOrderId: { in: orderIds } },
       include: {
         user: { select: { id: true, fullName: true, email: true, phone: true } },
         court: true,
-        courtSurface: { select: { id: true, name: true, code: true } }
+        courtSurface: { select: { id: true, name: true, code: true } },
+        bookingServices: { include: { service: true, courtService: true } }
       },
       orderBy: [{ bookingDate: "asc" }, { startTime: "asc" }]
     });
+    return bookings.map(normalizeBookingServices);
   },
 
-  bookingsByIds(partnerId: string, ids: string[]) {
-    return prisma.booking.findMany({
+  async bookingsByIds(partnerId: string, ids: string[]) {
+    const bookings = await prisma.booking.findMany({
       where: { court: { partnerId }, id: { in: ids } },
       include: {
         user: { select: { id: true, fullName: true, email: true, phone: true } },
         court: true,
-        courtSurface: { select: { id: true, name: true, code: true } }
+        courtSurface: { select: { id: true, name: true, code: true } },
+        bookingServices: { include: { service: true, courtService: true } }
       }
     });
+    return bookings.map(normalizeBookingServices);
   },
 
   bookingByPartner(bookingId: string, partnerId: string) {
@@ -361,8 +407,43 @@ export const partnerRepository = {
     return prisma.courtSurface.update({ where: { id: surfaceId }, data: { status } });
   },
 
-  updateCourtSurface(surfaceId: string, data: { openingTime?: Date | null; closingTime?: Date | null }) {
-    return prisma.courtSurface.update({ where: { id: surfaceId }, data });
+  async saveCourtSurface(courtId: string, surfaceId: string | null, data: Pick<Prisma.CourtSurfaceUncheckedCreateInput, "code" | "name" | "capacity" | "surface" | "size" | "openingTime" | "closingTime">) {
+    return prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM courts WHERE id = ${courtId} FOR UPDATE`;
+      const duplicate = await tx.courtSurface.findFirst({ where: {
+        courtId, code: { equals: data.code, mode: "insensitive" },
+        ...(surfaceId ? { id: { not: surfaceId } } : {})
+      } });
+      if (duplicate) throw new ConflictError("Mã sân con đã tồn tại trong cụm sân này");
+      const result = surfaceId
+        ? await tx.courtSurface.update({ where: { id: surfaceId, courtId }, data })
+        : await tx.courtSurface.create({ data: { ...data, courtId,
+            sortOrder: ((await tx.courtSurface.aggregate({ where: { courtId }, _max: { sortOrder: true } }))._max.sortOrder ?? -1) + 1
+          } });
+      const courtCount = await tx.courtSurface.count({ where: { courtId } });
+      await tx.court.update({ where: { id: courtId }, data: { courtCount } });
+      return result;
+    });
+  },
+
+  async deleteCourtSurface(courtId: string, surfaceId: string) {
+    return prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM courts WHERE id = ${courtId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM court_surfaces WHERE id = ${surfaceId} AND court_id = ${courtId} FOR UPDATE`;
+      const surface = await tx.courtSurface.findFirst({ where: { id: surfaceId, courtId }, include: {
+        _count: { select: { bookings: true, booking_slots: true, bookingSeries: true, availabilityBlocks: true } }
+      } });
+      if (!surface) throw new NotFoundError("Không tìm thấy sân con");
+      if (Object.values(surface._count).some((count) => count > 0)) {
+        throw new ConflictError("Sân con đã có lịch đặt hoặc lịch nghỉ. Vui lòng tạm ngưng thay vì xóa.");
+      }
+      if (await tx.courtSurface.count({ where: { courtId } }) <= 1) {
+        throw new ConflictError("Cụm sân cần ít nhất một sân con. Hãy thêm sân mới trước khi xóa hoặc tạm ngưng sân này.");
+      }
+      await tx.courtSurface.delete({ where: { id: surfaceId } });
+      await tx.court.update({ where: { id: courtId }, data: { courtCount: await tx.courtSurface.count({ where: { courtId } }) } });
+      return { id: surfaceId };
+    });
   },
 
   courtBlocks(courtId: string) {

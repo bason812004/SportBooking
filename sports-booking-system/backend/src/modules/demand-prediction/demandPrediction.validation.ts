@@ -16,3 +16,8 @@ export const demandPredictionQuerySchema = z.object({
 export const partnerCourtPredictionParamsSchema = z.object({
   params: z.object({ courtId: id })
 });
+
+export const partnerDemandForecastSchema = z.object({
+  params: z.object({ courtId: id }),
+  query: z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) })
+});

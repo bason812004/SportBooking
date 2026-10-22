@@ -1,3 +1,36 @@
 import { Router } from "express";
+import multer from "multer";
+import { UserRole } from "@prisma/client";
+import { asyncHandler } from "../../shared/utils/asyncHandler.js";
+import { authMiddleware } from "../../middlewares/auth.middleware.js";
+import { requireRole } from "../../middlewares/role.middleware.js";
+import { serviceController } from "./service.controller.js";
 
 export const serviceRoutes = Router();
+
+const imageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+
+// Public / User routes
+serviceRoutes.get("/categories", asyncHandler(serviceController.listCategories));
+serviceRoutes.get("/redistribute", asyncHandler(serviceController.redistributeServices));
+serviceRoutes.get("/courts/:courtId", asyncHandler(serviceController.listCourtServices));
+serviceRoutes.get("/detail/:id", asyncHandler(serviceController.getServiceById));
+serviceRoutes.get("/", asyncHandler(serviceController.listServices));
+
+// Partner / Recipient routes
+serviceRoutes.get("/partner", authMiddleware, requireRole(UserRole.PARTNER, UserRole.RECIPIENT), asyncHandler(serviceController.listPartnerServices));
+serviceRoutes.post("/partner", authMiddleware, requireRole(UserRole.PARTNER), asyncHandler(serviceController.createService));
+serviceRoutes.patch("/partner/:id", authMiddleware, requireRole(UserRole.PARTNER), asyncHandler(serviceController.updateService));
+serviceRoutes.delete("/partner/:id", authMiddleware, requireRole(UserRole.PARTNER), asyncHandler(serviceController.deleteService));
+serviceRoutes.post(
+  "/partner/image",
+  authMiddleware,
+  requireRole(UserRole.PARTNER),
+  imageUpload.single("image"),
+  asyncHandler(serviceController.uploadServiceImage)
+);
+serviceRoutes.post("/categories", authMiddleware, requireRole(UserRole.PARTNER, UserRole.ADMIN), asyncHandler(serviceController.createCategory));
+
+// Catch-all by id stays last: Express matches in registration order, so declaring it earlier makes
+// "/partner", "/categories" and friends resolve as an id and 404 on a lookup that was never meant.
+serviceRoutes.get("/:id", asyncHandler(serviceController.getServiceById));

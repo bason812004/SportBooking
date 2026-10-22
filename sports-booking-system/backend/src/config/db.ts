@@ -1,15 +1,57 @@
 import { PrismaClient } from "@prisma/client";
 
-// Prisma 6 accepts connection pool tuning only through the DATABASE_URL
-// query parameters (`?connection_limit=&pool_timeout=&pgbouncer=true`).
-// When a different value is required per environment we can override the
-// URL here. Keep this file lean so misconfiguration in another module
-// can't break the singleton.
+function getDatabaseUrl() {
+  let url = process.env.DATABASE_URL || process.env.DIRECT_URL || "";
+  if (!url) return url;
+
+  if (url.includes("connection_limit=")) {
+    url = url.replace(/connection_limit=\d+/, "connection_limit=30");
+  } else {
+    const separator = url.includes("?") ? "&" : "?";
+    url = `${url}${separator}connection_limit=30`;
+  }
+
+  if (url.includes("pool_timeout=")) {
+    url = url.replace(/pool_timeout=\d+/, "pool_timeout=30");
+  } else {
+    const separator = url.includes("?") ? "&" : "?";
+    url = `${url}${separator}pool_timeout=30`;
+  }
+
+  if (!url.includes("sslmode=")) {
+    const separator = url.includes("?") ? "&" : "?";
+    url = `${url}${separator}sslmode=require`;
+  }
+
+  if (!url.includes("connect_timeout=")) {
+    const separator = url.includes("?") ? "&" : "?";
+    url = `${url}${separator}connect_timeout=30`;
+  }
+
+  return url;
+}
+
+const debugSql = process.env.DEBUG_SQL === "1";
+
 export const prisma = new PrismaClient({
-  log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
+  log: debugSql
+    ? [{ emit: "event", level: "query" }, { emit: "stdout", level: "warn" }, { emit: "stdout", level: "error" }]
+    : ["error"],
   datasources: {
     db: {
-      url: process.env.DATABASE_URL
+      url: getDatabaseUrl()
     }
+  },
+  // Supabase là DB từ xa: mỗi round-trip tốn hàng trăm ms, nên mặc định 5000ms của Prisma
+  // khiến các interactive transaction nhiều bước bị đóng giữa chừng (P2028).
+  transactionOptions: {
+    maxWait: 10_000,
+    timeout: 20_000
   }
 });
+
+if (debugSql) {
+  (prisma as any).$on("query", (e: { query: string; params: string; duration: number }) => {
+    console.log(`[QUERY] ${e.duration}ms ${e.query} -- params=${e.params}`);
+  });
+}

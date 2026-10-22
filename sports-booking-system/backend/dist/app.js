@@ -1,7 +1,7 @@
 import compression from "compression";
 import cors from "cors";
 import express from "express";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import helmet from "helmet";
 import swaggerUi from "swagger-ui-express";
 import { env } from "./config/env.js";
@@ -10,6 +10,7 @@ import { errorMiddleware } from "./middlewares/error.middleware.js";
 import { performanceLogger } from "./middlewares/performance.middleware.js";
 import { adminRoutes } from "./modules/admin/admin.routes.js";
 import { adminAnalyticsRoutes, partnerAnalyticsRoutes } from "./modules/analytics/analytics.routes.js";
+import { adminReportRoutes, partnerReportRoutes, recipientReportRoutes } from "./modules/business-report/report.routes.js";
 import { authRoutes } from "./modules/auth/auth.routes.js";
 import { blogRoutes } from "./modules/blogs/blog.routes.js";
 import { bookingRoutes } from "./modules/bookings/booking.routes.js";
@@ -35,19 +36,33 @@ import { weeklyScheduleRoutes } from "./modules/weekly-schedule/weeklySchedule.r
 import { partnerWalletRoutes, adminWalletRoutes } from "./modules/wallets/wallet.routes.js";
 import { partnerSettlementRoutes, adminSettlementRoutes } from "./modules/settlements/settlement.routes.js";
 import { partnerWithdrawalRoutes, adminWithdrawalRoutes } from "./modules/withdrawals/withdrawal.routes.js";
+import { adminBookingReminderRoutes } from "./modules/booking-reminders/bookingReminder.routes.js";
 import { uploadRoutes } from "./modules/uploads/upload.routes.js";
+import { serviceRoutes } from "./modules/services/service.routes.js";
+import { inventoryRoutes } from "./modules/inventory/inventory.routes.js";
+import { cashierRoutes } from "./modules/cashier/cashier.routes.js";
+import { checkoutRoutes } from "./modules/checkout/checkout.routes.js";
+import { chatbotRoutes } from "./modules/chatbot/chatbot.routes.js";
 export const app = express();
 const allowedOrigins = new Set([
     env.FRONTEND_URL,
     "http://localhost:5173",
-    "http://127.0.0.1:5173"
+    "http://127.0.0.1:5173",
+    "http://localhost:8081",
+    "http://127.0.0.1:8081",
+    "http://localhost:19006",
+    "http://127.0.0.1:19006"
 ]);
 app.use(helmet());
 app.use(compression());
 app.use(cors({
     origin(origin, callback) {
-        if (!origin || allowedOrigins.has(origin))
+        if (!origin ||
+            allowedOrigins.has(origin) ||
+            process.env.NODE_ENV !== "production" ||
+            /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$/.test(origin)) {
             return callback(null, true);
+        }
         return callback(new Error(`Origin ${origin} is not allowed by CORS`));
     },
     credentials: true
@@ -84,15 +99,33 @@ app.use("/api/partner/demand-prediction", partnerDemandPredictionRoutes);
 app.use("/api/partner/vouchers", partnerVoucherRoutes);
 app.use("/api/partner/tournaments", partnerTournamentRoutes);
 app.use("/api/partner/analytics", partnerAnalyticsRoutes);
+app.use("/api/partner/report", partnerReportRoutes);
 app.use("/api/partner/wallet", partnerWalletRoutes);
 app.use("/api/partner/settlements", partnerSettlementRoutes);
 app.use("/api/partner/withdrawals", partnerWithdrawalRoutes);
+app.use("/api/services", serviceRoutes);
+app.use("/api/partner/inventory", inventoryRoutes);
+app.use("/api/inventory", inventoryRoutes);
+app.use("/api/cashier", cashierRoutes);
+app.use("/api/checkouts", checkoutRoutes);
+const chatbotRateLimit = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 15,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => req.user?.id ?? ipKeyGenerator(req.ip ?? "unknown")
+});
+app.use("/api/chatbot", chatbotRateLimit);
+app.use("/api/chatbot", chatbotRoutes);
 app.use("/api/partner", partnerRoutes);
+app.use("/api/recipient/report", recipientReportRoutes);
 app.use("/api/recipient", recipientRoutes);
 app.use("/api/admin/analytics", adminAnalyticsRoutes);
+app.use("/api/admin/report", adminReportRoutes);
 app.use("/api/admin/wallets", adminWalletRoutes);
 app.use("/api/admin/settlements", adminSettlementRoutes);
 app.use("/api/admin/withdrawals", adminWithdrawalRoutes);
+app.use("/api/admin/booking-reminders", adminBookingReminderRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/uploads", uploadRoutes);
 app.use(errorMiddleware);

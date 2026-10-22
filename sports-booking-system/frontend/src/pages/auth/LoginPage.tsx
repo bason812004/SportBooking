@@ -18,7 +18,7 @@ type FormValues = z.infer<typeof loginSchema>;
 function redirectPath(role: AuthSession["user"]["role"]) {
   if (role === "ADMIN") return "/admin/dashboard";
   if (role === "PARTNER") return "/partner/dashboard";
-  if (role === "RECIPIENT") return "/recipient/dashboard";
+  if (role === "RECIPIENT") return "/recipient/court-surfaces";
   return "/courts";
 }
 

@@ -47,8 +47,8 @@ export const notificationService = {
   async list(userId: string, query: { page?: string; limit?: string }) {
     const page = parsePage(query.page);
     const limit = parseLimit(query.limit);
-    const [items, total] = await notificationRepository.listByUser(userId, page, limit);
-    return { items, meta: paginationMeta(page, limit, total) };
+    const [items, total, unreadCount] = await notificationRepository.listByUser(userId, page, limit);
+    return { items, unreadCount, meta: paginationMeta(page, limit, total) };
   },
 
   async markRead(userId: string, id: string) {

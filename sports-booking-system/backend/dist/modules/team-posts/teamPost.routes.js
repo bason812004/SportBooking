@@ -7,6 +7,7 @@ export const teamPostRoutes = Router();
 teamPostRoutes.get("/", teamPostController.list);
 teamPostRoutes.get("/me", authMiddleware, teamPostController.listMine);
 teamPostRoutes.get("/joined", authMiddleware, teamPostController.listJoined);
+teamPostRoutes.get("/:id/membership", authMiddleware, validate(teamPostIdSchema), teamPostController.membership);
 teamPostRoutes.get("/:id/messages", authMiddleware, validate(teamPostIdSchema), teamPostController.messages);
 teamPostRoutes.get("/:id/members", authMiddleware, validate(teamPostIdSchema), teamPostController.members);
 teamPostRoutes.get("/:id", validate(teamPostIdSchema), teamPostController.detail);

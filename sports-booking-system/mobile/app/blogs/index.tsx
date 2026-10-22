@@ -1,5 +1,6 @@
 import { FlatList, View } from "react-native";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useFocusEffect } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { contentApi } from "../../src/api/content";
 import { queryKeys } from "../../src/api/queryKeys";
@@ -11,7 +12,22 @@ import { spacing } from "../../src/theme/tokens";
 
 export default function BlogsScreen() {
   const [search, setSearch] = useState("");
-  const blogs = useQuery({ queryKey: queryKeys.blogs({ search }), queryFn: () => contentApi.blogs({ search }) });
+  const [debounced, setDebounced] = useState("");
+  const [focused, setFocused] = useState(false);
+  useFocusEffect(useCallback(() => {
+    setFocused(true);
+    return () => setFocused(false);
+  }, []));
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(search.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const blogs = useQuery({
+    queryKey: queryKeys.blogs({ search: debounced }), queryFn: () => contentApi.blogs({ search: debounced }),
+    enabled: focused, staleTime: 0, refetchOnMount: "always", refetchOnReconnect: true, refetchInterval: 30000
+  });
   return (
     <Screen title="Blog" subtitle="Tin moi va kinh nghiem dat san." back scroll={false}>
       <SearchInput value={search} onChangeText={setSearch} placeholder="Tim bai viet" />

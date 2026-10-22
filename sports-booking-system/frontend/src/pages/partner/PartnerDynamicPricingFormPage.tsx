@@ -44,6 +44,16 @@ const dayTypeOptions = [
   { value: "HOLIDAY", label: "Ngày lễ" }
 ];
 
+const timeSlotOptions = [
+  { value: "", label: "-- Cả ngày --" },
+  ...Array.from({ length: 48 }, (_, i) => {
+    const h = String(Math.floor(i / 2)).padStart(2, "0");
+    const m = i % 2 === 0 ? "00" : "30";
+    const time = `${h}:${m}`;
+    return { value: time, label: time };
+  })
+];
+
 function timeText(value?: string | null) {
   if (!value) return "";
   const match = value.match(/(\d{2}:\d{2})/);
@@ -61,8 +71,8 @@ function buildPayload(values: FormValues): DynamicPricingRuleInput {
     endTime: values.endTime || undefined,
     priceAdjustmentType: values.priceAdjustmentType,
     priceAdjustmentValue: Number(values.priceAdjustmentValue),
-    minPrice: values.minPrice != null && values.minPrice !== ("" as never) ? Number(values.minPrice) : undefined,
-    maxPrice: values.maxPrice != null && values.maxPrice !== ("" as never) ? Number(values.maxPrice) : undefined,
+    minPrice: Number.isFinite(values.minPrice) ? Number(values.minPrice) : undefined,
+    maxPrice: Number.isFinite(values.maxPrice) ? Number(values.maxPrice) : undefined,
     priority: Number(values.priority),
     status: values.status
   };
@@ -95,6 +105,12 @@ export function PartnerDynamicPricingFormPage() {
     }
   });
   const values = form.watch();
+  const selectedCourt = courts.data?.find((court) => court.id === values.courtId);
+  const courtOpenTime = selectedCourt ? timeText(selectedCourt.openingTime) : "";
+  const courtCloseTime = selectedCourt ? timeText(selectedCourt.closingTime) : "";
+  const availableTimeOptions = timeSlotOptions.filter(
+    (option) => option.value === "" || !courtOpenTime || !courtCloseTime || (option.value >= courtOpenTime && option.value <= courtCloseTime)
+  );
 
   useEffect(() => {
     if (!rule.data) return;
@@ -148,8 +164,8 @@ export function PartnerDynamicPricingFormPage() {
             <Input label="Tên quy tắc" {...form.register("name", { required: true, minLength: 3 })} />
             <Select label="Loại quy tắc" {...form.register("ruleType")} options={ruleTypeOptions} />
             <Select label="Loại ngày" {...form.register("dayType")} options={dayTypeOptions} />
-            <Input label="Giờ bắt đầu" type="time" {...form.register("startTime")} />
-            <Input label="Giờ kết thúc" type="time" {...form.register("endTime")} />
+            <Select label="Giờ bắt đầu" {...form.register("startTime")} options={availableTimeOptions} />
+            <Select label="Giờ kết thúc" {...form.register("endTime")} options={availableTimeOptions} />
             <Input label="Độ ưu tiên (số nhỏ hơn ưu tiên hơn)" type="number" min="0" {...form.register("priority", { valueAsNumber: true })} />
             <Select
               label="Trạng thái"

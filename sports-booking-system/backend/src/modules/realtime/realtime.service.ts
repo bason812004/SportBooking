@@ -36,9 +36,8 @@ export const realtimeService = {
   },
   toCourt(courtId: string, event: string, payload: unknown) {
     emit(`court:${courtId}`, event, payload);
-    if (event === "court:availability-updated") {
-      // Drop any cached weekly schedule for this court — every other client
-      // that re-mounts the calendar will fetch fresh data on next request.
+    emit("public", event, payload);
+    if (event === "court:availability-updated" || event === "court:availability:updated") {
       weeklyScheduleInvalidator?.(courtId);
     }
   },

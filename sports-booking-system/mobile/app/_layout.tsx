@@ -4,6 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { AppProviders } from "../src/providers/AppProviders";
 import { NetworkBanner } from "../src/components/NetworkBanner";
+import { ChatFab } from "../src/components/chat/ChatFab";
 import { colors } from "../src/theme/tokens";
 
 export default function RootLayout() {
@@ -18,6 +19,7 @@ export default function RootLayout() {
             contentStyle: { backgroundColor: colors.canvas }
           }}
         />
+        <ChatFab />
       </AppProviders>
     </GestureHandlerRootView>
   );

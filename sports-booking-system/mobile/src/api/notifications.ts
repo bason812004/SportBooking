@@ -2,8 +2,8 @@ import { api } from "./client";
 import type { ApiResponse, NotificationItem, Paginated } from "./types";
 
 export const notificationApi = {
-  async listMine() {
-    const { data } = await api.get<ApiResponse<Paginated<NotificationItem>>>("/users/me/notifications");
+  async listMine(page = 1) {
+    const { data } = await api.get<ApiResponse<Paginated<NotificationItem>>>("/users/me/notifications", { params: { page, limit: 20 } });
     return data.data;
   },
   async markRead(id: string) {

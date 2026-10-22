@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import { LayoutGrid } from "lucide-react";
+import type { WeeklyScheduleSlot } from "../../types/api";
 import { LoadingState, ErrorState, EmptyState } from "../../components/common/States";
 import { useCourt } from "../../features/courts/hooks/useCourts";
 import { useUserLocation } from "../../features/courts/hooks/useUserLocation";
@@ -11,7 +13,6 @@ import {
   usePrefetchAdjacentWeeks,
   useWeeklySchedule
 } from "../../features/bookings/hooks/useBookingSchedule";
-import type { WeeklyScheduleSlot } from "../../types/api";
 import { getSocket } from "../../lib/socket";
 import { HeroGallery } from "./detail/HeroGallery";
 import { StickyBookingBar } from "./detail/StickyBookingBar";
@@ -29,9 +30,10 @@ import { CourtSectionNav } from "./detail/CourtSectionNav";
 import { DetailSection } from "./detail/detailUtils";
 import { CourtDetailBookingSidePanel } from "./detail/CourtDetailBookingSidePanel";
 import { detailImages } from "./detail/detailData";
+import { useBookingContext } from "../../context/BookingContext";
 
 function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const R = 6371; // Radius of the earth in km
+  const R = 6371;
   const dLat = (lat2 - lat1) * (Math.PI / 180);
   const dLon = (lon2 - lon1) * (Math.PI / 180);
   const a =
@@ -51,51 +53,96 @@ export function CourtDetailPage() {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
   const court = useCourt(id);
-
-  // Initialise week from URL ?week= param or default to current week
-  const initialWeekFromUrl = searchParams.get("week") ?? undefined;
-  const [weekStartDate, setWeekStartDate] = useState<Date>(
-    () => startOfWeek(
-      initialWeekFromUrl
-        ? new Date(`${initialWeekFromUrl}T00:00:00`)
-        : new Date()
-    )
-  );
-  const [focusedDate, setFocusedDate] = useState<Date>(() => new Date());
-  // selected slots are NOT reset when week changes
-  const [selected, setSelected] = useState<WeeklyScheduleSlot[]>([]);
-  const selectedWeekRef = useRef<string>("");
-
   const { language } = useLanguage();
   const { token } = useAuth();
   const queryClient = useQueryClient();
   const { location: userLoc } = useUserLocation({ autoRequest: true });
+  const [selectedSurfaceId, setSelectedSurfaceId] = useState<string | null>(null);
 
+  // ── Global booking context ──────────────────────────────────────────────────
+  // This is the single source of truth for all booking state.
+  // Slots, week navigation, and court info are shared across the entire app.
+  const {
+    state: bookingState,
+    toggleSlot,
+    removeSlot,
+    clearSlots,
+    setWeekStart: ctxSetWeekStart,
+    setFocusedDate: ctxSetFocusedDate,
+    goToNextWeek,
+    goToPrevWeek,
+    goToToday,
+    setCourt: ctxSetCourt,
+    totalSlots
+  } = useBookingContext();
+
+  // ── Initialize week from URL ────────────────────────────────────────────────
+  const initialWeekFromUrl = searchParams.get("week") ?? undefined;
+  const [weekStartDate, setWeekStartDate] = [bookingState.weekStart, ctxSetWeekStart];
   const weekStart = formatYmd(weekStartDate);
-  const schedule = useWeeklySchedule(id, weekStart);
 
-  usePrefetchAdjacentWeeks(id, weekStart);
-
-  // ── Sync week to URL ───────────────────────────────────────────
   useEffect(() => {
     const params = new URLSearchParams(searchParams);
     params.set("week", weekStart);
-    window.history.replaceState(null, "", `${location.pathname}?${params.toString()}`);
-  }, [weekStartDate]);
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+  }, [weekStart]);
 
-  // Realtime: invalidate weekly-schedule cache when bookings change.
+  // ── Sync court info to global context ───────────────────────────────────────
   useEffect(() => {
-    if (!id || !token) return;
+    if (court.data?.id && court.data?.name) {
+      ctxSetCourt(court.data.id, court.data.name);
+    }
+  }, [court.data?.id, court.data?.name, ctxSetCourt]);
+
+  // Reset draft selection when navigating away from this court
+  useEffect(() => {
+    return () => {
+      clearSlots();
+    };
+  }, [clearSlots]);
+
+  const surfaces = court.data?.surfaces;
+
+  const activeSurface = useMemo(() => {
+    if (!court.data?.surfaces?.length) return null;
+    return court.data.surfaces.find((s: any) => s.id === selectedSurfaceId) || court.data.surfaces[0];
+  }, [court.data?.surfaces, selectedSurfaceId]);
+
+  const activeSurfaceId = activeSurface?.id;
+
+  const schedule = useWeeklySchedule(id, weekStart, activeSurfaceId);
+  usePrefetchAdjacentWeeks(id, weekStart, activeSurfaceId);
+
+  const handleToggleSlot = useCallback(
+    (slot: WeeklyScheduleSlot) => {
+      const enrichedSlot: WeeklyScheduleSlot = {
+        ...slot,
+        courtSurfaceId: slot.courtSurfaceId || activeSurfaceId || null,
+        courtSurfaceName: slot.courtSurfaceName || activeSurface?.name || court.data?.name || ""
+      };
+      toggleSlot(enrichedSlot);
+    },
+    [activeSurfaceId, activeSurface?.name, court.data?.name, toggleSlot]
+  );
+
+  // ── Realtime invalidation ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (!id) return;
     const socket = getSocket(token);
     socket.emit("court:subscribe", id);
-    const refresh = () =>
+    const refresh = () => {
       queryClient.invalidateQueries({ queryKey: ["weekly-schedule", id] });
+      queryClient.invalidateQueries({ queryKey: ["court", id] });
+      queryClient.invalidateQueries({ queryKey: ["court-availability", id] });
+    };
+    socket.on("court:availability-updated", refresh);
     socket.on("court:availability:updated", refresh);
     socket.on("booking:created", refresh);
     socket.on("booking:cancelled", refresh);
     socket.on("booking:confirmed", refresh);
     return () => {
       socket.emit("court:unsubscribe", id);
+      socket.off("court:availability-updated", refresh);
       socket.off("court:availability:updated", refresh);
       socket.off("booking:created", refresh);
       socket.off("booking:cancelled", refresh);
@@ -103,6 +150,7 @@ export function CourtDetailPage() {
     };
   }, [id, queryClient, token]);
 
+  // ── Derived ────────────────────────────────────────────────────────────────
   const distanceText = useMemo(() => {
     const data = court.data;
     if (userLoc && data?.latitude && data?.longitude) {
@@ -139,7 +187,7 @@ export function CourtDetailPage() {
     };
   }, [court.data, id]);
 
-  const selectedDate = formatYmd(focusedDate);
+  const selectedDate = formatYmd(bookingState.focusedDate);
 
   if (court.isLoading) return <div className="px-5 py-16"><LoadingState /></div>;
   if (court.isError) return <div className="px-5 py-16"><ErrorState message={court.error.message} /></div>;
@@ -152,7 +200,7 @@ export function CourtDetailPage() {
         price={view.price}
         rating={view.rating}
         selectedDate={selectedDate}
-        selectedSlots={selected}
+        selectedSlots={bookingState.selectedSlots}
       />
       <div className="mx-auto max-w-[1600px] space-y-6 px-4 py-6">
         <HeroGallery images={view.images} />
@@ -166,6 +214,51 @@ export function CourtDetailPage() {
           bookingCount={view.bookingCount}
           distance={distanceText}
         />
+
+        {court.data?.surfaces && court.data.surfaces.length > 0 && (
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-base font-black text-[#0b1220] flex items-center gap-2">
+                  <LayoutGrid className="h-5 w-5 text-[#02712a]" />
+                  Danh Sách Sân Con Trực Thuộc ({court.data.surfaces.length} Sân Con)
+                </h3>
+                <p className="text-xs text-slate-500 font-semibold mt-0.5">
+                  Quý khách có thể chọn cụ thể 1 trong các sân con bên dưới để đặt lịch thi đấu
+                </p>
+              </div>
+
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-3">
+              {court.data.surfaces.map((sf: any) => {
+                const isSelected = selectedSurfaceId === sf.id;
+                return (
+                  <button
+                    key={sf.id}
+                    type="button"
+                    onClick={() => setSelectedSurfaceId(isSelected ? null : sf.id)}
+                    className={`rounded-2xl border p-4 text-left transition flex items-start justify-between ${isSelected
+                        ? "border-[#02712a] bg-emerald-50/70 shadow-md ring-2 ring-[#02712a]/30"
+                        : "border-slate-200 bg-white hover:border-emerald-300 hover:bg-slate-50"
+                      }`}
+                  >
+                    <div>
+                      <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[11px] font-black text-[#02712a]">
+                        Mã: {sf.code}
+                      </span>
+                      <h4 className="mt-1 font-black text-slate-900 text-sm">{sf.name}</h4>
+                      <p className="text-xs text-slate-500 font-semibold mt-1">{sf.surface || "Mặt sân tiêu chuẩn"} • {sf.capacity || "7 người"}</p>
+                    </div>
+                    <span className={`h-5 w-5 rounded-full border-2 flex items-center justify-center transition ${isSelected ? "border-[#02712a] bg-[#02712a]" : "border-slate-300"}`}>
+                      {isSelected && <div className="h-2 w-2 rounded-full bg-white" />}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="sticky top-20 z-30 xl:hidden">
           <CourtSectionNav />
@@ -193,6 +286,32 @@ export function CourtDetailPage() {
                 title="Lịch đặt sân trong tuần"
                 description="Chọn một hoặc nhiều khung giờ còn trống. Giá, dynamic pricing và demand prediction được lấy trực tiếp từ backend."
               >
+                {/* Sub-Court (Sân con) Selector */}
+                {surfaces && surfaces.length > 0 && (
+                  <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-black uppercase tracking-wider text-emerald-900 flex items-center gap-1.5 mr-2">
+                        <LayoutGrid className="h-4 w-4 text-emerald-600" />
+                        Chọn Sân Con:
+                      </span>
+                      {surfaces.map((s) => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => setSelectedSurfaceId(s.id)}
+                          className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-black transition border ${(selectedSurfaceId ?? surfaces?.[0]?.id) === s.id
+                              ? "bg-[#02712a] text-white border-[#02712a] shadow-md scale-105"
+                              : "bg-white text-slate-700 border-slate-200 hover:bg-emerald-100/60"
+                            }`}
+                        >
+                          <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                          {s.name} ({s.code})
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <WeeklyCalendarSection
                   response={schedule.data}
                   isLoading={schedule.isLoading}
@@ -200,18 +319,25 @@ export function CourtDetailPage() {
                   error={schedule.error as Error | null}
                   onRetry={() => schedule.refetch()}
                   weekStart={weekStartDate}
-                  onWeekStartChange={(next) => setWeekStartDate(next)}
-                  focusedDate={focusedDate}
-                  onFocusedDateChange={setFocusedDate}
-                  selected={selected}
-                  onSelectedChange={setSelected}
+                  onWeekStartChange={ctxSetWeekStart}
+                  focusedDate={bookingState.focusedDate}
+                  onFocusedDateChange={ctxSetFocusedDate}
+                  selected={bookingState.selectedSlots}
+                  onSelectedChange={(slots) => {
+                    // slots from WeeklyCalendarSection are only the NEW slot being toggled
+                    // We use toggleSlot from context instead
+                    // This callback is only used internally by the calendar
+                  }}
+                  onToggleSlot={handleToggleSlot}
                   language={language}
                   forceDayOnCompact
                   rightSlot={
                     <CourtDetailBookingSidePanel
                       courtId={view.id}
                       selectedDate={selectedDate}
-                      selectedSlots={selected}
+                      selectedSlots={bookingState.selectedSlots}
+                      onRemoveSlot={removeSlot}
+                      onClearSlots={clearSlots}
                     />
                   }
                 />

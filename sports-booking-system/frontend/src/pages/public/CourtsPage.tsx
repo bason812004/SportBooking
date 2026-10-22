@@ -11,6 +11,7 @@ import { CourtList } from "./search/CourtList";
 import { MapPanel } from "./search/MapPanel";
 import { PaginationSection } from "./search/PaginationSection";
 import type { SearchCourtItem } from "./search/CourtCard";
+import { UserLocationBadge } from "../../components/common/UserLocationBadge";
 
 const PAGE_SIZE = 8;
 
@@ -26,10 +27,10 @@ export function CourtsPage() {
   const [sportType, setSportType] = useState(searchParams.get("sportType") ?? "");
   const [minPrice, setMinPrice] = useState(searchParams.get("minPrice") ?? "");
   const [maxPrice, setMaxPrice] = useState(searchParams.get("maxPrice") ?? "");
-  const [radiusKm, setRadiusKm] = useState(10);
+  const [radiusKm, setRadiusKm] = useState<number | undefined>(undefined);
   const [sortBy, setSortBy] = useState("newest");
   const sportTypes = useSportTypes();
-  const userLocation = useUserLocation({ autoRequest: true });
+  const userLocation = useUserLocation({ autoRequest: true, enableRealtimeWatch: true });
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedKeyword(keyword), 350);
@@ -53,13 +54,9 @@ export function CourtsPage() {
 
   const sortOrder: "asc" | "desc" | undefined =
     sortBy === "rating" ? "desc" :
-    sortBy === "distance" ? "asc" :
-    sortBy === "name" ? "asc" :
-    undefined;
-  const sortField =
-    sortBy === "newest" ? undefined :
-    sortBy;
-
+      sortBy === "distance" ? "asc" :
+        sortBy === "name" ? "asc" :
+          undefined;
   const filters = {
     page,
     limit: PAGE_SIZE,
@@ -68,10 +65,10 @@ export function CourtsPage() {
     sportType: sportType || undefined,
     minPrice: minPrice || undefined,
     maxPrice: maxPrice || undefined,
-    radiusKm,
+    radiusKm: radiusKm && radiusKm > 0 ? radiusKm : undefined,
     latitude: userLocation.location?.latitude,
     longitude: userLocation.location?.longitude,
-    sortBy: sortField,
+    sortBy: sortBy || undefined,
     sortOrder
   };
   const courtsQuery = useCourts(filters);
@@ -112,6 +109,7 @@ export function CourtsPage() {
     setSportType("");
     setMinPrice("");
     setMaxPrice("");
+    setRadiusKm(undefined);
     setSortBy("newest");
     setPage(1);
     userLocation.clearLocation();
@@ -142,15 +140,26 @@ export function CourtsPage() {
           onSportTypeChange={setSportType}
           onMinPriceChange={setMinPrice}
           onMaxPriceChange={setMaxPrice}
-          onRadiusChange={setRadiusKm}
+          onRadiusChange={(val) => setRadiusKm(val > 0 ? val : undefined)}
           onClear={clearFilters}
         />
         <main className="space-y-5">
+          <UserLocationBadge
+            location={userLocation.location}
+            status={userLocation.status}
+            statusMessage={userLocation.statusMessage}
+            loading={userLocation.loading}
+            onRefresh={userLocation.refreshLocation}
+          />
           <SortBar onOpenFilter={() => setFilterOpen(true)} sortBy={sortBy} onSortChange={setSortBy} />
           <ResultStats
             total={total}
             averagePrice={averagePrice}
-            averageDistance={userLocation.location ? `Trong ${radiusKm} km` : "Đang tự xin vị trí"}
+            averageDistance={
+              userLocation.location
+                ? (radiusKm && radiusKm > 0 ? `Trong ${radiusKm} km` : "Tất cả khoảng cách")
+                : "Đang tự xin vị trí"
+            }
             averageRating={averageRating}
           />
           <CourtList courts={courts} loading={courtsQuery.isLoading} onHover={setActiveCourtId} />
@@ -176,7 +185,7 @@ export function CourtsPage() {
               onSportTypeChange={setSportType}
               onMinPriceChange={setMinPrice}
               onMaxPriceChange={setMaxPrice}
-              onRadiusChange={setRadiusKm}
+              onRadiusChange={(val) => setRadiusKm(val > 0 ? val : undefined)}
               onClear={clearFilters}
             />
           </div>

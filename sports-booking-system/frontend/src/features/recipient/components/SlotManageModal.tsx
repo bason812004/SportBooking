@@ -69,8 +69,8 @@ export function SlotManageModal({
   });
 
   const checkInMutation = useMutation({
-    mutationFn: () => recipientApi.earlyCheckInBooking(slot.bookingId!),
-    onSuccess: () => onSuccess("Đã check-in sớm"),
+    mutationFn: () => recipientApi.checkInBooking(slot.bookingId!),
+    onSuccess: () => onSuccess("Đã check-in"),
     onError: onError("Không thể check-in")
   });
 
@@ -154,7 +154,7 @@ export function SlotManageModal({
             <div className="flex flex-wrap gap-2">
               <Button variant="secondary" disabled={pending} onClick={() => checkInMutation.mutate()}>
                 <LogIn className="h-4 w-4" />
-                Check-in sớm
+                Check-in
               </Button>
               <Button variant="secondary" disabled={pending} onClick={() => checkOutMutation.mutate()}>
                 <LogOut className="h-4 w-4" />

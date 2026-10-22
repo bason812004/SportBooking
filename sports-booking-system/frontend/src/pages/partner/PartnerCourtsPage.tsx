@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -35,6 +36,7 @@ const activeToneClasses: Record<string, string> = {
 };
 
 export function PartnerCourtsPage() {
+  const { t: tp } = useTranslation("partner");
   const { t } = useLanguage();
   const queryClient = useQueryClient();
   const [deactivateTarget, setDeactivateTarget] = useState<{ id: string; name: string } | null>(null);
@@ -128,6 +130,7 @@ export function PartnerCourtsPage() {
 
             <div className="mt-auto space-y-3 p-4 pt-3">
               <div className="grid grid-cols-2 gap-2">
+                <Link className="col-span-2" to={`/partner/courts/${court.id}/surfaces`}><Button className="w-full" variant="secondary"><Boxes className="h-4 w-4" />{tp("surfaces.title")}</Button></Link>
                 <Link to={`/partner/courts/${court.id}/edit`}><Button className="w-full" variant="secondary">Sửa</Button></Link>
                 <Link to={`/partner/courts/${court.id}/prices`}><Button className="w-full" variant="secondary"><Wrench className="h-4 w-4" />Giá & dịch vụ</Button></Link>
                 <Link to={`/partner/courts/${court.id}/images`}><Button className="w-full" variant="secondary"><Image className="h-4 w-4" />Ảnh</Button></Link>

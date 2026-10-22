@@ -9,7 +9,7 @@ function toNum(v: unknown): number {
 }
 
 async function settlePendingSettlement(tx: Prisma.TransactionClient, bookingId: string) {
-  const settlement = await tx.settlement.findUnique({ where: { bookingId } });
+  const settlement = await tx.settlement.findUnique({ where: { bookingId_collectedBy: { bookingId, collectedBy: "PLATFORM" } } });
   if (!settlement || settlement.status !== "PENDING") return null;
   const updated = await tx.settlement.update({
     where: { id: settlement.id },
@@ -230,7 +230,7 @@ export const adminRepository = {
   dashboard() {
     const now = new Date();
     const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    return prisma.$transaction([
+    return Promise.all([
       prisma.user.count(),
       prisma.partnerProfile.count(),
       prisma.court.count(),
@@ -267,7 +267,7 @@ export const adminRepository = {
           ]
         : undefined
     };
-    return prisma.$transaction([
+    return Promise.all([
       prisma.user.findMany({
         where,
         select: { id: true, fullName: true, email: true, phone: true, role: true, status: true, createdAt: true },
@@ -296,7 +296,8 @@ export const adminRepository = {
     const listValues = [...values, limit, (page - 1) * limit];
     const limitIndex = values.length + 1;
     const offsetIndex = values.length + 2;
-    const items = await prisma.$queryRawUnsafe<any[]>(`
+    const [items, countRows] = await Promise.all([
+      prisma.$queryRawUnsafe<any[]>(`
       select
         b.id,
         b.booking_code as "bookingCode",
@@ -329,15 +330,16 @@ export const adminRepository = {
       ${where}
       order by ${orderBy}
       limit $${limitIndex} offset $${offsetIndex}
-    `, ...listValues);
-    const countRows = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
+    `, ...listValues),
+      prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
       select count(*)::bigint as count
       from bookings b
       join users u on u.id = b.user_id
       join courts c on c.id = b.court_id
       join partner_profiles p on p.id = c.partner_id
       ${where}
-    `, ...values);
+    `, ...values)
+    ]);
     return [items, Number(countRows[0]?.count ?? 0)] as const;
   },
 
@@ -386,10 +388,15 @@ export const adminRepository = {
           'id', bs.id,
           'quantity', bs.quantity,
           'price', bs.price::float,
-          'service', json_build_object('id', cs.id, 'name', cs.name, 'price', cs.price::float)
+          'service', json_build_object(
+            'id', coalesce(s.id::text, cs.id::text),
+            'name', coalesce(s.name, cs.name),
+            'price', coalesce(s.price, cs.price)::float
+          )
         ) order by bs.created_at) as items
         from booking_services bs
-        join court_services cs on cs.id = bs.service_id
+        left join services s on bs.service_id::text = s.id::text
+        left join court_services cs on bs.court_service_id::text = cs.id::text
         where bs.booking_id = b.id
       ) services on true
       left join lateral (
@@ -458,7 +465,7 @@ export const adminRepository = {
         await settlePendingSettlement(tx, id);
       }
       if (input.bookingStatus === "CANCELLED" && before.bookingStatus !== "CANCELLED") {
-        const settlement = await tx.settlement.findUnique({ where: { bookingId: id } });
+        const settlement = await tx.settlement.findUnique({ where: { bookingId_collectedBy: { bookingId: id, collectedBy: "PLATFORM" } } });
         if (settlement && settlement.status === "PENDING") {
           await tx.partnerWallet.update({
             where: { partnerId: settlement.partnerId },
@@ -475,7 +482,7 @@ export const adminRepository = {
         await settlePendingSettlement(tx, id);
       }
       if (input.bookingStatus === "CANCELLED" && before.bookingStatus !== "CANCELLED") {
-        const settlement = await tx.settlement.findUnique({ where: { bookingId: id } });
+        const settlement = await tx.settlement.findUnique({ where: { bookingId_collectedBy: { bookingId: id, collectedBy: "PLATFORM" } } });
         if (settlement && settlement.status === "PENDING") {
           await tx.partnerWallet.update({
             where: { partnerId: settlement.partnerId },
@@ -516,7 +523,8 @@ export const adminRepository = {
     const listValues = [...values, limit, (page - 1) * limit];
     const limitIndex = values.length + 1;
     const offsetIndex = values.length + 2;
-    const items = await prisma.$queryRawUnsafe<any[]>(`
+    const [items, countRows] = await Promise.all([
+      prisma.$queryRawUnsafe<any[]>(`
       select
         c.id, c.name, c.slug, c.address, c.city, c.district, c.ward,
         c.approval_status::text as "approvalStatus",
@@ -541,14 +549,15 @@ export const adminRepository = {
       ${where}
       order by ${orderBy}
       limit $${limitIndex} offset $${offsetIndex}
-    `, ...listValues);
-    const countRows = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
+    `, ...listValues),
+      prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
       select count(*)::bigint as count
       from courts c
       join partner_profiles p on p.id = c.partner_id
       join users u on u.id = p.user_id
       ${where}
-    `, ...values);
+    `, ...values)
+    ]);
     return [items, Number(countRows[0]?.count ?? 0)] as const;
   },
 
@@ -664,7 +673,8 @@ export const adminRepository = {
     const where = `where ${clauses.join(" and ")}`;
     const limitIndex = values.length + 1;
     const offsetIndex = values.length + 2;
-    const items = await prisma.$queryRawUnsafe<any[]>(`
+    const [items, countRows] = await Promise.all([
+      prisma.$queryRawUnsafe<any[]>(`
       select ct.id, ct.booking_id as "bookingId", b.booking_code as "bookingCode",
         b.booking_date as "bookingDate", c.id as "courtId", c.name as "courtName",
         p.id as "partnerId", p.business_name as "businessName",
@@ -680,8 +690,8 @@ export const adminRepository = {
       ${where}
       order by ${orderBy}
       limit $${limitIndex} offset $${offsetIndex}
-    `, ...values, limit, (page - 1) * limit);
-    const countRows = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
+    `, ...values, limit, (page - 1) * limit),
+      prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
       select count(*)::bigint as count
       from commission_transactions ct
       join bookings b on b.id = ct.booking_id
@@ -689,7 +699,8 @@ export const adminRepository = {
       join partner_profiles p on p.id = ct.partner_id
       left join partner_payouts po on po.partner_id = ct.partner_id and po.payout_month = $3
       ${where}
-    `, ...values);
+    `, ...values)
+    ]);
     return [items, Number(countRows[0]?.count ?? 0)] as const;
   },
 
@@ -723,7 +734,8 @@ export const adminRepository = {
     const where = `where ${clauses.join(" and ")}`;
     const limitIndex = values.length + 1;
     const offsetIndex = values.length + 2;
-    const items = await prisma.$queryRawUnsafe<any[]>(`
+    const [items, countRows] = await Promise.all([
+      prisma.$queryRawUnsafe<any[]>(`
       select b.id, b.booking_code as "bookingCode", b.booking_date as "bookingDate",
         b.total_price::float as "totalPrice", b.deposit_amount::float as "depositAmount",
         b.refund_amount::float as "refundAmount",
@@ -739,15 +751,16 @@ export const adminRepository = {
       ${where}
       order by ${orderBy}
       limit $${limitIndex} offset $${offsetIndex}
-    `, ...values, limit, (page - 1) * limit);
-    const countRows = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
+    `, ...values, limit, (page - 1) * limit),
+      prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
       select count(*)::bigint as count
       from bookings b
       join users u on u.id = b.user_id
       join courts c on c.id = b.court_id
       join partner_profiles p on p.id = c.partner_id
       ${where}
-    `, ...values);
+    `, ...values)
+    ]);
     return [items, Number(countRows[0]?.count ?? 0)] as const;
   },
 
@@ -852,7 +865,8 @@ export const adminRepository = {
     const where = clauses.length ? `where ${clauses.join(" and ")}` : "";
     const limitIndex = values.length + 1;
     const offsetIndex = values.length + 2;
-    const items = await prisma.$queryRawUnsafe<any[]>(`
+    const [items, countRows] = await Promise.all([
+      prisma.$queryRawUnsafe<any[]>(`
       select
         nc.id,
         nc.title,
@@ -875,15 +889,16 @@ export const adminRepository = {
       ${where}
       order by nc.created_at desc
       limit $${limitIndex} offset $${offsetIndex}
-    `, ...values, limit, (page - 1) * limit);
-    const countRows = await prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
+    `, ...values, limit, (page - 1) * limit),
+      prisma.$queryRawUnsafe<Array<{ count: bigint }>>(`
       select count(*)::bigint as count
       from notification_campaigns nc
       left join users u on u.id = nc.sent_by
       left join users tu on tu.id = nc.target_user_id
       left join partner_profiles pp on pp.id = nc.target_partner_id
       ${where}
-    `, ...values);
+    `, ...values)
+    ]);
     return [items, Number(countRows[0]?.count ?? 0)] as const;
   },
 
@@ -1015,7 +1030,7 @@ export const adminRepository = {
           ]
         : undefined
     };
-    return prisma.$transaction([
+    return Promise.all([
       prisma.partnerProfile.findMany({
         where,
         include: { user: { select: { id: true, fullName: true, email: true, phone: true, status: true } } },
@@ -1043,7 +1058,7 @@ export const adminRepository = {
 
   pendingCourts(page: number, limit: number) {
     const where: Prisma.CourtWhereInput = { approvalStatus: "PENDING" };
-    return prisma.$transaction([
+    return Promise.all([
       prisma.court.findMany({
         where,
         include: { category: true, partner: { include: { user: { select: { fullName: true, email: true } } } }, images: true },
@@ -1073,7 +1088,7 @@ export const adminRepository = {
   },
 
   reviews(page: number, limit: number) {
-    return prisma.$transaction([
+    return Promise.all([
       prisma.review.findMany({
         include: { user: { select: { fullName: true, email: true } }, court: { select: { name: true } } },
         orderBy: { createdAt: "desc" },
@@ -1091,7 +1106,7 @@ export const adminRepository = {
   },
 
   reports(page: number, limit: number) {
-    return prisma.$transaction([
+    return Promise.all([
       prisma.report.findMany({
         include: { user: { select: { fullName: true, email: true } }, court: { select: { name: true } } },
         orderBy: { createdAt: "desc" },
@@ -1106,7 +1121,7 @@ export const adminRepository = {
   },
 
   statistics() {
-    return prisma.$transaction([
+    return Promise.all([
       prisma.booking.groupBy({ by: ["bookingStatus"], orderBy: { bookingStatus: "asc" }, _count: true, _sum: { totalPrice: true } }),
       prisma.court.groupBy({ by: ["city"], orderBy: { city: "asc" }, _count: true }),
       prisma.review.aggregate({ _avg: { rating: true }, _count: true })
@@ -1142,7 +1157,7 @@ export const adminRepository = {
 
   vouchers(page: number, limit: number, filters: { search?: string; status?: string }) {
     const search = filters.search ? `%${filters.search}%` : null;
-    return prisma.$transaction([
+    return Promise.all([
       prisma.$queryRaw<any[]>`
         select v.id, v.code, v.title, v.discount_type::text as "discountType",
           v.discount_value::float as "discountValue", v.min_booking_amount::float as "minBookingAmount",
@@ -1248,7 +1263,7 @@ export const adminRepository = {
       ? Prisma.sql`u.role = ${filters.authorRole}::user_role`
       : Prisma.sql`true`;
 
-    return prisma.$transaction([
+    return Promise.all([
       prisma.$queryRaw<any[]>(Prisma.sql`
         select b.id, b.title, b.excerpt, b.content, b.cover_image_url as "coverImageUrl",
           b.status::text, b.visibility::text, ${allowCommentsSelect} as "allowComments",
@@ -1297,7 +1312,7 @@ export const adminRepository = {
 
   pendingTournaments(page: number, limit: number, search?: string) {
     const pattern = search ? `%${search}%` : null;
-    return prisma.$transaction([
+    return Promise.all([
       prisma.$queryRaw<any[]>`
         select t.id, t.title, t.description, t.sport_type as "sportType",
           t.start_date as "startDate", t.end_date as "endDate", t.status::text,
@@ -1340,7 +1355,7 @@ export const adminRepository = {
         { actor: { fullName: { contains: filters.search, mode: "insensitive" } } }
       ]
     } : {};
-    return prisma.$transaction([
+    return Promise.all([
       prisma.auditLog.findMany({
         where,
         include: { actor: { select: { fullName: true, email: true, role: true } } },
@@ -1361,7 +1376,7 @@ export const adminRepository = {
         { txHash: { contains: filters.search, mode: "insensitive" } }
       ] : undefined
     };
-    return prisma.$transaction([
+    return Promise.all([
       prisma.blockchainLog.findMany({ where, orderBy: blockchainLogOrderBy(filters.sortBy, filters.sortOrder), skip: (page - 1) * limit, take: limit }),
       prisma.blockchainLog.count({ where })
     ]);

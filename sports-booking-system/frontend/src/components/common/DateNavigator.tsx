@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "../ui/Button";
-import { Input } from "../ui/Input";
+import { DatePicker } from "../ui/DatePicker";
 
 function addDaysIso(dateStr: string, days: number) {
   const d = new Date(`${dateStr}T00:00:00.000Z`);
@@ -14,7 +14,7 @@ export function DateNavigator({ value, onChange }: { value: string; onChange: (d
       <Button type="button" variant="secondary" className="px-2.5" onClick={() => onChange(addDaysIso(value, -1))} aria-label="Ngày trước">
         <ChevronLeft className="h-4 w-4" />
       </Button>
-      <Input type="date" value={value} onChange={(e) => onChange(e.target.value)} />
+      <DatePicker value={value} onChange={onChange} />
       <Button type="button" variant="secondary" className="px-2.5" onClick={() => onChange(addDaysIso(value, 1))} aria-label="Ngày sau">
         <ChevronRight className="h-4 w-4" />
       </Button>

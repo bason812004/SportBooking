@@ -23,19 +23,77 @@ const webhookBookingInclude = {
   }
 } as const;
 
+export const LATE_PAYMENT_CANCEL_REASON = "Thanh toán đến sau khi hết hạn giữ chỗ, đang chờ hoàn tiền";
+
 export const paymentRepository = {
-  findForUser(paymentId: string, userId: string) {
-    return prisma.payment.findFirst({
+  async findForUser(paymentId: string, userId: string) {
+    const payment = await prisma.payment.findFirst({
       where: { id: paymentId, userId },
       include: {
         booking: {
           include: {
             court: { include: { images: { orderBy: { sortOrder: "asc" } }, category: true } },
-            bookingSlots: { orderBy: { startTime: "asc" } }
+            bookingSlots: { include: { court_surfaces: true }, orderBy: { startTime: "asc" } },
+            bookingServices: { include: { service: true } },
+            bookingOrder: {
+              include: {
+                bookings: {
+                  include: {
+                    court: { include: { images: { orderBy: { sortOrder: "asc" } }, category: true } },
+                    bookingSlots: { include: { court_surfaces: true }, orderBy: { startTime: "asc" } },
+                    bookingServices: { include: { service: true } }
+                  },
+                  orderBy: { bookingDate: "asc" }
+                }
+              }
+            }
+          }
+        },
+        bookingOrder: {
+          include: {
+            bookings: {
+              include: {
+                court: { include: { images: { orderBy: { sortOrder: "asc" } }, category: true } },
+                bookingSlots: { include: { court_surfaces: true }, orderBy: { startTime: "asc" } },
+                bookingServices: { include: { service: true } }
+              },
+              orderBy: { bookingDate: "asc" }
+            }
           }
         }
       }
     });
+
+    if (!payment) return null;
+
+    const order = payment.bookingOrder || payment.booking?.bookingOrder;
+    const orderBookings = order?.bookings && order.bookings.length > 1 ? order.bookings : null;
+
+    if (orderBookings && payment.booking) {
+      const allSlots = orderBookings.flatMap((b) =>
+        b.bookingSlots.map((s) => ({
+          ...s,
+          bookingDate: b.bookingDate,
+          courtName: b.court?.name
+        }))
+      );
+      const allServices = orderBookings.flatMap((b) => b.bookingServices);
+
+      return {
+        ...payment,
+        orderBookings,
+        booking: {
+          ...payment.booking,
+          bookingSlots: allSlots,
+          bookingServices: allServices
+        }
+      };
+    }
+
+    return {
+      ...payment,
+      orderBookings: null
+    };
   },
 
   findByExternalOrderId(externalOrderId: string, tx: Prisma.TransactionClient = prisma) {
@@ -85,7 +143,7 @@ export const paymentRepository = {
       }
 
       const existingTransaction = await this.findTransaction(input.provider, input.externalTransactionId, tx);
-      if (existingTransaction) {
+      if (existingTransaction || payment.status === "PAID") {
         console.log(`[applyWebhook] Transaction already processed (idempotent): provider=${input.provider}, txId=${input.externalTransactionId}`);
         return { payment, idempotent: true };
       }
@@ -101,6 +159,24 @@ export const paymentRepository = {
           verified: true
         }
       });
+
+      // Money for a payment we already expired or cancelled. Its slots were released and may have been
+      // rebooked, so the booking is never revived: record the money and leave the booking for an admin refund.
+      if (input.status === "PAID" && (payment.status === "EXPIRED" || payment.status === "CANCELLED")) {
+        const latePayment = await tx.payment.update({
+          where: { id: payment.id },
+          data: { status: "PAID", externalTransactionId: input.externalTransactionId, paidAt: new Date() },
+          include: webhookBookingInclude
+        });
+        const lateOrderBookings = latePayment.bookingOrder?.bookings;
+        const lateBookings = lateOrderBookings && lateOrderBookings.length > 0 ? lateOrderBookings : [latePayment.booking];
+        await tx.booking.updateMany({
+          where: { id: { in: lateBookings.map((b) => b.id) } },
+          data: { bookingStatus: "CANCELLED", paymentStatus: "PAID", cancelReason: LATE_PAYMENT_CANCEL_REASON }
+        });
+        console.log(`[applyWebhook] Late payment ${payment.id} (${payment.status}) received ${input.amount}; bookings kept cancelled, refund needed.`);
+        return { payment: latePayment, idempotent: false, bookings: lateBookings, lateRefund: { amount: input.amount } };
+      }
 
       const paid = input.status === "PAID" && Number(payment.amount) === input.amount;
       console.log(`[applyWebhook] Match result: paid=${paid}. Expected: amount=${payment.amount}, status="PAID". Received: amount=${input.amount}, status="${input.status}"`);
@@ -125,15 +201,60 @@ export const paymentRepository = {
         }
       });
 
+      if (updatedPayment.bookingOrderId) {
+        await tx.bookingOrder.update({
+          where: { id: updatedPayment.bookingOrderId },
+          data: { status: paid ? "CONFIRMED" : "CANCELLED" }
+        });
+      }
+
       const settlements = [];
-      for (const booking of bookingsToSettle) {
+      const allocationBase = bookingsToSettle.reduce((sum, b) => sum + Math.max(0, Number(b.basePrice ?? b.totalPrice) + Number(b.dynamicAdjustmentAmount ?? 0) - Number(b.voucherDiscountAmount ?? 0)), 0);
+      let allocated = 0;
+      for (const [index, booking] of bookingsToSettle.entries()) {
+        const weight = Math.max(0, Number(booking.basePrice ?? booking.totalPrice) + Number(booking.dynamicAdjustmentAmount ?? 0) - Number(booking.voucherDiscountAmount ?? 0));
+        const received = index === bookingsToSettle.length - 1 ? input.amount - allocated : allocationBase > 0 ? Math.round(input.amount * weight / allocationBase) : 0;
+        allocated += received;
+        if (paid) {
+          await tx.booking.updateMany({ where: { id: { in: [booking.id] } }, data: { depositAmount: received } });
+          booking.depositAmount = new Prisma.Decimal(received);
+        }
         const settlement = paid
-          ? await settlementService.createFromPaidBooking(booking, updatedPayment.id, tx)
+          ? await settlementService.createFromPaidBooking({ ...booking, totalPrice: new Prisma.Decimal(received) }, updatedPayment.id, tx)
           : await settlementService.cancelForBooking(booking.id, tx);
         if (settlement) settlements.push(settlement);
       }
 
       return { payment: updatedPayment, idempotent: false, settlement: settlements[0] ?? null, settlements, bookings: bookingsToSettle };
+    }, { timeout: 15000, maxWait: 10000 });
+  },
+
+  /** Payments still awaiting money after their deadline, oldest first. */
+  findExpiredPending(limit = 50, now = new Date()) {
+    return prisma.payment.findMany({
+      where: { status: { in: ["PENDING", "UNPAID"] }, expiresAt: { lte: now } },
+      select: { id: true, booking: { select: { courtId: true } } },
+      orderBy: { expiresAt: "asc" },
+      take: limit
+    });
+  },
+
+  /** The provider cancelled the payment: cancel it and every booking it covers, including all days of an order. */
+  cancelPendingPayment(paymentId: string) {
+    return prisma.$transaction(async (tx) => {
+      const payment = await tx.payment.findUnique({
+        where: { id: paymentId },
+        include: { bookingOrder: { include: { bookings: true } } }
+      });
+      if (!payment || (payment.status !== "PENDING" && payment.status !== "UNPAID")) return payment;
+      const bookingIds = payment.bookingOrder?.bookings.length
+        ? payment.bookingOrder.bookings.map((b) => b.id)
+        : [payment.bookingId];
+      await tx.booking.updateMany({
+        where: { id: { in: bookingIds } },
+        data: { bookingStatus: "CANCELLED", paymentStatus: "CANCELLED" }
+      });
+      return tx.payment.update({ where: { id: paymentId }, data: { status: "CANCELLED" } });
     });
   },
 

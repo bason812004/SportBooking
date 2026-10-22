@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 
 const SLOW_THRESHOLD_MS = 500;
 const VERY_SLOW_THRESHOLD_MS = 1000;
+const debugSql = process.env.DEBUG_SQL === "1";
 
 function getPath(req: Request) {
   return (req.baseUrl || "") + req.path;
@@ -27,6 +28,8 @@ export function performanceLogger(req: Request, res: Response, next: NextFunctio
       console.warn(
         `[SLOW] ${req.method} ${req.originalUrl} -> ${res.statusCode} took ${elapsedMs}ms`
       );
+    } else if (debugSql) {
+      console.log(`[REQ] ${req.method} ${req.originalUrl} -> ${res.statusCode} took ${elapsedMs}ms`);
     }
   });
   next();

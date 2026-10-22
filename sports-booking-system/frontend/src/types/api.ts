@@ -86,11 +86,16 @@ export type BookingService = {
   serviceId: string;
   quantity: number;
   price: string;
+  unitPrice?: number | string;
+  totalPrice?: number | string;
+  status?: string;
   service: {
     id: string;
     name: string;
     description?: string | null;
     price: string;
+    imageUrl?: string | null;
+    unit?: string;
   };
 };
 
@@ -137,6 +142,18 @@ export type Booking = {
   court: Court;
   courtSurface?: { id: string; name: string; code: string } | null;
   user?: { id?: string; fullName: string; email?: string; phone?: string };
+  // Superset of both shapes the API returns: the list endpoints send Date objects and
+  // courtSurfaceId, the detail endpoint sends strings plus bookingDate/court_surfaces.
+  bookingSlots?: Array<{
+    id: string;
+    bookingDate?: string;
+    startTime: string | Date;
+    endTime: string | Date;
+    slotPrice?: number | string;
+    basePrice?: number | string;
+    courtSurfaceId?: string | null;
+    court_surfaces?: { id: string; name: string; code: string } | null;
+  }>;
   bookingServices?: BookingService[];
   bookingVoucher?: BookingVoucherInfo | null;
   payments?: Array<{
@@ -555,6 +572,32 @@ export type PartnerDemandCourtOverview = {
   courtId: string;
   totalHistoricalBookings: number;
   status: "READY" | "INSUFFICIENT_DATA";
+  ruleBasedMinHistory: number;
+  mlMinHistory: number;
+  mlReady: boolean;
+};
+
+export type DemandPredictionModelVersion = "rule-based-v1" | "ml-random-forest-v1";
+
+export type PartnerDemandForecastSlot = {
+  startTime: string;
+  endTime: string;
+  status: "GENERATED" | "INSUFFICIENT_DATA" | "FAILED";
+  predictionLevel: "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH" | null;
+  predictedDemandScore: number | null;
+  predictedOccupancyRate: number | null;
+  confidenceScore: number;
+  modelVersion: DemandPredictionModelVersion | null;
+};
+
+export type PartnerDemandForecast = {
+  courtId: string;
+  date: string;
+  totalHistoricalBookings: number;
+  ruleBasedMinHistory: number;
+  mlMinHistory: number;
+  mlConfigured: boolean;
+  slots: PartnerDemandForecastSlot[];
 };
 
 export type DynamicPricingRuleType = "PEAK_HOUR" | "OFF_PEAK_HOUR" | "WEEKEND" | "HOLIDAY" | "HIGH_DEMAND" | "LOW_DEMAND" | "CUSTOM";
@@ -751,9 +794,13 @@ export type DynamicPricingAdjustment = {
 };
 
 export type WeeklyScheduleSlot = {
+  id?: string;
+  courtId?: string;
   date: string;
   startTime: string;
   endTime: string;
+  courtSurfaceId?: string | null;
+  courtSurfaceName?: string | null;
   status: WeeklySlotStatus;
   basePrice: number;
   finalPrice: number;
@@ -763,6 +810,7 @@ export type WeeklyScheduleSlot = {
   predictionLevel: "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH" | null;
   predictionStatus: "INSUFFICIENT_DATA" | "GENERATED" | "FAILED";
   predictedOccupancyRate: number | null;
+  predictionModel?: DemandPredictionModelVersion | null;
   blockReason: string | null;
   bookingCode: string | null;
   /** Staff-only fields (StaffScheduleGrid) — undefined on the customer-facing calendar. */
@@ -885,6 +933,7 @@ export type PartnerWallet = {
 };
 
 export type Settlement = {
+  collectedBy: "PLATFORM" | "PARTNER";
   id: string;
   bookingId: string;
   partnerId: string;

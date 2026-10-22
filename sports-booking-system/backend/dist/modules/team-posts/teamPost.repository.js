@@ -38,73 +38,88 @@ const selectMessage = `
     msg.mime_type as "mimeType",
     msg.created_at as "createdAt",
     msg.updated_at as "updatedAt",
-    json_build_object('id', u.id, 'fullName', u.full_name, 'avatarUrl', u.avatar_url) as "sender"
+    json_build_object('id', u.id, 'fullName', u.full_name, 'avatarUrl', u.avatar_url) as "sender",
+    coalesce(
+      (
+        select json_agg(json_build_object('reaction', r.reaction, 'userId', r.user_id, 'createdAt', r.created_at))
+        from team_post_message_reactions r
+        where r.message_id = msg.id
+      ),
+      '[]'::json
+    ) as "reactions"
   from team_post_messages msg
   join users u on u.id = msg.user_id
 `;
 let chatTablesReady = false;
-async function ensureTeamChatTables() {
+export async function ensureTeamChatTables() {
     if (chatTablesReady)
         return;
-    const statements = [
-        "create sequence if not exists seq_team_post_members",
-        "create sequence if not exists seq_team_post_messages",
-        "create sequence if not exists seq_team_post_message_reactions",
-        `
-    create table if not exists team_post_members (
-      id varchar(20) primary key default ('tpm' || lpad(nextval('seq_team_post_members')::text, 4, '0')),
-      post_id varchar(20) not null references team_recruitment_posts(id) on delete cascade,
-      user_id varchar(20) not null references users(id) on delete cascade,
-      role varchar(20) not null default 'MEMBER',
-      status varchar(20) not null default 'ACTIVE',
-      joined_at timestamptz not null default now(),
-      left_at timestamptz,
-      unique(post_id, user_id)
-    )
-    `,
-        `
-    create table if not exists team_post_messages (
-      id varchar(20) primary key default ('tmsg' || lpad(nextval('seq_team_post_messages')::text, 4, '0')),
-      post_id varchar(20) not null references team_recruitment_posts(id) on delete cascade,
-      user_id varchar(20) not null references users(id) on delete cascade,
-      content text,
-      message_type varchar(20) not null default 'TEXT',
-      attachment_url text,
-      attachment_name varchar(255),
-      attachment_size integer,
-      thumbnail_url text,
-      mime_type varchar(80),
-      created_at timestamptz not null default now(),
-      updated_at timestamptz not null default now()
-    )
-    `,
-        "create unique index if not exists ux_team_post_members_post_user on team_post_members(post_id, user_id)",
-        `
-    insert into team_post_members (post_id, user_id, role)
-    select id, user_id, 'OWNER'
-    from team_recruitment_posts
-    on conflict (post_id, user_id) do nothing
-    `,
-        "create index if not exists idx_team_post_members_post_id on team_post_members(post_id)",
-        "create index if not exists idx_team_post_members_user_id on team_post_members(user_id)",
-        "create index if not exists idx_team_post_messages_post_created on team_post_messages(post_id, created_at desc)",
-        `
-    create table if not exists team_post_message_reactions (
-      id varchar(24) primary key default ('tmr' || lpad(nextval('seq_team_post_message_reactions')::text, 6, '0')),
-      message_id varchar(20) not null references team_post_messages(id) on delete cascade,
-      user_id varchar(20) not null references users(id) on delete cascade,
-      reaction varchar(16) not null,
-      created_at timestamptz not null default now(),
-      unique(message_id, user_id)
-    )
-    `,
-        "create unique index if not exists ux_team_post_message_reactions_msg_user on team_post_message_reactions(message_id, user_id)",
-        "create index if not exists idx_team_post_message_reactions_message on team_post_message_reactions(message_id)"
-    ];
-    for (const statement of statements) {
-        await prisma.$executeRawUnsafe(statement);
+    try {
+        const statements = [
+            "create sequence if not exists seq_team_post_members",
+            "create sequence if not exists seq_team_post_messages",
+            "create sequence if not exists seq_team_post_message_reactions",
+            `
+      create table if not exists team_post_members (
+        id varchar(20) primary key default ('tpm' || lpad(nextval('seq_team_post_members')::text, 4, '0')),
+        post_id varchar(20) not null references team_recruitment_posts(id) on delete cascade,
+        user_id varchar(20) not null references users(id) on delete cascade,
+        role varchar(20) not null default 'MEMBER',
+        status varchar(20) not null default 'ACTIVE',
+        joined_at timestamptz not null default now(),
+        left_at timestamptz,
+        updated_at timestamptz default now(),
+        unique(post_id, user_id)
+      )
+      `,
+            "alter table team_post_members add column if not exists updated_at timestamptz default now()",
+            `
+      create table if not exists team_post_messages (
+        id varchar(20) primary key default ('tmsg' || lpad(nextval('seq_team_post_messages')::text, 4, '0')),
+        post_id varchar(20) not null references team_recruitment_posts(id) on delete cascade,
+        user_id varchar(20) not null references users(id) on delete cascade,
+        content text,
+        message_type varchar(20) not null default 'TEXT',
+        attachment_url text,
+        attachment_name varchar(255),
+        attachment_size integer,
+        thumbnail_url text,
+        mime_type varchar(80),
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      )
+      `,
+            "create unique index if not exists ux_team_post_members_post_user on team_post_members(post_id, user_id)",
+            `
+      insert into team_post_members (post_id, user_id, role)
+      select id, user_id, 'OWNER'
+      from team_recruitment_posts
+      on conflict (post_id, user_id) do nothing
+      `,
+            "create index if not exists idx_team_post_members_post_id on team_post_members(post_id)",
+            "create index if not exists idx_team_post_members_user_id on team_post_members(user_id)",
+            "create index if not exists idx_team_post_messages_post_created on team_post_messages(post_id, created_at desc)",
+            `
+      create table if not exists team_post_message_reactions (
+        id varchar(24) primary key default ('tmr' || lpad(nextval('seq_team_post_message_reactions')::text, 6, '0')),
+        message_id varchar(20) not null references team_post_messages(id) on delete cascade,
+        user_id varchar(20) not null references users(id) on delete cascade,
+        reaction varchar(16) not null,
+        created_at timestamptz not null default now(),
+        unique(message_id, user_id)
+      )
+      `,
+            "create unique index if not exists ux_team_post_message_reactions_msg_user on team_post_message_reactions(message_id, user_id)",
+            "create index if not exists idx_team_post_message_reactions_message on team_post_message_reactions(message_id)"
+        ];
+        for (const statement of statements) {
+            await prisma.$executeRawUnsafe(statement).catch(() => { });
+        }
+        chatTablesReady = true;
     }
-    chatTablesReady = true;
+    catch (err) {
+        console.warn("[TeamChatRepository] Note on ensure team chat tables:", err?.message || err);
+    }
 }
 export const teamPostRepository = {
     list() {
@@ -268,6 +283,15 @@ export const teamPostRepository = {
         limit 200
       `, postId);
     },
+    async findMessageById(messageId) {
+        await ensureTeamChatTables();
+        const rows = await prisma.$queryRawUnsafe(`
+        ${selectMessage}
+        where msg.id = $1
+        limit 1
+      `, messageId);
+        return rows[0] ?? null;
+    },
     async createMessage(postId, userId, payload) {
         await ensureTeamChatTables();
         const contentVal = payload.content ?? null;
@@ -277,8 +301,8 @@ export const teamPostRepository = {
        values ($1, $2, $3, $4::team_post_message_type, $5, $6, $7, $8, $9)
        returning id`, postId, userId, contentVal, msgType, payload.attachmentUrl ?? null, payload.attachmentName ?? null, payload.attachmentSize ?? null, payload.thumbnailUrl ?? null, payload.mimeType ?? null);
         if (!inserted?.id)
-            return [];
-        return this.listMessages(postId);
+            return null;
+        return this.findMessageById(inserted.id);
     },
     async getMember(postId, userId) {
         await ensureTeamChatTables();
@@ -315,25 +339,67 @@ export const teamPostRepository = {
     },
     async leaveGroup(postId, userId) {
         await ensureTeamChatTables();
-        return prisma.$executeRaw `
+        await prisma.$executeRaw `
       update team_post_members
-      set status = 'LEFT', left_at = now(), updated_at = now()
+      set status = 'LEFT', left_at = now()
       where post_id = ${postId} and user_id = ${userId} and status = 'ACTIVE'
     `;
+        await prisma.$executeRaw `
+      update team_recruitment_posts
+      set
+        current_players = (
+          select count(*)::int
+          from team_post_members
+          where post_id = ${postId} and status = 'ACTIVE'
+        ),
+        status = case
+          when (
+            select count(*)::int
+            from team_post_members
+            where post_id = ${postId} and status = 'ACTIVE'
+          ) < max_players and status = 'FULL'::team_recruitment_status
+          then 'OPEN'::team_recruitment_status
+          else status
+        end,
+        updated_at = now()
+      where id = ${postId}
+    `;
+        return { left: true };
     },
     async removeMember(postId, userId) {
         await ensureTeamChatTables();
-        return prisma.$executeRaw `
+        await prisma.$executeRaw `
       update team_post_members
-      set status = 'REMOVED', left_at = now(), updated_at = now()
+      set status = 'REMOVED', left_at = now()
       where post_id = ${postId} and user_id = ${userId} and status = 'ACTIVE'
     `;
+        await prisma.$executeRaw `
+      update team_recruitment_posts
+      set
+        current_players = (
+          select count(*)::int
+          from team_post_members
+          where post_id = ${postId} and status = 'ACTIVE'
+        ),
+        status = case
+          when (
+            select count(*)::int
+            from team_post_members
+            where post_id = ${postId} and status = 'ACTIVE'
+          ) < max_players and status = 'FULL'::team_recruitment_status
+          then 'OPEN'::team_recruitment_status
+          else status
+        end,
+        updated_at = now()
+      where id = ${postId}
+    `;
+        return { removed: true };
     },
     async updateMemberRole(postId, userId, role) {
         await ensureTeamChatTables();
         return prisma.$executeRaw `
       update team_post_members
-      set role = ${role}, updated_at = now()
+      set role = ${role}
       where post_id = ${postId} and user_id = ${userId} and status = 'ACTIVE'
     `;
     },

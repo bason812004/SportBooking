@@ -3,20 +3,58 @@ import { prisma } from "../../config/db.js";
 import { paymentRepository } from "./payment.repository.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
+import { invalidateWeeklyScheduleCache } from "../weekly-schedule/weeklySchedule.service.js";
+
+function releaseCourtSlots(courtId: string) {
+  invalidateWeeklyScheduleCache(courtId);
+  realtimeService.toCourt(courtId, realtimeEvents.courtAvailabilityUpdated, { courtId });
+}
+
+/**
+ * Cancels bookings whose payment deadline passed. Before this ran, an unpaid booking was only
+ * expired when its owner reopened the payment screen, and until then it kept the slot taken.
+ */
+async function expireOverduePayments() {
+  try {
+    const overdue = await paymentRepository.findExpiredPending();
+    if (!overdue.length) return;
+    const courtIds = new Set<string>();
+    for (const payment of overdue) {
+      await paymentRepository.expirePendingPayment(payment.id);
+      courtIds.add(payment.booking.courtId);
+    }
+    courtIds.forEach(releaseCourtSlots);
+    console.log(`[PaymentExpiry] Expired ${overdue.length} overdue payment(s).`);
+  } catch (error) {
+    console.error("[PaymentExpiry] Sweep error:", error);
+  }
+}
+
+export function startPaymentExpirySweep() {
+  console.log("[PaymentExpiry] Starting overdue payment sweep (every 60s)...");
+  void expireOverduePayments();
+  setInterval(expireOverduePayments, 60_000);
+}
 
 async function pollPayments() {
   try {
     const provider = env.PAYMENT_PROVIDER;
-    if (provider !== "PAYOS" && provider !== "SEPAY") {
+    const providerConfigured = Boolean(env.PAYMENT_API_KEY && env.PAYMENT_SECRET_KEY);
+    if ((provider !== "PAYOS" && provider !== "SEPAY") || !providerConfigured) {
       return;
     }
 
-    const pendingPayments = await prisma.payment.findMany({
-      where: { status: "PENDING" },
-      include: { booking: true }
-    });
+    let pendingPayments;
+    try {
+      pendingPayments = await prisma.payment.findMany({
+        where: { status: "PENDING" },
+        include: { booking: true }
+      });
+    } catch {
+      return;
+    }
 
-    if (pendingPayments.length === 0) return;
+    if (!pendingPayments || pendingPayments.length === 0) return;
 
     for (const payment of pendingPayments) {
       if (payment.expiresAt.getTime() <= Date.now()) {
@@ -66,16 +104,8 @@ async function pollPayments() {
               }
             } else if (payosStatus === "CANCELLED" || payosStatus === "EXPIRED") {
               console.log(`[Poller] Payment ${payment.id} cancelled/expired on PayOS`);
-              await prisma.$transaction(async (tx) => {
-                await tx.payment.update({
-                  where: { id: payment.id },
-                  data: { status: "CANCELLED" }
-                });
-                await tx.booking.update({
-                  where: { id: payment.bookingId },
-                  data: { bookingStatus: "CANCELLED", paymentStatus: "CANCELLED" }
-                });
-              });
+              await paymentRepository.cancelPendingPayment(payment.id);
+              releaseCourtSlots(payment.booking.courtId);
             }
           }
         } catch (err) {
@@ -134,7 +164,7 @@ async function pollPayments() {
 export function startPaymentPoller() {
   const provider = env.PAYMENT_PROVIDER;
   if (provider === "PAYOS" || provider === "SEPAY") {
-    console.log(`[Poller] Starting background payment transaction poller for ${provider} (every 10s)...`);
-    setInterval(pollPayments, 10000);
+    console.log(`[Poller] Starting background payment transaction poller for ${provider} (every 25s)...`);
+    setInterval(pollPayments, 25000);
   }
 }

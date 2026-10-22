@@ -1,117 +1,206 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 export type UserLocation = {
   latitude: number;
   longitude: number;
+  accuracy: number;
+  timestamp: number;
+  isFallback?: boolean;
 };
 
-const LOCATION_COOKIE = "sportbooking_location";
-const LOCATION_REQUEST_COOKIE = "sportbooking_location_requested";
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
+export type LocationStatus =
+  | "INITIALIZING"
+  | "FETCHING"
+  | "GRANTED"
+  | "DENIED"
+  | "UNAVAILABLE"
+  | "LOW_ACCURACY"
+  | "UNSUPPORTED";
 
-function readCookie(name: string) {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.split("; ").find((item) => item.startsWith(`${name}=`));
-  return match ? decodeURIComponent(match.split("=").slice(1).join("=")) : null;
+const LOCATION_CACHE_KEY = "sportbooking_device_location_cache";
+const MAX_ACCURACY_THRESHOLD = 1000; // 1000m threshold
+const MOVEMENT_THRESHOLD = 0.001; // ~100m threshold
+
+function getDistanceDelta(a: UserLocation, b: UserLocation): number {
+  const dLat = Math.abs(a.latitude - b.latitude);
+  const dLng = Math.abs(a.longitude - b.longitude);
+  return Math.sqrt(dLat * dLat + dLng * dLng);
 }
 
-function writeCookie(name: string, value: string, maxAge = COOKIE_MAX_AGE) {
-  if (typeof document === "undefined") return;
-  document.cookie = `${name}=${encodeURIComponent(value)}; Max-Age=${maxAge}; Path=/; SameSite=Lax`;
-}
-
-function clearCookie(name: string) {
-  if (typeof document === "undefined") return;
-  document.cookie = `${name}=; Max-Age=0; Path=/; SameSite=Lax`;
-}
-
-function readCachedLocation(): UserLocation | null {
-  const raw = readCookie(LOCATION_COOKIE);
-  if (!raw) return null;
+function readFallbackCache(): UserLocation | null {
+  if (typeof window === "undefined") return null;
   try {
+    const raw = localStorage.getItem(LOCATION_CACHE_KEY) || sessionStorage.getItem(LOCATION_CACHE_KEY);
+    if (!raw) return null;
     const parsed = JSON.parse(raw) as UserLocation;
-    if (Number.isFinite(parsed.latitude) && Number.isFinite(parsed.longitude)) return parsed;
+    if (Number.isFinite(parsed.latitude) && Number.isFinite(parsed.longitude)) {
+      return { ...parsed, isFallback: true };
+    }
   } catch {
     return null;
   }
   return null;
 }
 
-export function useUserLocation({ autoRequest = false }: { autoRequest?: boolean } = {}) {
-  const [location, setLocation] = useState<UserLocation | null>(() => readCachedLocation());
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [permissionState, setPermissionState] = useState<PermissionState | "unsupported">("prompt");
-  const secureContext = typeof window === "undefined" ? true : window.isSecureContext;
+function saveFallbackCache(loc: UserLocation) {
+  if (typeof window === "undefined") return;
+  try {
+    const payload = JSON.stringify({
+      latitude: loc.latitude,
+      longitude: loc.longitude,
+      accuracy: loc.accuracy,
+      timestamp: loc.timestamp
+    });
+    localStorage.setItem(LOCATION_CACHE_KEY, payload);
+    sessionStorage.setItem(LOCATION_CACHE_KEY, payload);
+  } catch {
+    // Ignore storage errors
+  }
+}
 
-  useEffect(() => {
-    let mounted = true;
-    if (!navigator.permissions?.query) {
-      setPermissionState("unsupported");
+export type UseUserLocationOptions = {
+  autoRequest?: boolean;
+  enableRealtimeWatch?: boolean;
+};
+
+export function useUserLocation(options: UseUserLocationOptions = {}) {
+  const { autoRequest = false, enableRealtimeWatch = false } = options;
+  const queryClient = useQueryClient();
+
+  const [location, setLocation] = useState<UserLocation | null>(() => readFallbackCache());
+  const [status, setStatus] = useState<LocationStatus>("INITIALIZING");
+  const [statusMessage, setStatusMessage] = useState<string>("Đang kiểm tra quyền vị trí...");
+  const [loading, setLoading] = useState<boolean>(false);
+
+  const prevLocationRef = useRef<UserLocation | null>(location);
+  const watchIdRef = useRef<number | null>(null);
+
+  const applyLocationUpdate = useCallback(
+    (newLoc: UserLocation) => {
+      const prev = prevLocationRef.current;
+      const isSignificantChange = !prev || getDistanceDelta(prev, newLoc) > MOVEMENT_THRESHOLD;
+
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[LOCATION]", {
+          previous: prev ? { lat: prev.latitude, lng: prev.longitude } : null,
+          current: { lat: newLoc.latitude, lng: newLoc.longitude },
+          accuracy: `${Math.round(newLoc.accuracy)}m`,
+          isSignificantChange
+        });
+      }
+
+      prevLocationRef.current = newLoc;
+      setLocation(newLoc);
+      saveFallbackCache(newLoc);
+
+      if (isSignificantChange) {
+        queryClient.invalidateQueries({ queryKey: ["courts"] });
+        queryClient.invalidateQueries({ queryKey: ["nearby-courts"] });
+        queryClient.invalidateQueries({ queryKey: ["court"] });
+      }
+    },
+    [queryClient]
+  );
+
+  const requestLocation = useCallback(() => {
+    if (typeof window === "undefined" || !navigator.geolocation) {
+      setStatus("UNSUPPORTED");
+      setStatusMessage("Trình duyệt của bạn không hỗ trợ định vị vị trí GPS.");
       return;
     }
 
-    navigator.permissions
-      .query({ name: "geolocation" as PermissionName })
-      .then((permission) => {
-        if (!mounted) return;
-        setPermissionState(permission.state);
-        permission.onchange = () => setPermissionState(permission.state);
-      })
-      .catch(() => {
-        if (mounted) setPermissionState("unsupported");
-      });
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  function requestLocation() {
-    setError(null);
-    writeCookie(LOCATION_REQUEST_COOKIE, "1");
-    if (!secureContext) {
-      setError("location.insecure");
-      return;
-    }
-    if (!navigator.geolocation) {
-      setError("location.unsupported");
-      return;
-    }
     setLoading(true);
+    setStatus("FETCHING");
+    setStatusMessage("Đang xác định vị trí hiện tại của thiết bị...");
+
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        const nextLocation = { latitude: position.coords.latitude, longitude: position.coords.longitude };
-        setLocation(nextLocation);
-        writeCookie(LOCATION_COOKIE, JSON.stringify(nextLocation));
-        setPermissionState("granted");
         setLoading(false);
+        const { latitude, longitude, accuracy } = position.coords;
+        const timestamp = position.timestamp || Date.now();
+
+        if (accuracy > MAX_ACCURACY_THRESHOLD) {
+          setStatus("LOW_ACCURACY");
+          setStatusMessage(`Vị trí hiện tại chưa đủ chính xác (độ tin cậy > ${Math.round(accuracy)}m).`);
+          applyLocationUpdate({ latitude, longitude, accuracy, timestamp, isFallback: true });
+          return;
+        }
+
+        const freshLocation: UserLocation = { latitude, longitude, accuracy, timestamp, isFallback: false };
+        setStatus("GRANTED");
+        setStatusMessage("Đã xác định vị trí hiện tại");
+        applyLocationUpdate(freshLocation);
       },
       (geoError) => {
-        setError(geoError.code === geoError.PERMISSION_DENIED ? "location.denied" : "location.unavailable");
-        if (geoError.code === geoError.PERMISSION_DENIED) setPermissionState("denied");
         setLoading(false);
+        if (geoError.code === geoError.PERMISSION_DENIED) {
+          setStatus("DENIED");
+          setStatusMessage("Bạn chưa cho phép truy cập vị trí. Hãy bật quyền vị trí của trình duyệt để tìm sân gần bạn.");
+        } else {
+          setStatus("UNAVAILABLE");
+          setStatusMessage("Không thể kết nối dịch vụ GPS để lấy vị trí thiết bị.");
+        }
       },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 } // maximumAge: 0 forces fresh GPS lookup
     );
-  }
+  }, [applyLocationUpdate]);
 
   useEffect(() => {
-    if (!autoRequest || location || loading || typeof window === "undefined") return;
-    if (permissionState === "granted") {
-      requestLocation();
-      return;
-    }
-    if (readCookie(LOCATION_REQUEST_COOKIE)) return;
+    if (!autoRequest) return;
     requestLocation();
-  }, [autoRequest, location, loading, permissionState]);
+  }, [autoRequest, requestLocation]);
 
-  function clearLocation() {
-    setLocation(null);
-    setError(null);
-    clearCookie(LOCATION_COOKIE);
-    clearCookie(LOCATION_REQUEST_COOKIE);
-  }
+  useEffect(() => {
+    if (!enableRealtimeWatch || typeof window === "undefined" || !navigator.geolocation) return;
 
-  return { location, error, loading, permissionState, secureContext, requestLocation, clearLocation };
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const { latitude, longitude, accuracy } = position.coords;
+        const timestamp = position.timestamp || Date.now();
+
+        if (accuracy <= MAX_ACCURACY_THRESHOLD) {
+          setStatus("GRANTED");
+          setStatusMessage("Đã xác định vị trí hiện tại");
+          applyLocationUpdate({ latitude, longitude, accuracy, timestamp, isFallback: false });
+        }
+      },
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) {
+          setStatus("DENIED");
+          setStatusMessage("Bạn chưa cho phép truy cập vị trí. Hãy bật quyền vị trí của trình duyệt để tìm sân gần bạn.");
+        }
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
+    );
+
+    watchIdRef.current = watchId;
+
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+    };
+  }, [enableRealtimeWatch, applyLocationUpdate]);
+
+  return {
+    location,
+    status,
+    statusMessage,
+    loading,
+    permissionState: status === "GRANTED" ? "granted" : status === "DENIED" ? "denied" : "prompt",
+    requestLocation,
+    refreshLocation: requestLocation,
+    clearLocation: () => {
+      setLocation(null);
+      localStorage.removeItem(LOCATION_CACHE_KEY);
+      sessionStorage.removeItem(LOCATION_CACHE_KEY);
+    }
+  };
 }

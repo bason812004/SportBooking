@@ -3,6 +3,7 @@ import { useCourts } from "../../../features/courts/hooks/useCourts";
 import { useUserLocation } from "../../../features/courts/hooks/useUserLocation";
 import { CourtCard } from "./CourtCard";
 import { Reveal, SectionShell, SkeletonCard } from "./homeUtils";
+import { UserLocationBadge } from "../../../components/common/UserLocationBadge";
 
 const FALLBACK_IMAGES = [
   "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=900&q=80",
@@ -12,7 +13,7 @@ const FALLBACK_IMAGES = [
 ];
 
 export function NearbyCourtsSection() {
-  const userLocation = useUserLocation();
+  const userLocation = useUserLocation({ autoRequest: true, enableRealtimeWatch: true });
   const courts = useCourts({
     limit: 6,
     latitude: userLocation.location?.latitude,
@@ -24,7 +25,7 @@ export function NearbyCourtsSection() {
 
   const description = userLocation.location
     ? "Đang ưu tiên sân gần vị trí của bạn."
-    : "Bấm cho phép vị trí để website hiển thị sân gần bạn hơn.";
+    : "Cho phép vị trí để website hiển thị các sân gần bạn nhất.";
 
   if (courts.isLoading) {
     return (
@@ -50,14 +51,15 @@ export function NearbyCourtsSection() {
 
   return (
     <SectionShell eyebrow="Sân gần bạn" title="Gợi ý sân phù hợp theo khu vực" description={description} className="bg-[#f8fafc]">
-      <LocationRequestStrip
-        loading={userLocation.loading}
-        error={userLocation.error}
-        hasLocation={Boolean(userLocation.location)}
-        secureContext={userLocation.secureContext}
-        permissionState={userLocation.permissionState}
-        onRequestLocation={userLocation.requestLocation}
-      />
+      <div className="mb-4">
+        <UserLocationBadge
+          location={userLocation.location}
+          status={userLocation.status}
+          statusMessage={userLocation.statusMessage}
+          loading={userLocation.loading}
+          onRefresh={userLocation.refreshLocation}
+        />
+      </div>
       {!displayItems ? (
         <p className="mt-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-slate-500">
           Chưa có sân nào trong cơ sở dữ liệu.

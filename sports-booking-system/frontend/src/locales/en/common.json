@@ -1,4 +1,5 @@
 {
+  "notifications": { "loading": "Loading notifications…", "retry": "Could not load notifications. Click to retry.", "more": "Load more notifications" },
   "language": {
     "label": "Language",
     "vietnamese": "Tiếng Việt",

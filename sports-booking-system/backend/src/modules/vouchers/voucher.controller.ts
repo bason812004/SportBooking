@@ -7,6 +7,7 @@ export const voucherController = {
   detail: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.detail(req.params.id))),
   click: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.trackClick(req.params.id))),
   claim: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.claim(req.user!.id, req.params.id), 201)),
+  claimAll: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.claimAllVouchers(req.user!.id))),
   claimAllPlatform: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.claimAllPlatformVouchers(req.user!.id))),
   myVouchers: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.listForUser(req.user!.id))),
   apply: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.apply({ ...req.body, userId: req.user?.id }))),

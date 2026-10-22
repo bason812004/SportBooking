@@ -11,6 +11,7 @@ export const teamPostController = {
     delete: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.delete(req.params.id, req.user.id))),
     join: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.join(req.params.id, req.user.id))),
     members: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.members(req.params.id, req.user.id))),
+    membership: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.membership(req.params.id, req.user.id))),
     messages: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.messages(req.params.id, req.user.id))),
     createMessage: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.createMessage(req.params.id, req.user.id, req.body), 201)),
     reactMessage: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.reactToMessage(req.params.id, req.user.id, req.body.messageId, req.body.reaction))),

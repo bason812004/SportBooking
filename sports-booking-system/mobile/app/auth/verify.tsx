@@ -30,6 +30,16 @@ export default function VerifyRegistrationScreen() {
     }
   });
 
+  async function resendCode() {
+    if (!email) return;
+    try {
+      await authApi.resendRegistrationCode(email);
+      Alert.alert("Da gui lai ma", `Ma OTP moi da duoc gui den ${email}.`);
+    } catch (error) {
+      Alert.alert("Khong gui lai duoc ma", error instanceof Error ? error.message : "Vui long thu lai");
+    }
+  }
+
   return (
     <Screen title="Nhap ma xac thuc" subtitle={`Ma OTP da duoc gui den ${email || "email cua ban"}.`} back>
       <Card>
@@ -37,7 +47,7 @@ export default function VerifyRegistrationScreen() {
           <FormInput label="Ma OTP" keyboardType="number-pad" maxLength={6} value={field.value} onChangeText={field.onChange} error={fieldState.error?.message} />
         )} />
         <Button loading={formState.isSubmitting} onPress={onSubmit}>Xac thuc</Button>
-        <Button variant="ghost" onPress={() => email && authApi.resendRegistrationCode(email)}>Gui lai ma</Button>
+        <Button variant="ghost" onPress={resendCode}>Gui lai ma</Button>
       </Card>
     </Screen>
   );

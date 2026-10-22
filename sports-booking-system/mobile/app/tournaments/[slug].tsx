@@ -1,5 +1,4 @@
 import { Image } from "expo-image";
-import * as Linking from "expo-linking";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Alert, StyleSheet, Text, View } from "react-native";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -12,6 +11,7 @@ import { ErrorState, LoadingState } from "../../src/components/StateViews";
 import { useAuthStore } from "../../src/store/auth";
 import { colors, spacing, typography } from "../../src/theme/tokens";
 import { formatCurrency, formatDate, stripHtml } from "../../src/utils/format";
+import { shareLink } from "../../src/utils/share";
 
 const fallbackImage = "https://images.unsplash.com/photo-1517649763962-0c623066013b?q=80&w=1400&auto=format&fit=crop";
 
@@ -78,7 +78,7 @@ export default function TournamentDetailScreen() {
       >
         Dang ky giai
       </Button>
-      <Button variant="secondary" onPress={() => Linking.openURL(`sportbooking://tournaments/${data.slug}`)}>Chia se giai dau</Button>
+      <Button variant="secondary" onPress={() => void shareLink(data.title, `tournaments/${data.slug}`)}>Chia se giai dau</Button>
     </Screen>
   );
 }

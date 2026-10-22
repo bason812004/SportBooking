@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -20,6 +21,7 @@ const statusOptions = [
 ];
 
 export function AdminSettlementsPage() {
+  const { t } = useTranslation("booking");
   const queryClient = useQueryClient();
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
@@ -56,7 +58,7 @@ export function AdminSettlementsPage() {
       <PageHero
         eyebrow="Tài chính"
         title="Quyết toán doanh thu"
-        subtitle="Theo dõi quyết toán từng booking đã thanh toán online và số tiền partner thực nhận."
+        subtitle={t("openTab.settlementDescription")}
       />
 
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -83,6 +85,7 @@ export function AdminSettlementsPage() {
                   <tr>
                     <Th>Mã booking</Th>
                     <Th>Partner</Th>
+                    <Th>{t("openTab.collectionSource")}</Th>
                     <Th>Ngày tạo</Th>
                     <Th className="text-right">Doanh thu gốc</Th>
                     <Th className="text-right">Hoa hồng</Th>
@@ -96,6 +99,7 @@ export function AdminSettlementsPage() {
                     <Tr key={item.id}>
                       <Td className="font-medium">{item.booking?.bookingCode ?? item.bookingId}</Td>
                       <Td>{item.partner?.businessName ?? item.partnerId}</Td>
+                      <Td>{t(item.collectedBy === "PARTNER" ? "openTab.partnerCollected" : "openTab.platformCollected")}</Td>
                       <Td>{new Date(item.createdAt).toLocaleString("vi-VN")}</Td>
                       <Td className="text-right">{money(item.grossAmount)}</Td>
                       <Td className="text-right text-red-600">
@@ -119,7 +123,7 @@ export function AdminSettlementsPage() {
                   ))}
                   {(settlements.data?.items ?? []).length === 0 && (
                     <tr>
-                      <Td className="p-8 text-center text-slate-500" colSpan={8}>Không có settlement nào.</Td>
+                      <Td className="p-8 text-center text-slate-500" colSpan={9}>Không có settlement nào.</Td>
                     </tr>
                   )}
                 </TBody>
@@ -141,7 +145,7 @@ export function AdminSettlementsPage() {
             <p className="mt-2 text-sm text-slate-600">
               Booking <b>{confirm.settlement.booking?.bookingCode ?? confirm.settlement.bookingId}</b> — partner nhận{" "}
               <b>{money(confirm.settlement.netAmount)}</b>.{" "}
-              {confirm.action === "settle"
+              {confirm.settlement.collectedBy === "PARTNER" ? t("openTab.counterCancellation") : confirm.action === "settle"
                 ? "Tiền sẽ chuyển từ chờ quyết toán sang số dư khả dụng của partner."
                 : confirm.settlement.status === "SETTLED"
                   ? "Tiền sẽ bị trừ khỏi số dư khả dụng của partner (thất bại nếu partner đã rút)."

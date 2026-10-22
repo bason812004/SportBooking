@@ -14,6 +14,9 @@ import { voucherService } from "../vouchers/voucher.service.js";
 import { userRepository } from "../users/user.repository.js";
 import { partnerRepository } from "./partner.repository.js";
 import { hashPassword } from "../auth/auth.security.js";
+import { cashierRepository } from "../cashier/cashier.repository.js";
+import { courtImageService } from "../court-images/courtImage.service.js";
+import type { CourtSurfaceInput } from "./partner.validation.js";
 
 async function getProfile(userId: string) {
   const profile = await partnerRepository.profileByUser(userId);
@@ -142,37 +145,17 @@ export const partnerService = {
     return partnerRepository.updateCourt(courtId, { activeStatus });
   },
 
-  async addImage(userId: string, courtId: string, input: { imageUrl?: string; sortOrder?: number }, file?: Express.Multer.File) {
-    const profile = await getProfile(userId);
-    const court = await partnerRepository.courtByPartner(courtId, profile.id);
-    if (!court) throw new NotFoundError("Khong tim thay san cua ban");
-
-    let imageUrl = input.imageUrl;
-    let publicId: string | undefined;
-    if (file) {
-      const uploaded = await cloudinaryService.uploadCourtImage(file, courtId);
-      imageUrl = uploaded.imageUrl;
-      publicId = uploaded.publicId;
-    }
-
-    if (!imageUrl) throw new ValidationError("Can imageUrl hoac file anh");
-    const image = await partnerRepository.addImage({
-      courtId,
-      imageUrl,
-      publicId,
-      sortOrder: input.sortOrder ?? 0
-    });
-    await partnerRepository.updateCourt(courtId, { approvalStatus: "PENDING" });
-    return image;
+  async addImage(userId: string, courtId: string, input: { imageUrl?: string; sortOrder?: number; replaceImageId?: string }, file?: Express.Multer.File) {
+    return courtImageService.submit(userId, courtId, input, file);
   },
 
   async deleteImage(userId: string, imageId: string) {
     const profile = await getProfile(userId);
     const image = await partnerRepository.imageByPartner(imageId, profile.id);
     if (!image) throw new NotFoundError("Khong tim thay anh san");
-    await cloudinaryService.deleteImage(image.publicId);
-    await partnerRepository.deleteImage(image.id);
-    await partnerRepository.updateCourt(image.courtId, { approvalStatus: "PENDING" });
+    const deleted = await partnerRepository.deleteImage(image.id);
+    await cloudinaryService.deleteImage(deleted.publicId);
+    // Removing an existing image does not require re-approving the court.
     return { id: image.id };
   },
 
@@ -364,6 +347,12 @@ export const partnerService = {
       return { updated: updatedBooking, settlement: updatedSettlement };
     });
 
+    if (status === BookingStatus.CANCELLED || status === BookingStatus.NO_SHOW) {
+      await cashierRepository
+        .releaseBookingServices(booking.id, status === BookingStatus.CANCELLED ? "Tự động trả do đơn bị huỷ" : "Tự động trả do khách không đến")
+        .catch(() => {});
+    }
+
     if (settlement) {
       realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
       realtimeService.toAdmin(realtimeEvents.settlementUpdated, settlement);
@@ -402,17 +391,52 @@ export const partnerService = {
     const profile = await getProfile(userId);
     const surface = await partnerRepository.courtSurfaceByPartner(surfaceId, courtId, profile.id);
     if (!surface) throw new NotFoundError("Khong tim thay san con thuoc cum san cua ban");
-    return partnerRepository.updateCourtSurfaceStatus(surfaceId, status);
+    const result = await partnerRepository.updateCourtSurfaceStatus(surfaceId, status);
+    realtimeService.toCourt(courtId, realtimeEvents.courtAvailabilityUpdated, { courtId });
+    return result;
   },
 
-  async updateCourtSurface(userId: string, courtId: string, surfaceId: string, input: { openingTime?: string | null; closingTime?: string | null }) {
+  async createCourtSurface(userId: string, courtId: string, input: CourtSurfaceInput) {
+    const profile = await getProfile(userId);
+    const court = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!court) throw new NotFoundError("Không tìm thấy cụm sân của bạn");
+    const openingTime = input.openingTime ? timeToDate(input.openingTime) : null;
+    const closingTime = input.closingTime ? timeToDate(input.closingTime) : null;
+    if ((openingTime ?? court.openingTime) >= (closingTime ?? court.closingTime)) {
+      throw new ValidationError("Giờ mở cửa phải trước giờ đóng cửa");
+    }
+    const result = await partnerRepository.saveCourtSurface(courtId, null, { ...input, openingTime, closingTime });
+    realtimeService.toCourt(courtId, realtimeEvents.courtAvailabilityUpdated, { courtId });
+    return result;
+  },
+
+  async deleteCourtSurface(userId: string, courtId: string, surfaceId: string) {
+    const profile = await getProfile(userId);
+    const surface = await partnerRepository.courtSurfaceByPartner(surfaceId, courtId, profile.id);
+    if (!surface) throw new NotFoundError("Không tìm thấy sân con thuộc cụm sân của bạn");
+    const result = await partnerRepository.deleteCourtSurface(courtId, surfaceId);
+    realtimeService.toCourt(courtId, realtimeEvents.courtAvailabilityUpdated, { courtId });
+    return result;
+  },
+
+  async updateCourtSurface(userId: string, courtId: string, surfaceId: string, input: Partial<CourtSurfaceInput>) {
     const profile = await getProfile(userId);
     const surface = await partnerRepository.courtSurfaceByPartner(surfaceId, courtId, profile.id);
     if (!surface) throw new NotFoundError("Khong tim thay san con thuoc cum san cua ban");
-    return partnerRepository.updateCourtSurface(surfaceId, {
-      openingTime: input.openingTime === undefined ? undefined : input.openingTime ? timeToDate(input.openingTime) : null,
-      closingTime: input.closingTime === undefined ? undefined : input.closingTime ? timeToDate(input.closingTime) : null
+    const court = await partnerRepository.courtByPartner(courtId, profile.id);
+    if (!court) throw new NotFoundError("Không tìm thấy cụm sân của bạn");
+    const openingTime = input.openingTime === undefined ? surface.openingTime : input.openingTime ? timeToDate(input.openingTime) : null;
+    const closingTime = input.closingTime === undefined ? surface.closingTime : input.closingTime ? timeToDate(input.closingTime) : null;
+    if ((openingTime ?? court.openingTime) >= (closingTime ?? court.closingTime)) {
+      throw new ValidationError("Giờ mở cửa phải trước giờ đóng cửa");
+    }
+    const result = await partnerRepository.saveCourtSurface(courtId, surfaceId, {
+      code: input.code ?? surface.code, name: input.name ?? surface.name,
+      capacity: input.capacity, surface: input.surface, size: input.size,
+      openingTime, closingTime
     });
+    realtimeService.toCourt(courtId, realtimeEvents.courtAvailabilityUpdated, { courtId });
+    return result;
   },
 
   async courtBlocks(userId: string, courtId: string) {

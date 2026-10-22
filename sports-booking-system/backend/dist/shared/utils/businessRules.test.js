@@ -86,4 +86,48 @@ describe("business rules", () => {
         });
         assert.deepEqual(result, { allowed: false, reason: "ALREADY_REGISTERED" });
     });
+    it("blocks registration when tournament status is not open or approved", () => {
+        const result = isTournamentRegistrationAllowed({
+            status: "DRAFT",
+            registrationDeadline: new Date("2026-12-31T00:00:00.000Z"),
+            currentParticipants: 1,
+            maxParticipants: 10,
+            alreadyRegistered: false,
+            now: new Date("2026-06-13T00:00:00.000Z")
+        });
+        assert.deepEqual(result, { allowed: false, reason: "NOT_OPEN" });
+    });
+    it("blocks registration after the deadline has passed", () => {
+        const result = isTournamentRegistrationAllowed({
+            status: "OPEN",
+            registrationDeadline: new Date("2026-06-01T00:00:00.000Z"),
+            currentParticipants: 1,
+            maxParticipants: 10,
+            alreadyRegistered: false,
+            now: new Date("2026-06-13T00:00:00.000Z")
+        });
+        assert.deepEqual(result, { allowed: false, reason: "DEADLINE_PASSED" });
+    });
+    it("blocks registration once the tournament is full", () => {
+        const result = isTournamentRegistrationAllowed({
+            status: "APPROVED",
+            registrationDeadline: new Date("2026-12-31T00:00:00.000Z"),
+            currentParticipants: 10,
+            maxParticipants: 10,
+            alreadyRegistered: false,
+            now: new Date("2026-06-13T00:00:00.000Z")
+        });
+        assert.deepEqual(result, { allowed: false, reason: "FULL" });
+    });
+    it("allows registration when status is open, before deadline, with capacity left", () => {
+        const result = isTournamentRegistrationAllowed({
+            status: "OPEN",
+            registrationDeadline: new Date("2026-12-31T00:00:00.000Z"),
+            currentParticipants: 9,
+            maxParticipants: 10,
+            alreadyRegistered: false,
+            now: new Date("2026-06-13T00:00:00.000Z")
+        });
+        assert.deepEqual(result, { allowed: true, reason: null });
+    });
 });

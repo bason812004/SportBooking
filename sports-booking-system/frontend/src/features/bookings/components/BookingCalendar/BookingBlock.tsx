@@ -32,7 +32,7 @@ export function BookingBlock({ slot, selected, onToggle, language, showTooltip =
     interactive && "cursor-pointer hover:-translate-y-px",
     !interactive && "cursor-not-allowed",
     slot.status === "AVAILABLE" && !selected && "bg-emerald-50 text-emerald-800 hover:bg-emerald-100",
-    selected && "bg-emerald-600 text-white shadow-inner ring-2 ring-emerald-700/40",
+    selected && "bg-[#02712a] text-white shadow-md ring-2 ring-[#02712a] font-black",
     slot.status === "BOOKED" && "bg-rose-50 text-rose-700",
     slot.status === "BLOCKED" && "bg-slate-100 text-slate-500",
     slot.status === "MAINTENANCE" && "bg-amber-50 text-amber-800",

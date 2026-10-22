@@ -510,12 +510,14 @@ export const adminService = {
     if (!(await adminRepository.moderateBlog(id, status))) throw new ValidationError("Bai viet khong con cho duyet");
     await adminRepository.addModerationHistory({ entityType: "BLOG", entityId: id, action: status, reason, actorId });
     await recordAdminAction(actorId, `BLOG_${status}`, "BLOG", id, { reason });
+    realtimeService.toPublic(realtimeEvents.blogUpdated, {});
     return { id, status };
   },
   async hideBlog(actorId: string, id: string, reason?: string) {
     if (!(await adminRepository.hideBlog(id))) throw new ValidationError("Bai viet khong the an (chi an bai da xuat ban)");
     await adminRepository.addModerationHistory({ entityType: "BLOG", entityId: id, action: "HIDDEN", reason, actorId });
     await recordAdminAction(actorId, "BLOG_HIDDEN", "BLOG", id, { reason });
+    realtimeService.toPublic(realtimeEvents.blogUpdated, {});
     return { id, status: "HIDDEN" };
   },
 

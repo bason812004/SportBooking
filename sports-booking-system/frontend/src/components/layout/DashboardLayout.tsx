@@ -23,6 +23,11 @@ import {
   Users,
   Wallet,
   WalletCards,
+  ShoppingBag,
+  Boxes,
+  Truck,
+  Receipt,
+  CreditCard,
   type LucideIcon
 } from "lucide-react";
 import { useAuth } from "../../features/auth/hooks/useAuth";
@@ -41,8 +46,13 @@ type MenuItem = {
 const menus = {
   PARTNER: [
     { to: "/partner/dashboard", label: "Bảng điều khiển", icon: Grid2X2, group: "Tổng quan" },
+    { to: "/partner/cashier", label: "Thu ngân (POS)", icon: Receipt, group: "Vận hành" },
     { to: "/partner/courts", label: "Quản lý sân", icon: UserRoundCheck, group: "Vận hành" },
     { to: "/partner/bookings", label: "Đơn đặt", icon: CalendarDays, group: "Vận hành" },
+    { to: "/partner/services", label: "Dịch vụ & Món", icon: ShoppingBag, group: "Tồn kho & Dịch vụ" },
+    { to: "/partner/inventory", label: "Tồn kho hàng hóa", icon: Boxes, group: "Tồn kho & Dịch vụ" },
+    { to: "/partner/purchases", label: "Nhập hàng & NCC", icon: Truck, group: "Tồn kho & Dịch vụ" },
+    { to: "/partner/checkouts", label: "Lịch sử Checkout", icon: CreditCard, group: "Tài chính" },
     { to: "/partner/staff", label: "Nhân viên", icon: Users, group: "Vận hành" },
     { to: "/partner/dynamic-pricing", label: "Định giá động", icon: Percent, group: "Vận hành" },
     { to: "/partner/demand-prediction", label: "Dự đoán nhu cầu", icon: TrendingUp, group: "Vận hành" },
@@ -50,12 +60,14 @@ const menus = {
     { to: "/partner/blogs", label: "Bài viết", icon: FileText, group: "Nội dung" },
     { to: "/partner/tournaments", label: "Giải đấu", icon: Trophy, group: "Nội dung" },
     { to: "/partner/statistics", label: "Doanh thu", icon: WalletCards, group: "Tài chính" },
+    { to: "/partner/report", label: "Báo cáo", icon: BarChart3, group: "Tài chính" },
     { to: "/partner/wallet", label: "Ví & Quyết toán", icon: Wallet, group: "Tài chính" },
     { to: "/partner/settings", label: "Cài đặt", icon: Settings, group: "Bảo mật" }
   ],
   ADMIN: [
     { to: "/admin/dashboard", label: "Bảng điều khiển", icon: Grid2X2, group: "Tổng quan" },
     { to: "/admin/statistics", label: "Thống kê", icon: TrendingUp, group: "Tổng quan" },
+    { to: "/admin/business-report", label: "Báo cáo doanh thu", icon: WalletCards, group: "Tài chính" },
     { to: "/admin/bookings", label: "Đơn đặt sân", icon: CalendarCheck, group: "Vận hành" },
     { to: "/admin/courts", label: "Tất cả sân", icon: Grid2X2, group: "Vận hành" },
     { to: "/admin/courts/pending", label: "Duyệt sân", icon: FolderCheck, group: "Vận hành" },
@@ -77,8 +89,14 @@ const menus = {
   ],
   RECIPIENT: [
     { to: "/recipient/dashboard", label: "Bảng điều khiển", icon: Grid2X2, group: "Tổng quan" },
+    { to: "/recipient/cashier", label: "Thu ngân (POS)", icon: Receipt, group: "Vận hành" },
+    { to: "/recipient/court-surfaces", label: "Đặt sân tại quầy", icon: UserRoundCheck, group: "Vận hành" },
     { to: "/recipient/bookings", label: "Đơn đặt sân", icon: CalendarCheck, group: "Vận hành" },
-    { to: "/recipient/court-surfaces", label: "Quản lý sân", icon: UserRoundCheck, group: "Vận hành" }
+    { to: "/recipient/services", label: "Dịch vụ & Món", icon: ShoppingBag, group: "Tồn kho & Dịch vụ" },
+    { to: "/recipient/inventory", label: "Tồn kho hàng hóa", icon: Boxes, group: "Tồn kho & Dịch vụ" },
+    { to: "/recipient/purchases", label: "Nhập hàng & NCC", icon: Truck, group: "Tồn kho & Dịch vụ" },
+    { to: "/recipient/checkouts", label: "Lịch sử Checkout", icon: CreditCard, group: "Tài chính" },
+    { to: "/recipient/report", label: "Báo cáo", icon: BarChart3, group: "Tài chính" }
   ]
 } satisfies Record<"PARTNER" | "ADMIN" | "RECIPIENT", MenuItem[]>;
 

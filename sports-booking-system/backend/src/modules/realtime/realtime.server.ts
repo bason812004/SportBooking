@@ -16,25 +16,29 @@ export function initRealtime(httpServer: HttpServer) {
 
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token || socket.handshake.auth?.accessToken;
-    if (!token || typeof token !== "string") return next(new Error("UNAUTHORIZED"));
-
-    try {
-      const payload = verifyAccessToken(token);
-      socket.data.user = { id: payload.sub, role: payload.role };
-      return next();
-    } catch {
-      return next(new Error("UNAUTHORIZED"));
+    if (token && typeof token === "string") {
+      try {
+        const payload = verifyAccessToken(token);
+        socket.data.user = { id: payload.sub, role: payload.role };
+      } catch {
+        // Invalid or expired token — proceed as guest so public realtime works
+      }
     }
+    return next();
   });
 
   io.on("connection", async (socket) => {
-    const user = socket.data.user as { id: string; role: "USER" | "PARTNER" | "ADMIN" };
-    socket.join(`user:${user.id}`);
-    if (user.role === "ADMIN") socket.join("admin");
+    socket.join("public");
 
-    if (user.role === "PARTNER") {
-      const partner = await prisma.partnerProfile.findUnique({ where: { userId: user.id }, select: { id: true } });
-      if (partner) socket.join(`partner:${partner.id}`);
+    const user = socket.data.user as { id: string; role: "USER" | "PARTNER" | "ADMIN" } | undefined;
+    if (user) {
+      socket.join(`user:${user.id}`);
+      if (user.role === "ADMIN") socket.join("admin");
+
+      if (user.role === "PARTNER") {
+        const partner = await prisma.partnerProfile.findUnique({ where: { userId: user.id }, select: { id: true } });
+        if (partner) socket.join(`partner:${partner.id}`);
+      }
     }
 
     socket.on("court:subscribe", (courtId: string) => {
@@ -51,6 +55,10 @@ export function initRealtime(httpServer: HttpServer) {
     });
     socket.on("team-post:subscribe", async (postId: string) => {
       if (!postId) return;
+      if (!user) {
+        socket.emit("team-post:subscribe-error", { postId, reason: "UNAUTHORIZED" });
+        return;
+      }
       try {
         const [member] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
           select exists (

@@ -477,8 +477,8 @@ begin
     usage_limit, used_count, start_date, end_date, status,
     funded_by, partner_funding_percent, platform_funding_percent)
   values
-    (gen_random_uuid(), null, 'WELCOME50', 'Chao mung thanh vien moi',
-     'Ma giam gia 50.000 VND cho don hang tu 300.000 VND.',
+    (gen_random_uuid(), null, 'WELCOME50', 'Chào mừng thành viên mới',
+     'Mã giảm giá 50.000 VND cho đơn hàng từ 300.000 VND.',
      'FIXED_AMOUNT', 50000, null, 300000, 1000, 0,
      now_ts, now_ts + interval '30 days', 'ACTIVE',
      'PLATFORM', 0, 100)
@@ -489,8 +489,8 @@ begin
     usage_limit, used_count, start_date, end_date, status,
     funded_by, partner_funding_percent, platform_funding_percent)
   values
-    (gen_random_uuid(), null, 'SPORT10', 'Giam 10% cho don hang',
-     'Ma giam gia 10% (toi da 100.000 VND) cho don hang tu 500.000 VND.',
+    (gen_random_uuid(), null, 'SPORT10', 'Giảm 10% cho đơn hàng',
+     'Mã giảm giá 10% (tối đa 100.000 VND) cho đơn hàng từ 500.000 VND.',
      'PERCENTAGE', 10, 100000, 500000, 500, 0,
      now_ts, now_ts + interval '90 days', 'ACTIVE',
      'PLATFORM', 0, 100)
@@ -501,8 +501,8 @@ begin
     usage_limit, used_count, start_date, end_date, status,
     funded_by, partner_funding_percent, platform_funding_percent)
   values
-    (gen_random_uuid(), null, 'WEEKEND15', 'Giam 15% cuoi tuan',
-     'Ma giam gia 15% (toi da 150.000 VND) chi ap dung cuoi tuan.',
+    (gen_random_uuid(), null, 'WEEKEND15', 'Giảm 15% cuối tuần',
+     'Mã giảm giá 15% (tối đa 150.000 VND) chỉ áp dụng cuối tuần.',
      'PERCENTAGE', 15, 150000, 0, 300, 0,
      now_ts, now_ts + interval '180 days', 'ACTIVE',
      'PLATFORM', 0, 100)
@@ -513,8 +513,8 @@ begin
     usage_limit, used_count, start_date, end_date, status,
     funded_by, partner_funding_percent, platform_funding_percent)
   values
-    (gen_random_uuid(), null, 'NIGHT30', 'Giam 30.000 VND ca dem',
-     'Ma giam gia 30.000 VND cho tat ca cac don hang.',
+    (gen_random_uuid(), null, 'NIGHT30', 'Giảm 30.000 VND ca đêm',
+     'Mã giảm giá 30.000 VND cho tất cả các đơn hàng.',
      'FIXED_AMOUNT', 30000, null, 0, 200, 0,
      now_ts, now_ts + interval '365 days', 'ACTIVE',
      'PLATFORM', 0, 100)
@@ -526,7 +526,7 @@ begin
     funded_by, partner_funding_percent, platform_funding_percent)
   values
     (gen_random_uuid(), null, 'SUMMER20', 'Khuyen mai he 2026',
-     'Ma giam gia 20% (toi da 200.000 VND) cho don hang tu 800.000 VND.',
+     'Mã giảm giá 20% (tối đa 200.000 VND) cho đơn hàng từ 800.000 VND.',
      'PERCENTAGE', 20, 200000, 800000, 1000, 0,
      now_ts, now_ts + interval '365 days', 'ACTIVE',
      'PLATFORM', 0, 100)

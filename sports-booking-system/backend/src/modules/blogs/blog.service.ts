@@ -1,5 +1,4 @@
 import { NotFoundError } from "../../shared/errors/AppError.js";
-import { notificationService } from "../notifications/notification.service.js";
 import { blogRepository } from "./blog.repository.js";
 
 type BlogBody = {
@@ -59,6 +58,9 @@ export const blogService = {
       allowComments: body.allowComments ?? true
     });
     if (!post) throw new NotFoundError("Khong the tao bai viet");
+
+    // The database trigger enqueues the admin notice in the same transaction.
+
     return post;
   },
 
@@ -73,12 +75,7 @@ export const blogService = {
     });
     if (!post) throw new NotFoundError("Khong the cap nhat bai viet");
 
-    await notificationService.notifyAdmins({
-      title: "Yêu cầu cập nhật bài viết",
-      content: `${post.author.fullName} vừa gửi cập nhật bài viết "${post.title}", cần duyệt lại.`,
-      type: "BLOG_UPDATE_REQUESTED",
-      metadata: { blogId: post.id, authorId: userId }
-    });
+    // The database trigger enqueues the admin notice in the same transaction.
 
     return post;
   },

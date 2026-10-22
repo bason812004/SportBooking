@@ -38,9 +38,17 @@ export const voucherApi = {
     const { data } = await api.post<ApiResponse<{ id: string }>>(`/vouchers/${voucherId}/claim`);
     return data.data;
   },
+  async claimAll() {
+    const { data } = await api.post<ApiResponse<{
+      claimedCount: number;
+      skippedCount: number;
+      claimedVouchers: Array<{ id: string; code: string; title: string }>;
+      skippedVouchers: Array<{ id: string; code: string; reason: string }>;
+    }>>("/vouchers/claim-all");
+    return data.data;
+  },
   async validate(payload: VoucherValidatePayload) {
     const { data } = await api.post<ApiResponse<VoucherValidateResult>>("/vouchers/validate", payload);
     return data.data;
   }
 };
-

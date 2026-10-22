@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { CalendarDays, ClipboardList, TrendingUp, UserRoundCheck, WalletCards } from "lucide-react";
+import { AlertTriangle, CalendarDays, ClipboardList, TrendingUp, UserRoundCheck, WalletCards } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { partnerApi } from "../../features/partner/api/partnerApi";
+import { inventoryApi } from "../../features/inventory/api/inventoryApi";
 import { EmptyState, LoadingState, ErrorState } from "../../components/common/States";
 import { PageHero } from "../../components/common/PageHero";
 import { StatCard } from "../../components/common/StatCard";
@@ -13,6 +14,8 @@ import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 
 export function PartnerDashboardPage() {
   const dashboard = useQuery({ queryKey: ["partner-dashboard"], queryFn: partnerApi.dashboard });
+  // Independent from the main dashboard query so a slow/failed inventory check never blocks core stats.
+  const lowStock = useQuery({ queryKey: ["partner-dashboard-low-stock"], queryFn: () => inventoryApi.getLowStockAlerts(5) });
   if (dashboard.isLoading) return <LoadingState />;
   if (dashboard.isError) return <ErrorState message={dashboard.error.message} />;
   const data = dashboard.data!;
@@ -20,6 +23,32 @@ export function PartnerDashboardPage() {
   return (
     <div className="space-y-8">
       <PageHero eyebrow="Vận hành" title="Tổng quan đối tác" subtitle="Số liệu vận hành được cập nhật trực tiếp từ booking và giao dịch hoa hồng." />
+
+      {!!lowStock.data?.length && (
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="flex items-center gap-2 text-lg font-bold text-amber-900">
+              <AlertTriangle className="h-5 w-5" /> Cảnh báo tồn kho sắp hết
+            </h2>
+            <Link to="/partner/inventory">
+              <Button variant="secondary">Xem tồn kho</Button>
+            </Link>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {lowStock.data.map((alert) => (
+              <div
+                key={alert.serviceId}
+                className={`rounded-xl border p-3 ${alert.status === "OUT_OF_STOCK" ? "border-rose-300 bg-rose-50" : "border-amber-300 bg-white"}`}
+              >
+                <p className="font-bold text-slate-900">{alert.serviceName}</p>
+                <p className="text-sm text-slate-600">
+                  Còn {alert.quantity} {alert.unit} (tối thiểu {alert.minimumStock})
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-4">
         <StatCard label="Sân đang hoạt động" value={data.courts} icon={UserRoundCheck} iconBg="bg-slate-100 text-slate-700" />

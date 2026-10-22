@@ -129,7 +129,7 @@ export function DayView(props: DayViewProps) {
                 : null;
             const statusClasses = clsx(
               "rounded-full px-2.5 py-1 text-[11px] font-black uppercase tracking-wide",
-              slot.status === "AVAILABLE" && (isSelected ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-700"),
+              slot.status === "AVAILABLE" && (isSelected ? "bg-[#02712a] text-white shadow-md font-black" : "bg-emerald-50 text-emerald-700"),
               slot.status === "BOOKED" && "bg-rose-50 text-rose-700",
               slot.status === "BLOCKED" && "bg-slate-100 text-slate-500",
               slot.status === "MAINTENANCE" && "bg-amber-50 text-amber-700",

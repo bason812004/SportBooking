@@ -1,20 +1,27 @@
 import { prisma } from "../../config/db.js";
 import { ValidationError } from "../../shared/errors/AppError.js";
 import { timeToDate, toDbDate } from "../../shared/utils/time.js";
+import { ensureServiceTables } from "../services/service.repository.js";
+import { settlementService } from "../settlements/settlement.service.js";
 function generateShortId(prefix) {
     const rand = Math.random().toString(36).slice(2, 10);
     const time = Date.now().toString(36).slice(-8);
     return `${prefix}${rand}${time}`.slice(0, 20);
 }
 let depositColumnReady = false;
-async function ensureCourtDepositColumn() {
+export async function ensureBookingTables() {
     if (depositColumnReady)
         return;
-    await prisma.$executeRaw `
-    alter table courts
-    add column if not exists deposit_percent numeric(5, 2) null
-  `;
-    depositColumnReady = true;
+    try {
+        await prisma.$executeRaw `
+      alter table courts
+      add column if not exists deposit_percent numeric(5, 2) null
+    `;
+        depositColumnReady = true;
+    }
+    catch (err) {
+        console.warn("[BookingRepository] Note on ensure booking tables:", err?.message || err);
+    }
 }
 /**
  * Compute platform/partner split of a voucher discount.
@@ -45,21 +52,62 @@ async function voucherDiscountSplit(tx, voucherId, discountAmount) {
     return { partnerShare: discountAmount, platformShare: 0 };
 }
 export const bookingRepository = {
-    findById(id) {
-        return prisma.booking.findUnique({
-            where: { id },
+    async findById(id) {
+        const booking = await prisma.booking.findFirst({
+            where: { OR: [{ id }, { bookingOrderId: id }, { bookingCode: id }] },
             include: {
                 court: { include: { images: { orderBy: { sortOrder: "asc" } }, category: true, partner: true } },
+                bookingSlots: { include: { court_surfaces: true }, orderBy: { startTime: "asc" } },
                 bookingServices: { include: { service: true } },
                 bookingVoucher: { include: { voucher: { include: { partner: true, court: true } } } },
                 payments: { orderBy: { createdAt: "desc" } },
-                bookingOrder: { select: { payment: true } },
+                bookingOrder: {
+                    include: {
+                        bookings: {
+                            include: {
+                                bookingSlots: { include: { court_surfaces: true }, orderBy: { startTime: "asc" } },
+                                bookingServices: { include: { service: true } }
+                            },
+                            orderBy: { bookingDate: "asc" }
+                        },
+                        payment: true
+                    }
+                },
                 review: true
             }
         });
+        if (!booking)
+            return null;
+        // If part of a multi-booking order, consolidate slots & pricing across order
+        if (booking.bookingOrder && booking.bookingOrder.bookings.length > 1) {
+            const allSlots = booking.bookingOrder.bookings.flatMap((b) => b.bookingSlots);
+            const allServices = booking.bookingOrder.bookings.flatMap((b) => b.bookingServices);
+            const totalOrderPrice = Number(booking.bookingOrder.totalAmount);
+            const subtotal = Number(booking.bookingOrder.subtotal);
+            const voucherDiscountAmount = Number(booking.bookingOrder.voucherDiscountAmount);
+            const courtSubtotal = allSlots.reduce((sum, s) => sum + Number(s.slotPrice ?? 0), 0);
+            return {
+                ...booking,
+                bookingSlots: allSlots,
+                bookingServices: allServices,
+                basePrice: courtSubtotal,
+                totalPrice: totalOrderPrice,
+                subtotal,
+                voucherDiscountAmount,
+                orderBookingsCount: booking.bookingOrder.bookings.length
+            };
+        }
+        if (booking.bookingSlots && booking.bookingSlots.length > 0) {
+            const courtSubtotal = booking.bookingSlots.reduce((sum, s) => sum + Number(s.slotPrice ?? 0), 0);
+            return {
+                ...booking,
+                basePrice: courtSubtotal
+            };
+        }
+        return booking;
     },
-    listByUser(userId, page, limit) {
-        const where = { userId };
+    listByUser(userId, page, limit, statuses = []) {
+        const where = { userId, ...(statuses.length ? { bookingStatus: { in: statuses } } : {}) };
         return prisma.$transaction([
             prisma.booking.findMany({
                 where,
@@ -105,17 +153,48 @@ export const bookingRepository = {
         });
     },
     cancel(id, data, db = prisma) {
-        return db.booking.update({
-            where: { id },
-            data: {
-                bookingStatus: "CANCELLED",
-                cancelReason: data.cancelReason,
-                refundAmount: data.refundAmount,
-                platformRetainedAmount: data.platformRetainedAmount,
-                paymentStatus: data.paymentStatus,
-                cancelledAt: new Date()
-            },
-            include: { court: true }
+        return prisma.$transaction(async (tx) => {
+            const updated = await tx.booking.update({
+                where: { id },
+                data: {
+                    bookingStatus: "CANCELLED",
+                    cancelReason: data.cancelReason,
+                    refundAmount: data.refundAmount,
+                    platformRetainedAmount: data.platformRetainedAmount,
+                    paymentStatus: data.paymentStatus,
+                    cancelledAt: new Date()
+                },
+                include: { court: true }
+            });
+            const settlement = await settlementService.cancelForBooking(id, tx);
+            const services = await tx.bookingService.findMany({
+                where: { bookingId: id, status: "ACTIVE" }
+            });
+            for (const bs of services) {
+                if (bs.serviceId && bs.quantity > 0) {
+                    const inv = await tx.serviceInventory.findFirst({ where: { serviceId: bs.serviceId } });
+                    if (inv) {
+                        await tx.serviceInventory.update({
+                            where: { id: inv.id },
+                            data: { quantity: { increment: bs.quantity } }
+                        });
+                        await tx.inventoryTransaction.create({
+                            data: {
+                                serviceId: bs.serviceId,
+                                // Restocking covers products as well as rentals, and the POS records the same
+                                // return as ADJUSTMENT — RENTAL_IN would mislabel every drink put back.
+                                type: "ADJUSTMENT",
+                                quantity: bs.quantity,
+                                unitCost: inv.lastPurchasePrice,
+                                referenceType: "BOOKING_CANCELLED",
+                                referenceId: id,
+                                note: `Hoàn kho do hủy booking ${id}`
+                            }
+                        });
+                    }
+                }
+            }
+            return { ...updated, settlement };
         });
     },
     courtWithPricing(id) {
@@ -125,7 +204,7 @@ export const bookingRepository = {
         });
     },
     async courtDepositPercent(id) {
-        await ensureCourtDepositColumn();
+        await ensureBookingTables();
         const [row] = await prisma.$queryRaw `
       select deposit_percent::float as "depositPercent"
       from courts
@@ -134,8 +213,42 @@ export const bookingRepository = {
     `;
         return Number(row?.depositPercent ?? 0);
     },
-    services(ids) {
-        return prisma.courtService.findMany({ where: { id: { in: ids }, status: "ACTIVE" } });
+    async services(ids) {
+        await ensureServiceTables();
+        const courtSvcs = await prisma.courtService.findMany({ where: { id: { in: ids }, status: "ACTIVE" } });
+        const directSvcs = await prisma.service.findMany({ where: { id: { in: ids } } });
+        const map = new Map();
+        courtSvcs.forEach((s) => map.set(s.id, { id: s.id, name: s.name, price: s.price }));
+        directSvcs.forEach((s) => map.set(s.id, { id: s.id, name: s.name, price: s.price }));
+        return Array.from(map.values());
+    },
+    /** Creates `bookingService` rows for an already-created booking and deducts inventory, mirroring the checkout flow above. */
+    async attachServicesToBooking(tx, bookingId, lines) {
+        for (const line of lines) {
+            await tx.bookingService.create({
+                data: { id: generateShortId("bs"), bookingId, serviceId: line.serviceId, quantity: line.quantity, unitPrice: line.price, price: line.price * line.quantity, totalPrice: line.price * line.quantity, status: "ACTIVE" }
+            });
+            const inv = await tx.serviceInventory.findFirst({ where: { serviceId: line.serviceId } });
+            if (inv) {
+                if (inv.quantity < line.quantity)
+                    throw new ValidationError("Sản phẩm/dịch vụ không đủ tồn kho");
+                await tx.serviceInventory.update({
+                    where: { id: inv.id },
+                    data: { quantity: { decrement: line.quantity } }
+                });
+                await tx.inventoryTransaction.create({
+                    data: {
+                        serviceId: line.serviceId,
+                        type: "RENTAL_OUT",
+                        quantity: line.quantity,
+                        unitCost: inv.lastPurchasePrice,
+                        referenceType: "BOOKING",
+                        referenceId: bookingId,
+                        note: `Đặt cùng đơn booking ${bookingId}`
+                    }
+                });
+            }
+        }
     },
     createWithServices(input) {
         return prisma.$transaction(async (tx) => {
@@ -163,24 +276,30 @@ export const bookingRepository = {
                             id: generateShortId("bs"),
                             serviceId: service.serviceId,
                             quantity: service.quantity,
-                            price: service.price
+                            unitPrice: service.price,
+                            price: service.price * service.quantity,
+                            totalPrice: service.price * service.quantity,
+                            status: "ACTIVE"
                         }))
                     }
                 },
                 include: { court: true, bookingServices: { include: { service: true } } }
             });
             if (input.voucherId && input.voucherDiscountAmount > 0) {
-                const voucherUpdate = await tx.voucher.updateMany({
-                    where: {
-                        id: input.voucherId,
-                        status: "ACTIVE",
-                        OR: [{ usageLimit: null }, { usedCount: { lt: tx.voucher.fields.usageLimit } }]
-                    },
-                    data: { usedCount: { increment: 1 } }
+                const existingVoucher = await tx.voucher.findUnique({
+                    where: { id: input.voucherId },
+                    select: { id: true, usageLimit: true, usedCount: true, status: true }
                 });
-                if (voucherUpdate.count !== 1) {
+                if (!existingVoucher || existingVoucher.status !== "ACTIVE") {
+                    throw new ValidationError("Voucher khong hop le");
+                }
+                if (existingVoucher.usageLimit !== null && existingVoucher.usedCount >= existingVoucher.usageLimit) {
                     throw new ValidationError("Voucher da het luot su dung");
                 }
+                await tx.voucher.update({
+                    where: { id: input.voucherId },
+                    data: { usedCount: { increment: 1 } }
+                });
                 const split = await voucherDiscountSplit(tx, input.voucherId, input.voucherDiscountAmount);
                 await tx.bookingVoucher.create({
                     data: {
@@ -201,32 +320,22 @@ export const bookingRepository = {
         });
     },
     async findConflictsInTransaction(tx, courtId, date, slots) {
-        const activeStatuses = ["PENDING", "PENDING_PAYMENT", "CONFIRMED", "COMPLETED"];
-        const bookingDate = toDbDate(date);
+        const activeStatuses = ["PENDING", "PENDING_PAYMENT", "CONFIRMED", "DEPOSIT_PAID", "IN_PROGRESS", "CHECKOUT_PENDING", "COMPLETED"];
         const conflicts = [];
         for (const slot of slots) {
+            const slotDateStr = slot.date || date;
+            const bookingDate = toDbDate(slotDateStr);
             const startTime = timeToDate(slot.startTime.slice(0, 5));
             const endTime = timeToDate(slot.endTime.slice(0, 5));
-            const legacyBooking = await tx.booking.findFirst({
-                where: {
-                    courtId,
-                    bookingDate,
-                    bookingStatus: { in: activeStatuses },
-                    startTime: { lt: endTime },
-                    endTime: { gt: startTime }
-                }
-            });
-            if (legacyBooking) {
-                conflicts.push(legacyBooking);
-                continue;
-            }
+            const surfaceId = slot.courtSurfaceId || slot.court_surface_id || slot.courtSubId || null;
             const slotBooking = await tx.bookingSlot.findFirst({
                 where: {
                     courtId,
                     bookingDate,
                     startTime: { lt: endTime },
                     endTime: { gt: startTime },
-                    booking: { bookingStatus: { in: activeStatuses } }
+                    booking: { bookingStatus: { in: activeStatuses } },
+                    ...(surfaceId ? { OR: [{ court_surface_id: surfaceId }, { court_surface_id: null }] } : {})
                 }
             });
             conflicts.push(slotBooking);
@@ -241,6 +350,7 @@ export const bookingRepository = {
             const sortedSlots = [...input.slots].sort((left, right) => left.startTime.localeCompare(right.startTime));
             const firstSlot = sortedSlots[0];
             const lastSlot = sortedSlots[sortedSlots.length - 1];
+            const primarySurfaceId = firstSlot.courtSurfaceId || firstSlot.court_surface_id || firstSlot.courtSubId || null;
             const bookingId = generateShortId("bk");
             const booking = await tx.booking.create({
                 data: {
@@ -248,6 +358,7 @@ export const bookingRepository = {
                     bookingCode: input.bookingCode,
                     userId: input.userId,
                     courtId: input.courtId,
+                    courtSurfaceId: primarySurfaceId,
                     bookingDate: toDbDate(input.bookingDate),
                     startTime: timeToDate(firstSlot.startTime),
                     endTime: timeToDate(lastSlot.endTime),
@@ -264,10 +375,11 @@ export const bookingRepository = {
                     bookingSlots: {
                         create: sortedSlots.map((slot) => ({
                             courtId: input.courtId,
-                            bookingDate: toDbDate(input.bookingDate),
+                            court_surface_id: slot.courtSurfaceId || slot.court_surface_id || slot.courtSubId || primarySurfaceId,
+                            bookingDate: toDbDate(slot.date || input.bookingDate),
                             startTime: timeToDate(slot.startTime),
                             endTime: timeToDate(slot.endTime),
-                            slotPrice: slot.price
+                            slotPrice: slot.finalPrice ?? slot.price
                         }))
                     },
                     bookingServices: {
@@ -275,24 +387,30 @@ export const bookingRepository = {
                             id: generateShortId("bs"),
                             serviceId: service.serviceId,
                             quantity: service.quantity,
-                            price: service.price
+                            unitPrice: service.price,
+                            price: service.price * service.quantity,
+                            totalPrice: service.price * service.quantity,
+                            status: "ACTIVE"
                         }))
                     }
                 },
                 include: { court: true, bookingSlots: true, bookingServices: { include: { service: true } } }
             });
             if (input.voucherId && input.voucherDiscountAmount > 0) {
-                const voucherUpdate = await tx.voucher.updateMany({
-                    where: {
-                        id: input.voucherId,
-                        status: "ACTIVE",
-                        OR: [{ usageLimit: null }, { usedCount: { lt: tx.voucher.fields.usageLimit } }]
-                    },
-                    data: { usedCount: { increment: 1 } }
+                const existingVoucher = await tx.voucher.findUnique({
+                    where: { id: input.voucherId },
+                    select: { id: true, usageLimit: true, usedCount: true, status: true }
                 });
-                if (voucherUpdate.count !== 1) {
+                if (!existingVoucher || existingVoucher.status !== "ACTIVE") {
+                    throw new ValidationError("Voucher khong hop le");
+                }
+                if (existingVoucher.usageLimit !== null && existingVoucher.usedCount >= existingVoucher.usageLimit) {
                     throw new ValidationError("Voucher da het luot su dung");
                 }
+                await tx.voucher.update({
+                    where: { id: input.voucherId },
+                    data: { usedCount: { increment: 1 } }
+                });
                 const split = await voucherDiscountSplit(tx, input.voucherId, input.voucherDiscountAmount);
                 await tx.bookingVoucher.create({
                     data: {
@@ -337,6 +455,7 @@ export const bookingRepository = {
             const sortedSlots = [...input.slots].sort((left, right) => left.startTime.localeCompare(right.startTime));
             const firstSlot = sortedSlots[0];
             const lastSlot = sortedSlots[sortedSlots.length - 1];
+            const primarySurfaceId = firstSlot.courtSurfaceId || firstSlot.court_surface_id || firstSlot.courtSubId || null;
             const bookingId = generateShortId("bk");
             const booking = await tx.booking.create({
                 data: {
@@ -344,6 +463,7 @@ export const bookingRepository = {
                     bookingCode: input.bookingCode,
                     userId: input.userId,
                     courtId: input.courtId,
+                    courtSurfaceId: primarySurfaceId,
                     bookingDate: toDbDate(input.bookingDate),
                     startTime: timeToDate(firstSlot.startTime),
                     endTime: timeToDate(lastSlot.endTime),
@@ -360,10 +480,11 @@ export const bookingRepository = {
                     bookingSlots: {
                         create: sortedSlots.map((slot) => ({
                             courtId: input.courtId,
-                            bookingDate: toDbDate(input.bookingDate),
+                            court_surface_id: slot.courtSurfaceId || slot.court_surface_id || slot.courtSubId || primarySurfaceId,
+                            bookingDate: toDbDate(slot.date || input.bookingDate),
                             startTime: timeToDate(slot.startTime),
                             endTime: timeToDate(slot.endTime),
-                            slotPrice: slot.price
+                            slotPrice: slot.finalPrice ?? slot.price
                         }))
                     },
                     bookingServices: {
@@ -371,24 +492,30 @@ export const bookingRepository = {
                             id: generateShortId("bs"),
                             serviceId: service.serviceId,
                             quantity: service.quantity,
-                            price: service.price
+                            unitPrice: service.price,
+                            price: service.price * service.quantity,
+                            totalPrice: service.price * service.quantity,
+                            status: "ACTIVE"
                         }))
                     }
                 },
                 include: { court: true, bookingSlots: true, bookingServices: { include: { service: true } } }
             });
             if (input.voucherId && input.voucherDiscountAmount > 0) {
-                const voucherUpdate = await tx.voucher.updateMany({
-                    where: {
-                        id: input.voucherId,
-                        status: "ACTIVE",
-                        OR: [{ usageLimit: null }, { usedCount: { lt: tx.voucher.fields.usageLimit } }]
-                    },
-                    data: { usedCount: { increment: 1 } }
+                const existingVoucher = await tx.voucher.findUnique({
+                    where: { id: input.voucherId },
+                    select: { id: true, usageLimit: true, usedCount: true, status: true }
                 });
-                if (voucherUpdate.count !== 1) {
+                if (!existingVoucher || existingVoucher.status !== "ACTIVE") {
+                    throw new ValidationError("Voucher khong hop le");
+                }
+                if (existingVoucher.usageLimit !== null && existingVoucher.usedCount >= existingVoucher.usageLimit) {
                     throw new ValidationError("Voucher da het luot su dung");
                 }
+                await tx.voucher.update({
+                    where: { id: input.voucherId },
+                    data: { usedCount: { increment: 1 } }
+                });
                 const split = await voucherDiscountSplit(tx, input.voucherId, input.voucherDiscountAmount);
                 await tx.bookingVoucher.create({
                     data: {
@@ -451,6 +578,7 @@ export const bookingRepository = {
                 const sortedSlots = [...day.slots].sort((left, right) => left.startTime.localeCompare(right.startTime));
                 const firstSlot = sortedSlots[0];
                 const lastSlot = sortedSlots[sortedSlots.length - 1];
+                const primarySurfaceId = firstSlot.courtSurfaceId || firstSlot.court_surface_id || firstSlot.courtSubId || null;
                 const bookingId = generateShortId("bk");
                 const booking = await tx.booking.create({
                     data: {
@@ -458,6 +586,7 @@ export const bookingRepository = {
                         bookingCode: day.bookingCode,
                         userId: input.userId,
                         courtId: input.courtId,
+                        courtSurfaceId: primarySurfaceId,
                         bookingOrderId: orderId,
                         bookingDate: toDbDate(day.bookingDate),
                         startTime: timeToDate(firstSlot.startTime),
@@ -475,10 +604,11 @@ export const bookingRepository = {
                         bookingSlots: {
                             create: sortedSlots.map((slot) => ({
                                 courtId: input.courtId,
+                                court_surface_id: slot.courtSurfaceId || slot.court_surface_id || slot.courtSubId || primarySurfaceId,
                                 bookingDate: toDbDate(day.bookingDate),
                                 startTime: timeToDate(slot.startTime),
                                 endTime: timeToDate(slot.endTime),
-                                slotPrice: slot.price
+                                slotPrice: slot.finalPrice ?? slot.price
                             }))
                         },
                         bookingServices: {
@@ -486,7 +616,10 @@ export const bookingRepository = {
                                 id: generateShortId("bs"),
                                 serviceId: service.serviceId,
                                 quantity: service.quantity,
-                                price: service.price
+                                unitPrice: service.price,
+                                price: service.price * service.quantity,
+                                totalPrice: service.price * service.quantity,
+                                status: "ACTIVE"
                             }))
                         }
                     },
@@ -574,13 +707,44 @@ export const bookingRepository = {
                 const sortedSlots = [...day.slots].sort((left, right) => left.startTime.localeCompare(right.startTime));
                 const firstSlot = sortedSlots[0];
                 const lastSlot = sortedSlots[sortedSlots.length - 1];
+                const primarySurfaceId = firstSlot.courtSurfaceId || firstSlot.court_surface_id || firstSlot.courtSubId || null;
                 const bookingId = generateShortId("bk");
+                for (const service of day.services) {
+                    if (service.serviceId && service.quantity > 0) {
+                        const inv = await tx.serviceInventory.findFirst({
+                            where: { serviceId: service.serviceId }
+                        });
+                        if (inv) {
+                            if (inv.quantity < service.quantity) {
+                                const svc = await tx.service.findUnique({ where: { id: service.serviceId } });
+                                throw new ValidationError(`Sản phẩm/dịch vụ "${svc?.name || "Sản phẩm"}" chỉ còn ${inv.quantity} sản phẩm trong kho.`);
+                            }
+                            await tx.serviceInventory.update({
+                                where: { id: inv.id },
+                                data: { quantity: { decrement: service.quantity } }
+                            });
+                            await tx.inventoryTransaction.create({
+                                data: {
+                                    serviceId: service.serviceId,
+                                    // Matches how the POS records the same deduction (cashier.repository).
+                                    type: "SALE",
+                                    quantity: service.quantity,
+                                    unitCost: inv.lastPurchasePrice,
+                                    referenceType: "BOOKING",
+                                    referenceId: bookingId,
+                                    note: `Đặt cùng đơn booking ${bookingId}`
+                                }
+                            });
+                        }
+                    }
+                }
                 const booking = await tx.booking.create({
                     data: {
                         id: bookingId,
                         bookingCode: day.bookingCode,
                         userId: input.userId,
                         courtId: input.courtId,
+                        courtSurfaceId: primarySurfaceId,
                         bookingOrderId: orderId,
                         bookingDate: toDbDate(day.bookingDate),
                         startTime: timeToDate(firstSlot.startTime),
@@ -598,10 +762,11 @@ export const bookingRepository = {
                         bookingSlots: {
                             create: sortedSlots.map((slot) => ({
                                 courtId: input.courtId,
+                                court_surface_id: slot.courtSurfaceId || slot.court_surface_id || slot.courtSubId || primarySurfaceId,
                                 bookingDate: toDbDate(day.bookingDate),
                                 startTime: timeToDate(slot.startTime),
                                 endTime: timeToDate(slot.endTime),
-                                slotPrice: slot.price
+                                slotPrice: slot.finalPrice ?? slot.price
                             }))
                         },
                         bookingServices: {
@@ -609,7 +774,10 @@ export const bookingRepository = {
                                 id: generateShortId("bs"),
                                 serviceId: service.serviceId,
                                 quantity: service.quantity,
-                                price: service.price
+                                unitPrice: service.price,
+                                price: service.price * service.quantity,
+                                totalPrice: service.price * service.quantity,
+                                status: "ACTIVE"
                             }))
                         }
                     },

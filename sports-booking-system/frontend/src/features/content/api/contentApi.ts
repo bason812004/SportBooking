@@ -28,6 +28,16 @@ export const contentApi = {
     return repairObject(data.data);
   },
 
+  async claimAllVouchers() {
+    const { data } = await api.post<ApiResponse<{
+      claimedCount: number;
+      skippedCount: number;
+      claimedVouchers: Array<{ id: string; code: string; title: string }>;
+      skippedVouchers: Array<{ id: string; code: string; reason: string }>;
+    }>>("/vouchers/claim-all");
+    return data.data;
+  },
+
   async blogs(params: { search?: string } = {}) {
     const { data } = await api.get<ApiResponse<BlogPost[]>>("/blogs", { params: clean(params) });
     return repairObject(data.data);
@@ -184,10 +194,12 @@ export const contentApi = {
       mimeType?: string;
     }
   ) {
-    // Backend returns TeamPostMessage[] — extract the first (the newly created message)
-    const { data } = await api.post<ApiResponse<TeamPostMessage[]>>(`/team-posts/${id}/messages`, payload);
-    const messages = repairObject(data.data) as TeamPostMessage[];
-    return messages[0];
+    const { data } = await api.post<ApiResponse<TeamPostMessage | TeamPostMessage[]>>(`/team-posts/${id}/messages`, payload);
+    const res = repairObject(data.data);
+    if (Array.isArray(res)) {
+      return res[res.length - 1];
+    }
+    return res as TeamPostMessage;
   },
 
   async reactToMessage(postId: string, payload: { messageId: string; reaction: string }) {

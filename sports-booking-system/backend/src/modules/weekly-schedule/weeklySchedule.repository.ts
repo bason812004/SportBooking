@@ -9,8 +9,10 @@ import {
   type InternalWeeklySlot
 } from "./weeklySchedule.types.js";
 
-function toMinutes(time: string) {
+function toMinutes(time: string | undefined | null) {
+  if (!time || typeof time !== "string" || !time.includes(":")) return 0;
   const [h, m] = time.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return 0;
   return h * 60 + m;
 }
 
@@ -22,22 +24,47 @@ function fmt(minutes: number) {
   return `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
 }
 
+function parseYmd(dateInput: string | Date | undefined | null): string {
+  if (!dateInput) return new Date().toISOString().slice(0, 10);
+  if (dateInput instanceof Date) {
+    if (Number.isNaN(dateInput.getTime())) return new Date().toISOString().slice(0, 10);
+    return dateInput.toISOString().slice(0, 10);
+  }
+  const str = String(dateInput).trim();
+  const clean = str.split("T")[0];
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) return clean;
+  const parsed = new Date(str);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  return new Date().toISOString().slice(0, 10);
+}
+
 function addDays(date: string, days: number) {
-  const dt = new Date(`${date}T00:00:00Z`);
+  const ymd = parseYmd(date);
+  const dt = new Date(`${ymd}T00:00:00Z`);
   dt.setUTCDate(dt.getUTCDate() + days);
   return dt.toISOString().slice(0, 10);
 }
 
 export function startOfWeek(dateInput: string) {
-  const dt = new Date(`${dateInput}T00:00:00Z`);
+  const ymd = parseYmd(dateInput);
+  const dt = new Date(`${ymd}T00:00:00Z`);
   const day = dt.getUTCDay();
   const diff = day === 0 ? -6 : 1 - day;
   dt.setUTCDate(dt.getUTCDate() + diff);
   return dt.toISOString().slice(0, 10);
 }
 
-function toIsoTime(value: Date) {
-  return value.toISOString().slice(11, 16);
+function toIsoTime(value: Date | string | null | undefined): string {
+  if (!value) return "00:00";
+  if (typeof value === "string") {
+    if (value.includes("T")) return value.slice(11, 16);
+    return value.slice(0, 5);
+  }
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return "00:00";
+    return value.toISOString().slice(11, 16);
+  }
+  return "00:00";
 }
 
 function overlaps(start: string, end: string, otherStart: string, otherEnd: string) {
@@ -57,9 +84,13 @@ function isPendingButExpired(booking: {
 }
 
 export const weeklyScheduleRepository = {
-  async court(courtId: string) {
+  async court(courtIdOrSlug: string) {
     const court = await prisma.court.findFirst({
-      where: { id: courtId, approvalStatus: "APPROVED", activeStatus: "ACTIVE" },
+      where: {
+        OR: [{ id: courtIdOrSlug }, { slug: courtIdOrSlug }],
+        approvalStatus: "APPROVED",
+        activeStatus: "ACTIVE"
+      },
       select: {
         id: true,
         name: true,
@@ -70,7 +101,8 @@ export const weeklyScheduleRepository = {
         closingTime: true,
         prices: { select: { price: true } },
         images: { take: 1, orderBy: { sortOrder: "asc" }, select: { imageUrl: true } },
-        category: { select: { name: true } }
+        category: { select: { name: true } },
+        surfaces: { where: { status: "ACTIVE" }, select: { id: true, name: true, surface: true, code: true }, orderBy: { sortOrder: "asc" } }
       }
     });
     if (!court) return null;
@@ -78,23 +110,26 @@ export const weeklyScheduleRepository = {
     return { ...court, minPrice };
   },
 
-  availabilityBlocks(courtId: string, fromDate: string, toDate: string) {
+  availabilityBlocks(courtId: string, fromDate: string, toDate: string, surfaceId?: string) {
     return prisma.courtAvailabilityBlock.findMany({
       where: {
         courtId,
         blockDate: { gte: toDbDate(fromDate), lte: toDbDate(toDate) },
-        status: "ACTIVE"
+        status: "ACTIVE",
+        // A row without a surface covers the whole court, so it applies to every surface.
+        ...(surfaceId ? { OR: [{ courtSurfaceId: surfaceId }, { courtSurfaceId: null }] } : {})
       },
-      select: { id: true, blockDate: true, startTime: true, endTime: true, reason: true }
+      select: { id: true, blockDate: true, startTime: true, endTime: true, reason: true, courtSurfaceId: true }
     });
   },
 
-  bookings(courtId: string, fromDate: string, toDate: string) {
+  bookings(courtId: string, fromDate: string, toDate: string, surfaceId?: string) {
     return prisma.booking.findMany({
       where: {
         courtId,
         bookingDate: { gte: toDbDate(fromDate), lte: toDbDate(toDate) },
-        bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] }
+        bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] },
+        ...(surfaceId ? { OR: [{ courtSurfaceId: surfaceId }, { courtSurfaceId: null }] } : {})
       },
       select: {
         id: true,
@@ -103,17 +138,19 @@ export const weeklyScheduleRepository = {
         startTime: true,
         endTime: true,
         bookingStatus: true,
+        courtSurfaceId: true,
         payments: { select: { expiresAt: true, status: true } }
       }
     });
   },
 
-  bookingSlots(courtId: string, fromDate: string, toDate: string) {
+  bookingSlots(courtId: string, fromDate: string, toDate: string, surfaceId?: string) {
     return prisma.bookingSlot.findMany({
       where: {
         courtId,
         bookingDate: { gte: toDbDate(fromDate), lte: toDbDate(toDate) },
-        booking: { bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] } }
+        booking: { bookingStatus: { notIn: [BookingStatus.CANCELLED, BookingStatus.NO_SHOW] } },
+        ...(surfaceId ? { OR: [{ court_surface_id: surfaceId }, { court_surface_id: null }] } : {})
       },
       select: {
         id: true,
@@ -122,7 +159,12 @@ export const weeklyScheduleRepository = {
         startTime: true,
         endTime: true,
         slotPrice: true,
-        booking: { select: { bookingStatus: true, payments: { select: { expiresAt: true, status: true } } } }
+        court_surface_id: true,
+        booking: {
+          select: {
+            bookingStatus: true
+          }
+        }
       },
       orderBy: { startTime: "asc" }
     });

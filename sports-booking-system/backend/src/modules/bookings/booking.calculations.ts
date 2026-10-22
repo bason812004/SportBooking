@@ -1,6 +1,7 @@
-import { isFullHour, timeToMinutes } from "../../shared/utils/time.js";
+import { isFullHour, timeToMinutes, vietnamWallClock } from "../../shared/utils/time.js";
 
 export type SlotInput = {
+  date?: string;
   startTime: string;
   endTime: string;
 };
@@ -27,6 +28,9 @@ export function calculateDistanceKm(from: { latitude: number; longitude: number 
 }
 
 export function checkBookingOverlap(left: SlotInput, right: SlotInput) {
+  if (left.date && right.date && left.date !== right.date) {
+    return false;
+  }
   return timeToMinutes(left.startTime) < timeToMinutes(right.endTime) && timeToMinutes(left.endTime) > timeToMinutes(right.startTime);
 }
 
@@ -43,7 +47,8 @@ export function calculateBookingQuote(slots: PricedSlot[], voucherDiscountAmount
   const subtotal = slots.reduce((sum, slot) => sum + slot.price, 0) + extraSubtotal;
   const discount = Math.min(Math.max(voucherDiscountAmount, 0), subtotal);
   const totalAmount = subtotal - discount;
-  const minimumDepositAmount = calculateMinimumDeposit(totalAmount, depositPercent);
+  const depositBase = Math.max(0, subtotal - extraSubtotal - discount);
+  const minimumDepositAmount = calculateMinimumDeposit(depositBase, depositPercent);
   return {
     subtotal,
     voucherDiscountAmount: discount,
@@ -65,6 +70,11 @@ export function canCreateBookingCheckout(input: { totalAmount: number; paymentTy
   if (input.paymentType === "DEPOSIT") return requiresDeposit;
   if (input.paymentType === "PAY_AT_COURT") return !requiresDeposit;
   return false;
+}
+
+/** First slot whose start time has already been reached; online booking closes at the slot's start. */
+export function findStartedSlot<T extends { date: string; startTime: string }>(slots: T[], now = new Date()) {
+  return slots.find((slot) => vietnamWallClock(slot.date, slot.startTime).getTime() <= now.getTime());
 }
 
 export function expirePendingPaymentAndReleaseSlots(expiresAt: Date, now = new Date()) {

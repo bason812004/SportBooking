@@ -8,6 +8,8 @@ import {
   type DbClient
 } from "./commission.types.js";
 
+function roundCommission(gross: number, rate: number) { return Math.round(gross * rate) / 100; }
+
 function asNumber(value: unknown) {
   return Number(value ?? 0);
 }
@@ -112,13 +114,19 @@ export const commissionService = {
       court: { partner: Pick<PartnerProfile, "id" | "commissionRate"> };
     },
     eventType: "COMPLETED" | "NO_SHOW",
-    db: DbClient
+    db: DbClient,
+    invoiceTotal?: number
   ) {
     const existing = await commissionRepository.earningByBooking(booking.id, db);
-    if (existing) return existing;
+    if (existing) {
+      if (invoiceTotal !== undefined && invoiceTotal > asNumber(existing.grossAmount)) {
+        return commissionRepository.updateEarning(existing.id, invoiceTotal, roundCommission(invoiceTotal, asNumber(existing.commissionRate)), db);
+      }
+      return existing;
+    }
 
     const grossAmount =
-      eventType === "NO_SHOW" ? asNumber(booking.depositAmount) : asNumber(booking.totalPrice);
+      invoiceTotal ?? (eventType === "NO_SHOW" ? asNumber(booking.depositAmount) : asNumber(booking.totalPrice));
     const commissionRate = await this.effectiveRate(booking.court.partner, db);
     const commissionAmount = Math.round(grossAmount * (commissionRate / 100) * 100) / 100;
     const netAmount = Math.round((grossAmount - commissionAmount) * 100) / 100;
@@ -139,41 +147,29 @@ export const commissionService = {
 
   async adminReport(month?: string) {
     const range = monthRange(month);
-    const transactions = await commissionRepository.report(range.from, range.to);
-    const partners = new Map<
-      string,
-      {
-        partnerId: string;
-        businessName: string;
-        grossAmount: number;
-        commissionAmount: number;
-        netAmount: number;
-        transactionCount: number;
-      }
-    >();
-
-    for (const item of transactions) {
-      const current = partners.get(item.partnerId) ?? {
-        partnerId: item.partnerId,
-        businessName: item.partner.businessName,
-        grossAmount: 0,
-        commissionAmount: 0,
-        netAmount: 0,
-        transactionCount: 0
-      };
-      current.grossAmount += asNumber(item.grossAmount);
-      current.commissionAmount += asNumber(item.commissionAmount);
-      current.netAmount += asNumber(item.netAmount);
-      current.transactionCount += 1;
-      partners.set(item.partnerId, current);
-    }
+    const { totals, perPartner, partnerNames } = await commissionRepository.reportAggregate(
+      range.from,
+      range.to
+    );
 
     return {
       month: range.month,
-      summary: summarize(transactions),
-      partners: [...partners.values()].sort(
-        (a, b) => b.commissionAmount - a.commissionAmount
-      )
+      summary: {
+        grossAmount: asNumber(totals._sum.grossAmount),
+        commissionAmount: asNumber(totals._sum.commissionAmount),
+        netAmount: asNumber(totals._sum.netAmount),
+        transactionCount: totals._count
+      },
+      partners: perPartner
+        .map((row) => ({
+          partnerId: row.partnerId,
+          businessName: partnerNames.get(row.partnerId) ?? "",
+          grossAmount: asNumber(row._sum.grossAmount),
+          commissionAmount: asNumber(row._sum.commissionAmount),
+          netAmount: asNumber(row._sum.netAmount),
+          transactionCount: row._count
+        }))
+        .sort((a, b) => b.commissionAmount - a.commissionAmount)
     };
   },
 

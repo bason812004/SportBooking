@@ -12,8 +12,8 @@ export type NotificationItem = {
 };
 
 export const notificationApi = {
-  async listMine() {
-    const { data } = await api.get<ApiResponse<Paginated<NotificationItem>>>("/users/me/notifications");
+  async listMine(page = 1) {
+    const { data } = await api.get<ApiResponse<Paginated<NotificationItem> & { unreadCount: number }>>("/users/me/notifications", { params: { page } });
     return data.data;
   },
   async markRead(id: string) {

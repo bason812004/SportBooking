@@ -1,13 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CalendarDays, ChevronLeft, ChevronRight, Clock, Filter, LayoutGrid, PhoneCall, ShieldAlert, Table2, User, Wallet } from "lucide-react";
+import { vi } from "date-fns/locale";
+import { CalendarDays, ChevronLeft, ChevronRight, Clock, Filter, LayoutGrid, PhoneCall, ShieldAlert, Table2, User, Wallet, ShoppingBag } from "lucide-react";
+import { QuickCashierModal } from "../../components/booking/QuickCashierModal";
 import { partnerApi, type PartnerBookingGroup, type PartnerCalendarBooking } from "../../features/partner/api/partnerApi";
 import { LoadingState, ErrorState, EmptyState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
+import { DatePicker } from "../../components/ui/DatePicker";
+import { DayPickerCalendar } from "../../components/ui/DayPickerCalendar";
 import { Select } from "../../components/ui/Select";
+import { useClickOutside } from "../../hooks/useClickOutside";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { SortableTh } from "../../components/common/SortableTh";
 import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
@@ -25,6 +30,8 @@ import {
   formatYmd,
   startOfWeek
 } from "../../features/bookings/components/BookingCalendar/utils";
+import { RentEquipmentModal } from "../../features/recipient/components/RentEquipmentModal";
+import type { Booking } from "../../types/api";
 
 type Action = "confirm" | "reject" | "complete" | "no-show";
 
@@ -44,6 +51,13 @@ function todayValue() {
 function currentYearRange() {
   const year = new Date().getFullYear();
   return { fromDate: `${year}-01-01`, toDate: `${year}-12-31` };
+}
+
+function hasCustomerArrived(bookingDate: string, startTime: string) {
+  const datePart = bookingDate.slice(0, 10);
+  const timePart = startTime.slice(11, 16) || startTime.slice(0, 5);
+  const startsAt = new Date(`${datePart}T${timePart}:00`);
+  return new Date() >= startsAt;
 }
 
 function shiftDate(date: string, days: number) {
@@ -70,6 +84,7 @@ function endOfMonth(date: Date) {
 }
 
 export function PartnerBookingsPage() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const viewMode = searchParams.get("view") === "calendar" ? "calendar" : "table";
@@ -86,9 +101,10 @@ export function PartnerBookingsPage() {
   const [confirm, setConfirm] = useState<{ id: string; action: Action } | null>(null);
   const [calendarDetail, setCalendarDetail] = useState<PartnerCalendarBooking | null>(null);
   const [rowDetail, setRowDetail] = useState<PartnerBookingGroup | null>(null);
+  const [cashierBookingId, setCashierBookingId] = useState<string | null>(null);
+  const [servingOnly, setServingOnly] = useState(false);
   const [interveningId, setInterveningId] = useState<string | null>(null);
   const [calendarIntervening, setCalendarIntervening] = useState(false);
-  const periodDateInputRef = useRef<HTMLInputElement>(null);
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
   const [pickerYear, setPickerYear] = useState(() => new Date().getFullYear());
   const courts = useQuery({ queryKey: ["partner-courts"], queryFn: partnerApi.courts });
@@ -155,11 +171,9 @@ export function PartnerBookingsPage() {
     setPage(1);
   };
 
-  const openPicker = (input: HTMLInputElement | null) => {
-    if (!input) return;
-    if (typeof input.showPicker === "function") input.showPicker();
-    else input.focus();
-  };
+  const [dayPickerOpen, setDayPickerOpen] = useState(false);
+  const [dayPickerMonth, setDayPickerMonth] = useState(periodAnchor);
+  const dayPickerRef = useClickOutside<HTMLSpanElement>(dayPickerOpen, () => setDayPickerOpen(false));
 
   const openMonthPicker = () => {
     setPickerYear(periodAnchor.getFullYear());
@@ -193,6 +207,18 @@ export function PartnerBookingsPage() {
     enabled: viewMode === "table"
   });
 
+  const displayGroups = useMemo(() => {
+    const rawGroups = bookings.data?.items ?? [];
+    if (!servingOnly) return rawGroups;
+    return rawGroups.filter((group) => {
+      const primary = group.bookings[0];
+      if (!primary) return false;
+      if (!["CONFIRMED", "IN_PROGRESS", "DEPOSIT_PAID", "CHECKOUT_PENDING", "PENDING"].includes(primary.bookingStatus)) return false;
+      const startsAt = new Date(`${primary.bookingDate.slice(0, 10)}T${primary.startTime.slice(11, 16)}:00`);
+      return new Date() >= startsAt;
+    });
+  }, [bookings.data?.items, servingOnly]);
+
   const calendarQuery = useQuery({
     queryKey: ["partner-calendar", calendarDate, courtId],
     queryFn: () => partnerApi.calendar({ fromDate: calendarDate, toDate: calendarDate, courtId }),
@@ -209,6 +235,8 @@ export function PartnerBookingsPage() {
     queryClient.invalidateQueries({ queryKey: ["partner-bookings"] });
     queryClient.invalidateQueries({ queryKey: ["partner-calendar"] });
   };
+
+  const [rentEquipmentBooking, setRentEquipmentBooking] = useState<Booking | null>(null);
 
   const statusMutation = useMutation({
     mutationFn: ({ id, action }: { id: string; action: Action }) => partnerApi.setBookingStatus(id, action),
@@ -247,6 +275,10 @@ export function PartnerBookingsPage() {
         ? `${primary.court.name}${primary.courtSurface ? ` · ${primary.courtSurface.name}` : ""}`
         : `${distinctSurfaceIds.size} sân`;
 
+    const bookedTimeLabel = primary.startTime && primary.endTime
+      ? `${primary.startTime.slice(11, 16) || primary.startTime.slice(0, 5)} - ${primary.endTime.slice(11, 16) || primary.endTime.slice(0, 5)}`
+      : "Chưa chọn giờ";
+
     return (
       <Tr key={rowKey} className={isGroup ? "bg-emerald-50/40" : undefined}>
         <Td className="font-medium">
@@ -258,7 +290,13 @@ export function PartnerBookingsPage() {
           <br />
           <span className="text-xs text-slate-500">{primary.user?.phone}</span>
         </Td>
-        <Td>{surfaceLabel}</Td>
+        <Td>
+          <span className="font-bold text-slate-800">{surfaceLabel}</span>
+          <br />
+          <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-[#02712a] bg-emerald-50 px-2 py-0.5 rounded-md mt-1 border border-emerald-200">
+            <Clock className="h-3 w-3 text-[#02712a]" /> Giờ phục vụ: {bookedTimeLabel}
+          </span>
+        </Td>
         <Td>
           {isGroup ? (
             `${group.bookings.length} khung giờ`
@@ -288,7 +326,26 @@ export function PartnerBookingsPage() {
         </Td>
         <Td className="text-right">{totalPrice.toLocaleString("vi-VN")} đ</Td>
         <Td>
-          <div className="flex flex-wrap items-start gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {["CONFIRMED", "IN_PROGRESS", "DEPOSIT_PAID", "CHECKOUT_PENDING"].includes(primary.bookingStatus) && (
+              <Button
+                size="sm"
+                className="bg-[#02712a] text-white hover:bg-[#1fa955] font-bold text-xs shadow-sm"
+                onClick={() => navigate(`/partner/pos/${primary.id}`)}
+              >
+                <ShoppingBag className="mr-1 h-3.5 w-3.5" /> Dịch vụ (POS)
+              </Button>
+            )}
+            {["CONFIRMED", "DEPOSIT_PAID"].includes(primary.bookingStatus) && !hasCustomerArrived(primary.bookingDate, primary.startTime) && (
+              <Button
+                size="sm"
+                variant="secondary"
+                className="border-emerald-300 text-[#02712a] hover:bg-emerald-50 font-bold text-xs"
+                onClick={() => setRentEquipmentBooking(primary)}
+              >
+                <ShoppingBag className="mr-1 h-3.5 w-3.5" /> Thuê dụng cụ
+              </Button>
+            )}
             <Button variant="secondary" onClick={() => setRowDetail(group)}>
               Chi tiết
             </Button>
@@ -373,13 +430,35 @@ export function PartnerBookingsPage() {
               onChange={(e) => {
                 setPage(1);
                 setStatus(e.target.value);
+                setServingOnly(false);
               }}
               options={[
                 { value: "", label: "Tất cả trạng thái" },
-                ...BOOKING_STATUS_VALUES.map((value) => ({ value, label: bookingStatusLabels[value] ?? value }))
+                ...BOOKING_STATUS_VALUES.map((val) => ({
+                  value: val,
+                  label: bookingStatusLabels[val] ?? val
+                }))
               ]}
             />
-            <Input
+            <div className="flex items-end">
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !servingOnly;
+                  setServingOnly(next);
+                  setPage(1);
+                  if (next) setStatus("");
+                }}
+                className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-black transition border ${
+                  servingOnly
+                    ? "bg-[#02712a] text-white border-[#02712a] shadow-md"
+                    : "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
+                }`}
+              >
+                <ShoppingBag className="h-3.5 w-3.5" />
+                Sân đang phục vụ
+              </button>
+            </div><Input
               label="Tìm kiếm"
               value={search}
               onChange={(e) => {
@@ -405,22 +484,20 @@ export function PartnerBookingsPage() {
 
           {rangeMode === "custom" ? (
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <Input
+              <DatePicker
                 label="Từ ngày"
-                type="date"
                 value={customFrom}
-                onChange={(e) => {
+                onChange={(value) => {
                   setPage(1);
-                  setCustomFrom(e.target.value);
+                  setCustomFrom(value);
                 }}
               />
-              <Input
+              <DatePicker
                 label="Đến ngày"
-                type="date"
                 value={customTo}
-                onChange={(e) => {
+                onChange={(value) => {
                   setPage(1);
-                  setCustomTo(e.target.value);
+                  setCustomTo(value);
                 }}
               />
             </div>
@@ -437,24 +514,32 @@ export function PartnerBookingsPage() {
                 Hôm nay
               </Button>
               {rangeMode === "day" || rangeMode === "week" ? (
-                <span className="relative inline-flex">
-                  <Button variant="secondary" onClick={() => openPicker(periodDateInputRef.current)} title="Chọn ngày">
+                <span className="relative inline-flex" ref={dayPickerRef}>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setDayPickerMonth(periodAnchor);
+                      setDayPickerOpen((o) => !o);
+                    }}
+                    title="Chọn ngày"
+                  >
                     <CalendarDays className="h-4 w-4" />
                     Chọn ngày
                   </Button>
-                  <input
-                    ref={periodDateInputRef}
-                    type="date"
-                    value={formatYmd(periodAnchor)}
-                    onChange={(e) => {
-                      if (!e.target.value) return;
-                      setPeriodAnchor(new Date(`${e.target.value}T00:00:00`));
-                      setPage(1);
-                    }}
-                    className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
-                    tabIndex={-1}
-                    aria-hidden="true"
-                  />
+                  {dayPickerOpen && (
+                    <DayPickerCalendar
+                      required
+                      selected={periodAnchor}
+                      onSelect={(date) => {
+                        setPeriodAnchor(date);
+                        setPage(1);
+                        setDayPickerOpen(false);
+                      }}
+                      month={dayPickerMonth}
+                      onMonthChange={setDayPickerMonth}
+                      locale={vi}
+                    />
+                  )}
                 </span>
               ) : (
                 <Button variant="secondary" onClick={openMonthPicker} title="Chọn tháng">
@@ -477,7 +562,7 @@ export function PartnerBookingsPage() {
               <Button variant="secondary" onClick={() => setCalendarDate(shiftDate(calendarDate, -1))}>
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <Input type="date" value={calendarDate} onChange={(e) => setCalendarDate(e.target.value)} />
+              <DatePicker value={calendarDate} onChange={setCalendarDate} />
               <Button variant="secondary" onClick={() => setCalendarDate(shiftDate(calendarDate, 1))}>
                 <ChevronRight className="h-4 w-4" />
               </Button>
@@ -511,7 +596,7 @@ export function PartnerBookingsPage() {
                   <Th></Th>
                 </tr>
               </THead>
-              <TBody>{bookings.data?.items.map((group) => renderBookingRow(group))}</TBody>
+              <TBody>{displayGroups.map((group) => renderBookingRow(group))}</TBody>
             </Table>
 
             <div className="flex items-center justify-end gap-3">
@@ -657,6 +742,24 @@ export function PartnerBookingsPage() {
                   </span>
                 </div>
 
+                {booking.bookingServices?.length ? (
+                  <div className="mt-1.5 border-t border-slate-100 pt-1.5">
+                    <p className="mb-1 text-xs font-semibold text-slate-500">Dịch vụ</p>
+                    <div className="max-h-28 overflow-y-auto rounded border border-slate-100">
+                      <table className="w-full text-xs">
+                        <tbody>
+                          {booking.bookingServices.map((item) => (
+                            <tr key={item.id} className="border-t border-slate-100 first:border-t-0">
+                              <td className="p-1.5 text-slate-700">{item.service.name}</td>
+                              <td className="p-1.5 text-right text-slate-500">x{item.quantity}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null}
+
                 {actionsForStatus(booking.bookingStatus).length > 0 ? (
                   interveningId === booking.id ? (
                     <div className="mt-2 space-y-1.5 border-t border-slate-100 pt-2">
@@ -725,6 +828,22 @@ export function PartnerBookingsPage() {
           </div>
         </Overlay>
       ) : null}
+      <QuickCashierModal
+        isOpen={Boolean(cashierBookingId)}
+        onClose={() => setCashierBookingId(null)}
+        bookingId={cashierBookingId}
+      />
+      <RentEquipmentModal
+        isOpen={Boolean(rentEquipmentBooking)}
+        onClose={() => setRentEquipmentBooking(null)}
+        bookingId={rentEquipmentBooking?.id ?? ""}
+        courtId={rentEquipmentBooking?.court.id ?? ""}
+        courtName={rentEquipmentBooking?.court.name}
+        onRented={() => {
+          toast.success("Đã thuê dụng cụ cho khách");
+          invalidateAll();
+        }}
+      />
     </div>
   );
 }

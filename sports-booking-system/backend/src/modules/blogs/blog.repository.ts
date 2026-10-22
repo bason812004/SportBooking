@@ -81,25 +81,33 @@ function normalizeSearchText(value: string) {
 
 const vietnamesePlainChars = normalizeSearchText(vietnameseAccentedChars);
 
-const columnExistsCache = new Map<string, boolean>();
+const columnExistsCache = new Map<string, boolean>([
+  ["blog_posts.view_count", true],
+  ["blog_posts.allow_comments", true]
+]);
 
 async function columnExists(tableName: string, columnName: string) {
   const cacheKey = `${tableName}.${columnName}`;
   const cached = columnExistsCache.get(cacheKey);
   if (cached !== undefined) return cached;
 
-  const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
-    select exists(
-      select 1
-      from information_schema.columns
-      where table_schema = 'public'
-        and table_name = ${tableName}
-        and column_name = ${columnName}
-    ) as "exists"
-  `;
-  const exists = Boolean(row?.exists);
-  if (exists) columnExistsCache.set(cacheKey, true);
-  return exists;
+  try {
+    const [row] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+      select exists(
+        select 1
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = ${tableName}
+          and column_name = ${columnName}
+      ) as "exists"
+    `;
+    const exists = Boolean(row?.exists);
+    columnExistsCache.set(cacheKey, exists);
+    return exists;
+  } catch (err) {
+    columnExistsCache.set(cacheKey, true);
+    return true;
+  }
 }
 
 async function ensureAllowCommentsColumn() {
@@ -119,8 +127,8 @@ export const blogRepository = {
     const viewCountSelect = hasViewCount ? Prisma.sql`coalesce(b.view_count, 0)::int` : Prisma.sql`0::int`;
     const allowCommentsSelect = hasAllowComments ? Prisma.sql`coalesce(b.allow_comments, true)` : Prisma.sql`true`;
     const orderBy = hasViewCount
-      ? Prisma.sql`coalesce(b.view_count, 0) desc, coalesce(b.published_at, b.created_at) desc`
-      : Prisma.sql`coalesce(b.published_at, b.created_at) desc`;
+      ? Prisma.sql`coalesce(b.published_at, b.created_at) desc, coalesce(b.view_count, 0) desc, b.id desc`
+      : Prisma.sql`coalesce(b.published_at, b.created_at) desc, b.id desc`;
     const pattern = search ? `%${search}%` : null;
     const normalizedPattern = search ? `%${normalizeSearchText(search)}%` : null;
 
@@ -209,7 +217,7 @@ export const blogRepository = {
         ${input.content},
         ${input.coverImageUrl || null},
         ${input.visibility}::blog_visibility,
-        'DRAFT'::blog_post_status,
+        'PENDING'::blog_post_status,
         ${input.allowComments},
         null
       )

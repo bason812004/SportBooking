@@ -37,50 +37,37 @@ export type VerificationRow = {
   verificationDocumentUrl: string | null;
 };
 
-let authSchemaReady: Promise<void> | null = null;
+let authSchemaChecked = false;
 
-function ensureAuthSchema() {
-  authSchemaReady ??= (async () => {
-    await prisma.$executeRawUnsafe(`
-      do $$
-      begin
-        if not exists (select 1 from pg_type where typname = 'auth_provider') then
-          create type auth_provider as enum ('LOCAL', 'GOOGLE');
-        end if;
-      end $$
-    `);
-    await prisma.$executeRawUnsafe("alter type account_status add value if not exists 'INACTIVE'");
-    await prisma.$executeRawUnsafe("alter type account_status add value if not exists 'BLOCKED'");
-    await prisma.$executeRawUnsafe("alter table users add column if not exists provider auth_provider not null default 'LOCAL'");
-    await prisma.$executeRawUnsafe("alter table users add column if not exists provider_id varchar(160)");
-    await prisma.$executeRawUnsafe("alter table users add column if not exists email_verified boolean not null default false");
-    await prisma.$executeRawUnsafe("alter table users alter column password_hash drop not null");
-    await prisma.$executeRawUnsafe(`
-      create table if not exists refresh_tokens (
+export async function ensureAuthSchema() {
+  if (authSchemaChecked) return;
+  authSchemaChecked = true;
+
+  try {
+    const statements = [
+      `do $$ begin if not exists (select 1 from pg_type where typname = 'auth_provider') then create type auth_provider as enum ('LOCAL', 'GOOGLE'); end if; end $$;`,
+      "alter type account_status add value if not exists 'INACTIVE'",
+      "alter type account_status add value if not exists 'BLOCKED'",
+      "alter table users add column if not exists provider auth_provider not null default 'LOCAL'",
+      "alter table users add column if not exists provider_id varchar(160)",
+      "alter table users add column if not exists email_verified boolean not null default false",
+      "alter table users alter column password_hash drop not null",
+      `create table if not exists refresh_tokens (
         id uuid primary key default gen_random_uuid(),
         user_id varchar(20) not null references users(id) on delete cascade,
         token_hash text not null,
         expires_at timestamptz not null,
         revoked_at timestamptz,
         created_at timestamptz not null default now()
-      )
-    `);
-    await prisma.$executeRawUnsafe("alter table refresh_tokens drop constraint if exists refresh_tokens_user_id_fkey");
-    await prisma.$executeRawUnsafe("alter table refresh_tokens alter column user_id type varchar(20) using user_id::text");
-    await prisma.$executeRawUnsafe("alter table refresh_tokens add constraint refresh_tokens_user_id_fkey foreign key (user_id) references users(id) on delete cascade");
-    await prisma.$executeRawUnsafe("create index if not exists idx_refresh_tokens_user_id on refresh_tokens(user_id)");
-    await prisma.$executeRawUnsafe("create index if not exists idx_refresh_tokens_token_hash on refresh_tokens(token_hash)");
-    await prisma.$executeRawUnsafe("create index if not exists idx_users_provider_provider_id on users(provider, provider_id)");
-    await prisma.$executeRawUnsafe(`
-      do $$
-      begin
-        if not exists (select 1 from pg_type where typname = 'verification_purpose') then
-          create type verification_purpose as enum ('REGISTER', 'FORGOT_PASSWORD', 'CHANGE_EMAIL');
-        end if;
-      end $$
-    `);
-    await prisma.$executeRawUnsafe(`
-      create table if not exists email_verification_codes (
+      )`,
+      "alter table refresh_tokens drop constraint if exists refresh_tokens_user_id_fkey",
+      "alter table refresh_tokens alter column user_id type varchar(20) using user_id::text",
+      "alter table refresh_tokens add constraint refresh_tokens_user_id_fkey foreign key (user_id) references users(id) on delete cascade",
+      "create index if not exists idx_refresh_tokens_user_id on refresh_tokens(user_id)",
+      "create index if not exists idx_refresh_tokens_token_hash on refresh_tokens(token_hash)",
+      "create index if not exists idx_users_provider_provider_id on users(provider, provider_id)",
+      `do $$ begin if not exists (select 1 from pg_type where typname = 'verification_purpose') then create type verification_purpose as enum ('REGISTER', 'FORGOT_PASSWORD', 'CHANGE_EMAIL'); end if; end $$;`,
+      `create table if not exists email_verification_codes (
         id uuid primary key default gen_random_uuid(),
         email varchar(160) not null,
         full_name varchar(120) not null,
@@ -97,15 +84,20 @@ function ensureAuthSchema() {
         created_at timestamptz not null default now(),
         updated_at timestamptz not null default now(),
         constraint uq_email_verification_codes_email_purpose unique (email, purpose)
-      )
-    `);
-    await prisma.$executeRawUnsafe("create index if not exists idx_email_verification_codes_expires_at on email_verification_codes(expires_at)");
-    await prisma.$executeRawUnsafe("alter table email_verification_codes add column if not exists account_type varchar(20) not null default 'USER'");
-    await prisma.$executeRawUnsafe("alter table email_verification_codes add column if not exists business_name varchar(180)");
-    await prisma.$executeRawUnsafe("alter table email_verification_codes add column if not exists address text");
-    await prisma.$executeRawUnsafe("alter table email_verification_codes add column if not exists verification_document_url text");
-  })();
-  return authSchemaReady;
+      )`,
+      "create index if not exists idx_email_verification_codes_expires_at on email_verification_codes(expires_at)",
+      "alter table email_verification_codes add column if not exists account_type varchar(20) not null default 'USER'",
+      "alter table email_verification_codes add column if not exists business_name varchar(180)",
+      "alter table email_verification_codes add column if not exists address text",
+      "alter table email_verification_codes add column if not exists verification_document_url text"
+    ];
+
+    for (const stmt of statements) {
+      await prisma.$executeRawUnsafe(stmt).catch(() => {});
+    }
+  } catch (err: any) {
+    console.warn("[AuthRepository] Note on auth schema setup:", err?.message || err);
+  }
 }
 
 const userSelect = Prisma.sql`

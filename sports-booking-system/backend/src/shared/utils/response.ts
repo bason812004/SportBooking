@@ -4,6 +4,10 @@ export function sendSuccess<T>(res: Response, data: T, statusCode = 200, message
   return res.status(statusCode).json({ success: true, message, data });
 }
 
+export function successResponse<T>(res: Response, data: T, message = "Success", statusCode = 200) {
+  return res.status(statusCode).json({ success: true, message, data });
+}
+
 export function omitPassword<T extends { passwordHash?: string | null }>(record: T) {
   const { passwordHash, ...rest } = record;
   void passwordHash;

@@ -43,27 +43,47 @@ export async function recordAdminAction(
   });
 }
 
+const VERIFY_BATCH_SIZE = 500;
+
 export async function verifyAuditChain() {
-  const logs = await prisma.$queryRawUnsafe<any[]>(`
-    select id, actor_id as "actorId", action, entity_type as "entityType",
-      entity_id as "entityId", metadata, previous_hash as "previousHash",
-      current_hash as "currentHash", created_at as "createdAt"
-    from audit_logs
-    order by created_at asc, id asc
-  `);
-  for (let index = 0; index < logs.length; index += 1) {
-    const expectedPrevious = index === 0 ? null : logs[index - 1].currentHash;
-    const expectedHash = hash({
-      actorId: logs[index].actorId,
-      action: logs[index].action,
-      entityType: logs[index].entityType,
-      entityId: logs[index].entityId,
-      metadata: logs[index].metadata ?? null,
-      previousHash: expectedPrevious
-    });
-    if ((logs[index].previousHash ?? null) !== expectedPrevious || logs[index].currentHash !== expectedHash) {
-      return { valid: false, checked: index + 1, brokenAt: logs[index].id };
+  let cursorCreatedAt: Date | null = null;
+  let cursorId: string | null = null;
+  let previousHash: string | null = null;
+  let checked = 0;
+
+  while (true) {
+    const rows: any[] = await prisma.$queryRawUnsafe<any[]>(`
+      select id, actor_id as "actorId", action, entity_type as "entityType",
+        entity_id as "entityId", metadata, previous_hash as "previousHash",
+        current_hash as "currentHash", created_at as "createdAt"
+      from audit_logs
+      where $1::timestamptz is null or (created_at, id) > ($1::timestamptz, $2::uuid)
+      order by created_at asc, id asc
+      limit $3
+    `, cursorCreatedAt, cursorId, VERIFY_BATCH_SIZE);
+
+    for (const log of rows) {
+      const expectedPrevious = checked === 0 ? null : previousHash;
+      const expectedHash = hash({
+        actorId: log.actorId,
+        action: log.action,
+        entityType: log.entityType,
+        entityId: log.entityId,
+        metadata: log.metadata ?? null,
+        previousHash: expectedPrevious
+      });
+      if ((log.previousHash ?? null) !== expectedPrevious || log.currentHash !== expectedHash) {
+        return { valid: false, checked: checked + 1, brokenAt: log.id };
+      }
+      previousHash = log.currentHash;
+      checked += 1;
     }
+
+    if (rows.length < VERIFY_BATCH_SIZE) break;
+    const last = rows[rows.length - 1];
+    cursorCreatedAt = last.createdAt;
+    cursorId = last.id;
   }
-  return { valid: true, checked: logs.length, brokenAt: null };
+
+  return { valid: true, checked, brokenAt: null };
 }

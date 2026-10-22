@@ -1,7 +1,8 @@
-import type { UseFormReturn } from "react-hook-form";
+import { Controller, type UseFormReturn } from "react-hook-form";
 import { X } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
+import { DatePicker } from "../ui/DatePicker";
 import { Select } from "../ui/Select";
 import type { ScheduleRow } from "../booking/CourtScheduleGrid";
 
@@ -83,7 +84,18 @@ export function BlockTimeRangeModal({
           {bulkMode === "month" ? (
             <Input label="Tháng" type="month" {...bulkForm.register("month", { required: true })} />
           ) : (
-            <Input label={bulkMode === "day" ? "Ngày" : "Một ngày bất kỳ trong tuần"} type="date" {...bulkForm.register("date", { required: true })} />
+            <Controller
+              control={bulkForm.control}
+              name="date"
+              rules={{ required: true }}
+              render={({ field }) => (
+                <DatePicker
+                  label={bulkMode === "day" ? "Ngày" : "Một ngày bất kỳ trong tuần"}
+                  value={field.value}
+                  onChange={field.onChange}
+                />
+              )}
+            />
           )}
           <Input
             label="Từ giờ"
