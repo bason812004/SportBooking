@@ -1,44 +1,5 @@
-import { RefreshCcw, Search } from "lucide-react";
-import { useLanguage } from "../../lib/i18n";
-
-export function AdminBlockchainLogsPage() {
-  const { t } = useLanguage();
-  return (
-    <div>
-      <h1 className="text-5xl font-black">{t("Nhật ký blockchain")}</h1>
-      <p className="mt-4 text-xl text-slate-700">{t("Kiểm tra trạng thái ghi nhận hash booking, payment và audit lên blockchain testnet.")}</p>
-      <section className="mt-10 rounded-3xl border border-[#dfe8dc] bg-white p-8 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <label className="flex h-14 min-w-80 items-center gap-3 rounded-xl border border-[#b9cdb7] px-5">
-            <Search className="h-5 w-5 text-slate-500" />
-            <input className="w-full outline-none" placeholder={t("Tìm tx hash, entity, status...")} />
-          </label>
-          <button className="inline-flex h-14 items-center gap-3 rounded-xl border border-blue-700 px-6 font-bold text-blue-700">
-            <RefreshCcw className="h-5 w-5" />
-            {t("Thử lại lỗi")}
-          </button>
-        </div>
-        <div className="mt-8 overflow-auto rounded-2xl border border-[#dfe8dc]">
-          <table className="w-full min-w-[1000px] text-left">
-            <thead className="bg-[#f1fbef]">
-              <tr>
-                <th className="p-4">{t("Nhật ký kiểm toán")}</th>
-                <th>{t("Đối tượng")}</th>
-                <th>Payload hash</th>
-                <th>{t("Mạng")}</th>
-                <th>Tx hash</th>
-                <th>{t("Trạng thái")}</th>
-                <th>{t("Xác nhận lúc")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td className="p-8 text-center text-slate-500" colSpan={7}>{t("Chưa có endpoint blockchain log trong frontend API. Trang đã sẵn sàng để nối backend.")}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
-  );
-}
+import { useState } from "react";import { keepPreviousData, useMutation,useQuery,useQueryClient } from "@tanstack/react-query";import { toast } from "sonner";import { RefreshCcw } from "lucide-react";import { adminApi } from "../../features/admin/api/adminApi";import { Button } from "../../components/ui/Button";import { Input } from "../../components/ui/Input";import { Select } from "../../components/ui/Select";import { ErrorState,LoadingState } from "../../components/common/States";import { SortableTh } from "../../components/common/SortableTh";import { useUrlSort } from "../../hooks/useUrlSort";import { Table,THead,TBody,Tr,Th,Td } from "../../components/common/Table";import { PageHero } from "../../components/common/PageHero";
+type SortField="entityType"|"network"|"status"|"attempts";
+const SORT_FIELDS:SortField[]=["entityType","network","status","attempts"];
+export function AdminBlockchainLogsPage(){const qc=useQueryClient();const[f,setF]=useState({search:"",status:""});const[page,setPage]=useState(1);const {sortField,sortOrder,handleSort:sortBy}=useUrlSort<SortField>({fields:SORT_FIELDS,default:null});const handleSort=(field:SortField)=>{setPage(1);sortBy(field)};const q=useQuery({queryKey:["admin-ledger",f,page,sortField,sortOrder],queryFn:()=>adminApi.blockchainLogs({...f,page,limit:10,sortBy:sortField??undefined,sortOrder}),placeholderData:keepPreviousData});const retry=useMutation({mutationFn:adminApi.retryBlockchainLog,onSuccess:async()=>{toast.success("Đã đưa bản ghi về hàng đợi");await qc.invalidateQueries({queryKey:["admin-ledger"]})},onError:e=>toast.error(e.message)});if(q.isLoading)return <LoadingState/>;if(q.isError)return <ErrorState message={q.error.message}/>;return <div className="space-y-5"><PageHero eyebrow="Bảo mật" title="Nhật ký ledger" subtitle="Provider blockchain chưa cấu hình nên bản ghi ở trạng thái PENDING; không có giao dịch on-chain giả." /><div className="grid gap-3 md:grid-cols-2"><Input label="Tìm entity hoặc tx hash" value={f.search} onChange={e=>{setPage(1);setF({...f,search:e.target.value})}}/><Select label="Trạng thái" value={f.status} onChange={e=>{setPage(1);setF({...f,status:e.target.value})}} options={[{value:"",label:"Tất cả"},{value:"PENDING",label:"PENDING"},{value:"CONFIRMED",label:"CONFIRMED"},{value:"FAILED",label:"FAILED"}]}/></div><Table minWidth="1000px"><THead><tr><SortableTh label="Đối tượng" field="entityType" sortField={sortField} sortOrder={sortOrder} onSort={handleSort}/><Th>Payload hash</Th><SortableTh label="Mạng" field="network" sortField={sortField} sortOrder={sortOrder} onSort={handleSort}/><Th>Tx hash</Th><SortableTh label="Trạng thái" field="status" sortField={sortField} sortOrder={sortOrder} onSort={handleSort}/><SortableTh label="Lần thử" field="attempts" sortField={sortField} sortOrder={sortOrder} onSort={handleSort}/><Th></Th></tr></THead><TBody>{q.data?.items.map(x=><Tr key={x.id}><Td>{x.entityType}<br/><span className="text-xs">{x.entityId}</span></Td><Td className="font-mono">{x.payloadHash.slice(0,14)}…</Td><Td>{x.network}</Td><Td>{x.txHash||"-"}</Td><Td>{x.status}<br/><span className="text-xs text-red-600">{x.error}</span></Td><Td>{x.attempts}</Td><Td><Button variant="secondary" onClick={()=>retry.mutate(x.id)}><RefreshCcw className="h-4 w-4"/>Thử lại</Button></Td></Tr>)}</TBody></Table><Pager page={page} total={q.data?.meta.totalPages??1} setPage={setPage}/></div>}
+function Pager({page,total,setPage}:{page:number;total:number;setPage:(v:number)=>void}){return <div className="flex justify-end gap-3"><Button variant="secondary" disabled={page<=1} onClick={()=>setPage(page-1)}>Trước</Button><span className="py-2">{page}/{Math.max(total,1)}</span><Button variant="secondary" disabled={page>=total} onClick={()=>setPage(page+1)}>Sau</Button></div>}

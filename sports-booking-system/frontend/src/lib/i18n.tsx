@@ -13,6 +13,7 @@ import viVouchers from "../locales/vi/vouchers.json";
 import viBlogs from "../locales/vi/blogs.json";
 import viTournaments from "../locales/vi/tournaments.json";
 import viErrors from "../locales/vi/errors.json";
+import viChat from "../locales/vi/chat.json";
 import enCommon from "../locales/en/common.json";
 import enHomepage from "../locales/en/homepage.json";
 import enCourts from "../locales/en/courts.json";
@@ -25,12 +26,13 @@ import enVouchers from "../locales/en/vouchers.json";
 import enBlogs from "../locales/en/blogs.json";
 import enTournaments from "../locales/en/tournaments.json";
 import enErrors from "../locales/en/errors.json";
+import enChat from "../locales/en/chat.json";
 
 export type Language = "vi" | "en";
 
 const resources = {
-  vi: { common: viCommon, homepage: viHomepage, courts: viCourts, booking: viBooking, partner: viPartner, admin: viAdmin, footer: viFooter, header: viHeader, vouchers: viVouchers, blogs: viBlogs, tournaments: viTournaments, errors: viErrors },
-  en: { common: enCommon, homepage: enHomepage, courts: enCourts, booking: enBooking, partner: enPartner, admin: enAdmin, footer: enFooter, header: enHeader, vouchers: enVouchers, blogs: enBlogs, tournaments: enTournaments, errors: enErrors }
+  vi: { common: viCommon, homepage: viHomepage, courts: viCourts, booking: viBooking, partner: viPartner, admin: viAdmin, footer: viFooter, header: viHeader, vouchers: viVouchers, blogs: viBlogs, tournaments: viTournaments, errors: viErrors, chat: viChat },
+  en: { common: enCommon, homepage: enHomepage, courts: enCourts, booking: enBooking, partner: enPartner, admin: enAdmin, footer: enFooter, header: enHeader, vouchers: enVouchers, blogs: enBlogs, tournaments: enTournaments, errors: enErrors, chat: enChat }
 };
 
 if (!i18next.isInitialized) {
@@ -42,7 +44,7 @@ if (!i18next.isInitialized) {
       fallbackLng: "vi",
       supportedLngs: ["vi", "en"],
       defaultNS: "common",
-      ns: ["common", "homepage", "courts", "booking", "partner", "admin", "footer", "header", "vouchers", "blogs", "tournaments", "errors"],
+      ns: ["common", "homepage", "courts", "booking", "partner", "admin", "footer", "header", "vouchers", "blogs", "tournaments", "errors", "chat"],
       interpolation: { escapeValue: false }
     });
 }

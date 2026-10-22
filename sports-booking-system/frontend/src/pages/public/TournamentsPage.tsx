@@ -94,7 +94,9 @@ export function TournamentsPage() {
                         <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold capitalize text-slate-600">{tournament.sportType}</span>
                       </div>
                       <div>
-                        <h2 className="line-clamp-2 text-2xl font-black leading-tight text-slate-950">{tournament.title}</h2>
+                        <Link to={`/tournaments/${tournament.slug}`}>
+                          <h2 className="line-clamp-2 text-2xl font-black leading-tight text-slate-950 hover:text-emerald-800">{tournament.title}</h2>
+                        </Link>
                         <p className="mt-2 line-clamp-2 text-sm leading-6 text-slate-600">{tournament.description}</p>
                       </div>
                       <div className="grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
@@ -121,10 +123,10 @@ export function TournamentsPage() {
                           <div className="h-full rounded-full bg-emerald-600" style={{ width: `${Math.min(percent, 100)}%` }} />
                         </div>
                       </div>
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
                         <span className="text-xs font-semibold text-slate-500">Hạn đăng ký {dateFormat.format(new Date(tournament.registrationDeadline))}</span>
-                        <Link to={`/courts/${tournament.court.id}`} className="rounded-full bg-emerald-700 px-4 py-2 text-sm font-bold text-white">
-                          Xem sân
+                        <Link to={`/tournaments/${tournament.slug}`} className="rounded-full bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800">
+                          Xem chi tiết
                         </Link>
                       </div>
                     </div>

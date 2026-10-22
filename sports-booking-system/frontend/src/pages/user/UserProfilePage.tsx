@@ -1,17 +1,222 @@
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CalendarDays, Camera, KeyRound, Loader2, Mail, Phone, Save, ShieldCheck, UserRound } from "lucide-react";
+import { useForm } from "react-hook-form";
+import { toast } from "sonner";
+import { ErrorState, LoadingState } from "../../components/common/States";
+import { Button } from "../../components/ui/Button";
+import { Input } from "../../components/ui/Input";
+import { authApi } from "../../features/auth/api/authApi";
 import { useAuth } from "../../features/auth/hooks/useAuth";
-import { useLanguage } from "../../lib/i18n";
+import { userApi } from "../../features/user/api/userApi";
+import { uploadApi } from "../../features/uploads/api/uploadApi";
+
+type ProfileValues = { fullName: string; phone: string; avatarUrl: string };
+type PasswordValues = { currentPassword: string; newPassword: string; confirmPassword: string };
+
+const ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const MAX_AVATAR_SIZE = 5 * 1024 * 1024;
 
 export function UserProfilePage() {
-  const { user } = useAuth();
-  const { t } = useLanguage();
+  const auth = useAuth();
+  const queryClient = useQueryClient();
+  const profile = useQuery({ queryKey: ["user-profile"], queryFn: userApi.me, enabled: Boolean(auth.token) });
+  const user = profile.data ?? auth.user;
+  const profileForm = useForm<ProfileValues>({ defaultValues: { fullName: "", phone: "", avatarUrl: "" } });
+  const passwordForm = useForm<PasswordValues>();
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!profile.data || !auth.token) return;
+    auth.setSession(profile.data, auth.token, auth.refreshToken ?? undefined);
+  }, [auth, profile.data]);
+
+  useEffect(() => {
+    if (!user) return;
+    profileForm.reset({ fullName: user.fullName, phone: user.phone ?? "", avatarUrl: user.avatarUrl ?? "" });
+    setAvatarPreview(user.avatarUrl ?? null);
+  }, [profileForm, user]);
+
+  async function handleAvatarChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+      toast.error("Chỉ chấp nhận ảnh JPEG, PNG hoặc WebP");
+      return;
+    }
+    if (file.size > MAX_AVATAR_SIZE) {
+      toast.error("Ảnh tối đa 5MB");
+      return;
+    }
+    setAvatarPreview(URL.createObjectURL(file));
+    setUploadingAvatar(true);
+    try {
+      const result = await uploadApi.uploadAvatar(file);
+      profileForm.setValue("avatarUrl", result.url);
+      if (user) {
+        auth.setSession({ ...user, avatarUrl: result.url }, auth.token!, auth.refreshToken ?? undefined);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["user-profile"] });
+      toast.success("Đã cập nhật ảnh đại diện.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không thể tải ảnh lên.");
+    } finally {
+      setUploadingAvatar(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  const saveProfile = useMutation({
+    mutationFn: (values: ProfileValues) => userApi.updateMe({ ...values, avatarUrl: values.avatarUrl || undefined }),
+    onSuccess: async (updated) => {
+      auth.setSession(updated, auth.token!, auth.refreshToken ?? undefined);
+      await queryClient.invalidateQueries({ queryKey: ["user-profile"] });
+      toast.success("Đã cập nhật hồ sơ cá nhân.");
+    },
+    onError: (error) => toast.error(error.message)
+  });
+
+  const changePassword = useMutation({
+    mutationFn: (values: PasswordValues) => authApi.changePassword({ currentPassword: values.currentPassword, newPassword: values.newPassword }),
+    onSuccess: () => {
+      passwordForm.reset();
+      toast.success("Đổi mật khẩu thành công.");
+    },
+    onError: (error) => toast.error(error.message)
+  });
+
+  if (profile.isLoading && !user) return <LoadingState label="Đang tải hồ sơ..." />;
+  if (profile.isError && !user) return <ErrorState message={profile.error.message || "Không thể tải hồ sơ."} onRetry={() => void profile.refetch()} />;
+  if (!user) return <ErrorState message="Không tìm thấy thông tin tài khoản." />;
+
   return (
-    <div className="rounded-md border border-line bg-white p-5">
-      <h1 className="text-2xl font-semibold">{t("Thông tin cá nhân")}</h1>
-      <dl className="mt-4 grid gap-3 text-sm">
-        <div><dt className="text-slate-500">{t("Họ tên")}</dt><dd className="font-medium">{user?.fullName}</dd></div>
-        <div><dt className="text-slate-500">Email</dt><dd className="font-medium">{user?.email}</dd></div>
-        <div><dt className="text-slate-500">{t("Vai trò")}</dt><dd className="font-medium">{user?.role}</dd></div>
-      </dl>
+    <div className="space-y-6">
+      <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-blue-700 via-indigo-700 to-violet-700 p-6 text-white shadow-xl sm:p-8">
+        <div className="absolute -right-16 -top-20 h-56 w-56 rounded-full bg-white/10" />
+        <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center">
+          <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-3xl border-4 border-white/30 bg-white/15 text-3xl font-black">
+            {user.avatarUrl ? <img src={user.avatarUrl} alt={user.fullName} className="h-full w-full object-cover" /> : user.fullName.charAt(0).toUpperCase()}
+          </div>
+          <div>
+            <p className="text-sm font-bold uppercase tracking-[0.2em] text-blue-100">Hồ sơ thành viên</p>
+            <h1 className="mt-1 text-3xl font-black">{user.fullName}</h1>
+            <p className="mt-2 flex items-center gap-2 text-sm text-white/75"><Mail className="h-4 w-4" />{user.email}</p>
+          </div>
+          <span className="inline-flex w-fit items-center gap-2 rounded-full bg-emerald-400/20 px-4 py-2 text-sm font-bold text-emerald-100 sm:ml-auto">
+            <ShieldCheck className="h-4 w-4" />
+            Tài khoản hoạt động
+          </span>
+        </div>
+      </section>
+
+      <div className="grid gap-6 lg:grid-cols-[1.4fr_0.8fr]">
+        <form className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm" onSubmit={profileForm.handleSubmit((v) => saveProfile.mutate(v))}>
+          <div className="mb-6 flex items-center gap-3">
+            <span className="rounded-2xl bg-blue-50 p-3 text-blue-700"><UserRound /></span>
+            <div>
+              <h2 className="text-xl font-black">Thông tin cá nhân</h2>
+              <p className="text-sm text-slate-500">Thông tin dùng cho đặt sân và liên hệ</p>
+            </div>
+          </div>
+
+          <div className="mb-6 flex items-center gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200">
+              {avatarPreview ? (
+                <img src={avatarPreview} alt={user.fullName} className="h-full w-full object-cover" />
+              ) : (
+                <span className="text-2xl font-black text-slate-500">{user.fullName.charAt(0).toUpperCase()}</span>
+              )}
+              {uploadingAvatar && (
+                <div className="absolute inset-0 grid place-items-center bg-black/40">
+                  <Loader2 className="h-5 w-5 animate-spin text-white" />
+                </div>
+              )}
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-black text-slate-800">Ảnh đại diện</p>
+              <p className="text-xs text-slate-500">Cho phép JPEG, PNG, WebP. Tối đa 5MB.</p>
+              <div className="mt-2 flex gap-2">
+                <Button type="button" variant="secondary" onClick={() => fileInputRef.current?.click()} disabled={uploadingAvatar}>
+                  <Camera className="h-4 w-4" />
+                  {uploadingAvatar ? "Đang tải lên..." : "Chọn ảnh từ máy tính"}
+                </Button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  onChange={handleAvatarChange}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Input label="Họ và tên" {...profileForm.register("fullName", { required: "Vui lòng nhập họ tên", minLength: 2 })} error={profileForm.formState.errors.fullName?.message} />
+            <Input label="Số điện thoại" type="tel" {...profileForm.register("phone")} />
+            <Input label="Email" value={user.email} disabled className="bg-slate-50" />
+          </div>
+          <input type="hidden" {...profileForm.register("avatarUrl")} />
+          <Button className="mt-6" disabled={saveProfile.isPending}>
+            <Save className="h-4 w-4" />
+            {saveProfile.isPending ? "Đang lưu..." : "Lưu thay đổi"}
+          </Button>
+        </form>
+
+        <aside className="space-y-4">
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="font-black">Tổng quan tài khoản</h3>
+            <div className="mt-5 space-y-4 text-sm">
+              <Info icon={<Mail />} label="Email" value={user.email} />
+              <Info icon={<Phone />} label="Điện thoại" value={user.phone || "Chưa cập nhật"} />
+              <Info icon={<CalendarDays />} label="Vai trò" value="Thành viên" />
+            </div>
+          </div>
+          <div className="rounded-3xl bg-amber-50 p-5 text-sm text-amber-900">
+            <div className="flex gap-3">
+              <Camera className="h-5 w-5 shrink-0" />
+              <p>Dùng đường dẫn ảnh HTTPS để ảnh đại diện hiển thị rõ trên hồ sơ và đánh giá của bạn.</p>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <form
+        className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm"
+        onSubmit={passwordForm.handleSubmit((v) =>
+          v.newPassword === v.confirmPassword
+            ? changePassword.mutate(v)
+            : passwordForm.setError("confirmPassword", { message: "Mật khẩu xác nhận không khớp" })
+        )}
+      >
+        <div className="mb-6 flex items-center gap-3">
+          <span className="rounded-2xl bg-violet-50 p-3 text-violet-700"><KeyRound /></span>
+          <div>
+            <h2 className="text-xl font-black">Bảo mật</h2>
+            <p className="text-sm text-slate-500">Đổi mật khẩu định kỳ để bảo vệ tài khoản</p>
+          </div>
+        </div>
+        <div className="grid gap-5 md:grid-cols-3">
+          <Input label="Mật khẩu hiện tại" type="password" {...passwordForm.register("currentPassword", { required: true })} />
+          <Input label="Mật khẩu mới" type="password" {...passwordForm.register("newPassword", { required: true, minLength: { value: 8, message: "Tối thiểu 8 ký tự" } })} error={passwordForm.formState.errors.newPassword?.message} />
+          <Input label="Xác nhận mật khẩu mới" type="password" {...passwordForm.register("confirmPassword", { required: true })} error={passwordForm.formState.errors.confirmPassword?.message} />
+        </div>
+        <Button className="mt-6" disabled={changePassword.isPending}>Cập nhật mật khẩu</Button>
+      </form>
+    </div>
+  );
+}
+
+function Info({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="text-slate-400 [&>svg]:h-4 [&>svg]:w-4">{icon}</span>
+      <div className="min-w-0">
+        <p className="text-xs text-slate-400">{label}</p>
+        <p className="truncate font-semibold text-slate-700">{value}</p>
+      </div>
     </div>
   );
 }

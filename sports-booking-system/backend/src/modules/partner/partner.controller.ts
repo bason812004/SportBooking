@@ -5,12 +5,22 @@ import { partnerService } from "./partner.service.js";
 
 export const partnerController = {
   dashboard: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.dashboard(req.user!.id))),
+  profile: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.profile(req.user!.id))),
+  updateProfile: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateProfile(req.user!.id, req.body))),
   courts: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.courts(req.user!.id))),
   createCourt: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.createCourt(req.user!.id, req.body), 201)),
   courtDetail: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.courtDetail(req.user!.id, req.params.id))),
   updateCourt: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateCourt(req.user!.id, req.params.id, req.body))),
   deactivateCourt: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deactivateCourt(req.user!.id, req.params.id))),
+  updateCourtStatus: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateCourtStatus(req.user!.id, req.params.id, req.body.activeStatus))),
+  courtBlocks: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.courtBlocks(req.user!.id, req.params.id))),
+  createCourtBlock: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.createCourtBlock(req.user!.id, req.params.id, req.body), 201)),
+  cancelCourtBlock: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.cancelCourtBlock(req.user!.id, req.params.id, req.params.blockId))),
+  courtAvailabilityGrid: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.courtAvailabilityGrid(req.user!.id, req.params.id, req.query.date as string))),
+  createCourtBlockBulk: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.createCourtBlockBulk(req.user!.id, req.params.id, req.body), 201)),
   addImage: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.addImage(req.user!.id, req.params.id, req.body, req.file), 201)),
+  deleteImage: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deleteImage(req.user!.id, req.params.imageId))),
+  reorderImages: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.reorderImages(req.user!.id, req.params.id, req.body.imageIds))),
   addPrice: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.addPrice(req.user!.id, req.params.id, req.body), 201)),
   updatePrice: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updatePrice(req.user!.id, req.params.priceId, req.body))),
   deletePrice: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deletePrice(req.user!.id, req.params.priceId))),
@@ -22,5 +32,43 @@ export const partnerController = {
   reject: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.CANCELLED))),
   complete: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.COMPLETED))),
   noShow: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.NO_SHOW))),
-  revenue: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.revenue(req.user!.id)))
+  revenue: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.revenue(req.user!.id, req.query.month as string | undefined))
+  ),
+  calendar: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.calendar(req.user!.id, req.query as any))),
+  courtSurfaces: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.courtSurfaces(req.user!.id, req.params.id))),
+  createCourtSurface: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.createCourtSurface(req.user!.id, req.params.id, req.body), 201)),
+  deleteCourtSurface: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deleteCourtSurface(req.user!.id, req.params.id, req.params.surfaceId))),
+  updateCourtSurfaceStatus: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateCourtSurfaceStatus(req.user!.id, req.params.id, req.params.surfaceId, req.body.status))),
+  updateCourtSurface: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateCourtSurface(req.user!.id, req.params.id, req.params.surfaceId, req.body))),
+  vouchers: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.vouchers(req.user!.id))),
+  voucherDetail: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.voucherDetail(req.user!.id, req.params.id))
+  ),
+  createVoucher: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.createVoucher(req.user!.id, req.body), 201)
+  ),
+  updateVoucher: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.updateVoucher(req.user!.id, req.params.id, req.body))
+  ),
+  activateVoucher: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.activateVoucher(req.user!.id, req.params.id))
+  ),
+  disableVoucher: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.disableVoucher(req.user!.id, req.params.id))
+  ),
+  deleteVoucher: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.deleteVoucher(req.user!.id, req.params.id))
+  ),
+  blogs: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.blogs(req.user!.id))),
+  blogDetail: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.blogDetail(req.user!.id, req.params.id))),
+  createBlog: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.createBlog(req.user!.id, req.body), 201)),
+  updateBlog: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBlog(req.user!.id, req.params.id, req.body))),
+  updateBlogComments: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBlogComments(req.user!.id, req.params.id, req.body.allowComments))),
+  submitBlog: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.submitBlog(req.user!.id, req.params.id))),
+  deleteBlog: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deleteBlog(req.user!.id, req.params.id))),
+  listRecipients: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.listRecipients(req.user!.id))),
+  createRecipient: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.createRecipient(req.user!.id, req.body), 201)),
+  updateRecipient: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateRecipient(req.user!.id, req.params.id, req.body))),
+  deleteRecipient: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deleteRecipient(req.user!.id, req.params.id)))
 };

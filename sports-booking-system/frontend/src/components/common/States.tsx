@@ -26,9 +26,29 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
   );
 }
 
-export function EmptyState({ title }: { title?: string }) {
+export function EmptyState({
+  title,
+  description,
+  actionLabel,
+  onAction
+}: {
+  title?: string;
+  description?: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
   const { t } = useLanguage();
-  return <div className="rounded-md border border-dashed border-line bg-white p-8 text-center text-sm text-slate-500">{title ?? t("Chưa có dữ liệu")}</div>;
+  return (
+    <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-10 text-center">
+      <p className="text-base font-bold text-slate-700">{title ?? t("Chưa có dữ liệu")}</p>
+      {description ? <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">{description}</p> : null}
+      {actionLabel && onAction ? (
+        <Button className="mt-4" onClick={onAction}>
+          {actionLabel}
+        </Button>
+      ) : null}
+    </div>
+  );
 }
 
 export function SkeletonRows() {

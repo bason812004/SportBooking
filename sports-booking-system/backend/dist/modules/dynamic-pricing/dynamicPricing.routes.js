@@ -1,0 +1,18 @@
+import { Router } from "express";
+import { UserRole } from "@prisma/client";
+import { authMiddleware } from "../../middlewares/auth.middleware.js";
+import { requireRole } from "../../middlewares/role.middleware.js";
+import { validate } from "../../middlewares/validate.middleware.js";
+import { dynamicPricingController } from "./dynamicPricing.controller.js";
+import { dynamicPriceQuerySchema, pricingRuleParamsSchema, pricingRuleUpdateSchema, pricingRuleWriteSchema } from "./dynamicPricing.validation.js";
+export const publicDynamicPricingRoutes = Router({ mergeParams: true });
+publicDynamicPricingRoutes.get("/", validate(dynamicPriceQuerySchema), dynamicPricingController.calculate);
+export const partnerDynamicPricingRoutes = Router();
+partnerDynamicPricingRoutes.use(authMiddleware, requireRole(UserRole.PARTNER));
+partnerDynamicPricingRoutes.get("/rules", dynamicPricingController.listRules);
+partnerDynamicPricingRoutes.post("/rules", validate(pricingRuleWriteSchema), dynamicPricingController.createRule);
+partnerDynamicPricingRoutes.get("/rules/:id", validate(pricingRuleParamsSchema), dynamicPricingController.getRule);
+partnerDynamicPricingRoutes.put("/rules/:id", validate(pricingRuleUpdateSchema), dynamicPricingController.updateRule);
+partnerDynamicPricingRoutes.delete("/rules/:id", validate(pricingRuleParamsSchema), dynamicPricingController.deleteRule);
+partnerDynamicPricingRoutes.put("/rules/:id/activate", validate(pricingRuleParamsSchema), dynamicPricingController.activate);
+partnerDynamicPricingRoutes.put("/rules/:id/deactivate", validate(pricingRuleParamsSchema), dynamicPricingController.deactivate);

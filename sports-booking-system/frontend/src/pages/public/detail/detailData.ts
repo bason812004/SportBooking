@@ -57,7 +57,7 @@ export const similarCourts = [
 ];
 
 export const tournamentAtCourt = [
-  { title: "Panda Badminton Open", time: "18/06", members: 48 },
+  { title: "Badminton Open Night", time: "18/06", members: 48 },
   { title: "Pickleball Friendly Night", time: "22/06", members: 32 }
 ];
 
@@ -78,7 +78,6 @@ export const faq = [
   { question: "Sân có cho thuê dụng cụ không?", answer: "Có, dịch vụ thuê vợt, bóng và nước uống có thể chọn kèm khi đặt." }
 ];
 
-export const partner = { name: "Panda Sports Group", courts: 28, rating: 4.9, bookings: 18420 };
 export const topPlayers = [
   { icon: Trophy, name: "Nguyễn Minh", score: "18 trận/tháng" },
   { icon: Users, name: "Team Thunder", score: "42 giờ chơi" }

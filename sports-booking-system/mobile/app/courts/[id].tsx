@@ -1,0 +1,318 @@
+import { Image } from "expo-image";
+import * as Linking from "expo-linking";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { MapPin, Phone, Share2, Star, Clock, Layers } from "lucide-react-native";
+import { useEffect, useState } from "react";
+import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useQuery } from "@tanstack/react-query";
+import { courtApi } from "../../src/api/courts";
+import type { AvailabilitySlot } from "../../src/api/types";
+import { queryKeys } from "../../src/api/queryKeys";
+import { Button, Chip } from "../../src/components/Buttons";
+import { CourtCard } from "../../src/components/Cards";
+import { Card, Screen, SectionHeader } from "../../src/components/Screen";
+import { DateStrip, SlotPicker, SurfaceStrip } from "../../src/components/SlotPicker";
+import { ErrorState, LoadingState } from "../../src/components/StateViews";
+import { StickyBottomAction } from "../../src/components/StickyBottomAction";
+import { useCourtSchedule } from "../../src/hooks/useCourtSchedule";
+import { useBookingStore } from "../../src/store/useBookingStore";
+import { colors, radii, spacing, typography } from "../../src/theme/tokens";
+import { formatCurrency, shortAddress, stripHtml, timeText, todayKey } from "../../src/utils/format";
+
+const fallbackImage = "https://images.unsplash.com/photo-1526232761682-d26e03ac148e?q=80&w=1400&auto=format&fit=crop";
+
+export default function CourtDetailScreen() {
+  const router = useRouter();
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const courtId = Array.isArray(id) ? id[0] : id;
+  const [date, setDate] = useState(todayKey());
+  const [selectedSurfaceId, setSelectedSurfaceId] = useState<string | null>(null);
+  const storeSlots = useBookingStore((state) => state.selectedSlots);
+  const setCourtId = useBookingStore((state) => state.setCourtId);
+  const toggleStoreSlot = useBookingStore((state) => state.toggleSlot);
+
+  useEffect(() => {
+    if (courtId) setCourtId(courtId);
+  }, [courtId, setCourtId]);
+
+  const court = useQuery({
+    queryKey: queryKeys.court(courtId),
+    queryFn: () => courtApi.detail(courtId),
+    enabled: Boolean(courtId),
+    staleTime: 2 * 60 * 1000
+  });
+
+  // Until the customer picks one, the first surface (sân con) is the one the backend books by default.
+  const surfaces = court.data?.surfaces ?? [];
+  const surfaceId = selectedSurfaceId ?? surfaces[0]?.id ?? null;
+  const surfaceName = surfaces.find((item) => item.id === surfaceId)?.name ?? null;
+
+  const availability = useCourtSchedule(courtId, date, surfaceId, court.isSuccess);
+
+  // Shared with the booking screen, so slots picked here are still selected there.
+  const selectedSlots = storeSlots.filter((slot) => slot.courtId === courtId);
+  const selectedSlotsForDate = selectedSlots
+    .filter((slot) => slot.date === date && (slot.courtSurfaceId ?? null) === surfaceId)
+    .map((slot) => ({ startTime: slot.startTime, endTime: slot.endTime, status: "AVAILABLE" as const, price: slot.price, bookingId: null }));
+
+  function toggleSlot(slot: AvailabilitySlot) {
+    toggleStoreSlot({
+      courtId,
+      date,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      price: slot.price ?? 0,
+      courtName: court.data?.name,
+      courtSurfaceId: surfaceId,
+      courtSurfaceName: surfaceName
+    });
+  }
+
+  if (court.isLoading) return <Screen back><LoadingState label="Đang tải thông tin sân..." /></Screen>;
+  if (court.isError) return <Screen back><ErrorState message={court.error.message} onRetry={() => void court.refetch()} /></Screen>;
+  if (!court.data) return <Screen back><ErrorState message="Không tìm thấy thông tin sân." /></Screen>;
+
+  const data = court.data;
+  const images = data.images?.length ? data.images.map((img) => img.imageUrl) : [fallbackImage];
+  const priceValues = (data.prices ?? []).map((item) => Number(item.price)).filter(Number.isFinite);
+  const minPrice = data.minPrice ?? (priceValues.length ? Math.min(...priceValues) : 0);
+  const canBook = data.activeStatus === "ACTIVE";
+
+  const totalSlotPrice = selectedSlots.reduce((sum, s) => sum + (s.price ?? 0), 0);
+
+  return (
+    <View style={{ flex: 1 }}>
+      <Screen title={data.name} subtitle={shortAddress(data)} back fixedHeader>
+        {/* Images Carousel */}
+        <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} contentContainerStyle={styles.gallery}>
+          {images.map((imgUri, index) => (
+            <Image key={index} source={{ uri: imgUri }} style={styles.hero} contentFit="cover" />
+          ))}
+        </ScrollView>
+
+        {/* Basic Info Card */}
+        <Card style={{ gap: spacing.sm }}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.categoryBadge}>{data.category?.name ?? "Sân thể thao"}</Text>
+            <View style={styles.inline}>
+              <Star size={16} color="#F59E0B" fill="#F59E0B" />
+              <Text style={styles.strong}>{Number(data.averageRating ?? 0).toFixed(1)}</Text>
+              <Text style={styles.meta}>({data.reviewCount ?? 0} đánh giá)</Text>
+            </View>
+          </View>
+
+          <Text style={styles.courtName}>{data.name}</Text>
+
+          <View style={styles.inline}>
+            <MapPin size={16} color={colors.primary} />
+            <Text style={styles.meta}>{shortAddress(data)}</Text>
+          </View>
+
+          <View style={styles.inline}>
+            <Clock size={16} color={colors.muted} />
+            <Text style={styles.meta}>Giờ mở cửa: {timeText(data.openingTime)} - {timeText(data.closingTime)}</Text>
+          </View>
+
+          <View style={styles.actions}>
+            {data.contactPhone ? (
+              <Button variant="secondary" onPress={() => Linking.openURL(`tel:${data.contactPhone}`)}>
+                Gọi chủ sân
+              </Button>
+            ) : null}
+            <Button
+              variant="secondary"
+              onPress={() => Linking.openURL(data.mapUrl || `https://maps.google.com/?q=${encodeURIComponent(shortAddress(data))}`)}
+            >
+              Chỉ đường
+            </Button>
+          </View>
+        </Card>
+
+        {/* Description */}
+        <SectionHeader title="Mô tả sân" />
+        <Card>
+          <Text style={styles.body}>{stripHtml(data.description) || "Sân chưa cập nhật mô tả chi tiết."}</Text>
+        </Card>
+
+        {/* Amenities */}
+        <SectionHeader title="Tiện ích & Dịch vụ" />
+        <Card>
+          <View style={styles.wrap}>
+            {(data.amenities ?? []).length ? (
+              data.amenities.map((item) => (
+                <Text key={item.id} style={styles.pill}>{item.name}</Text>
+              ))
+            ) : (
+              <Text style={styles.meta}>Chưa có tiện ích được công bố.</Text>
+            )}
+          </View>
+        </Card>
+
+        {/* Pricing Table */}
+        <SectionHeader title="Bảng giá tham khảo" />
+        <Card style={{ gap: spacing.xs }}>
+          {(data.prices ?? []).map((price) => (
+            <View key={price.id} style={styles.rowBetween}>
+              <Text style={styles.meta}>{price.dayType} · {timeText(price.startTime)} - {timeText(price.endTime)}</Text>
+              <Text style={styles.strong}>{formatCurrency(price.price)}</Text>
+            </View>
+          ))}
+        </Card>
+
+        {/* Interactive Slots Picker */}
+        <SectionHeader title={surfaces.length > 1 ? "Chọn sân con, ngày & khung giờ" : "Chọn ngày & Khung giờ"} />
+        {surfaces.length > 1 ? <SurfaceStrip surfaces={surfaces} value={surfaceId} onChange={setSelectedSurfaceId} /> : null}
+        <DateStrip value={date} onChange={setDate} />
+
+        {availability.isLoading ? (
+          <LoadingState label="Đang tải khung giờ trống..." />
+        ) : availability.isError ? (
+          <ErrorState message={availability.error?.message ?? "Không tải được lịch sân."} onRetry={() => void availability.refetch()} />
+        ) : (
+          <SlotPicker slots={availability.slots} selected={selectedSlotsForDate} onToggle={toggleSlot} />
+        )}
+
+        {/* Reviews */}
+        {data.reviews?.length ? (
+          <>
+            <SectionHeader title={`Đánh giá từ khách hàng (${data.reviews.length})`} />
+            {data.reviews.slice(0, 5).map((review) => (
+              <Card key={review.id} style={{ gap: 4 }}>
+                <View style={styles.rowBetween}>
+                  <Text style={styles.strong}>{review.user?.fullName || "Khách hàng"}</Text>
+                  <View style={styles.inline}>
+                    <Star size={14} color="#F59E0B" fill="#F59E0B" />
+                    <Text style={styles.strong}>{review.rating}/5</Text>
+                  </View>
+                </View>
+                <Text style={styles.body}>{review.comment ?? "Đánh giá tốt"}</Text>
+              </Card>
+            ))}
+          </>
+        ) : null}
+
+        {/* Nearby Courts */}
+        {data.nearbyCourts?.length ? (
+          <>
+            <SectionHeader title="Sân tương tự gần đây" />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.md, paddingRight: spacing.lg }}>
+              {data.nearbyCourts.map((item) => <CourtCard key={item.id} court={item} horizontal />)}
+            </ScrollView>
+          </>
+        ) : null}
+      </Screen>
+
+      {/* Sticky Bottom Booking Bar */}
+      <StickyBottomAction>
+        <View style={styles.bottom}>
+          <View>
+            <Text style={styles.meta}>
+              {selectedSlots.length > 0 ? `Đã chọn ${selectedSlots.length} ô giờ` : "Giá từ"}
+            </Text>
+            <Text style={styles.bottomPrice}>
+              {formatCurrency(selectedSlots.length > 0 ? totalSlotPrice : minPrice)}
+            </Text>
+          </View>
+          <Button
+            disabled={!canBook}
+            onPress={() => {
+              router.push({
+                pathname: "/booking/[courtId]",
+                params: {
+                  courtId: data.id,
+                  date,
+                  ...(surfaceId ? { surfaceId } : {})
+                }
+              });
+            }}
+          >
+            {selectedSlots.length > 0 ? "Tiếp tục đặt sân" : "Chọn giờ & Đặt sân"}
+          </Button>
+        </View>
+      </StickyBottomAction>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  gallery: {
+    gap: spacing.sm,
+    paddingBottom: spacing.xs
+  },
+  hero: {
+    width: 320,
+    height: 200,
+    borderRadius: radii.xl,
+    backgroundColor: colors.surfaceAlt
+  },
+  rowBetween: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing.md
+  },
+  inline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6
+  },
+  categoryBadge: {
+    color: colors.primaryDark,
+    backgroundColor: colors.primarySoft,
+    fontWeight: "900",
+    fontSize: 11,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radii.sm,
+    textTransform: "uppercase"
+  },
+  courtName: {
+    fontSize: typography.h1,
+    fontWeight: "900",
+    color: colors.ink
+  },
+  strong: {
+    color: colors.ink,
+    fontWeight: "900"
+  },
+  meta: {
+    color: colors.muted,
+    fontSize: typography.small,
+    lineHeight: 19
+  },
+  body: {
+    color: colors.text,
+    fontSize: typography.body,
+    lineHeight: 22
+  },
+  actions: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    marginTop: spacing.xs
+  },
+  wrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm
+  },
+  pill: {
+    borderRadius: 999,
+    backgroundColor: colors.primarySoft,
+    color: colors.primaryDark,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    fontWeight: "800",
+    fontSize: typography.small
+  },
+  bottom: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md
+  },
+  bottomPrice: {
+    color: colors.primaryDark,
+    fontSize: typography.h2,
+    fontWeight: "900"
+  }
+});

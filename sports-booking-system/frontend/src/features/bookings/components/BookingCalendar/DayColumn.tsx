@@ -1,0 +1,39 @@
+import clsx from "clsx";
+import type { WeeklyScheduleDay } from "../../../../types/api";
+import { BookingBlock } from "./BookingBlock";
+import { slotKey, type Language } from "./utils";
+
+export type DayColumnProps = {
+  day: WeeklyScheduleDay | undefined;
+  hours: string[];
+  selectedKeys: Set<string>;
+  onToggle?: (slot: WeeklyScheduleDay["slots"][number]) => void;
+  language: Language;
+  manageable?: boolean;
+  onManage?: (slot: WeeklyScheduleDay["slots"][number]) => void;
+};
+
+export function DayColumn({ day, hours, selectedKeys, onToggle, language, manageable, onManage }: DayColumnProps) {
+  const slotByHour = new Map<string, WeeklyScheduleDay["slots"][number]>();
+  if (day) {
+    for (const slot of day.slots) slotByHour.set(slot.startTime, slot);
+  }
+  return (
+    <div className={clsx("flex flex-col", !day && "bg-slate-50/60")} role="grid" aria-label="day-column">
+      {hours.map((hour) => {
+        const slot = slotByHour.get(hour);
+        return (
+          <BookingBlock
+            key={`${day?.date ?? "na"}-${hour}`}
+            slot={slot}
+            selected={slot ? selectedKeys.has(slotKey(slot)) : false}
+            onToggle={onToggle}
+            language={language}
+            manageable={manageable}
+            onManage={onManage}
+          />
+        );
+      })}
+    </div>
+  );
+}

@@ -1,0 +1,24 @@
+# Environment variables
+.env
+.env.*
+**/.env
+**/.env.*
+!backend/.env.gmail-payos.example
+!backend/.env.example
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+dist/
+**/dist/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# ML training artifacts (generated locally, may contain real booking data)
+ml/.venv/
+ml/**/__pycache__/
+ml/models/*.csv
+ml/models/*.joblib

@@ -20,10 +20,7 @@ export function HeroGallery({ images }: { images: string[] }) {
           </button>
         ))}
       </div>
-      <button className="fixed bottom-24 left-6 z-40 hidden rounded-full bg-white px-4 py-3 font-black text-[#0b1220] shadow-xl lg:inline-flex">
-        <Maximize2 className="mr-2 h-5 w-5" />
-        Lightbox / Zoom
-      </button>
+      
     </section>
   );
 }

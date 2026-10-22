@@ -1,0 +1,122 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
+import { ErrorState, LoadingState } from "../../components/common/States";
+import { Button } from "../../components/ui/Button";
+import { Input } from "../../components/ui/Input";
+import { adminApi } from "../../features/admin/api/adminApi";
+import { PageHero } from "../../components/common/PageHero";
+import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
+
+const currentMonth = new Date().toISOString().slice(0, 7);
+const money = (value: number) => `${value.toLocaleString("vi-VN")} đ`;
+
+export function AdminCommissionSettingsPage() {
+  const queryClient = useQueryClient();
+  const [rate, setRate] = useState("10");
+  const [month, setMonth] = useState(currentMonth);
+  const config = useQuery({ queryKey: ["commission-default"], queryFn: adminApi.commissionDefault });
+  const report = useQuery({
+    queryKey: ["commission-report", month],
+    queryFn: () => adminApi.commissionReport(month)
+  });
+  useEffect(() => {
+    if (config.data) setRate(String(config.data.rate));
+  }, [config.data]);
+
+  const save = useMutation({
+    mutationFn: () => adminApi.updateCommissionDefault(Number(rate)),
+    onSuccess: () => {
+      toast.success("Đã cập nhật tỷ lệ hoa hồng mặc định");
+      queryClient.invalidateQueries({ queryKey: ["commission-default"] });
+      queryClient.invalidateQueries({ queryKey: ["commission-report"] });
+    },
+    onError: (error) => toast.error(error.message)
+  });
+
+  if (config.isLoading) return <LoadingState />;
+  if (config.isError) return <ErrorState message={config.error.message} />;
+
+  return (
+    <div className="space-y-8">
+      <PageHero
+        eyebrow="Tài chính"
+        title="Hoa hồng"
+        subtitle="Tỷ lệ này áp dụng cho các đối tác chưa được cấu hình tỷ lệ riêng."
+      />
+      <section className="rounded-2xl border border-line bg-white p-6">
+        <div className="flex max-w-md items-end gap-3">
+          <Input
+            label="Tỷ lệ mặc định (%)"
+            type="number"
+            min="0"
+            max="100"
+            step="0.01"
+            value={rate}
+            onChange={(event) => setRate(event.target.value)}
+          />
+          <Button
+            disabled={save.isPending || Number(rate) < 0 || Number(rate) > 100}
+            onClick={() => save.mutate()}
+          >
+            Lưu thay đổi
+          </Button>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-line bg-white p-6">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-bold">Thống kê</h2>
+            <p className="mt-1 text-slate-600">Breakdown theo từng đối tác trong tháng.</p>
+          </div>
+          <Input label="Tháng" type="month" value={month} onChange={(event) => setMonth(event.target.value)} />
+        </div>
+        {report.isLoading && <div className="mt-6"><LoadingState /></div>}
+        {report.isError && <div className="mt-6"><ErrorState message={report.error.message} /></div>}
+        {report.data && (
+          <>
+            <div className="mt-6 grid gap-4 md:grid-cols-3">
+              <Summary label="Tổng giao dịch" value={money(report.data.summary.grossAmount)} />
+              <Summary label="Platform nhận" value={money(report.data.summary.commissionAmount)} />
+              <Summary label="Đối tác thực nhận" value={money(report.data.summary.netAmount)} />
+            </div>
+            <div className="mt-6">
+              <Table minWidth="720px">
+                <THead>
+                  <tr>
+                    <Th>Đối tác</Th>
+                    <Th className="text-right">Số giao dịch</Th>
+                    <Th className="text-right">Doanh thu gốc</Th>
+                    <Th className="text-right">Hoa hồng</Th>
+                    <Th className="text-right">Thực nhận</Th>
+                  </tr>
+                </THead>
+                <TBody>
+                  {report.data.partners.map((partner) => (
+                    <Tr key={partner.partnerId}>
+                      <Td className="font-medium">{partner.businessName}</Td>
+                      <Td className="text-right">{partner.transactionCount}</Td>
+                      <Td className="text-right">{money(partner.grossAmount)}</Td>
+                      <Td className="text-right text-red-600">{money(partner.commissionAmount)}</Td>
+                      <Td className="text-right font-medium text-emerald-700">{money(partner.netAmount)}</Td>
+                    </Tr>
+                  ))}
+                </TBody>
+              </Table>
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function Summary({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-slate-50 p-4">
+      <p className="text-sm text-slate-600">{label}</p>
+      <p className="mt-2 text-2xl font-bold">{value}</p>
+    </div>
+  );
+}

@@ -25,19 +25,19 @@ const linkGroups = [
   {
     title: "sections.support",
     links: [
-      { label: "links.help", to: "/#faq" },
-      { label: "links.faq", to: "/#faq" },
-      { label: "links.contact", to: "/#contact" },
-      { label: "links.report", to: "/#contact" }
+      { label: "links.help", to: "/support" },
+      { label: "links.faq", to: "/support" },
+      { label: "links.contact", to: "/support" },
+      { label: "links.report", to: "/support" }
     ]
   },
   {
     title: "sections.policies",
     links: [
-      { label: "links.terms", to: "/#terms" },
-      { label: "links.privacy", to: "/#privacy" },
-      { label: "links.payment", to: "/#payment-policy" },
-      { label: "links.refund", to: "/#refund-policy" }
+      { label: "links.terms", to: "/policies?tab=terms" },
+      { label: "links.privacy", to: "/policies?tab=privacy" },
+      { label: "links.payment", to: "/policies?tab=payment" },
+      { label: "links.refund", to: "/policies?tab=refund" }
     ]
   }
 ];
@@ -50,7 +50,7 @@ export function SiteFooter() {
     <footer id="contact" className="border-t border-slate-200 bg-[#07130f] text-white">
       <div className="mx-auto max-w-7xl px-4 py-12">
         <div className="grid gap-4 rounded-[2rem] border border-white/10 bg-white/5 p-5 sm:grid-cols-2 lg:grid-cols-4">
-          {stats.map((item) => <div key={item} className="text-xl font-black">{t(item)}</div>)}
+          {stats.map((item, idx) => <div key={`${item}-${idx}`} className="text-xl font-black">{t(item)}</div>)}
         </div>
 
         <div className="mt-12 grid gap-10 lg:grid-cols-[1fr_2fr]">
@@ -73,11 +73,31 @@ export function SiteFooter() {
               <div key={group.title}>
                 <h3 className="font-black text-lime-200">{t(group.title)}</h3>
                 <div className="mt-4 space-y-3 text-sm text-slate-300">
-                  {group.links.map((item) => (
-                    <Link key={item.label} to={item.to} className="block hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-300">
-                      {t(item.label)}
-                    </Link>
-                  ))}
+                  {group.links.map((item) => {
+                    const isExternal = item.to.startsWith("http");
+                    if (isExternal) {
+                      return (
+                        <a
+                          key={item.label}
+                          href={item.to}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-300"
+                        >
+                          {t(item.label)}
+                        </a>
+                      );
+                    }
+                    return (
+                      <Link
+                        key={item.label}
+                        to={item.to}
+                        className="block hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-300"
+                      >
+                        {t(item.label)}
+                      </Link>
+                    );
+                  })}
                 </div>
               </div>
             ))}

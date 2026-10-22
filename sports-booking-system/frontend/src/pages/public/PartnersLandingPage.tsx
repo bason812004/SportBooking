@@ -39,7 +39,7 @@ export function PartnersLandingPage() {
                   <TrendingUp className="h-4 w-4" />
                 </Button>
               </Link>
-              <Link to="/login">
+              <Link to="/partner/login">
                 <Button variant="secondary" className="h-12 rounded-md border-blue-700 px-7 text-base text-blue-700">
                   {t("Đăng nhập đối tác")}
                 </Button>

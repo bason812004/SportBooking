@@ -1,4 +1,6 @@
 import { BookingStatus } from "@prisma/client";
+import { env } from "../../config/env.js";
+import { prisma } from "../../config/db.js";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
 import {
@@ -12,19 +14,367 @@ import {
   toDbDate
 } from "../../shared/utils/time.js";
 import { courtRepository } from "../courts/court.repository.js";
+import { paymentProvider } from "../payments/providers/index.js";
 import { bookingRepository } from "./booking.repository.js";
+import { calculateBookingQuote, canCreateBookingCheckout, findStartedSlot } from "./booking.calculations.js";
 import type { CreateBookingInput } from "./booking.types.js";
+import { realtimeService } from "../realtime/realtime.service.js";
+import { realtimeEvents } from "../realtime/realtime.events.js";
+import { invalidateWeeklyScheduleCache } from "../weekly-schedule/weeklySchedule.service.js";
+import { cashierService } from "../cashier/cashier.service.js";
+import { cashierRepository } from "../cashier/cashier.repository.js";
+import { checkoutRepository } from "../checkout/checkout.repository.js";
 
 function bookingCode() {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
   return `BK${stamp}${Math.floor(Math.random() * 900 + 100)}`;
 }
 
+function assertSlotsNotStarted(slots: Array<{ date: string; startTime: string }>) {
+  const started = findStartedSlot(slots);
+  if (!started) return;
+  const [year, month, day] = started.date.slice(0, 10).split("-");
+  throw new ValidationError(`Khung giờ ${started.startTime.slice(0, 5)} ngày ${day}/${month}/${year} đã qua, vui lòng chọn khung giờ khác`);
+}
+
+function notifyCourtAvailabilityUpdated(courtId: string) {
+  invalidateWeeklyScheduleCache(courtId);
+  realtimeService.toCourt(courtId, "court:availability:updated", { courtId });
+  realtimeService.toPublic("court:availability:updated", { courtId });
+  realtimeService.toCourt(courtId, "court:availability-updated", { courtId });
+  realtimeService.toPublic("court:availability-updated", { courtId });
+  realtimeService.toCourt(courtId, "inventory:updated", { courtId });
+  realtimeService.toPublic("inventory:updated", { courtId });
+}
+
+export type SlotPayload = {
+  date?: string;
+  startTime: string;
+  endTime: string;
+};
+
+export type DayPayload = {
+  bookingDate: string;
+  slots: SlotPayload[];
+};
+
+export type ServicePayload = {
+  serviceId: string;
+  quantity: number;
+};
+
+export type BookingQuoteInput = {
+  courtId: string;
+  days: DayPayload[];
+  services?: ServicePayload[];
+  voucherId?: string;
+  voucherCode?: string;
+};
+
+export type BookingCheckoutInput = BookingQuoteInput & {
+  paymentType: "DEPOSIT" | "FULL_PAYMENT" | "PAY_AT_COURT";
+  note?: string;
+};
+
+import { calculateBookingPrice } from "../pricing/bookingPricing.service.js";
+
 export const bookingService = {
+  async quote(userId: string, input: BookingQuoteInput) {
+    const flatSlots = input.days.flatMap((day) =>
+      day.slots.map((s) => ({
+        courtId: input.courtId,
+        courtSurfaceId: (s as any).courtSurfaceId || (s as any).court_surface_id || (s as any).courtSubId,
+        date: (s as any).date || day.bookingDate,
+        startTime: s.startTime,
+        endTime: s.endTime
+      }))
+    );
+
+    // Checkout and the chatbot both go through quote(), so this one check covers every online booking path.
+    assertSlotsNotStarted(flatSlots);
+
+    const calculated = await calculateBookingPrice({
+      courtId: input.courtId,
+      slots: flatSlots,
+      services: input.services,
+      voucherId: input.voucherId,
+      voucherCode: input.voucherCode
+    });
+
+    const daysMap = new Map<string, any[]>();
+    for (const item of calculated.items) {
+      const list = daysMap.get(item.date) || [];
+      list.push({
+        courtSurfaceId: item.courtSurfaceId,
+        courtSurfaceName: item.courtSurfaceName,
+        startTime: item.startTime,
+        endTime: item.endTime,
+        basePrice: item.basePrice,
+        dynamicAdjustment: item.dynamicAdjustment,
+        price: item.finalPrice,
+        finalPrice: item.finalPrice
+      });
+      daysMap.set(item.date, list);
+    }
+
+    const daysResult = Array.from(daysMap.entries()).map(([bookingDate, slots]) => {
+      const dayCourtSub = slots.reduce((sum, s) => sum + s.price, 0);
+      return {
+        bookingDate,
+        slots,
+        courtSubtotal: dayCourtSub,
+        subtotal: dayCourtSub,
+        voucherDiscountAmount: 0,
+        totalAmount: dayCourtSub
+      };
+    });
+
+    return {
+      court: calculated.court,
+      days: daysResult,
+      services: calculated.services,
+      courtSubtotal: calculated.courtSubtotal,
+      servicesSubtotal: calculated.servicesSubtotal,
+      subtotal: calculated.subtotal,
+      voucherDiscountAmount: calculated.voucherDiscountAmount,
+      totalAmount: calculated.totalAmount,
+      depositBase: calculated.depositBase,
+      minimumDepositAmount: calculated.depositAmount,
+      remainingAmount: calculated.remainingAmount,
+      depositPercent: calculated.depositPercent,
+      requiresDeposit: calculated.requiresDeposit,
+      currency: "VND" as const,
+      quoteExpiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      voucherId: calculated.voucherId
+    };
+  },
+
+  async checkout(userId: string, input: BookingCheckoutInput) {
+    if (!input.days || !input.days.length) {
+      throw new ValidationError("Vui lòng chọn ít nhất một ngày và khung giờ đặt sân");
+    }
+
+    const quoteData = await this.quote(userId, input);
+    const { totalAmount, minimumDepositAmount, depositPercent } = quoteData;
+
+    if (!canCreateBookingCheckout({ totalAmount, paymentType: input.paymentType, depositPercent })) {
+      throw new ValidationError("Phương thức thanh toán không phù hợp với yêu cầu cọc của sân");
+    }
+
+    const paymentAmount = input.paymentType === "FULL_PAYMENT"
+      ? quoteData.depositBase
+      : input.paymentType === "DEPOSIT"
+      ? minimumDepositAmount
+      : 0;
+
+    const remainingAmount = totalAmount - paymentAmount;
+
+    // Single day booking
+    if (input.days.length === 1) {
+      const day = input.days[0];
+      const dayQuote = quoteData.days[0];
+      const bCode = bookingCode();
+
+      if (input.paymentType === "PAY_AT_COURT" || paymentAmount === 0) {
+        const result = await bookingRepository.createPayAtCourtCheckout({
+          bookingCode: bCode,
+          userId,
+          courtId: input.courtId,
+          bookingDate: day.bookingDate,
+          slots: dayQuote.slots,
+          services: quoteData.services.map((s) => ({ serviceId: s.serviceId, quantity: s.quantity, price: s.price })),
+          courtSubtotal: dayQuote.courtSubtotal,
+          subtotal: quoteData.subtotal,
+          voucherDiscountAmount: quoteData.voucherDiscountAmount,
+          totalAmount: quoteData.totalAmount,
+          voucherId: quoteData.voucherId ?? undefined,
+          note: input.note
+        });
+
+        if ("conflict" in result && result.conflict) {
+          throw new ConflictError("Khung giờ này đã có người đặt.", "BOOKING_CONFLICT");
+        }
+
+        notifyCourtAvailabilityUpdated(input.courtId);
+        return {
+          bookingId: result.booking!.id,
+          bookingStatus: result.booking!.bookingStatus,
+          paymentStatus: result.booking!.paymentStatus,
+          paymentType: "PAY_AT_COURT" as const,
+          totalAmount: result.booking!.totalPrice,
+          paymentAmount: 0,
+          remainingAmount: result.booking!.totalPrice,
+          providerConfigured: true
+        };
+      }
+
+      // QR_TRANSFER / DEPOSIT / FULL_PAYMENT
+      const extOrderId = Date.now().toString();
+      const ref = `BK${extOrderId.slice(-6)}`;
+      const expiresAt = new Date(Date.now() + env.PAYMENT_QR_EXPIRES_MINUTES * 60 * 1000);
+      const providerResult = await paymentProvider.createQrPayment({
+        amount: paymentAmount,
+        currency: "VND",
+        orderId: extOrderId,
+        paymentReference: ref,
+        description: `Thanh toan booking ${bCode}`,
+        expiresAt
+      });
+      const result = await bookingRepository.createCheckout({
+        bookingCode: bCode,
+        userId,
+        courtId: input.courtId,
+        bookingDate: day.bookingDate,
+        slots: dayQuote.slots,
+        services: quoteData.services.map((s) => ({ serviceId: s.serviceId, quantity: s.quantity, price: s.price })),
+        courtSubtotal: dayQuote.courtSubtotal,
+        subtotal: quoteData.subtotal,
+        voucherDiscountAmount: quoteData.voucherDiscountAmount,
+        totalAmount: quoteData.totalAmount,
+        depositAmount: minimumDepositAmount,
+        paymentType: input.paymentType,
+        paymentAmount,
+        voucherId: quoteData.voucherId ?? undefined,
+        note: input.note,
+        provider: providerResult.provider,
+        externalOrderId: providerResult.externalOrderId,
+        qrCodeUrl: providerResult.qrCodeUrl,
+        qrPayload: providerResult.qrPayload,
+        paymentReference: ref,
+        expiresAt
+      });
+
+      if ("conflict" in result && result.conflict) {
+        throw new ConflictError("Khung giờ này đã có người đặt.", "BOOKING_CONFLICT");
+      }
+
+      notifyCourtAvailabilityUpdated(input.courtId);
+      return {
+        bookingId: result.booking!.id,
+        paymentId: result.payment!.id,
+        bookingStatus: result.booking!.bookingStatus,
+        paymentStatus: result.payment!.status,
+        paymentType: input.paymentType,
+        totalAmount: quoteData.totalAmount,
+        paymentAmount,
+        remainingAmount,
+        qrCodeUrl: result.payment!.qrCodeUrl ?? null,
+        qrPayload: result.payment!.qrPayload ?? null,
+        paymentReference: result.payment!.paymentReference,
+        expiresAt: result.payment!.expiresAt?.toISOString() ?? null,
+        providerConfigured: providerResult.providerConfigured
+      };
+    }
+
+    // Multi-day booking
+    const courtDiscount = Math.min(quoteData.voucherDiscountAmount, quoteData.courtSubtotal);
+    let allocatedDiscount = 0;
+    const daysData = quoteData.days.map((dayQuote, index) => {
+      let discount = index === quoteData.days.length - 1
+        ? courtDiscount - allocatedDiscount
+        : Math.round(dayQuote.courtSubtotal / (quoteData.courtSubtotal || 1) * courtDiscount);
+      allocatedDiscount += discount;
+      if (index === 0) discount += quoteData.voucherDiscountAmount - courtDiscount;
+      const services = index === 0 ? quoteData.services.map(s => ({ serviceId: s.serviceId, quantity: s.quantity, price: s.price })) : [];
+      const subtotal = dayQuote.courtSubtotal + (index === 0 ? quoteData.servicesSubtotal : 0);
+      return { bookingCode: bookingCode(), bookingDate: dayQuote.bookingDate, slots: dayQuote.slots,
+        services, courtSubtotal: dayQuote.courtSubtotal, subtotal, voucherDiscountAmount: discount,
+        totalAmount: Math.max(0, subtotal - discount) };
+    });
+
+    if (input.paymentType === "PAY_AT_COURT" || paymentAmount === 0) {
+      const result = await bookingRepository.createPayAtCourtOrderCheckout({
+        userId,
+        courtId: input.courtId,
+        days: daysData,
+        voucherId: quoteData.voucherId ?? undefined,
+        note: input.note
+      });
+
+      if ("conflict" in result && result.conflict) {
+        throw new ConflictError(`Khung giờ ngày ${result.conflictDate} đã có người đặt.`, "BOOKING_CONFLICT");
+      }
+
+      notifyCourtAvailabilityUpdated(input.courtId);
+      return {
+        orderId: result.orderId,
+        bookingId: result.bookings![0].id,
+        bookings: result.bookings!.map((b) => ({ bookingId: b.id, bookingDate: b.bookingDate.toISOString().slice(0, 10), totalAmount: b.totalPrice })),
+        bookingStatus: "CONFIRMED",
+        paymentStatus: "UNPAID",
+        paymentType: "PAY_AT_COURT" as const,
+        totalAmount: quoteData.totalAmount,
+        paymentAmount: 0,
+        remainingAmount: quoteData.totalAmount,
+        bookingCount: result.bookings!.length,
+        isMultiBooking: true,
+        providerConfigured: true
+      };
+    }
+
+    // Multi-day QR payment
+    const extOrderId = Date.now().toString();
+    const ref = `BO${extOrderId.slice(-6)}`;
+    const expiresAt = new Date(Date.now() + env.PAYMENT_QR_EXPIRES_MINUTES * 60 * 1000);
+    const providerResult = await paymentProvider.createQrPayment({
+      amount: paymentAmount,
+      currency: "VND",
+      orderId: extOrderId,
+      paymentReference: ref,
+      description: `Thanh toan booking order ${extOrderId}`,
+      expiresAt
+    });
+    const result = await bookingRepository.createOrderCheckout({
+      userId,
+      courtId: input.courtId,
+      days: daysData,
+      subtotal: quoteData.subtotal,
+      voucherDiscountAmount: quoteData.voucherDiscountAmount,
+      totalAmount: quoteData.totalAmount,
+      paymentType: input.paymentType,
+      paymentAmount,
+      voucherId: quoteData.voucherId ?? undefined,
+      note: input.note,
+      provider: providerResult.provider,
+      externalOrderId: providerResult.externalOrderId,
+      qrCodeUrl: providerResult.qrCodeUrl,
+      qrPayload: providerResult.qrPayload,
+      paymentReference: ref,
+      expiresAt
+    });
+
+    if ("conflict" in result && result.conflict) {
+      throw new ConflictError(`Khung giờ ngày ${result.conflictDate} đã có người đặt.`, "BOOKING_CONFLICT");
+    }
+
+    notifyCourtAvailabilityUpdated(input.courtId);
+
+    return {
+      orderId: result.orderId,
+      bookingId: result.bookings![0].id,
+      paymentId: result.payment!.id,
+      bookings: result.bookings!.map((b) => ({ bookingId: b.id, bookingDate: b.bookingDate.toISOString().slice(0, 10), totalAmount: b.totalPrice })),
+      bookingStatus: result.bookings![0].bookingStatus,
+      paymentStatus: result.payment!.status,
+      paymentType: input.paymentType,
+      totalAmount: quoteData.totalAmount,
+      paymentAmount,
+      remainingAmount,
+      qrCodeUrl: result.payment!.qrCodeUrl ?? null,
+      qrPayload: result.payment!.qrPayload ?? null,
+      paymentReference: result.payment!.paymentReference,
+      expiresAt: result.payment!.expiresAt?.toISOString() ?? null,
+      bookingCount: result.bookings!.length,
+      isMultiBooking: true,
+      providerConfigured: providerResult.providerConfigured
+    };
+  },
+
   async create(userId: string, input: CreateBookingInput) {
     if (timeToMinutes(input.startTime) >= timeToMinutes(input.endTime)) {
       throw new ValidationError("Gio bat dau phai nho hon gio ket thuc");
     }
+    assertSlotsNotStarted([{ date: input.bookingDate, startTime: input.startTime }]);
 
     const conflict = await courtRepository.findConflict(input.courtId, input.bookingDate, input.startTime, input.endTime);
     if (conflict) {
@@ -35,14 +385,32 @@ export const bookingService = {
     if (!court) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
 
     const dayType = dayTypeFor(input.bookingDate);
-    const matchingPrice = court.prices.find(
-      (price) =>
-        price.dayType === dayType &&
-        timeToMinutes(price.startTime.toISOString().slice(11, 16)) <= timeToMinutes(input.startTime) &&
-        timeToMinutes(price.endTime.toISOString().slice(11, 16)) >= timeToMinutes(input.endTime)
-    );
+    const startMin = timeToMinutes(input.startTime);
+    const endMin = timeToMinutes(input.endTime);
 
-    if (!matchingPrice) throw new ValidationError("Khung gio nay chua co bang gia");
+    const allPrices = court.prices.map((p) => ({
+      dayType: p.dayType,
+      startMin: timeToMinutes(p.startTime.toISOString().slice(11, 16)),
+      endMin: timeToMinutes(p.endTime.toISOString().slice(11, 16)),
+      price: Number(p.price)
+    }));
+
+    let matchingPrice = allPrices.find(
+      (p) => p.dayType === dayType && p.startMin <= startMin && p.endMin >= endMin
+    );
+    if (!matchingPrice) {
+      matchingPrice = allPrices.find(
+        (p) => p.dayType === dayType && p.startMin < endMin && p.endMin > startMin
+      );
+    }
+    if (!matchingPrice) {
+      matchingPrice = allPrices.find((p) => p.dayType === dayType);
+    }
+    if (!matchingPrice && allPrices.length > 0) {
+      matchingPrice = allPrices[0];
+    }
+
+    if (!matchingPrice) throw new ValidationError("Khung giờ này chưa có bảng giá. Vui lòng thiết lập bảng giá cho sân.");
 
     const serviceIds = input.services.map((service) => service.serviceId);
     const services = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
@@ -53,7 +421,7 @@ export const bookingService = {
       return { serviceId: line.serviceId, quantity: line.quantity, price: Number(service.price) };
     });
 
-    const courtTotal = Number(matchingPrice.price) * durationHours(input.startTime, input.endTime);
+    const courtTotal = matchingPrice.price * durationHours(input.startTime, input.endTime);
     const serviceTotal = serviceLines.reduce((sum, line) => sum + line.price * line.quantity, 0);
 
     return bookingRepository.createWithServices({
@@ -63,7 +431,12 @@ export const bookingService = {
       bookingDate: toDbDate(input.bookingDate),
       startTime: timeToDate(input.startTime),
       endTime: timeToDate(input.endTime),
+      basePrice: courtTotal,
+      dynamicAdjustmentAmount: 0,
+      subtotal: courtTotal + serviceTotal,
+      voucherDiscountAmount: 0,
       totalPrice: courtTotal + serviceTotal,
+      depositAmount: 0,
       paymentMethod: input.paymentMethod,
       services: serviceLines
     });
@@ -76,10 +449,12 @@ export const bookingService = {
     return booking;
   },
 
-  async listForUser(userId: string, query: { page?: string; limit?: string }) {
+  async listForUser(userId: string, query: { page?: string; limit?: string; status?: string }) {
     const page = parsePage(query.page);
     const limit = parseLimit(query.limit);
-    const [items, total] = await bookingRepository.listByUser(userId, page, limit);
+    // Already checked against BookingStatus by myBookingsQuerySchema.
+    const statuses = (query.status ?? "").split(",").map((item) => item.trim()).filter(Boolean) as BookingStatus[];
+    const [items, total] = await bookingRepository.listByUser(userId, page, limit, statuses);
     return { items, meta: paginationMeta(page, limit, total) };
   },
 
@@ -96,6 +471,200 @@ export const bookingService = {
     const minCancelAt = new Date(startAt.getTime() - 2 * 60 * 60 * 1000);
     if (new Date() > minCancelAt) throw new ValidationError("Chi duoc huy truoc gio bat dau it nhat 2 gio");
 
-    return bookingRepository.cancel(bookingId, cancelReason);
+    const result = await bookingRepository.cancel(bookingId, {
+      cancelReason,
+      refundAmount: 0,
+      platformRetainedAmount: 0,
+      paymentStatus: "CANCELLED"
+    });
+
+    if (result.settlement) {
+      const partnerId = result.settlement.partnerId;
+      realtimeService.toPartner(partnerId, realtimeEvents.settlementUpdated, result.settlement);
+      realtimeService.toAdmin(realtimeEvents.settlementUpdated, result.settlement);
+      realtimeService.toPartner(partnerId, realtimeEvents.walletUpdated, { partnerId });
+      realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId });
+    }
+
+    notifyCourtAvailabilityUpdated(booking.courtId);
+    realtimeService.toUser(booking.userId, realtimeEvents.bookingCancelled, { bookingId });
+    realtimeService.toBooking(bookingId, realtimeEvents.bookingCancelled, { bookingId });
+
+    return result;
+  },
+
+  async assertBookingAccess(userId: string, bookingId: string, role?: string) {
+    const booking = await prisma.booking.findFirst({
+      where: {
+        OR: [
+          { id: bookingId },
+          { bookingCode: bookingId },
+          { bookingOrderId: bookingId }
+        ]
+      },
+      include: {
+        court: { select: { id: true, name: true, address: true, partnerId: true } },
+        user: { select: { id: true, fullName: true, phone: true, email: true } }
+      }
+    });
+
+    if (!booking) throw new NotFoundError("Không tìm thấy đơn đặt sân");
+    if (role === "ADMIN" || role === "SYSTEM_ADMIN") {
+      return booking;
+    }
+    if (role === "PARTNER") {
+      const partner = await prisma.partnerProfile.findUnique({ where: { userId }, select: { id: true } });
+      if (!partner || booking.court?.partnerId !== partner.id) {
+        throw new ForbiddenError("Bạn không có quyền quản lý đơn đặt của sân này");
+      }
+      return booking;
+    }
+    if (role === "RECIPIENT") {
+      const recipient = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { managedCourtId: true, partnerId: true }
+      });
+      const matchesManagedCourt = recipient?.managedCourtId && recipient.managedCourtId === booking.courtId;
+      const matchesPartner = recipient?.partnerId && recipient.partnerId === booking.court?.partnerId;
+      if (!matchesManagedCourt && !matchesPartner) {
+        throw new ForbiddenError("Bạn không có quyền quản lý đơn đặt của sân này");
+      }
+      return booking;
+    }
+    if (booking.userId !== userId) {
+      throw new ForbiddenError("Bạn không có quyền truy cập đơn đặt này");
+    }
+    return booking;
+  },
+
+  async getBookingBill(userId: string, bookingId: string, role?: string) {
+    const booking = await this.assertBookingAccess(userId, bookingId, role);
+    const detail = await cashierRepository.getBookingDetailForCashier(booking.id);
+    const checkoutData = await checkoutRepository.getOrCreateCheckout(booking.id);
+
+    // Compute status
+    let paymentStatus: "PAID" | "PARTIAL" | "UNPAID" | "OVERDUE" = "UNPAID";
+    const remaining = Number(checkoutData.breakdown.remainingAmount);
+    const totalPaid = Number(checkoutData.breakdown.totalPaid);
+
+    if (remaining <= 0) {
+      paymentStatus = "PAID";
+    } else {
+      let isOverdue = false;
+      try {
+        const dateStr = booking.bookingDate instanceof Date
+          ? booking.bookingDate.toISOString().slice(0, 10)
+          : String(booking.bookingDate).slice(0, 10);
+        const timeStr = booking.endTime instanceof Date
+          ? booking.endTime.toISOString().slice(11, 16)
+          : String(booking.endTime).slice(0, 5);
+        const endDateTime = new Date(`${dateStr}T${timeStr}:00`);
+        if (!isNaN(endDateTime.getTime()) && new Date() > endDateTime) {
+          isOverdue = true;
+        }
+      } catch {
+        isOverdue = false;
+      }
+
+      if (isOverdue) {
+        paymentStatus = "OVERDUE";
+      } else if (totalPaid > 0) {
+        paymentStatus = "PARTIAL";
+      } else {
+        paymentStatus = "UNPAID";
+      }
+    }
+
+    return {
+      bookingId: booking.id,
+      bookingCode: booking.bookingCode,
+      bookingStatus: booking.bookingStatus,
+      paymentStatus,
+      court: {
+        id: booking.court?.id || booking.courtId,
+        name: booking.court?.name || detail.booking.court?.name,
+        address: booking.court?.address || ""
+      },
+      user: booking.user || detail.booking.user,
+      bookingDate: booking.bookingDate,
+      startTime: detail.booking.startTime,
+      endTime: detail.booking.endTime,
+      services: detail.activeServices || [],
+      subtotalCourt: checkoutData.breakdown.subtotalCourt,
+      serviceSubtotal: checkoutData.breakdown.subtotalService,
+      voucherDiscount: checkoutData.breakdown.discount,
+      depositPaid: checkoutData.breakdown.depositPaid,
+      totalPaid: checkoutData.breakdown.totalPaid,
+      remainingAmount: checkoutData.breakdown.remainingAmount,
+      totalAmount: checkoutData.breakdown.totalAmount,
+      grandTotal: checkoutData.breakdown.totalAmount,
+      isFullyPaid: checkoutData.breakdown.isFullyPaid,
+      checkoutId: checkoutData.checkout.id,
+      checkoutStatus: checkoutData.checkout.status,
+      payments: checkoutData.checkout.payments || []
+    };
+  },
+
+  async getBookingServices(userId: string, bookingId: string, role?: string) {
+    const booking = await this.assertBookingAccess(userId, bookingId, role);
+    const detail = await cashierRepository.getBookingDetailForCashier(booking.id);
+    return detail.activeServices || [];
+  },
+
+  async addServiceToBooking(
+    userId: string,
+    bookingId: string,
+    input: { serviceId: string; quantity: number },
+    role?: string
+  ) {
+    const booking = await this.assertBookingAccess(userId, bookingId, role);
+    const blockedStatuses: BookingStatus[] = [BookingStatus.CANCELLED, BookingStatus.NO_SHOW];
+    if (blockedStatuses.includes(booking.bookingStatus)) {
+      throw new ValidationError("Không thể thêm dịch vụ vào đơn đã hủy hoặc vắng mặt");
+    }
+
+    const result = await cashierService.addServiceToBooking(booking.id, input, userId, { id: userId, role: role ?? "USER" });
+    await checkoutRepository.getOrCreateCheckout(booking.id);
+    return result;
+  },
+
+  async updateBookingServiceQuantity(
+    userId: string,
+    bookingId: string,
+    serviceId: string,
+    quantity: number,
+    role?: string
+  ) {
+    const booking = await this.assertBookingAccess(userId, bookingId, role);
+    const blockedStatuses: BookingStatus[] = [BookingStatus.CANCELLED, BookingStatus.NO_SHOW];
+    if (blockedStatuses.includes(booking.bookingStatus)) {
+      throw new ValidationError("Không thể cập nhật dịch vụ của đơn đã hủy hoặc vắng mặt");
+    }
+
+    const result = await cashierService.updateBookingServiceQuantity(booking.id, serviceId, quantity, { id: userId, role: role ?? "USER" });
+    await checkoutRepository.getOrCreateCheckout(booking.id);
+    return result;
+  },
+
+  async removeBookingService(
+    userId: string,
+    bookingId: string,
+    serviceId: string,
+    role?: string
+  ) {
+    const booking = await this.assertBookingAccess(userId, bookingId, role);
+    const blockedStatuses: BookingStatus[] = [BookingStatus.CANCELLED, BookingStatus.NO_SHOW];
+    if (blockedStatuses.includes(booking.bookingStatus)) {
+      throw new ValidationError("Không thể xóa dịch vụ của đơn đã hủy hoặc vắng mặt");
+    }
+
+    const result = await cashierService.removeBookingService(booking.id, serviceId, { id: userId, role: role ?? "USER" });
+    await checkoutRepository.getOrCreateCheckout(booking.id);
+    return result;
+  },
+
+  async checkoutBooking(userId: string, bookingId: string, role?: string) {
+    const booking = await this.assertBookingAccess(userId, bookingId, role);
+    return checkoutRepository.getOrCreateCheckout(booking.id);
   }
 };

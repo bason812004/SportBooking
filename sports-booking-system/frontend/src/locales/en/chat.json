@@ -1,0 +1,29 @@
+{
+  "title": "Booking Assistant",
+  "subtitle": "Ask about court prices, opening hours, cancellation policy, or have us book a court for you.",
+  "placeholder": "Type your question...",
+  "send": "Send",
+  "sending": "Sending...",
+  "guestBanner": "You are browsing as a guest. Log in to see your bookings and get automated booking help.",
+  "errorGeneric": "Something went wrong, please try again.",
+  "suggestions": {
+    "hours": "What are the opening hours?",
+    "cancelPolicy": "What is the cancellation policy?",
+    "myBookings": "My upcoming bookings",
+    "bookTonight": "Book me a badminton court tonight"
+  },
+  "pendingBooking": {
+    "title": "Booking proposal",
+    "court": "Court",
+    "date": "Date",
+    "slot": "Time slot",
+    "total": "Total",
+    "payment": "Payment method",
+    "expires": "Expires at",
+    "confirm": "Confirm booking",
+    "cancel": "Cancel",
+    "confirming": "Confirming...",
+    "confirmed": "Booking confirmed!",
+    "expired": "This proposal has expired, please ask again."
+  }
+}
