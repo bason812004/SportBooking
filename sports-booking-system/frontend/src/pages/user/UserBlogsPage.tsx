@@ -1,18 +1,13 @@
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Edit3, Eye, MessageCircle, MessageCircleOff, Plus } from "lucide-react";
+import { Edit3, Eye, MessageCircle, MessageCircleOff, Plus, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
+import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { contentApi } from "../../features/content/api/contentApi";
+import { blogStatusHint, blogStatusLabel } from "../../features/content/blogStatus";
 import { useMyBlogs } from "../../features/content/hooks/useContent";
-
-const statusLabel: Record<string, string> = {
-  DRAFT: "Bản nháp",
-  PENDING: "Chờ admin duyệt",
-  PUBLISHED: "Đã xuất bản",
-  REJECTED: "Bị từ chối",
-  HIDDEN: "Đã ẩn"
-};
 
 function wasUpdated(createdAt: string, updatedAt?: string) {
   if (!updatedAt) return false;
@@ -29,6 +24,20 @@ export function UserBlogsPage() {
       if (blog?.slug) {
         queryClient.setQueryData(["public-blog", blog.slug], blog);
       }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["my-blogs"] }),
+        queryClient.invalidateQueries({ queryKey: ["public-blogs"] }),
+        queryClient.invalidateQueries({ queryKey: ["public-blog"] })
+      ]);
+    },
+    onError: (error) => toast.error(error.message)
+  });
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const remove = useMutation({
+    mutationFn: (id: string) => contentApi.deleteBlog(id),
+    onSuccess: async () => {
+      toast.success("Đã xoá bài viết.");
+      setDeleteTarget(null);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["my-blogs"] }),
         queryClient.invalidateQueries({ queryKey: ["public-blogs"] }),
@@ -69,7 +78,7 @@ export function UserBlogsPage() {
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div className="min-w-0">
                       <div className="flex flex-wrap gap-2">
-                        <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-800">{statusLabel[blog.status] ?? blog.status}</span>
+                        <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-800">{blogStatusLabel(blog)}</span>
                         <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-700">{blog.visibility === "PRIVATE" ? "Riêng tư" : "Công khai"}</span>
                         <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-black ${allowComments ? "bg-sky-50 text-sky-800" : "bg-amber-100 text-amber-800"}`}>
                           {allowComments ? <MessageCircle className="h-3.5 w-3.5" /> : <MessageCircleOff className="h-3.5 w-3.5" />}
@@ -82,6 +91,7 @@ export function UserBlogsPage() {
                           Lý do từ chối: {blog.rejectionReason}
                         </p>
                       )}
+                      {blogStatusHint(blog) && <p className="mt-2 text-sm font-semibold text-slate-600">{blogStatusHint(blog)}</p>}
                       <h2 className="mt-3 break-words text-2xl font-black">{blog.title}</h2>
                       {blog.excerpt && <p className="mt-2 line-clamp-2 text-sm text-slate-600">{blog.excerpt}</p>}
                       <p className="mt-2 text-sm text-slate-500">Cập nhật {new Date(blog.updatedAt ?? blog.createdAt).toLocaleString("vi-VN")}</p>
@@ -106,6 +116,15 @@ export function UserBlogsPage() {
                         <Edit3 className="h-4 w-4" />
                         Sửa
                       </Link>
+                      <button
+                        type="button"
+                        disabled={remove.isPending}
+                        onClick={() => setDeleteTarget(blog.id)}
+                        className="inline-flex items-center gap-2 rounded-xl border border-red-200 px-4 py-2 text-sm font-black text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Xoá
+                      </button>
                     </div>
                   </div>
                 </article>
@@ -114,6 +133,13 @@ export function UserBlogsPage() {
           </div>
         )}
       </div>
+      <ConfirmModal
+        open={Boolean(deleteTarget)}
+        title="Xác nhận xoá bài viết"
+        message="Bài viết cùng bình luận và lượt thích sẽ bị xoá vĩnh viễn, không thể hoàn tác."
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => deleteTarget && remove.mutate(deleteTarget)}
+      />
     </main>
   );
 }

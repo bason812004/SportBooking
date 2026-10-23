@@ -1,10 +1,17 @@
-import { NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
+import { ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { blogCommentRepository } from "./blogComment.repository.js";
 
 async function requirePublishedPost(slug: string) {
   const [post] = await blogCommentRepository.publishedPostBySlug(slug);
   if (!post) throw new NotFoundError("Khong tim thay bai viet");
   return post;
+}
+
+/** The comment must belong to the post in the URL, so a post author cannot reach comments elsewhere. */
+async function requireCommentOf(postId: string, commentId: string) {
+  const [comment] = await blogCommentRepository.findById(commentId);
+  if (!comment || comment.postId !== postId) throw new NotFoundError("Khong tim thay binh luan");
+  return comment;
 }
 
 export const blogCommentService = {
@@ -21,13 +28,13 @@ export const blogCommentService = {
     return comment;
   },
 
+  /** Only the commenter (or an admin) may reword a comment. */
   async update(slug: string, commentId: string, userId: string, role: string, content: string) {
-    await requirePublishedPost(slug);
-    const [comment] = await blogCommentRepository.findById(commentId);
-    if (!comment) throw new NotFoundError("Khong tim thay binh luan");
+    const post = await requirePublishedPost(slug);
+    const comment = await requireCommentOf(post.id, commentId);
 
     if (comment.user.id !== userId && role !== "ADMIN") {
-      throw new ValidationError("Ban khong co quyen chinh sua binh luan nay");
+      throw new ForbiddenError("Ban khong co quyen chinh sua binh luan nay");
     }
 
     const [updated] = await blogCommentRepository.update(commentId, content);
@@ -35,13 +42,13 @@ export const blogCommentService = {
     return updated;
   },
 
+  /** The commenter, the post's author (moderating their own post) or an admin may remove a comment. */
   async delete(slug: string, commentId: string, userId: string, role: string) {
-    await requirePublishedPost(slug);
-    const [comment] = await blogCommentRepository.findById(commentId);
-    if (!comment) throw new NotFoundError("Khong tim thay binh luan");
+    const post = await requirePublishedPost(slug);
+    const comment = await requireCommentOf(post.id, commentId);
 
-    if (comment.user.id !== userId && role !== "ADMIN") {
-      throw new ValidationError("Ban khong co quyen xoa binh luan nay");
+    if (comment.user.id !== userId && post.authorId !== userId && role !== "ADMIN") {
+      throw new ForbiddenError("Ban khong co quyen xoa binh luan nay");
     }
 
     await blogCommentRepository.delete(commentId);

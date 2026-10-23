@@ -12,6 +12,7 @@ import { MapPanel } from "./search/MapPanel";
 import { PaginationSection } from "./search/PaginationSection";
 import type { SearchCourtItem } from "./search/CourtCard";
 import { UserLocationBadge } from "../../components/common/UserLocationBadge";
+import { courtAddress } from "../../lib/format";
 
 const PAGE_SIZE = 8;
 
@@ -78,7 +79,7 @@ export function CourtsPage() {
       id: court.id,
       name: court.name,
       category: court.category?.name ?? "Sân thể thao",
-      address: [court.address, court.district, court.city].filter(Boolean).join(", "),
+      address: courtAddress(court),
       distance: court.distanceKm != null ? `Cách bạn ${Number(court.distanceKm).toFixed(1)} km` : "",
       price: court.minPrice ?? 0,
       rating: court.averageRating ?? 0,

@@ -22,22 +22,44 @@ function resolveNotificationRoute(item: NotificationItem, role?: Role): string |
     case "BLOG_UPDATE_REQUESTED":
       return role === "ADMIN" ? "/admin/blogs/pending" : null;
     case "COURT_APPROVAL_REQUESTED":
-      return role === "ADMIN" ? "/admin/courts/pending" : null;
+      if (role !== "ADMIN") return null;
+      return typeof metadata.courtId === "string" ? `/admin/courts/pending/${metadata.courtId}` : "/admin/courts/pending";
     case "COURT_IMAGE_SUBMITTED":
       return role === "ADMIN" ? "/admin/courts" : null;
     case "PARTNER_APPROVAL_REQUESTED":
-      return role === "ADMIN" ? "/admin/partners" : null;
+      return role === "ADMIN" ? "/admin/partners?status=PENDING" : null;
     case "REPORT_CREATED":
       return role === "ADMIN" ? "/admin/reports" : null;
     case "WITHDRAWAL_CREATED":
       return role === "ADMIN" ? "/admin/withdrawals" : null;
-    case "PAYMENT_LATE_REFUND":
-      return role === "ADMIN" ? "/admin/bookings" : role === "USER" ? "/user/bookings" : null;
+    // Refunds open the booking itself: the admin bookings list is filtered to today by default.
+    case "PAYMENT_LATE_REFUND": {
+      const [bookingId] = Array.isArray(metadata.bookingIds) ? metadata.bookingIds : [];
+      if (role === "ADMIN") return typeof bookingId === "string" ? `/admin/bookings?bookingId=${bookingId}` : "/admin/bookings";
+      return role === "USER" ? "/user/bookings" : null;
+    }
+    case "REFUND_REQUIRED":
+      if (role !== "ADMIN") return null;
+      return typeof metadata.bookingId === "string" ? `/admin/bookings?bookingId=${metadata.bookingId}` : "/admin/bookings";
     case "TOURNAMENT_CREATED":
       return role === "ADMIN" ? "/admin/tournaments/pending" : null;
     case "TOURNAMENT_APPROVED":
     case "TOURNAMENT_REJECTED":
       return role === "PARTNER" ? "/partner/tournaments" : null;
+    // Moderation outcomes for the post's author.
+    case "BLOG_PUBLISHED":
+      if (typeof metadata.slug === "string") return `/blogs/${metadata.slug}`;
+      return role === "PARTNER" ? "/partner/blogs" : "/user/blogs";
+    case "BLOG_REJECTED":
+    case "BLOG_HIDDEN":
+      return role === "PARTNER" ? "/partner/blogs" : role === "USER" ? "/user/blogs" : null;
+    case "TEAM_POST_REMOVED":
+      return role === "USER" ? "/user/teammates" : null;
+    case "WITHDRAWAL_APPROVED":
+    case "WITHDRAWAL_REJECTED":
+    case "WITHDRAWAL_PAID":
+    case "WITHDRAWAL_FAILED":
+      return role === "PARTNER" ? "/partner/wallet" : null;
     default:
       return null;
   }

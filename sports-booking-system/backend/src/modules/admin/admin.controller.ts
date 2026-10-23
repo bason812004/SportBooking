@@ -52,6 +52,7 @@ export const adminController = {
   ),
   courts: asyncHandler(async (req, res) => sendSuccess(res, await adminService.courts(req.query))),
   courtDetail: asyncHandler(async (req, res) => sendSuccess(res, await adminService.courtDetail(req.params.id))),
+  courtReview: asyncHandler(async (req, res) => sendSuccess(res, await adminService.courtReview(req.params.id))),
   updateCourtAdmin: asyncHandler(async (req, res) =>
     sendSuccess(res, await adminService.updateCourtAdmin(req.user!.id, req.params.id, req.body))
   ),

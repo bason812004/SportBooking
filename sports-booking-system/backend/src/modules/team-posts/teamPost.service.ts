@@ -1,6 +1,8 @@
 import { ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
+import { recordAdminAction } from "../admin/admin.audit.js";
+import { notificationService } from "../notifications/notification.service.js";
 import { teamPostRepository, type TeamPostInput } from "./teamPost.repository.js";
 
 type BodyInput = Omit<TeamPostInput, "userId">;
@@ -56,9 +58,30 @@ export const teamPostService = {
     return post;
   },
 
-  async delete(id: string, userId: string) {
-    const count = await teamPostRepository.delete(id, userId);
-    if (!count) throw new ForbiddenError("Ban chi co the xoa bai dang cua minh");
+  /**
+   * The owner deletes their own post. Team posts go live without review, so an admin can also remove
+   * any post that breaks the rules; the owner is told and the removal is audited.
+   */
+  async delete(id: string, user: { id: string; role: string }) {
+    if (user.role === "ADMIN") {
+      const removed = await teamPostRepository.deleteAny(id);
+      if (!removed) throw new NotFoundError("Khong tim thay bai dang tim dong doi");
+      await recordAdminAction(user.id, "TEAM_POST_REMOVED", "TEAM_POST", id, { title: removed.title, ownerId: removed.userId });
+      if (removed.userId !== user.id) {
+        await notificationService
+          .create({
+            userId: removed.userId,
+            title: "Bài tìm đồng đội đã bị gỡ",
+            content: `Bài "${removed.title}" đã bị quản trị viên gỡ vì không phù hợp với quy định cộng đồng.`,
+            type: "TEAM_POST_REMOVED",
+            metadata: { postId: id }
+          })
+          .catch((error) => console.error("[TeamPostModeration] Owner notification failed:", error));
+      }
+    } else {
+      const count = await teamPostRepository.delete(id, user.id);
+      if (!count) throw new ForbiddenError("Ban chi co the xoa bai dang cua minh");
+    }
     realtimeService.toTeamPost(id, realtimeEvents.teamPostMemberRemoved, { postId: id });
     return { deleted: true };
   },

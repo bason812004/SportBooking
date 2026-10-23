@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+import type { BlogStatus } from "./blog.calculations.js";
 
 export type BlogPostRow = {
   id: string;
@@ -22,12 +23,19 @@ export type BlogPostRow = {
 
 export type BlogWriteInput = {
   title: string;
-  slug: string;
   excerpt?: string | null;
   content: string;
   coverImageUrl?: string | null;
   visibility: "PUBLIC" | "PRIVATE";
   allowComments: boolean;
+};
+
+export type BlogListSort = "newest" | "oldest" | "views";
+
+const publishedOrder: Record<BlogListSort, Prisma.Sql> = {
+  newest: Prisma.sql`coalesce(b.published_at, b.created_at) desc, coalesce(b.view_count, 0) desc, b.id desc`,
+  oldest: Prisma.sql`coalesce(b.published_at, b.created_at) asc, b.id asc`,
+  views: Prisma.sql`coalesce(b.view_count, 0) desc, coalesce(b.published_at, b.created_at) desc, b.id desc`
 };
 
 const blogRowSelect = (
@@ -121,14 +129,12 @@ async function ensureAllowCommentsColumn() {
 }
 
 export const blogRepository = {
-  async listPublished(search?: string) {
+  async listPublished({ search, sort = "newest", page = 1, limit = 30 }: { search?: string; sort?: BlogListSort; page?: number; limit?: number } = {}) {
     const hasViewCount = await columnExists("blog_posts", "view_count");
     const hasAllowComments = await columnExists("blog_posts", "allow_comments");
     const viewCountSelect = hasViewCount ? Prisma.sql`coalesce(b.view_count, 0)::int` : Prisma.sql`0::int`;
     const allowCommentsSelect = hasAllowComments ? Prisma.sql`coalesce(b.allow_comments, true)` : Prisma.sql`true`;
-    const orderBy = hasViewCount
-      ? Prisma.sql`coalesce(b.published_at, b.created_at) desc, coalesce(b.view_count, 0) desc, b.id desc`
-      : Prisma.sql`coalesce(b.published_at, b.created_at) desc, b.id desc`;
+    const orderBy = hasViewCount ? publishedOrder[sort] : Prisma.sql`coalesce(b.published_at, b.created_at) desc, b.id desc`;
     const pattern = search ? `%${search}%` : null;
     const normalizedPattern = search ? `%${normalizeSearchText(search)}%` : null;
 
@@ -144,7 +150,8 @@ export const blogRepository = {
           or lower(translate(u.full_name, ${vietnameseAccentedChars}, ${vietnamesePlainChars})) like ${normalizedPattern}
         )
       order by ${orderBy}
-      limit 30
+      offset ${(page - 1) * limit}
+      limit ${limit}
     `);
   },
 
@@ -166,10 +173,10 @@ export const blogRepository = {
   async incrementViewCount(slug: string) {
     if (!(await columnExists("blog_posts", "view_count"))) return 0;
 
+    // A view is not an edit: updated_at stays the author's last change.
     return prisma.$executeRaw`
       update blog_posts
-      set view_count = coalesce(view_count, 0) + 1,
-          updated_at = now()
+      set view_count = coalesce(view_count, 0) + 1
       where slug = ${slug}
         and status = 'PUBLISHED'::blog_post_status
         and visibility = 'PUBLIC'::blog_visibility
@@ -204,7 +211,7 @@ export const blogRepository = {
     `);
   },
 
-  async createMine(userId: string, input: BlogWriteInput) {
+  async createMine(userId: string, input: BlogWriteInput & { slug: string }, status: BlogStatus) {
     await ensureAllowCommentsColumn();
 
     const [inserted] = await prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
@@ -217,7 +224,7 @@ export const blogRepository = {
         ${input.content},
         ${input.coverImageUrl || null},
         ${input.visibility}::blog_visibility,
-        'PENDING'::blog_post_status,
+        ${status}::blog_post_status,
         ${input.allowComments},
         null
       )
@@ -226,26 +233,39 @@ export const blogRepository = {
     return inserted?.id ? this.findMineById(inserted.id, userId) : [];
   },
 
-  async updateMine(id: string, userId: string, input: BlogWriteInput) {
+  /**
+   * Saves the author's edit. The slug is kept so links already shared keep working, and published_at
+   * keeps the first publication date (an approved re-edit does not jump to the top of the list).
+   */
+  async updateMine(id: string, userId: string, input: BlogWriteInput, status: BlogStatus) {
     await ensureAllowCommentsColumn();
 
     const [updated] = await prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
       update blog_posts
       set title = ${input.title},
-          slug = ${input.slug},
           excerpt = ${input.excerpt ?? null},
           content = ${input.content},
           cover_image_url = ${input.coverImageUrl || null},
           visibility = ${input.visibility}::blog_visibility,
           allow_comments = ${input.allowComments},
-          status = 'PENDING'::blog_post_status,
-          published_at = null,
+          status = ${status}::blog_post_status,
           updated_at = now()
       where id = ${id}
         and author_id = ${userId}
       returning id
     `);
     return updated?.id ? this.findMineById(updated.id, userId) : [];
+  },
+
+  /** Moves the author's post from `from` to `to`; 0 when it was changed meanwhile. */
+  setMineStatus(id: string, userId: string, from: BlogStatus, to: BlogStatus) {
+    return prisma.$executeRaw`
+      update blog_posts
+      set status = ${to}::blog_post_status, updated_at = now()
+      where id = ${id}
+        and author_id = ${userId}
+        and status = ${from}::blog_post_status
+    `;
   },
 
   async updateMineComments(id: string, userId: string, allowComments: boolean) {

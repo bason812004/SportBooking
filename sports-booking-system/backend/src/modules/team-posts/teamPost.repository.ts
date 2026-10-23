@@ -329,6 +329,15 @@ export const teamPostRepository = {
     `;
   },
 
+  /** Moderation removal of any post; members and messages go with it (ON DELETE CASCADE). */
+  deleteAny(id: string) {
+    return prisma.$queryRaw<Array<{ userId: string; title: string }>>`
+      delete from team_recruitment_posts
+      where id = ${id}
+      returning user_id as "userId", title
+    `.then((rows) => rows[0] ?? null);
+  },
+
   async join(id: string, userId: string) {
     await ensureTeamChatTables();
 

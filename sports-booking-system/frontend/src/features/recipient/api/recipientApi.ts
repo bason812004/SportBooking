@@ -131,7 +131,7 @@ export type RecipientWalkInBookingPayload = {
   bookingDate: string;
   startTime: string;
   minutes: number;
-  paymentMethod: "CASH" | "BANK_TRANSFER" | "E_WALLET";
+  paymentMethod: "CASH" | "BANK_TRANSFER";
   paymentType?: "FULL_PAYMENT" | "DEPOSIT" | "PAY_AT_COURT";
   note?: string;
   services?: Array<{ serviceId: string; quantity: number }>;
@@ -147,9 +147,18 @@ export type RecipientWalkInPayment = {
   amount: number;
 };
 
+/** The account the walk-in booking was attached to; `matchedExisting` when the phone already had one. */
+export type RecipientWalkInCustomer = {
+  id: string;
+  fullName: string;
+  phone: string | null;
+  matchedExisting: boolean;
+};
+
 export type RecipientWalkInBookingResult = {
   booking: Booking;
   payment: RecipientWalkInPayment | null;
+  customer: RecipientWalkInCustomer;
 };
 
 export type RecipientWalkInBookingOrderPayload = {
@@ -166,6 +175,7 @@ export type RecipientWalkInBookingOrderResult = {
   orderId: string;
   bookings: Booking[];
   payment: RecipientWalkInPayment | null;
+  customer: RecipientWalkInCustomer;
 };
 
 export type RecipientRecurringBookingPayload = {
@@ -184,6 +194,7 @@ export type RecipientRecurringBookingResult = {
   created: Booking[];
   skipped: { courtSurfaceId: string; date: string; reason: string }[];
   payment: RecipientWalkInPayment | null;
+  customer: RecipientWalkInCustomer;
 };
 
 export type RecipientCustomerMatch = {
@@ -218,6 +229,23 @@ export type RecipientPaymentStatus = {
   amount: number;
   expiresAt: string;
   paidAt?: string | null;
+  /** False in production: QR money is confirmed by the payment provider, never by staff. */
+  manualConfirmAllowed: boolean;
+};
+
+/** What the counter will charge for extra time on a booking, under the court's partner-set policy. */
+export type RecipientTimeChargeQuote = {
+  policy: { earlyFreeMinutes: number; earlyMaxMinutes: number | null; earlyPricePercent: number; extensionPricePercent: number };
+  extensions: Array<{ minutes: number; amount: number }>;
+  /** Null unless the booking is today, not checked in, and has not started yet. */
+  earlyCheckIn: {
+    earlyMinutes: number;
+    freeMinutes: number;
+    chargedMinutes: number;
+    maxMinutes: number | null;
+    allowed: boolean;
+    amount: number;
+  } | null;
 };
 
 export type RecipientBookingGroup = {
@@ -304,6 +332,13 @@ export const recipientApi = {
     return data.data;
   },
 
+  async timeChargeQuote(id: string, extendMinutes: number[]) {
+    const { data } = await api.get<ApiResponse<RecipientTimeChargeQuote>>(`/recipient/bookings/${id}/time-charge-quote`, {
+      params: { extendMinutes: extendMinutes.join(",") }
+    });
+    return data.data;
+  },
+
   async getExtendOptions(id: string, minutes: number) {
     const { data } = await api.get<ApiResponse<Array<{ id: string; name: string }>>>(`/recipient/bookings/${id}/extend-options`, {
       params: { minutes }
@@ -337,7 +372,9 @@ export const recipientApi = {
   },
 
   async checkInBooking(id: string) {
-    const { data } = await api.post<ApiResponse<Booking & { extraChargeAmount?: number }>>(`/recipient/bookings/${id}/check-in`);
+    const { data } = await api.post<ApiResponse<Booking & { extraChargeAmount?: number; earlyCheckIn?: RecipientTimeChargeQuote["earlyCheckIn"] }>>(
+      `/recipient/bookings/${id}/check-in`
+    );
     return data.data;
   },
 
@@ -352,7 +389,12 @@ export const recipientApi = {
   },
 
   async confirmPayment(paymentId: string) {
-    const { data } = await api.post<ApiResponse<{ id: string; status: string }>>(`/recipient/payments/${paymentId}/confirm`);
+    const { data } = await api.post<ApiResponse<RecipientPaymentStatus>>(`/recipient/payments/${paymentId}/confirm`);
+    return data.data;
+  },
+
+  async syncPayment(paymentId: string) {
+    const { data } = await api.post<ApiResponse<RecipientPaymentStatus>>(`/recipient/payments/${paymentId}/sync`);
     return data.data;
   }
 };

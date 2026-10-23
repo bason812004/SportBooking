@@ -51,9 +51,10 @@ export function weekStartKey(date: string) {
   return day.toISOString().slice(0, 10);
 }
 
-export function shortAddress(input?: { address?: string; district?: string; city?: string } | null) {
+// New courts have address + ward + city (no district since the 2025 reform); older ones keep a district.
+export function shortAddress(input?: { address?: string; ward?: string | null; district?: string | null; city?: string } | null) {
   if (!input) return "-";
-  return [input.address, input.district, input.city].filter(Boolean).join(", ");
+  return [input.address, input.ward, input.district, input.city].filter(Boolean).join(", ");
 }
 
 export function bookingStatusLabel(status: string) {

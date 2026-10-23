@@ -6,7 +6,9 @@ import {
   calculateMinimumDeposit,
   canCreateBookingCheckout,
   checkBookingOverlap,
+  courtCancellationPayment,
   expirePendingPaymentAndReleaseSlots,
+  refundRequiredAdminEvent,
   findStartedSlot,
   validateSelectedSlots,
   verifyPaymentWebhookIdempotency
@@ -85,6 +87,23 @@ test("only the slots that have started are flagged, across days", () => {
   ];
   assert.deepEqual(findStartedSlot(slots, now), slots[2]);
   assert.equal(findStartedSlot(slots.slice(0, 2), now), undefined);
+});
+
+test("court cancellation: online money stays PAID for an admin refund, counter money is refunded on the spot", () => {
+  assert.deepEqual(courtCancellationPayment("PAID", 300000, 150000), { paymentStatus: "PAID", refundAmount: 0, refundByAdmin: 150000 });
+  assert.deepEqual(courtCancellationPayment("PAID", 300000, 0), { paymentStatus: "REFUNDED", refundAmount: 300000, refundByAdmin: 0 });
+  assert.deepEqual(courtCancellationPayment("UNPAID", 300000, 0), { paymentStatus: "UNPAID", refundAmount: 0, refundByAdmin: 0 });
+});
+
+test("refund notice names the court, booking, customer and amount", () => {
+  const event = refundRequiredAdminEvent(
+    { id: "b1", bookingCode: "BK1", courtId: "c1", court: { name: "Sân A" }, user: { fullName: "Nguyễn Văn A", phone: "0900000000" } },
+    150000,
+    "Đối tác"
+  );
+  assert.equal(event.type, "REFUND_REQUIRED");
+  assert.equal(event.content, "Đối tác Sân A đã huỷ đơn BK1 mà Nguyễn Văn A (0900000000) đã thanh toán online 150.000đ. Hãy hoàn tiền rồi cập nhật đơn sang Đã hoàn tiền.");
+  assert.deepEqual(event.metadata, { bookingId: "b1", bookingCode: "BK1", courtId: "c1", amount: 150000 });
 });
 
 test("vietnamNow rolls the date over at Vietnam midnight, not UTC midnight", () => {

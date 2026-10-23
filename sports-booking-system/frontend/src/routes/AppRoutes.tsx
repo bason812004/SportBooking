@@ -70,6 +70,7 @@ const AdminUsersPage = lazy(() => import("../pages/admin/AdminUsersPage").then((
 const AdminPartnersPage = lazy(() => import("../pages/admin/AdminPartnersPage").then((m) => ({ default: m.AdminPartnersPage })));
 const AdminCourtsPage = lazy(() => import("../pages/admin/AdminCourtsPage").then((m) => ({ default: m.AdminCourtsPage })));
 const AdminPendingCourtsPage = lazy(() => import("../pages/admin/AdminPendingCourtsPage").then((m) => ({ default: m.AdminPendingCourtsPage })));
+const AdminCourtReviewPage = lazy(() => import("../pages/admin/AdminCourtReviewPage").then((m) => ({ default: m.AdminCourtReviewPage })));
 const AdminCategoriesPage = lazy(() => import("../pages/admin/AdminCategoriesPage").then((m) => ({ default: m.AdminCategoriesPage })));
 const AdminReviewsPage = lazy(() => import("../pages/admin/AdminReviewsPage").then((m) => ({ default: m.AdminReviewsPage })));
 const AdminReportsPage = lazy(() => import("../pages/admin/AdminReportsPage").then((m) => ({ default: m.AdminReportsPage })));
@@ -210,6 +211,7 @@ export function AppRoutes() {
             <Route path="admin/partners/:id/commission" element={<AdminPartnerCommissionPage />} />
             <Route path="admin/courts" element={<AdminCourtsPage />} />
             <Route path="admin/courts/pending" element={<AdminPendingCourtsPage />} />
+            <Route path="admin/courts/pending/:id" element={<AdminCourtReviewPage />} />
             <Route path="admin/categories" element={<AdminCategoriesPage />} />
             <Route path="admin/reviews" element={<AdminReviewsPage />} />
             <Route path="admin/vouchers" element={<AdminVouchersPage />} />

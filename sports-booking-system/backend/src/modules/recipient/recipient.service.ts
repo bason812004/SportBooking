@@ -1,4 +1,4 @@
-import { BookingStatus, CourtActiveStatus, PaymentMethod } from "@prisma/client";
+import { BookingStatus, CourtActiveStatus, PaymentMethod, Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 import { env } from "../../config/env.js";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
@@ -14,17 +14,23 @@ import {
   parsePage,
   timeToDate,
   timeToMinutes,
-  toDbDate
+  toDbDate,
+  vietnamNow
 } from "../../shared/utils/time.js";
 import { bookingRepository } from "../bookings/booking.repository.js";
-import { calculateMinimumDeposit } from "../bookings/booking.calculations.js";
+import { calculateMinimumDeposit, courtCancellationPayment, refundRequiredAdminEvent } from "../bookings/booking.calculations.js";
+import { enqueueAdminEvent } from "../notifications/notificationOutbox.repository.js";
 import { commissionService } from "../commission/commission.service.js";
 import { dynamicPricingService } from "../dynamic-pricing/dynamicPricing.service.js";
+import { syncPaymentWithProvider } from "../payments/payment.poller.js";
+import { paymentRepository } from "../payments/payment.repository.js";
+import { paymentService } from "../payments/payment.service.js";
 import { paymentProvider } from "../payments/providers/index.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { settlementService } from "../settlements/settlement.service.js";
 import { cashierRepository } from "../cashier/cashier.repository.js";
+import { earlyCheckInWindow, scaleCourtPrice, toTimeChargePolicy } from "./recipient.calculations.js";
 
 function dbTime(value: Date) {
   return value.toISOString().slice(11, 16);
@@ -125,6 +131,157 @@ async function extensionConflictFor(
       ...overlapWhere(booking.endTime, newEndTime)
     }
   });
+}
+
+type WalkInSlot = { courtSurfaceId: string; bookingDate: string; startTime: Date; endTime: Date };
+type WalkInSlotProblem = "BOOKED" | "BLOCKED" | "DUPLICATE";
+
+const walkInSkipReasons: Record<WalkInSlotProblem, string> = {
+  BOOKED: "Khung gio nay da co khach khac",
+  BLOCKED: "San dang trong lich nghi/bao tri",
+  DUPLICATE: "Trung voi buoi khac trong cung yeu cau"
+};
+
+/**
+ * Index -> problem for walk-in slots that hit an active booking, an availability block, or an
+ * earlier slot of the same request. Two queries in total, however many slots are passed.
+ */
+async function walkInSlotProblems(client: Prisma.TransactionClient, courtId: string, slots: WalkInSlot[]) {
+  const problems = new Map<number, WalkInSlotProblem>();
+  if (!slots.length) return problems;
+  const bookingDates = [...new Set(slots.map((slot) => slot.bookingDate))].map((date) => toDbDate(date));
+  const surfaceFilter = [{ courtSurfaceId: { in: [...new Set(slots.map((slot) => slot.courtSurfaceId))] } }, { courtSurfaceId: null }];
+  const [bookings, blocks] = await Promise.all([
+    client.booking.findMany({
+      where: { courtId, bookingDate: { in: bookingDates }, bookingStatus: { in: activeOperationStatuses }, OR: surfaceFilter },
+      select: { courtSurfaceId: true, bookingDate: true, startTime: true, endTime: true }
+    }),
+    client.courtAvailabilityBlock.findMany({
+      where: { courtId, status: "ACTIVE", blockDate: { in: bookingDates }, OR: surfaceFilter },
+      select: { courtSurfaceId: true, blockDate: true, startTime: true, endTime: true }
+    })
+  ]);
+  const taken = [
+    ...bookings.map((item) => ({ ...item, bookingDate: item.bookingDate.toISOString().slice(0, 10), problem: "BOOKED" as const })),
+    ...blocks.map((item) => ({ ...item, bookingDate: item.blockDate.toISOString().slice(0, 10), problem: "BLOCKED" as const }))
+  ];
+  const overlaps = (slot: WalkInSlot, other: { courtSurfaceId: string | null; bookingDate: string; startTime: Date; endTime: Date }) =>
+    (other.courtSurfaceId === null || other.courtSurfaceId === slot.courtSurfaceId) &&
+    other.bookingDate === slot.bookingDate &&
+    slot.startTime < other.endTime &&
+    slot.endTime > other.startTime;
+
+  slots.forEach((slot, index) => {
+    const hit = taken.find((item) => overlaps(slot, item));
+    if (hit) problems.set(index, hit.problem);
+    else if (slots.slice(0, index).some((earlier, earlierIndex) => !problems.has(earlierIndex) && overlaps(slot, earlier))) problems.set(index, "DUPLICATE");
+  });
+  return problems;
+}
+
+function assertNoWalkInSlotProblems(problems: Map<number, WalkInSlotProblem>, slots: WalkInSlot[]) {
+  for (const [index, problem] of problems) {
+    const date = slots[index].bookingDate;
+    if (problem === "BLOCKED") throw new ConflictError(`San dang trong lich nghi/bao tri ngay ${date}`, "WALK_IN_BOOKING_BLOCKED");
+    throw new ConflictError(
+      problem === "DUPLICATE" ? `Cac khung gio da chon ngay ${date} bi trung nhau` : `Khung gio ngay ${date} da co khach khac`,
+      "WALK_IN_BOOKING_CONFLICT"
+    );
+  }
+}
+
+/** Postgres aborts one of two Serializable transactions that booked the same slot at once (P2034). */
+function walkInSerializationConflict(error: unknown): never {
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+    throw new ConflictError("Khung gio vua duoc dat o noi khac, vui long tai lai lich va thu lai", "WALK_IN_BOOKING_CONFLICT");
+  }
+  throw error;
+}
+
+/** Walk-in slots must fit the court's opening hours (the hours the staff grid shows) and must not be over already. */
+async function assertWalkInSlotsBookable(courtId: string, slots: Array<{ bookingDate: string; startTime: string; minutes: number }>) {
+  const court = await prisma.court.findUnique({ where: { id: courtId }, select: { openingTime: true, closingTime: true } });
+  if (!court) throw new NotFoundError("Khong tim thay co so duoc giao quan ly");
+  const opening = dbTime(court.openingTime);
+  const closing = dbTime(court.closingTime);
+  const now = vietnamNow();
+  for (const slot of slots) {
+    const start = timeToMinutes(slot.startTime);
+    const end = start + slot.minutes;
+    const label = `${slot.startTime}-${minutesToTime(end)}`;
+    if (start < timeToMinutes(opening) || end > timeToMinutes(closing)) {
+      throw new ValidationError(`Khung gio ${label} nam ngoai gio mo cua ${opening}-${closing}`);
+    }
+    if (slot.bookingDate < now.date || (slot.bookingDate === now.date && end <= timeToMinutes(now.time))) {
+      throw new ValidationError(`Khung gio ${label} ngay ${slot.bookingDate} da qua`);
+    }
+  }
+}
+
+type PricingPrefetch = Awaited<ReturnType<typeof dynamicPricingService.prefetch>>;
+
+/**
+ * Court charge priced hour by hour, exactly like an online booking of the same hourly grid slots: each
+ * piece between full hours gets its own base price and dynamic rules, rounded like bookingPricing.
+ * A 15:37-16:37 "Bắt đầu ngay" booking is priced as 15:37-16:00 plus 16:00-16:37.
+ */
+function walkInCourtPrice(prefetched: PricingPrefetch, date: string, startTime: string, minutes: number) {
+  const end = timeToMinutes(startTime) + minutes;
+  let basePrice = 0;
+  let courtSubtotal = 0;
+  for (let cursor = timeToMinutes(startTime); cursor < end; ) {
+    const next = Math.min(end, (Math.floor(cursor / 60) + 1) * 60);
+    const hours = (next - cursor) / 60;
+    const price = dynamicPricingService.resolveFromPrefetched(prefetched, { date, startTime: minutesToTime(cursor), endTime: minutesToTime(next) });
+    basePrice += Math.round(price.basePrice * hours);
+    courtSubtotal += Math.round(price.finalPrice * hours);
+    cursor = next;
+  }
+  return { basePrice, dynamicAdjustmentAmount: courtSubtotal - basePrice, courtSubtotal };
+}
+
+/**
+ * Customer account for a walk-in booking, found by the (already normalized) phone. Only USER accounts
+ * count, so a staff, partner or admin sharing the number is never booked as the customer; otherwise a
+ * walk-in account is created. `matchedExisting` lets the counter say which account the booking went to.
+ */
+async function resolveWalkInCustomer(customerName: string, customerPhone: string) {
+  const existing = await prisma.user.findFirst({ where: { phone: customerPhone, role: "USER" }, orderBy: { createdAt: "asc" } });
+  const customer =
+    existing ??
+    (await prisma.user.create({
+      data: {
+        id: await nextPrefixedId("u", "seq_users"),
+        fullName: customerName,
+        email: `walkin-${customerPhone.replace(/\D/g, "") || Date.now()}-${Date.now()}@walkin.sportsbooking.local`,
+        phone: customerPhone,
+        emailVerified: false
+      }
+    }));
+  return { customer, summary: { id: customer.id, fullName: customer.fullName, phone: customer.phone, matchedExisting: Boolean(existing) } };
+}
+
+async function courtTimeChargePolicy(courtId: string) {
+  const court = await prisma.court.findUnique({
+    where: { id: courtId },
+    select: { earlyFreeMinutes: true, earlyMaxMinutes: true, earlyPricePercent: true, extensionPricePercent: true }
+  });
+  if (!court) throw new NotFoundError("Khong tim thay co so duoc giao quan ly");
+  return toTimeChargePolicy(court);
+}
+
+/** Charge for `minutes` of extra play from `startTime`: the hour-by-hour court price times the partner's %. */
+function extraTimeCharge(prefetched: PricingPrefetch, date: string, startTime: string, minutes: number, percent: number) {
+  if (minutes <= 0) return { amount: 0, basePrice: 0, dynamicAdjustmentAmount: 0 };
+  return scaleCourtPrice(walkInCourtPrice(prefetched, date, startTime, minutes), percent);
+}
+
+function appendNote(note: string | null, line: string) {
+  return note ? `${note}\n${line}` : line;
+}
+
+function noteAmount(amount: number) {
+  return `${new Intl.NumberFormat("vi-VN").format(amount)}d`;
 }
 
 export async function getManagedCourtId(userId: string) {
@@ -361,9 +518,11 @@ export const recipientService = {
 
   async lookupCustomersByPhone(userId: string, phone: string) {
     const courtId = await getManagedCourtId(userId);
+    // Same rule as resolveWalkInCustomer: only USER accounts can be the customer of a walk-in booking.
     const users = await prisma.user.findMany({
-      where: { phone: { startsWith: phone } },
+      where: { phone: { startsWith: phone }, role: "USER" },
       select: { id: true, fullName: true, phone: true },
+      orderBy: { createdAt: "asc" },
       take: 8
     });
 
@@ -389,7 +548,9 @@ export const recipientService = {
           lastBookingDate: stat?._max.bookingDate ?? null
         };
       })
-      .filter((match) => match.bookingsCount > 0);
+      // Partial numbers only suggest this court's customers. The full number also reveals an account with no
+      // history here, because the booking will be attached to it: staff must see that name before submitting.
+      .filter((match) => match.bookingsCount > 0 || match.phone === phone);
 
     return { matches };
   },
@@ -436,28 +597,35 @@ export const recipientService = {
     }
 
     const { updated, settlement } = await prisma.$transaction(async (tx) => {
+      const cancellation =
+        status === BookingStatus.CANCELLED
+          ? courtCancellationPayment(booking.paymentStatus, Number(booking.totalPrice), await bookingRepository.onlineCollectedAmount(tx, booking))
+          : null;
       const updatedBooking = await tx.booking.update({
         where: { id: booking.id },
-        data:
-          status === BookingStatus.CANCELLED
-            ? {
-                bookingStatus: status,
-                cancelReason: "Nhân viên sân từ chối",
-                cancelledAt: new Date(),
-                refundAmount: booking.paymentStatus === "PAID" ? booking.totalPrice : 0,
-                platformRetainedAmount: 0,
-                paymentStatus: booking.paymentStatus === "PAID" ? "REFUNDED" : booking.paymentStatus
-              }
-            : {
-                bookingStatus: status
-              },
-        include: { court: { include: { partner: true } } }
+        data: cancellation
+          ? {
+              bookingStatus: status,
+              cancelReason: "Nhân viên sân từ chối",
+              cancelledAt: new Date(),
+              refundAmount: cancellation.refundAmount,
+              platformRetainedAmount: 0,
+              paymentStatus: cancellation.paymentStatus
+            }
+          : {
+              bookingStatus: status
+            },
+        include: { court: { include: { partner: true } }, user: { select: { fullName: true, phone: true } } }
       });
+      if (cancellation?.refundByAdmin) {
+        await enqueueAdminEvent(tx, refundRequiredAdminEvent(updatedBooking, cancellation.refundByAdmin, "Nhân viên sân"));
+      }
 
       let updatedSettlement = null;
       if (status === BookingStatus.COMPLETED || status === BookingStatus.NO_SHOW) {
         await commissionService.createEarning(updatedBooking, status, tx);
         updatedSettlement = await settlementService.settleForBooking(booking.id, tx);
+        if (status === BookingStatus.COMPLETED) await settlementService.chargePartnerCollected(booking.id, tx);
       } else if (status === BookingStatus.CANCELLED) {
         updatedSettlement = await settlementService.cancelForBooking(booking.id, tx);
       }
@@ -590,12 +758,26 @@ export const recipientService = {
     const opening = ceilToFullHour(timeToMinutes(dbTime(court.openingTime)));
     const closing = floorToFullHour(timeToMinutes(dbTime(court.closingTime)));
 
+    // Same per-hour price (base + dynamic rules) the walk-in booking will charge, so "Tạm tính" matches the QR.
+    // Without an approved court or a price table booking fails with its own message; keep the plain table price.
+    const pricing = await dynamicPricingService.prefetch(courtId).catch(() => null);
+    const priceFor = (slot: { startTime: string; endTime: string }) => {
+      if (pricing) {
+        try {
+          return walkInCourtPrice(pricing, date, slot.startTime, 60).courtSubtotal;
+        } catch {
+          // fall through to the table price
+        }
+      }
+      return slotPrice(slot, date, court.prices);
+    };
+
     const slots = [];
     for (let cursor = opening; cursor < closing; cursor += 60) {
       const slot = { startTime: minutesToTime(cursor), endTime: minutesToTime(cursor + 60) };
       const booking = bookings.find((item) => overlapsSlot(slot, item));
       const block = !booking ? blocks.find((item) => overlapsSlot(slot, item)) : undefined;
-      const price = slotPrice(slot, date, court.prices);
+      const price = priceFor(slot);
       slots.push({
         ...slot,
         status: booking ? "BOOKED" : block ? "BLOCKED" : "AVAILABLE",
@@ -665,8 +847,9 @@ export const recipientService = {
 
   async operations(userId: string, query: { date?: string; nowTime?: string }) {
     const courtId = await getManagedCourtId(userId);
-    const selectedDate = query.date ?? new Date().toISOString().slice(0, 10);
-    const nowTime = query.nowTime ?? new Date().toTimeString().slice(0, 5);
+    const vnNow = vietnamNow();
+    const selectedDate = query.date ?? vnNow.date;
+    const nowTime = query.nowTime ?? vnNow.time;
     const nowMinutes = timeToMinutes(nowTime);
 
     const court = await prisma.court.findUnique({
@@ -785,6 +968,34 @@ export const recipientService = {
     return available;
   },
 
+  /**
+   * Prices shown on the counter's "+N phút" and "Check-in sớm" buttons, computed exactly as extendBooking
+   * and checkInBooking will charge them. The early check-in part is a snapshot of "now" (Vietnam time).
+   */
+  async timeChargeQuote(userId: string, bookingId: string, extendMinutes: number[]) {
+    const courtId = await getManagedCourtId(userId);
+    const booking = await prisma.booking.findFirst({ where: { id: bookingId, courtId } });
+    if (!booking) throw new NotFoundError("Khong tim thay don dat san thuoc quyen quan ly cua ban");
+    const [policy, pricing] = await Promise.all([courtTimeChargePolicy(courtId), dynamicPricingService.prefetch(courtId)]);
+    const date = booking.bookingDate.toISOString().slice(0, 10);
+
+    const extensions = extendMinutes.map((minutes) => ({
+      minutes,
+      amount: extraTimeCharge(pricing, date, dbTime(booking.endTime), minutes, policy.extensionPricePercent).amount
+    }));
+
+    const now = vietnamNow();
+    const startMinutes = timeToMinutes(dbTime(booking.startTime));
+    let earlyCheckIn: (ReturnType<typeof earlyCheckInWindow> & { amount: number }) | null = null;
+    if (date === now.date && !booking.checkedInAt && timeToMinutes(now.time) < startMinutes) {
+      const early = earlyCheckInWindow(policy, timeToMinutes(now.time), startMinutes);
+      const amount = early.allowed ? extraTimeCharge(pricing, date, now.time, early.chargedMinutes, policy.earlyPricePercent).amount : 0;
+      earlyCheckIn = { ...early, amount };
+    }
+
+    return { policy, extensions, earlyCheckIn };
+  },
+
   async extendBooking(userId: string, bookingId: string, minutes: number, targetSurfaceId?: string) {
     const courtId = await getManagedCourtId(userId);
     const booking = await prisma.booking.findFirst({ where: { id: bookingId, courtId } });
@@ -808,11 +1019,9 @@ export const recipientService = {
     }
 
     const date = booking.bookingDate.toISOString().slice(0, 10);
-    const startTime = dbTime(booking.endTime);
-    const endTime = dbTime(newEndTime);
-    const dynamicPrice = await dynamicPricingService.calculate(courtId, { date, startTime, endTime });
-    const hours = durationHours(startTime, endTime);
-    const subtotal = dynamicPrice.finalPrice * hours;
+    // The partner's extension % of the hour-by-hour court price, the same figure the quote showed staff.
+    const [policy, pricing] = await Promise.all([courtTimeChargePolicy(courtId), dynamicPricingService.prefetch(courtId)]);
+    const charge = extraTimeCharge(pricing, date, dbTime(booking.endTime), minutes, policy.extensionPricePercent);
 
     const { updated } = await prisma.$transaction(async (tx) => {
       const updatedBooking = await tx.booking.update({
@@ -820,10 +1029,11 @@ export const recipientService = {
         data: {
           endTime: newEndTime,
           courtSurfaceId: surfaceId,
-          basePrice: { increment: dynamicPrice.basePrice * hours },
-          dynamicAdjustmentAmount: { increment: dynamicPrice.dynamicAdjustmentAmount * hours },
-          subtotal: { increment: subtotal },
-          totalPrice: { increment: subtotal }
+          basePrice: { increment: charge.basePrice },
+          dynamicAdjustmentAmount: { increment: charge.dynamicAdjustmentAmount },
+          subtotal: { increment: charge.amount },
+          totalPrice: { increment: charge.amount },
+          note: appendNote(booking.note, `Gia han +${minutes} phut (${policy.extensionPricePercent}% gia gio): ${noteAmount(charge.amount)}`)
         }
       });
 
@@ -832,7 +1042,7 @@ export const recipientService = {
         data: {
           endTime: newEndTime,
           court_surface_id: surfaceId,
-          slotPrice: { increment: subtotal }
+          slotPrice: { increment: charge.amount }
         }
       });
 
@@ -852,7 +1062,7 @@ export const recipientService = {
       bookingDate: string;
       startTime: string;
       minutes: number;
-      paymentMethod: PaymentMethod;
+      paymentMethod: typeof PaymentMethod.CASH | typeof PaymentMethod.BANK_TRANSFER;
       paymentType?: "FULL_PAYMENT" | "DEPOSIT" | "PAY_AT_COURT";
       note?: string;
       services?: Array<{ serviceId: string; quantity: number }>;
@@ -861,6 +1071,7 @@ export const recipientService = {
     const courtId = await getManagedCourtId(userId);
     const surface = await prisma.courtSurface.findFirst({ where: { id: input.courtSurfaceId, courtId, status: CourtActiveStatus.ACTIVE } });
     if (!surface) throw new NotFoundError("San con khong ton tai hoac dang tam ngung");
+    await assertWalkInSlotsBookable(courtId, [input]);
 
     const payLater = input.paymentType === "PAY_AT_COURT";
     const paymentMethod = payLater ? PaymentMethod.CASH : input.paymentMethod;
@@ -870,38 +1081,15 @@ export const recipientService = {
 
     const startTime = timeToDate(input.startTime);
     const endTime = timeToDate(minutesToTime(timeToMinutes(input.startTime) + input.minutes));
-    const conflict = await prisma.booking.findFirst({
-      where: {
-        courtId,
-        OR: [{ courtSurfaceId: input.courtSurfaceId }, { courtSurfaceId: null }],
-        bookingDate: toDbDate(input.bookingDate),
-        bookingStatus: { in: activeOperationStatuses },
-        ...overlapWhere(startTime, endTime)
-      }
-    });
-    if (conflict) throw new ConflictError("Khung gio nay da co khach khac", "WALK_IN_BOOKING_CONFLICT");
+    const requestedSlots = [{ courtSurfaceId: input.courtSurfaceId, bookingDate: input.bookingDate, startTime, endTime }];
+    // Fail fast before a QR is created; checked again inside the Serializable transaction below.
+    assertNoWalkInSlotProblems(await walkInSlotProblems(prisma, courtId, requestedSlots), requestedSlots);
 
-    const activeBlock = await prisma.courtAvailabilityBlock.findFirst({
-      where: {
-        courtId,
-        status: "ACTIVE",
-        blockDate: toDbDate(input.bookingDate),
-        OR: [{ courtSurfaceId: null }, { courtSurfaceId: input.courtSurfaceId }],
-        ...overlapWhere(startTime, endTime)
-      }
-    });
-    if (activeBlock) throw new ConflictError("San dang trong lich nghi/bao tri, khong the dat", "WALK_IN_BOOKING_BLOCKED");
-
-    const dynamicPrice = await dynamicPricingService.calculate(courtId, {
-      date: input.bookingDate,
-      startTime: input.startTime,
-      endTime: dbTime(endTime)
-    });
-    const hours = durationHours(input.startTime, dbTime(endTime));
-    const courtSubtotal = dynamicPrice.finalPrice * hours;
+    const courtPrice = walkInCourtPrice(await dynamicPricingService.prefetch(courtId), input.bookingDate, input.startTime, input.minutes);
+    const courtSubtotal = courtPrice.courtSubtotal;
 
     const serviceIds = (input.services ?? []).map((s) => s.serviceId);
-    const availableServices = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
+    const availableServices = serviceIds.length ? await bookingRepository.services(serviceIds, courtId) : [];
     if (availableServices.length !== serviceIds.length) throw new ValidationError("Dich vu khong hop le");
     const serviceLines = (input.services ?? []).map((line) => {
       const service = availableServices.find((item) => item.id === line.serviceId)!;
@@ -911,18 +1099,7 @@ export const recipientService = {
     const subtotal = courtSubtotal + servicesSubtotal;
     const chargeAmount = payLater ? 0 : wantsDeposit ? calculateMinimumDeposit(courtSubtotal, depositPercent) : courtSubtotal;
 
-    const existingUser = await prisma.user.findFirst({ where: { phone: input.customerPhone } });
-    const customer =
-      existingUser ??
-      (await prisma.user.create({
-        data: {
-          id: await nextPrefixedId("u", "seq_users"),
-          fullName: input.customerName,
-          email: `walkin-${input.customerPhone.replace(/\D/g, "") || Date.now()}-${Date.now()}@walkin.sportsbooking.local`,
-          phone: input.customerPhone,
-          emailVerified: false
-        }
-      }));
+    const { customer, summary: customerSummary } = await resolveWalkInCustomer(input.customerName, input.customerPhone);
     const bookingId = await nextPrefixedId("b", "seq_bookings");
 
     let paymentInput: { reference: string; expiresAt: Date; providerResult: Awaited<ReturnType<typeof paymentProvider.createQrPayment>> } | null = null;
@@ -945,6 +1122,7 @@ export const recipientService = {
     }
 
     return prisma.$transaction(async (tx) => {
+      assertNoWalkInSlotProblems(await walkInSlotProblems(tx, courtId, requestedSlots), requestedSlots);
       const booking = await tx.booking.create({
         data: {
           id: bookingId,
@@ -955,8 +1133,8 @@ export const recipientService = {
           bookingDate: toDbDate(input.bookingDate),
           startTime,
           endTime,
-          basePrice: dynamicPrice.basePrice * hours,
-          dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
+          basePrice: courtPrice.basePrice,
+          dynamicAdjustmentAmount: courtPrice.dynamicAdjustmentAmount,
           subtotal,
           totalPrice: subtotal,
           depositAmount: chargeAmount,
@@ -971,6 +1149,8 @@ export const recipientService = {
         data: {
           bookingId: booking.id,
           courtId,
+          // Without it the slot reads as "whole court" and blocks every surface for online customers.
+          court_surface_id: input.courtSurfaceId,
           bookingDate: toDbDate(input.bookingDate),
           startTime,
           endTime,
@@ -1003,8 +1183,8 @@ export const recipientService = {
         });
       }
 
-      return { booking, payment };
-    });
+      return { booking, payment, customer: customerSummary };
+    }, { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 }).catch(walkInSerializationConflict);
   },
 
   /**
@@ -1034,6 +1214,7 @@ export const recipientService = {
       where: { id: { in: surfaceIds }, courtId, status: CourtActiveStatus.ACTIVE }
     });
     if (surfaces.length !== surfaceIds.length) throw new NotFoundError("Mot hoac nhieu san con khong ton tai hoac dang tam ngung");
+    await assertWalkInSlotsBookable(courtId, input.slots);
 
     const payLater = input.paymentType === "PAY_AT_COURT";
     const paymentMethod = payLater ? PaymentMethod.CASH : input.paymentMethod;
@@ -1044,7 +1225,7 @@ export const recipientService = {
     // Dịch vụ chỉ được chọn một lần cho cả đơn (không lặp lại theo từng khung giờ),
     // sẽ được gắn vào booking đầu tiên tạo ra bên dưới.
     const serviceIds = (input.services ?? []).map((s) => s.serviceId);
-    const availableServices = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
+    const availableServices = serviceIds.length ? await bookingRepository.services(serviceIds, courtId) : [];
     if (availableServices.length !== serviceIds.length) throw new ValidationError("Dich vu khong hop le");
     const serviceLines = (input.services ?? []).map((line) => {
       const service = availableServices.find((item) => item.id === line.serviceId)!;
@@ -1070,20 +1251,15 @@ export const recipientService = {
     for (const slot of input.slots) {
       const startTime = timeToDate(slot.startTime);
       const endTime = timeToDate(minutesToTime(timeToMinutes(slot.startTime) + slot.minutes));
-      const dynamicPrice = dynamicPricingService.resolveFromPrefetched(pricingPrefetch, {
-        date: slot.bookingDate,
-        startTime: slot.startTime,
-        endTime: dbTime(endTime)
-      });
-      const hours = durationHours(slot.startTime, dbTime(endTime));
-      const subtotal = dynamicPrice.finalPrice * hours;
+      const courtPrice = walkInCourtPrice(pricingPrefetch, slot.bookingDate, slot.startTime, slot.minutes);
+      const subtotal = courtPrice.courtSubtotal;
       entries.push({
         courtSurfaceId: slot.courtSurfaceId,
         bookingDate: slot.bookingDate,
         startTime,
         endTime,
-        basePrice: dynamicPrice.basePrice * hours,
-        dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
+        basePrice: courtPrice.basePrice,
+        dynamicAdjustmentAmount: courtPrice.dynamicAdjustmentAmount,
         courtSubtotal: subtotal,
         subtotal,
         chargeAmount: payLater ? 0 : wantsDeposit ? calculateMinimumDeposit(subtotal, depositPercent) : subtotal
@@ -1096,18 +1272,10 @@ export const recipientService = {
       // Services remain on the open tab; the court charge is unchanged.
     }
 
-    const existingUser = await prisma.user.findFirst({ where: { phone: input.customerPhone } });
-    const customer =
-      existingUser ??
-      (await prisma.user.create({
-        data: {
-          id: await nextPrefixedId("u", "seq_users"),
-          fullName: input.customerName,
-          email: `walkin-${input.customerPhone.replace(/\D/g, "") || Date.now()}-${Date.now()}@walkin.sportsbooking.local`,
-          phone: input.customerPhone,
-          emailVerified: false
-        }
-      }));
+    // Fail fast before a QR is created; checked again inside the Serializable transaction below.
+    assertNoWalkInSlotProblems(await walkInSlotProblems(prisma, courtId, entries), entries);
+
+    const { customer, summary: customerSummary } = await resolveWalkInCustomer(input.customerName, input.customerPhone);
 
     const orderId = await nextPrefixedId("bo", "seq_booking_orders");
     const bookingIds = await Promise.all(entries.map(() => nextPrefixedId("b", "seq_bookings")));
@@ -1135,29 +1303,7 @@ export const recipientService = {
 
     const { bookings, payment } = await prisma.$transaction(
       async (tx) => {
-        for (const entry of entries) {
-          const conflict = await tx.booking.findFirst({
-            where: {
-              courtId,
-              OR: [{ courtSurfaceId: entry.courtSurfaceId }, { courtSurfaceId: null }],
-              bookingDate: toDbDate(entry.bookingDate),
-              bookingStatus: { in: activeOperationStatuses },
-              ...overlapWhere(entry.startTime, entry.endTime)
-            }
-          });
-          if (conflict) throw new ConflictError(`Khung gio ngay ${entry.bookingDate} da co khach khac`, "WALK_IN_BOOKING_CONFLICT");
-
-          const activeBlock = await tx.courtAvailabilityBlock.findFirst({
-            where: {
-              courtId,
-              status: "ACTIVE",
-              blockDate: toDbDate(entry.bookingDate),
-              OR: [{ courtSurfaceId: null }, { courtSurfaceId: entry.courtSurfaceId }],
-              ...overlapWhere(entry.startTime, entry.endTime)
-            }
-          });
-          if (activeBlock) throw new ConflictError(`San dang trong lich nghi/bao tri ngay ${entry.bookingDate}`, "WALK_IN_BOOKING_BLOCKED");
-        }
+        assertNoWalkInSlotProblems(await walkInSlotProblems(tx, courtId, entries), entries);
 
         const isCash = !payLater && paymentMethod === PaymentMethod.CASH;
 
@@ -1204,6 +1350,7 @@ export const recipientService = {
             data: {
               bookingId: booking.id,
               courtId,
+              court_surface_id: entry.courtSurfaceId,
               bookingDate: toDbDate(entry.bookingDate),
               startTime: entry.startTime,
               endTime: entry.endTime,
@@ -1243,9 +1390,9 @@ export const recipientService = {
         return { bookings: created, payment };
       },
       { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 }
-    );
+    ).catch(walkInSerializationConflict);
 
-    return { orderId, bookings, payment };
+    return { orderId, bookings, payment, customer: customerSummary };
   },
 
   async createRecurringWalkInBooking(
@@ -1267,6 +1414,8 @@ export const recipientService = {
       where: { id: { in: surfaceIds }, courtId, status: CourtActiveStatus.ACTIVE }
     });
     if (surfaces.length !== surfaceIds.length) throw new NotFoundError("Mot hoac nhieu san con khong ton tai hoac dang tam ngung");
+    // Later weekly occurrences share the template's time of day, so checking the first date covers them.
+    await assertWalkInSlotsBookable(courtId, input.slots);
 
     const payLater = input.paymentType === "PAY_AT_COURT";
     const paymentMethod = payLater ? PaymentMethod.CASH : input.paymentMethod;
@@ -1276,7 +1425,7 @@ export const recipientService = {
 
     // Dịch vụ chỉ gắn vào buổi đầu tiên thực sự được tạo (không lặp lại cho mọi occurrence trong tương lai).
     const serviceIds = (input.services ?? []).map((s) => s.serviceId);
-    const availableServices = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
+    const availableServices = serviceIds.length ? await bookingRepository.services(serviceIds, courtId) : [];
     if (availableServices.length !== serviceIds.length) throw new ValidationError("Dich vu khong hop le");
     const serviceLines = (input.services ?? []).map((line) => {
       const service = availableServices.find((item) => item.id === line.serviceId)!;
@@ -1284,18 +1433,7 @@ export const recipientService = {
     });
     const servicesSubtotal = serviceLines.reduce((sum, line) => sum + line.price * line.quantity, 0);
 
-    const existingUser = await prisma.user.findFirst({ where: { phone: input.customerPhone } });
-    const customer =
-      existingUser ??
-      (await prisma.user.create({
-        data: {
-          id: await nextPrefixedId("u", "seq_users"),
-          fullName: input.customerName,
-          email: `walkin-${input.customerPhone.replace(/\D/g, "") || Date.now()}-${Date.now()}@walkin.sportsbooking.local`,
-          phone: input.customerPhone,
-          emailVerified: false
-        }
-      }));
+    const { customer, summary: customerSummary } = await resolveWalkInCustomer(input.customerName, input.customerPhone);
 
     const isCash = !payLater && paymentMethod === PaymentMethod.CASH;
 
@@ -1327,26 +1465,13 @@ export const recipientService = {
 
     const series: { id: string }[] = [];
     const skipped: { courtSurfaceId: string; date: string; reason: string }[] = [];
-    const entries: Array<{
-      courtSurfaceId: string;
-      seriesId: string;
-      occurrenceDate: string;
-      startTime: Date;
-      endTime: Date;
-      basePrice: number;
-      dynamicAdjustmentAmount: number;
-      courtSubtotal: number;
-      subtotal: number;
-      chargeAmount: number;
-    }> = [];
+    const candidates: Array<WalkInSlot & { seriesId: string; startText: string; minutes: number }> = [];
 
     // Each selected slot is its own weekly-repeating template (own weekday/time/surface) —
     // all of them share `occurrences` and get bundled into the same order/payment above.
     for (const slotTemplate of input.slots) {
       const startTime = timeToDate(slotTemplate.startTime);
       const endTime = timeToDate(minutesToTime(timeToMinutes(slotTemplate.startTime) + slotTemplate.minutes));
-      const endTimeStr = dbTime(endTime);
-      const hours = durationHours(slotTemplate.startTime, endTimeStr);
 
       const seriesId = await nextPrefixedId("bs", "seq_booking_series");
       await prisma.bookingSeries.create({
@@ -1366,80 +1491,64 @@ export const recipientService = {
       });
       series.push({ id: seriesId });
 
-      const occurrenceDates = Array.from({ length: input.occurrences }, (_, i) => addWeeks(slotTemplate.bookingDate, i));
-
-      // Batch conflict/block checks for every occurrence of this template in 2 queries total,
-      // instead of 2 queries PER occurrence.
-      const [conflicts, blocks] = await Promise.all([
-        prisma.booking.findMany({
-          where: {
-            courtId,
-            OR: [{ courtSurfaceId: slotTemplate.courtSurfaceId }, { courtSurfaceId: null }],
-            bookingDate: { in: occurrenceDates.map((d) => toDbDate(d)) },
-            bookingStatus: { in: activeOperationStatuses },
-            ...overlapWhere(startTime, endTime)
-          },
-          select: { bookingDate: true }
-        }),
-        prisma.courtAvailabilityBlock.findMany({
-          where: {
-            courtId,
-            status: "ACTIVE",
-            blockDate: { in: occurrenceDates.map((d) => toDbDate(d)) },
-            OR: [{ courtSurfaceId: null }, { courtSurfaceId: slotTemplate.courtSurfaceId }],
-            ...overlapWhere(startTime, endTime)
-          },
-          select: { blockDate: true }
-        })
-      ]);
-      const conflictedDates = new Set(conflicts.map((b) => b.bookingDate.toISOString().slice(0, 10)));
-      const blockedDates = new Set(blocks.map((b) => b.blockDate.toISOString().slice(0, 10)));
-
-      for (const occurrenceDate of occurrenceDates) {
-        if (conflictedDates.has(occurrenceDate)) {
-          skipped.push({ courtSurfaceId: slotTemplate.courtSurfaceId, date: occurrenceDate, reason: "Khung gio nay da co khach khac" });
-          continue;
-        }
-        if (blockedDates.has(occurrenceDate)) {
-          skipped.push({ courtSurfaceId: slotTemplate.courtSurfaceId, date: occurrenceDate, reason: "San dang trong lich nghi/bao tri" });
-          continue;
-        }
-
-        const dynamicPrice = dynamicPricingService.resolveFromPrefetched(pricingPrefetch, {
-          date: occurrenceDate,
-          startTime: slotTemplate.startTime,
-          endTime: endTimeStr
-        });
-
-        const subtotal = dynamicPrice.finalPrice * hours;
-        entries.push({
+      for (let week = 0; week < input.occurrences; week++) {
+        candidates.push({
           courtSurfaceId: slotTemplate.courtSurfaceId,
           seriesId,
-          occurrenceDate,
+          bookingDate: addWeeks(slotTemplate.bookingDate, week),
           startTime,
           endTime,
-          basePrice: dynamicPrice.basePrice * hours,
-          dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
-          courtSubtotal: subtotal,
-          subtotal,
-          chargeAmount: payLater ? 0 : wantsDeposit ? calculateMinimumDeposit(subtotal, depositPercent) : subtotal
+          startText: slotTemplate.startTime,
+          minutes: slotTemplate.minutes
         });
       }
     }
 
-    if (servicesSubtotal > 0 && entries.length > 0) {
-      // Dịch vụ đã chọn được cộng vào buổi đầu tiên thực sự tạo được, không nhân bản cho các occurrence sau.
-      entries[0].subtotal += servicesSubtotal;
-      // Services remain on the open tab; the court charge is unchanged.
-    }
+    // Every occurrence of every template is checked in 2 queries, including templates that land on
+    // each other in later weeks (e.g. the same Monday slot picked in two different weeks).
+    const problems = await walkInSlotProblems(prisma, courtId, candidates);
+    const entries: Array<
+      WalkInSlot & { seriesId: string; basePrice: number; dynamicAdjustmentAmount: number; courtSubtotal: number; chargeAmount: number }
+    > = [];
+    candidates.forEach((candidate, index) => {
+      const problem = problems.get(index);
+      if (problem) {
+        skipped.push({ courtSurfaceId: candidate.courtSurfaceId, date: candidate.bookingDate, reason: walkInSkipReasons[problem] });
+        return;
+      }
+
+      const courtPrice = walkInCourtPrice(pricingPrefetch, candidate.bookingDate, candidate.startText, candidate.minutes);
+      const courtSubtotal = courtPrice.courtSubtotal;
+      entries.push({
+        courtSurfaceId: candidate.courtSurfaceId,
+        seriesId: candidate.seriesId,
+        bookingDate: candidate.bookingDate,
+        startTime: candidate.startTime,
+        endTime: candidate.endTime,
+        basePrice: courtPrice.basePrice,
+        dynamicAdjustmentAmount: courtPrice.dynamicAdjustmentAmount,
+        courtSubtotal,
+        chargeAmount: payLater ? 0 : wantsDeposit ? calculateMinimumDeposit(courtSubtotal, depositPercent) : courtSubtotal
+      });
+    });
 
     const bookingIds = await Promise.all(entries.map(() => nextPrefixedId("b", "seq_bookings")));
 
     const created = await prisma.$transaction(
       async (tx) => {
+        // Re-checked inside the transaction: an occurrence booked since the check above is skipped as well.
+        const lateProblems = await walkInSlotProblems(tx, courtId, entries);
         const rows: Awaited<ReturnType<typeof tx.booking.create>>[] = [];
         for (let i = 0; i < entries.length; i++) {
           const entry = entries[i];
+          const lateProblem = lateProblems.get(i);
+          if (lateProblem) {
+            skipped.push({ courtSurfaceId: entry.courtSurfaceId, date: entry.bookingDate, reason: walkInSkipReasons[lateProblem] });
+            continue;
+          }
+          // Dịch vụ đã chọn được cộng vào buổi đầu tiên thực sự tạo được, không nhân bản cho các occurrence sau.
+          // Services remain on the open tab; the court charge (chargeAmount) is unchanged.
+          const subtotal = entry.courtSubtotal + (rows.length === 0 ? servicesSubtotal : 0);
           const createdBooking = await tx.booking.create({
             data: {
               id: bookingIds[i],
@@ -1449,13 +1558,13 @@ export const recipientService = {
               courtSurfaceId: entry.courtSurfaceId,
               bookingSeriesId: entry.seriesId,
               bookingOrderId: orderId ?? undefined,
-              bookingDate: toDbDate(entry.occurrenceDate),
+              bookingDate: toDbDate(entry.bookingDate),
               startTime: entry.startTime,
               endTime: entry.endTime,
               basePrice: entry.basePrice,
               dynamicAdjustmentAmount: entry.dynamicAdjustmentAmount,
-              subtotal: entry.subtotal,
-              totalPrice: entry.subtotal,
+              subtotal,
+              totalPrice: subtotal,
               depositAmount: entry.chargeAmount,
               paymentMethod,
               paymentStatus: isCash ? "PAID" : "UNPAID",
@@ -1468,7 +1577,8 @@ export const recipientService = {
             data: {
               bookingId: createdBooking.id,
               courtId,
-              bookingDate: toDbDate(entry.occurrenceDate),
+              court_surface_id: entry.courtSurfaceId,
+              bookingDate: toDbDate(entry.bookingDate),
               startTime: entry.startTime,
               endTime: entry.endTime,
               slotPrice: entry.courtSubtotal
@@ -1485,7 +1595,7 @@ export const recipientService = {
         return rows;
       },
       { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 }
-    );
+    ).catch(walkInSerializationConflict);
 
     let payment = null;
     if (orderId) {
@@ -1533,16 +1643,23 @@ export const recipientService = {
       }
     }
 
-    return { series, created, skipped, payment };
+    return { series, created, skipped, payment, customer: customerSummary };
   },
 
   async paymentStatus(userId: string, paymentId: string) {
     const courtId = await getManagedCourtId(userId);
-    const payment = await prisma.payment.findFirst({
-      where: { id: paymentId, booking: { courtId } },
-      include: { booking: { select: { bookingStatus: true } } }
-    });
+    const find = () =>
+      prisma.payment.findFirst({
+        where: { id: paymentId, booking: { courtId } },
+        include: { booking: { select: { bookingStatus: true } } }
+      });
+    let payment = await find();
     if (!payment) throw new NotFoundError("Khong tim thay thanh toan thuoc quyen quan ly cua ban");
+    // Same lazy expiry as paymentService.detail, so the counter sees an expired QR without waiting for the sweep.
+    if ((payment.status === "PENDING" || payment.status === "UNPAID") && payment.expiresAt.getTime() <= Date.now()) {
+      await paymentRepository.expirePendingPayment(payment.id);
+      payment = (await find()) ?? payment;
+    }
 
     return {
       id: payment.id,
@@ -1551,29 +1668,46 @@ export const recipientService = {
       bookingStatus: payment.booking.bookingStatus,
       amount: Number(payment.amount),
       expiresAt: payment.expiresAt,
-      paidAt: payment.paidAt
+      paidAt: payment.paidAt,
+      // The counter UI shows the QA-only "Xác nhận đã nhận tiền" button only where the API accepts it.
+      manualConfirmAllowed: paymentService.manualCompletionAllowed()
     };
   },
 
+  /**
+   * Walk-in QR money goes to the platform's PayOS account, so it must be marked paid by the provider
+   * (webhook, poller or syncWalkInPayment) through applyWebhook, which records the PLATFORM settlement
+   * and credits the partner's wallet. Staff cannot see that account: outside production this is only a
+   * QA shortcut through that same path, never a direct status update.
+   */
   async confirmWalkInPayment(userId: string, paymentId: string) {
+    const courtId = await getManagedCourtId(userId);
+    const payment = await prisma.payment.findFirst({ where: { id: paymentId, booking: { courtId } } });
+    if (!payment) throw new NotFoundError("Khong tim thay thanh toan thuoc quyen quan ly cua ban");
+    if (payment.status !== "PAID") {
+      if (!(payment.status === "PENDING" || payment.status === "UNPAID") || payment.expiresAt.getTime() <= Date.now()) {
+        throw new ValidationError("Ma QR da het han hoac bi huy nen booking da bi huy, vui long tao lai booking");
+      }
+      if (!paymentService.manualCompletionAllowed()) {
+        throw new ForbiddenError("Thanh toan QR duoc xac nhan tu dong khi tien ve tai khoan. Bam 'Kiem tra lai' neu khach da chuyen khoan");
+      }
+      await paymentService.devCompletePayment(payment, userId);
+    }
+    return this.paymentStatus(userId, paymentId);
+  },
+
+  /** "Kiểm tra lại" at the counter: asks the provider now instead of waiting for the webhook or the next poll. */
+  async syncWalkInPayment(userId: string, paymentId: string) {
     const courtId = await getManagedCourtId(userId);
     const payment = await prisma.payment.findFirst({
       where: { id: paymentId, booking: { courtId } },
-      include: { bookingOrder: { include: { bookings: true } } }
+      include: { booking: { select: { courtId: true } } }
     });
     if (!payment) throw new NotFoundError("Khong tim thay thanh toan thuoc quyen quan ly cua ban");
-    if (payment.status === "PAID") return payment;
-
-    // A walk-in order/recurring series QR covers several bookings at once — mark every
-    // booking sharing this bookingOrderId as paid too, not just the one on the Payment row.
-    const bookingIds = payment.bookingOrder?.bookings.length ? payment.bookingOrder.bookings.map((b) => b.id) : [payment.bookingId];
-
-    const [updatedPayment] = await prisma.$transaction([
-      prisma.payment.update({ where: { id: paymentId }, data: { status: "PAID", paidAt: new Date() } }),
-      prisma.booking.updateMany({ where: { id: { in: bookingIds } }, data: { paymentStatus: "PAID" } })
-    ]);
-
-    return updatedPayment;
+    if (payment.status === "PENDING" && payment.expiresAt.getTime() > Date.now()) {
+      await syncPaymentWithProvider(payment);
+    }
+    return this.paymentStatus(userId, paymentId);
   },
 
   async checkInBooking(userId: string, bookingId: string) {
@@ -1585,11 +1719,11 @@ export const recipientService = {
     }
     if (booking.checkedInAt) return booking; // Idempotent: đã check-in rồi thì không làm gì thêm
 
-    const today = new Date().toISOString().slice(0, 10);
+    // Giờ Việt Nam, không phụ thuộc timezone của server (Render/Railway chạy UTC)
+    const { date: today, time: currentTime } = vietnamNow();
     const date = booking.bookingDate.toISOString().slice(0, 10);
     if (date !== today) throw new ValidationError("Chi co the check-in cho booking hom nay");
 
-    const currentTime = new Date().toTimeString().slice(0, 5);
     const now = new Date();
 
     // Đến đúng giờ hoặc trễ giờ — không cần dời giờ, chỉ đánh dấu đã check-in
@@ -1600,8 +1734,18 @@ export const recipientService = {
       });
     }
 
-    // Đến sớm hơn giờ đặt — giữ nguyên logic cũ: kiểm tra sân có đang bị người khác chiếm không,
-    // nếu trống thì dời giờ bắt đầu lên hiện tại (khách được chơi bù thêm thời gian)
+    // Đến sớm hơn giờ đặt: áp chính sách của đối tác (sớm tối đa bao nhiêu phút, bao nhiêu phút miễn phí,
+    // % giá giờ cho phần còn lại), rồi kiểm tra sân trống và dời giờ bắt đầu lên hiện tại.
+    const policy = await courtTimeChargePolicy(courtId);
+    const early = earlyCheckInWindow(policy, timeToMinutes(currentTime), timeToMinutes(dbTime(booking.startTime)));
+    if (!early.allowed) {
+      throw new ValidationError(
+        early.maxMinutes === 0
+          ? "San nay khong cho check-in som, vui long doi den gio dat"
+          : `Chi duoc check-in som toi da ${early.maxMinutes} phut truoc gio dat. Khach den som ${early.earlyMinutes} phut, vui long doi them ${early.earlyMinutes - early.maxMinutes!} phut`
+      );
+    }
+
     const newStartTime = timeToDate(currentTime);
     const conflict = await prisma.booking.findFirst({
       where: {
@@ -1615,12 +1759,13 @@ export const recipientService = {
     });
     if (conflict) throw new ConflictError("San dang co khach, khong the check-in som", "EARLY_CHECK_IN_CONFLICT");
 
-    // Khach den som duoc choi bu them thoi gian nhung van phai tra tien cho phan do
-    const extraStartTime = currentTime;
-    const extraEndTime = dbTime(booking.startTime);
-    const dynamicPrice = await dynamicPricingService.calculate(courtId, { date, startTime: extraStartTime, endTime: extraEndTime });
-    const hours = durationHours(extraStartTime, extraEndTime);
-    const extraAmount = dynamicPrice.finalPrice * hours;
+    // Only the minutes before the free ones are charged; they run from now.
+    const charge = early.chargedMinutes
+      ? extraTimeCharge(await dynamicPricingService.prefetch(courtId), date, currentTime, early.chargedMinutes, policy.earlyPricePercent)
+      : { amount: 0, basePrice: 0, dynamicAdjustmentAmount: 0 };
+    const earlyNote = early.chargedMinutes
+      ? `Check-in som ${early.earlyMinutes} phut (mien phi ${early.freeMinutes} phut, tinh ${early.chargedMinutes} phut x ${policy.earlyPricePercent}% gia gio): ${noteAmount(charge.amount)}`
+      : `Check-in som ${early.earlyMinutes} phut (mien phi)`;
 
     const { updated } = await prisma.$transaction(async (tx) => {
       const updatedBooking = await tx.booking.update({
@@ -1629,21 +1774,22 @@ export const recipientService = {
           startTime: newStartTime,
           bookingStatus: BookingStatus.CONFIRMED,
           checkedInAt: now,
-          basePrice: { increment: dynamicPrice.basePrice * hours },
-          dynamicAdjustmentAmount: { increment: dynamicPrice.dynamicAdjustmentAmount * hours },
-          subtotal: { increment: extraAmount },
-          totalPrice: { increment: extraAmount }
+          basePrice: { increment: charge.basePrice },
+          dynamicAdjustmentAmount: { increment: charge.dynamicAdjustmentAmount },
+          subtotal: { increment: charge.amount },
+          totalPrice: { increment: charge.amount },
+          note: appendNote(booking.note, earlyNote)
         }
       });
       await tx.bookingSlot.updateMany({
         where: { bookingId: booking.id, startTime: booking.startTime },
-        data: { startTime: newStartTime, slotPrice: { increment: extraAmount } }
+        data: { startTime: newStartTime, slotPrice: { increment: charge.amount } }
       });
       // Early play is collected at checkout.
       return { updated: updatedBooking };
     });
 
-    return { ...updated, extraChargeAmount: extraAmount };
+    return { ...updated, extraChargeAmount: charge.amount, earlyCheckIn: early };
   },
 
   async earlyCheckOutBooking(userId: string, bookingId: string) {
@@ -1654,11 +1800,10 @@ export const recipientService = {
       throw new ValidationError("Chi co the check-out don dang cho xu ly hoac da xac nhan");
     }
 
-    const today = new Date().toISOString().slice(0, 10);
+    const { date: today, time: currentTime } = vietnamNow();
     const date = booking.bookingDate.toISOString().slice(0, 10);
     if (date !== today) throw new ValidationError("Chi co the check-out cho booking hom nay");
 
-    const currentTime = new Date().toTimeString().slice(0, 5);
     if (timeToMinutes(currentTime) <= timeToMinutes(dbTime(booking.startTime)) || timeToMinutes(currentTime) >= timeToMinutes(dbTime(booking.endTime))) {
       throw new ValidationError("Chi co the check-out khi booking dang dien ra");
     }
@@ -1683,6 +1828,7 @@ export const recipientService = {
 
       await commissionService.createEarning(updatedBooking, BookingStatus.COMPLETED, tx);
       const updatedSettlement = await settlementService.settleForBooking(booking.id, tx);
+      await settlementService.chargePartnerCollected(booking.id, tx);
       return { updated: updatedBooking, settlement: updatedSettlement };
     },
     { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 }

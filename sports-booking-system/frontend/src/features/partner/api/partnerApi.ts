@@ -18,6 +18,18 @@ import type {
   WithdrawalRequest
 } from "../../../types/api";
 
+/** How the counter charges play outside the booked hours on one court. */
+export type CourtTimeChargePolicy = {
+  /** Minutes right before the booked start that are not charged. */
+  earlyFreeMinutes: number;
+  /** How early play may start; null = no limit, 0 = early check-in not allowed. */
+  earlyMaxMinutes: number | null;
+  /** % of the hourly court price for the charged early minutes. */
+  earlyPricePercent: number;
+  /** % of the hourly court price when play is extended. */
+  extensionPricePercent: number;
+};
+
 export type PartnerCourtSurface = {
   id: string;
   courtId: string;
@@ -31,6 +43,22 @@ export type PartnerCourtSurface = {
   sortOrder: number;
   openingTime?: string | null;
   closingTime?: string | null;
+};
+
+/** Venue registration: the venue fields are shared by the courts created for each sport. */
+export type PartnerCourtRegistrationInput = {
+  name: string;
+  description?: string;
+  address: string;
+  ward: string;
+  city: string;
+  openingTime: string;
+  closingTime: string;
+  depositPercent?: number | null;
+  sports: Array<{
+    categoryId: string;
+    surfaces: Array<{ name: string; surface?: string | null; size?: string | null }>;
+  }>;
 };
 
 export type PartnerCourtBlock = {
@@ -142,6 +170,11 @@ export const partnerApi = {
     const { data } = await api.post<ApiResponse<Court>>("/partner/courts", payload);
     return data.data;
   },
+  /** One court per sport, each with its declared sub-courts, created in a single transaction. */
+  async registerCourts(payload: PartnerCourtRegistrationInput) {
+    const { data } = await api.post<ApiResponse<{ courts: Court[] }>>("/partner/courts/register", payload);
+    return data.data.courts;
+  },
   async updateCourt(id: string, payload: Record<string, unknown>) {
     const { data } = await api.put<ApiResponse<Court>>(`/partner/courts/${id}`, payload);
     return data.data;
@@ -152,6 +185,15 @@ export const partnerApi = {
   },
   async courtDetail(id: string) {
     const { data } = await api.get<ApiResponse<Court>>(`/partner/courts/${id}`);
+    return data.data;
+  },
+  async timeChargePolicy(courtId: string) {
+    const { data } = await api.get<ApiResponse<CourtTimeChargePolicy>>(`/partner/courts/${courtId}/time-charge-policy`);
+    return data.data;
+  },
+  /** Saved on its own endpoint, so unlike updateCourt it does not send the court back to admin approval. */
+  async updateTimeChargePolicy(courtId: string, payload: CourtTimeChargePolicy) {
+    const { data } = await api.put<ApiResponse<CourtTimeChargePolicy>>(`/partner/courts/${courtId}/time-charge-policy`, payload);
     return data.data;
   },
   async addCourtImage(courtId: string, image: File, sortOrder = 0, replaceImageId?: string) {

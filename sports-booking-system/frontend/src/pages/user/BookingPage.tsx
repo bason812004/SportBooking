@@ -7,7 +7,7 @@ import { EmptyState, ErrorState, LoadingState } from "../../components/common/St
 import { useCourt } from "../../features/courts/hooks/useCourts";
 import { useLanguage } from "../../lib/i18n";
 import { useAuth } from "../../features/auth/hooks/useAuth";
-import { formatCurrency, timeText } from "../../lib/format";
+import { courtAddress, formatCurrency, timeText } from "../../lib/format";
 import { usePrefetchAdjacentWeeks, useWeeklySchedule } from "../../features/bookings/hooks/useBookingSchedule";
 import { bookingApi, type BookingCheckoutPayload, type BookingCheckoutResult } from "../../features/bookings/api/bookingApi";
 import { BookingSummary, WeeklyCalendarSection, startOfWeek, formatYmd } from "../../features/bookings/components/BookingCalendar";
@@ -405,7 +405,7 @@ export function BookingPage() {
               <h1 className="mt-1 text-2xl font-black text-slate-950 sm:text-3xl">{c.name}</h1>
               <p className="mt-1 flex items-center gap-1.5 text-sm text-slate-500">
                 <MapPin className="h-4 w-4 shrink-0 text-emerald-600" />
-                {[c.address, c.district, c.city].filter(Boolean).join(", ") ||
+                {courtAddress(c) ||
                   (language === "en" ? "No address yet" : "Chưa cập nhật địa chỉ")}
               </p>
               <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold">

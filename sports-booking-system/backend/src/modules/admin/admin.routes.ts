@@ -62,6 +62,7 @@ adminRoutes.get("/notifications/campaigns/:id", adminController.notificationCamp
 adminRoutes.get("/courts/pending", adminController.pendingCourts);
 adminRoutes.get("/courts", validate(adminCourtQuerySchema), adminController.courts);
 adminRoutes.get("/courts/:id", adminController.courtDetail);
+adminRoutes.get("/courts/:id/review", adminController.courtReview);
 adminRoutes.patch("/courts/:id/admin", validate(adminCourtUpdateSchema), adminController.updateCourtAdmin);
 adminRoutes.post("/courts/:id/request-update", validate(adminCourtRequestUpdateSchema), adminController.requestCourtUpdate);
 adminRoutes.put("/courts/:id/approve", adminController.approveCourt);

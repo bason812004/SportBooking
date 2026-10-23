@@ -7,6 +7,7 @@ import { bookingApi } from "../../features/bookings/api/bookingApi";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import {
   bookingStatusLabel,
+  courtAddress,
   durationText,
   formatCurrency,
   formatDate,
@@ -38,7 +39,7 @@ export function UserBookingsPage() {
         return (
           booking.bookingCode.toLowerCase().includes(term) ||
           booking.court.name.toLowerCase().includes(term) ||
-          [booking.court.address, booking.court.district, booking.court.city].filter(Boolean).join(" ").toLowerCase().includes(term)
+          courtAddress(booking.court).toLowerCase().includes(term)
         );
       })
       .sort((a, b) => {
@@ -125,7 +126,7 @@ function BookingCard({ booking }: { booking: Booking }) {
   const voucher = booking.bookingVoucher?.voucher;
   const services = booking.bookingServices ?? [];
   const serviceTotal = services.reduce((sum, line) => sum + Number(line.price) * line.quantity, 0);
-  const address = [booking.court.address, booking.court.district, booking.court.city].filter(Boolean).join(", ") || "Chưa cập nhật địa chỉ";
+  const address = courtAddress(booking.court) || "Chưa cập nhật địa chỉ";
   const canPay = !["PAID", "REFUNDED"].includes(booking.paymentStatus);
   const paymentId = booking.payments?.[0]?.id;
 

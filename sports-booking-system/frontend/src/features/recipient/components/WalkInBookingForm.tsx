@@ -2,7 +2,13 @@ import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { recipientApi, type RecipientCustomerMatch, type RecipientSurfaceAvailabilitySlot, type RecipientWalkInPayment } from "../api/recipientApi";
+import {
+  recipientApi,
+  type RecipientCustomerMatch,
+  type RecipientSurfaceAvailabilitySlot,
+  type RecipientWalkInCustomer,
+  type RecipientWalkInPayment
+} from "../api/recipientApi";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
 import { Select } from "../../../components/ui/Select";
@@ -11,18 +17,20 @@ import { QrPaymentPanel } from "../../../components/payment/QrPaymentPanel";
 import { Overlay } from "../../../components/common/Overlay";
 import { BookingServiceSelector } from "../../services/components/BookingServiceSelector";
 import type { ServiceItem } from "../../services/api/serviceApi";
+import { formatYmd } from "../../bookings/components/BookingCalendar/utils";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { formatCurrency } from "../../../lib/format";
 import { CalendarDays, Clock, LayoutGrid, PhoneCall, PlusCircle, History, ShoppingBag, User, Wallet, X } from "lucide-react";
 
 const paymentDoneStatuses = ["PAID", "FAILED", "EXPIRED", "CANCELLED"];
-const todayValue = () => new Date().toISOString().slice(0, 10);
+// Local date, not toISOString() (UTC): before 07:00 in Vietnam that would still be yesterday.
+const todayValue = () => formatYmd(new Date());
 const nowValue = () => new Date().toTimeString().slice(0, 5);
 
 type WalkInForm = {
   customerName: string;
   customerPhone: string;
-  paymentMethod: "CASH" | "BANK_TRANSFER" | "E_WALLET";
+  paymentMethod: "CASH" | "BANK_TRANSFER";
   paymentType: "FULL_PAYMENT" | "DEPOSIT" | "PAY_AT_COURT";
   note: string;
 };
@@ -45,6 +53,12 @@ function weekdayDate(date: string) {
 
 function slotPriceKey(courtSurfaceId: string, date: string, startTime: string, endTime: string) {
   return `${courtSurfaceId}|${date}|${startTime}|${endTime}`;
+}
+
+/** Mirrors the backend's normalizeVietnamPhone: "0901 234 567" and "+84901234567" both mean the stored 0901234567. */
+function normalizePhone(value: string) {
+  const digits = value.replace(/\D/g, "");
+  return digits.startsWith("84") && digits.length >= 11 ? `0${digits.slice(2)}` : digits;
 }
 
 function minutesBetween(startTime: string, endTime: string) {
@@ -253,6 +267,23 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
     setShowDropdown(false);
   };
 
+  // A full number that already has a customer account fills in (and locks) that account's name: the booking
+  // is attached to that account whatever name is typed, so staff should see it before submitting.
+  useEffect(() => {
+    if (selectedMatch) return;
+    const typed = normalizePhone(debouncedPhone);
+    const exact = customerMatches.data?.matches.find((match) => match.phone === typed);
+    if (exact) selectMatch(exact);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerMatches.data, debouncedPhone, selectedMatch]);
+
+  // Without the lookup (the calendar's quick form) the same situation is only known after creating the booking.
+  const announceCustomer = (customer: RecipientWalkInCustomer | undefined) => {
+    if (customer?.matchedExisting && customer.fullName.trim() !== walkInForm.customerName.trim()) {
+      toast.info(`SĐT ${customer.phone ?? ""} đã có tài khoản khách "${customer.fullName}", booking được gắn vào tài khoản này.`);
+    }
+  };
+
   const walkInPaymentStatus = useQuery({
     queryKey: ["recipient-payment-status", activeWalkInPayment?.id],
     queryFn: () => recipientApi.paymentStatus(activeWalkInPayment!.id),
@@ -279,7 +310,7 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
           note: walkInForm.note || undefined,
           services: servicesPayload.length ? servicesPayload : undefined
         });
-        return { bookingsCount: 1, payment: result.payment };
+        return { bookingsCount: 1, payment: result.payment, customer: result.customer };
       }
 
       if (slotClusters.length === 0) throw new Error("Chọn ít nhất một khung giờ");
@@ -298,7 +329,7 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
           note: walkInForm.note || undefined,
           services: servicesPayload.length ? servicesPayload : undefined
         });
-        return { bookingsCount: 1, payment: result.payment };
+        return { bookingsCount: 1, payment: result.payment, customer: result.customer };
       }
 
       // Multiple non-contiguous time ranges (possibly across different dates/surfaces) are grouped into a single BookingOrder,
@@ -313,14 +344,15 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
           startTime: cluster.startTime,
           minutes: minutesBetween(cluster.startTime, cluster.endTime)
         })),
-        paymentMethod: walkInForm.paymentMethod === "BANK_TRANSFER" ? "BANK_TRANSFER" : "CASH",
+        paymentMethod: walkInForm.paymentMethod,
         paymentType: walkInForm.paymentType,
         note: walkInForm.note || undefined,
         services: servicesPayload.length ? servicesPayload : undefined
       });
-      return { bookingsCount: slotClusters.length, payment: orderResult.payment };
+      return { bookingsCount: slotClusters.length, payment: orderResult.payment, customer: orderResult.customer };
     },
     onSuccess: (result) => {
+      announceCustomer(result.customer);
       setWalkInSlots([]);
       clearServices();
       setShowServices(false);
@@ -353,13 +385,14 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
           minutes: minutesBetween(cluster.startTime, cluster.endTime)
         })),
         occurrences,
-        paymentMethod: walkInForm.paymentMethod === "BANK_TRANSFER" ? "BANK_TRANSFER" : "CASH",
+        paymentMethod: walkInForm.paymentMethod,
         paymentType: walkInForm.paymentType,
         note: walkInForm.note || undefined,
         services: servicesPayload.length ? servicesPayload : undefined
       });
     },
     onSuccess: (result) => {
+      announceCustomer(result.customer);
       setWalkInSlots([]);
       clearServices();
       setShowServices(false);
@@ -395,8 +428,19 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
     onError: (error: any) => toast.error(error.message || "Không thể xác nhận thanh toán")
   });
 
+  // Asks the payment provider right away instead of waiting for its webhook or the 25s background poll.
+  const syncWalkInPayment = useMutation({
+    mutationFn: (paymentId: string) => recipientApi.syncPayment(paymentId),
+    onSuccess: (result) => {
+      if (result.status === "PENDING" || result.status === "UNPAID") toast.info("Chưa nhận được tiền, vui lòng đợi khách chuyển khoản rồi kiểm tra lại");
+      void walkInPaymentStatus.refetch();
+    },
+    onError: (error: any) => toast.error(error.message || "Không thể kiểm tra thanh toán")
+  });
+
   useEffect(() => {
-    if (walkInPaymentStatus.data?.status === "PAID") {
+    const status = walkInPaymentStatus.data?.status;
+    if (status === "PAID") {
       toast.success("Đã nhận được thanh toán chuyển khoản");
       setActiveWalkInPayment(null);
       setWalkInForm(defaultWalkInForm());
@@ -404,6 +448,11 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
       setRepeatWeekly(false);
       onBookingCreated?.();
       onSettled?.();
+    } else if (status === "FAILED" || status === "EXPIRED" || status === "CANCELLED") {
+      // The booking was cancelled with the QR; keep the customer's details so staff can book again quickly.
+      toast.error("Mã QR đã hết hạn hoặc bị huỷ nên booking đã bị huỷ. Vui lòng chọn lại khung giờ và tạo lại.");
+      setActiveWalkInPayment(null);
+      onBookingCreated?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walkInPaymentStatus.data?.status]);
@@ -446,6 +495,7 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
     createWalkIn,
     createRecurringWalkIn,
     confirmWalkInPayment,
+    syncWalkInPayment,
     customerMatches,
     customerHistory,
     selectedHistoryCustomerId,
@@ -461,7 +511,7 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
 type WalkInBooking = ReturnType<typeof useWalkInBooking>;
 
 function WalkInPaymentPanel({ walkIn }: { walkIn: WalkInBooking }) {
-  const { activeWalkInPayment, setActiveWalkInPayment, walkInPaymentStatus, confirmWalkInPayment } = walkIn;
+  const { activeWalkInPayment, setActiveWalkInPayment, walkInPaymentStatus, confirmWalkInPayment, syncWalkInPayment } = walkIn;
   if (!activeWalkInPayment) return null;
   return (
     <div className="space-y-2.5 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
@@ -470,7 +520,12 @@ function WalkInPaymentPanel({ walkIn }: { walkIn: WalkInBooking }) {
           <PlusCircle className="h-3.5 w-3.5" />
           Chờ khách chuyển khoản
         </p>
-        <button type="button" onClick={() => setActiveWalkInPayment(null)} className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" title="Đóng">
+        <button
+          type="button"
+          onClick={() => setActiveWalkInPayment(null)}
+          className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          title="Đóng (booking sẽ tự huỷ nếu khách không chuyển khoản trước khi mã QR hết hạn)"
+        >
           <X className="h-4 w-4" />
         </button>
       </div>
@@ -485,9 +540,15 @@ function WalkInPaymentPanel({ walkIn }: { walkIn: WalkInBooking }) {
           expiresAt: walkInPaymentStatus.data?.expiresAt ?? activeWalkInPayment.expiresAt
         }}
       />
-      <Button className="w-full" disabled={confirmWalkInPayment.isPending} onClick={() => confirmWalkInPayment.mutate(activeWalkInPayment.id)}>
-        {confirmWalkInPayment.isPending ? "Đang xác nhận..." : "Xác nhận đã nhận tiền"}
+      <p className="text-xs font-semibold text-slate-600">Hệ thống tự xác nhận khi tiền về tài khoản, không cần bấm xác nhận.</p>
+      <Button className="w-full" variant="secondary" disabled={syncWalkInPayment.isPending} onClick={() => syncWalkInPayment.mutate(activeWalkInPayment.id)}>
+        {syncWalkInPayment.isPending ? "Đang kiểm tra..." : "Kiểm tra lại"}
       </Button>
+      {walkInPaymentStatus.data?.manualConfirmAllowed ? (
+        <Button className="w-full" disabled={confirmWalkInPayment.isPending} onClick={() => confirmWalkInPayment.mutate(activeWalkInPayment.id)}>
+          {confirmWalkInPayment.isPending ? "Đang xác nhận..." : "Xác nhận đã nhận tiền (chỉ môi trường thử)"}
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -885,7 +946,7 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
           onChange={(event) => {
             const value = event.target.value;
             setWalkInForm({ ...walkInForm, customerPhone: value });
-            if (selectedMatch && value !== selectedMatch.phone) setSelectedMatch(null);
+            if (selectedMatch && normalizePhone(value) !== selectedMatch.phone) setSelectedMatch(null);
           }}
           onFocus={() => setShowDropdown(true)}
           onBlur={() => setTimeout(() => setShowDropdown(false), 150)}
@@ -903,7 +964,10 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
                   selectMatch(match);
                 }}
               >
-                {match.phone}
+                {match.phone} · {match.fullName}
+                <span className="ml-1 font-normal text-slate-400">
+                  {match.bookingsCount > 0 ? `(${match.bookingsCount} lần)` : "(chưa đặt tại sân này)"}
+                </span>
               </button>
             ))}
           </div>
@@ -921,10 +985,12 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
 
       {selectedMatch ? (
         <div className="space-y-1.5 rounded-lg border border-emerald-200 bg-white p-2">
-          <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Khách quen tìm thấy</p>
+          <p className="text-xs font-black uppercase tracking-wide text-emerald-700">
+            {selectedMatch.bookingsCount > 0 ? "Khách quen tìm thấy" : "SĐT đã có tài khoản khách"}
+          </p>
           <div className="flex items-center justify-between gap-2 rounded-md bg-emerald-50/60 px-2 py-1.5 text-xs">
             <span className="min-w-0 truncate font-semibold text-slate-700">
-              {selectedMatch.fullName} — đã đặt {selectedMatch.bookingsCount} lần
+              {selectedMatch.fullName} — {selectedMatch.bookingsCount > 0 ? `đã đặt ${selectedMatch.bookingsCount} lần` : "chưa đặt tại sân này"}
               {selectedMatch.lastBookingDate ? `, gần nhất ${new Date(selectedMatch.lastBookingDate).toLocaleDateString("vi-VN")}` : ""}
             </span>
             <button
@@ -1047,8 +1113,7 @@ export function WalkInBookingForm(props: UseWalkInBookingArgs) {
         onChange={(event) => walkIn.setWalkInForm({ ...walkIn.walkInForm, paymentMethod: event.target.value as WalkInForm["paymentMethod"] })}
         options={[
           { value: "CASH", label: "Tiền mặt" },
-          { value: "BANK_TRANSFER", label: "Chuyển khoản" },
-          { value: "E_WALLET", label: "Ví điện tử" }
+          { value: "BANK_TRANSFER", label: "Chuyển khoản (QR)" }
         ]}
       />}
       <Input label="Ghi chú" value={walkIn.walkInForm.note} onChange={(event) => walkIn.setWalkInForm({ ...walkIn.walkInForm, note: event.target.value })} />

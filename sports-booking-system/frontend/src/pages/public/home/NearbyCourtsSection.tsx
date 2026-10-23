@@ -4,6 +4,7 @@ import { useUserLocation } from "../../../features/courts/hooks/useUserLocation"
 import { CourtCard } from "./CourtCard";
 import { Reveal, SectionShell, SkeletonCard } from "./homeUtils";
 import { UserLocationBadge } from "../../../components/common/UserLocationBadge";
+import { courtArea } from "../../../lib/format";
 
 const FALLBACK_IMAGES = [
   "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=900&q=80",
@@ -40,7 +41,7 @@ export function NearbyCourtsSection() {
     ? items.slice(0, 4).map((court, index) => ({
         id: court.id,
         name: court.name,
-        area: `${court.district}, ${court.city}`,
+        area: courtArea(court),
         distance: court.distanceKm != null ? `${Number(court.distanceKm).toFixed(1)} km` : `${(index + 1) * 1.8} km`,
         price: `${Number(court.minPrice ?? 120000).toLocaleString("vi-VN")}đ/giờ`,
         rating: court.averageRating ?? 4.8,

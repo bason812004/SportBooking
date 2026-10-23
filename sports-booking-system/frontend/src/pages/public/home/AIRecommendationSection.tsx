@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { BrainCircuit, CalendarDays, HeartHandshake, Sparkles } from "lucide-react";
 import { useCourts } from "../../../features/courts/hooks/useCourts";
 import { Reveal, SectionShell } from "./homeUtils";
+import { courtArea } from "../../../lib/format";
 
 const FALLBACK_IMAGE = "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=900&q=80";
 
@@ -17,7 +18,7 @@ export function AIRecommendationSection() {
 
   const image = recommended?.images?.[0]?.imageUrl || FALLBACK_IMAGE;
   const name = recommended?.name ?? "Sân gợi ý";
-  const area = recommended ? `${recommended.district}, ${recommended.city}` : "";
+  const area = recommended ? courtArea(recommended) : "";
   const price = recommended ? `${Number(recommended.minPrice ?? 150000).toLocaleString("vi-VN")}đ/giờ` : "";
   const rating = recommended?.averageRating ?? 4.8;
   const courtId = recommended?.id ?? "";

@@ -7,14 +7,7 @@ import { Button } from "../../components/ui/Button";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { partnerApi } from "../../features/partner/api/partnerApi";
-
-const statusLabel: Record<string, string> = {
-  DRAFT: "Bản nháp",
-  PENDING: "Chờ admin duyệt",
-  PUBLISHED: "Đã xuất bản",
-  REJECTED: "Bị từ chối",
-  HIDDEN: "Đã ẩn"
-};
+import { blogStatusHint, blogStatusLabel } from "../../features/content/blogStatus";
 
 export function PartnerBlogsPage() {
   const queryClient = useQueryClient();
@@ -54,7 +47,9 @@ export function PartnerBlogsPage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold">Bài viết</h1>
-          <p className="text-slate-600">Tạo nội dung giới thiệu sân và hoạt động thể thao. Bài công khai cần admin duyệt trước khi xuất bản.</p>
+          <p className="text-slate-600">
+            Tạo nội dung giới thiệu sân và hoạt động thể thao. Bài công khai cần admin duyệt trước khi xuất bản; sửa bài đã gửi duyệt hoặc đã đăng sẽ gửi duyệt lại.
+          </p>
         </div>
         <Link to="/partner/blogs/create">
           <Button><Plus className="h-4 w-4" />Viết bài</Button>
@@ -70,7 +65,7 @@ export function PartnerBlogsPage() {
             <article key={blog.id} className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border bg-white p-5">
               <div>
                 <div className="flex flex-wrap gap-2">
-                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-800">{statusLabel[blog.status] ?? blog.status}</span>
+                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-800">{blogStatusLabel(blog)}</span>
                   <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-black ${allowComments ? "bg-sky-50 text-sky-800" : "bg-amber-100 text-amber-800"}`}>
                     {allowComments ? <MessageCircle className="h-3.5 w-3.5" /> : <MessageCircleOff className="h-3.5 w-3.5" />}
                     {allowComments ? "Bật bình luận" : "Tắt bình luận"}
@@ -81,6 +76,7 @@ export function PartnerBlogsPage() {
                     Lý do từ chối: {blog.rejectionReason}
                   </p>
                 )}
+                {blogStatusHint(blog) && <p className="mt-2 text-sm font-semibold text-slate-600">{blogStatusHint(blog)}</p>}
                 <h2 className="mt-2 font-bold">{blog.title}</h2>
                 <p className="text-sm text-slate-600">{new Date(blog.createdAt).toLocaleDateString("vi-VN")}</p>
               </div>
@@ -89,13 +85,16 @@ export function PartnerBlogsPage() {
                   {allowComments ? <MessageCircleOff className="h-4 w-4" /> : <MessageCircle className="h-4 w-4" />}
                   {allowComments ? "Tắt bình luận" : "Mở bình luận"}
                 </Button>
-                {blog.status === "DRAFT" && (
-                  <>
-                    <Link to={`/partner/blogs/${blog.id}/edit`}><Button variant="secondary">Sửa</Button></Link>
-                    <Button disabled={action.isPending} onClick={() => action.mutate({ id: blog.id, type: "submit" })}>Gửi duyệt</Button>
-                    <Button disabled={action.isPending} variant="danger" onClick={() => setDeleteTarget(blog.id)}>Xóa</Button>
-                  </>
+                {blog.visibility === "PUBLIC" && blog.status === "PUBLISHED" && (
+                  <Link to={`/blogs/${blog.slug}`}><Button variant="secondary">Xem</Button></Link>
                 )}
+                <Link to={`/partner/blogs/${blog.id}/edit`}><Button variant="secondary">Sửa</Button></Link>
+                {(blog.status === "DRAFT" || blog.status === "REJECTED") && (
+                  <Button disabled={action.isPending} onClick={() => action.mutate({ id: blog.id, type: "submit" })}>
+                    {blog.status === "DRAFT" ? "Gửi duyệt" : "Gửi duyệt lại"}
+                  </Button>
+                )}
+                <Button disabled={action.isPending} variant="danger" onClick={() => setDeleteTarget(blog.id)}>Xóa</Button>
               </div>
             </article>
           );
@@ -105,7 +104,7 @@ export function PartnerBlogsPage() {
       <ConfirmModal
         open={Boolean(deleteTarget)}
         title="Xác nhận xoá bài viết"
-        message="Bài viết nháp này sẽ bị xoá vĩnh viễn và không thể hoàn tác."
+        message="Bài viết cùng bình luận và lượt thích sẽ bị xoá vĩnh viễn, không thể hoàn tác."
         onCancel={() => setDeleteTarget(null)}
         onConfirm={() => deleteTarget && action.mutate({ id: deleteTarget, type: "delete" })}
       />

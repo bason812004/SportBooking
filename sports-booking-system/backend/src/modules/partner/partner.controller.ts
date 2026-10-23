@@ -9,7 +9,12 @@ export const partnerController = {
   updateProfile: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateProfile(req.user!.id, req.body))),
   courts: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.courts(req.user!.id))),
   createCourt: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.createCourt(req.user!.id, req.body), 201)),
+  registerCourts: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.registerCourts(req.user!.id, req.body), 201)),
   courtDetail: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.courtDetail(req.user!.id, req.params.id))),
+  timeChargePolicy: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.timeChargePolicy(req.user!.id, req.params.id))),
+  updateTimeChargePolicy: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.updateTimeChargePolicy(req.user!.id, req.params.id, req.body), 200, "Đã lưu chính sách giờ phát sinh")
+  ),
   updateCourt: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateCourt(req.user!.id, req.params.id, req.body))),
   deactivateCourt: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deactivateCourt(req.user!.id, req.params.id))),
   updateCourtStatus: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateCourtStatus(req.user!.id, req.params.id, req.body.activeStatus))),

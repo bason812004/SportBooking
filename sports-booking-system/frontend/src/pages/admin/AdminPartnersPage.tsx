@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2, CheckCircle2, ChevronDown, ChevronUp, ExternalLink, XCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -10,6 +10,7 @@ import { Select } from "../../components/ui/Select";
 import { ErrorState, LoadingState } from "../../components/common/States";
 import { AdminReasonModal } from "./AdminReasonModal";
 import { PageHero } from "../../components/common/PageHero";
+import { httpUrl } from "../../lib/format";
 
 const approvalLabel: Record<string, { label: string; className: string }> = {
   PENDING: { label: "Chờ duyệt", className: "bg-amber-100 text-amber-800" },
@@ -27,8 +28,17 @@ const statusFilterOptions = [
 export function AdminPartnersPage() {
   const qc = useQueryClient();
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("");
+  // ?status=PENDING comes from the "đối tác cần duyệt" notification, ?search=<email> from the court review page.
+  const [searchParams] = useSearchParams();
+  const [search, setSearch] = useState(() => searchParams.get("search") ?? "");
+  const [status, setStatus] = useState(() => searchParams.get("status") ?? "");
+  useEffect(() => {
+    const statusFromUrl = searchParams.get("status");
+    const searchFromUrl = searchParams.get("search");
+    if (statusFromUrl) setStatus(statusFromUrl);
+    if (searchFromUrl) setSearch(searchFromUrl);
+    if (statusFromUrl || searchFromUrl) setPage(1);
+  }, [searchParams]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [pending, setPending] = useState<{ id: string; action: "approve" | "reject" } | null>(null);
 
@@ -52,7 +62,10 @@ export function AdminPartnersPage() {
       setPending(null);
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["admin-partners"] }),
-        qc.invalidateQueries({ queryKey: ["admin-partner"] })
+        qc.invalidateQueries({ queryKey: ["admin-partner"] }),
+        // Court approval depends on the partner being approved.
+        qc.invalidateQueries({ queryKey: ["admin-court-review"] }),
+        qc.invalidateQueries({ queryKey: ["admin-pending-courts"] })
       ]);
     },
     onError: (e) => toast.error(e.message)
@@ -91,8 +104,8 @@ export function AdminPartnersPage() {
                     </div>
                     <h2 className="mt-2 text-lg font-bold">{p.businessName}</h2>
                     <p className="text-sm text-slate-500">{p.user?.email}</p>
-                    {p.verificationDocumentUrl && (
-                      <a className="mt-1 inline-flex items-center gap-1 text-sm font-semibold text-blue-700 hover:underline" href={p.verificationDocumentUrl} target="_blank" rel="noopener noreferrer">
+                    {httpUrl(p.verificationDocumentUrl) && (
+                      <a className="mt-1 inline-flex items-center gap-1 text-sm font-semibold text-blue-700 hover:underline" href={httpUrl(p.verificationDocumentUrl)!} target="_blank" rel="noopener noreferrer">
                         <ExternalLink className="h-3.5 w-3.5" /> Xem giấy tờ xác minh
                       </a>
                     )}

@@ -1,3 +1,4 @@
+import type { PaymentStatus } from "@prisma/client";
 import { isFullHour, timeToMinutes, vietnamWallClock } from "../../shared/utils/time.js";
 
 export type SlotInput = {
@@ -83,4 +84,41 @@ export function expirePendingPaymentAndReleaseSlots(expiresAt: Date, now = new D
 
 export function verifyPaymentWebhookIdempotency(existingTransactionId?: string | null) {
   return Boolean(existingTransactionId);
+}
+
+/**
+ * Payment fields when the court (partner or its staff) cancels a booking. Money collected online sits in
+ * the platform's account and nothing returns it automatically, so the booking stays PAID and an admin
+ * refunds `refundByAdmin`, then marks it REFUNDED (the late-payment flow works the same way). Money taken
+ * at the counter is handed back by the court on the spot, so the booking is REFUNDED immediately.
+ */
+export function courtCancellationPayment(paymentStatus: PaymentStatus, totalPrice: number, onlineCollected: number) {
+  if (paymentStatus !== "PAID") return { paymentStatus, refundAmount: 0, refundByAdmin: 0 };
+  if (onlineCollected > 0) return { paymentStatus, refundAmount: 0, refundByAdmin: onlineCollected };
+  return { paymentStatus: "REFUNDED" as PaymentStatus, refundAmount: totalPrice, refundByAdmin: 0 };
+}
+
+/** Admin notice for money that arrived after its payment expired: the bookings stay cancelled and it is refunded. */
+export function latePaymentRefundAdminEvent(paymentId: string, bookings: Array<{ id: string; bookingCode: string }>, amount: number) {
+  return {
+    title: "Cần hoàn tiền một khoản thanh toán trễ",
+    content: `Khách đã chuyển ${new Intl.NumberFormat("vi-VN").format(amount)}đ cho đơn ${bookings.map((booking) => booking.bookingCode).join(", ")} sau khi đơn hết hạn và đã bị hủy. Hãy hoàn tiền rồi cập nhật đơn sang Đã hoàn tiền.`,
+    type: "PAYMENT_LATE_REFUND",
+    metadata: { paymentId, bookingIds: bookings.map((booking) => booking.id), amount }
+  };
+}
+
+/** Admin notice for money the platform has to return after the court cancelled a booking paid online. */
+export function refundRequiredAdminEvent(
+  booking: { id: string; bookingCode: string; courtId: string; court: { name: string }; user?: { fullName: string; phone: string | null } | null },
+  amount: number,
+  cancelledBy: "Đối tác" | "Nhân viên sân"
+) {
+  const customer = booking.user ? `${booking.user.fullName}${booking.user.phone ? ` (${booking.user.phone})` : ""}` : "khách";
+  return {
+    title: "Cần hoàn tiền cho khách",
+    content: `${cancelledBy} ${booking.court.name} đã huỷ đơn ${booking.bookingCode} mà ${customer} đã thanh toán online ${new Intl.NumberFormat("vi-VN").format(amount)}đ. Hãy hoàn tiền rồi cập nhật đơn sang Đã hoàn tiền.`,
+    type: "REFUND_REQUIRED",
+    metadata: { bookingId: booking.id, bookingCode: booking.bookingCode, courtId: booking.courtId, amount }
+  };
 }

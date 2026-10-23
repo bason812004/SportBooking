@@ -1,6 +1,7 @@
 import { BookingStatus } from "@prisma/client";
 import { asyncHandler } from "../../shared/utils/asyncHandler.js";
 import { sendSuccess } from "../../shared/utils/response.js";
+import { vietnamNow } from "../../shared/utils/time.js";
 import { recipientService } from "./recipient.service.js";
 
 export const recipientController = {
@@ -21,7 +22,7 @@ export const recipientController = {
       await recipientService.surfaceAvailability(
         req.user!.id,
         req.params.id,
-        (req.query.date as string | undefined) ?? new Date().toISOString().slice(0, 10)
+        (req.query.date as string | undefined) ?? vietnamNow().date
       )
     )
   ),
@@ -30,6 +31,9 @@ export const recipientController = {
   operations: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.operations(req.user!.id, req.query as any))),
   extendBooking: asyncHandler(async (req, res) =>
     sendSuccess(res, await recipientService.extendBooking(req.user!.id, req.params.id, req.body.minutes, req.body.targetSurfaceId))
+  ),
+  timeChargeQuote: asyncHandler(async (req, res) =>
+    sendSuccess(res, await recipientService.timeChargeQuote(req.user!.id, req.params.id, req.query.extendMinutes as unknown as number[]))
   ),
   extendOptions: asyncHandler(async (req, res) =>
     sendSuccess(res, await recipientService.getAvailableSurfacesForExtension(req.user!.id, req.params.id, Number(req.query.minutes)))
@@ -44,5 +48,6 @@ export const recipientController = {
   checkInBooking: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.checkInBooking(req.user!.id, req.params.id))),
   earlyCheckOutBooking: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.earlyCheckOutBooking(req.user!.id, req.params.id))),
   paymentStatus: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.paymentStatus(req.user!.id, req.params.id))),
-  confirmWalkInPayment: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.confirmWalkInPayment(req.user!.id, req.params.id)))
+  confirmWalkInPayment: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.confirmWalkInPayment(req.user!.id, req.params.id))),
+  syncWalkInPayment: asyncHandler(async (req, res) => sendSuccess(res, await recipientService.syncWalkInPayment(req.user!.id, req.params.id)))
 };

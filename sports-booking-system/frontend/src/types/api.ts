@@ -37,8 +37,9 @@ export type Court = {
   description?: string;
   address: string;
   city: string;
-  district: string;
-  ward?: string;
+  /** Only on courts registered before the 2025 reform (no district level any more). */
+  district?: string | null;
+  ward?: string | null;
   latitude?: number;
   longitude?: number;
   approvalStatus: "PENDING" | "APPROVED" | "REJECTED";
@@ -298,6 +299,71 @@ export type AdminCourt = Omit<Court, "category" | "images" | "prices" | "service
   images?: Array<{ id: string; imageUrl: string; sortOrder: number }>;
   prices?: Array<{ id: string; dayType: string; startTime: string; endTime: string; price: number | string; note?: string | null }>;
   services?: Array<{ id: string; name: string; description?: string | null; price: number | string; status: string }>;
+};
+
+export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+/** A court waiting for approval, as listed on /admin/courts/pending. */
+export type AdminPendingCourt = Court & {
+  partner: { id: string; businessName: string; approvalStatus: ApprovalStatus; user: { fullName: string; email: string } };
+  imageRequests: Array<{ imageUrl: string }>;
+  _count: { images: number; imageRequests: number };
+};
+
+export type CourtReviewCheck = { key: string; status: "ok" | "warning" | "missing"; label: string };
+
+/** GET /admin/courts/:id/review: what an admin needs to judge whether a submitted court is real. */
+export type AdminCourtReview = {
+  id: string;
+  name: string;
+  description?: string | null;
+  address: string;
+  ward?: string | null;
+  district?: string | null;
+  city: string;
+  latitude: number | null;
+  longitude: number | null;
+  mapUrl?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  openingTime: string;
+  closingTime: string;
+  courtCount: number;
+  approvalStatus: ApprovalStatus;
+  activeStatus: string;
+  rejectionReason?: string | null;
+  updateRequestNote?: string | null;
+  createdAt: string;
+  depositPercent: number | null;
+  category: { id: string; name: string };
+  surfaces: Array<{ id: string; code: string; name: string; surface?: string | null; size?: string | null; status: string }>;
+  images: Array<{ id: string; imageUrl: string; sortOrder: number }>;
+  imageRequests: Array<{
+    id: string;
+    imageUrl: string;
+    previousImageUrl: string | null;
+    replaceImageId: string | null;
+    status: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+    reason: string | null;
+    createdAt: string;
+  }>;
+  prices: Array<{ id: string; dayType: string; startTime: string; endTime: string; price: number; note?: string | null }>;
+  partner: {
+    id: string;
+    businessName: string;
+    address: string;
+    approvalStatus: ApprovalStatus;
+    taxCode?: string | null;
+    verificationDocumentUrl?: string | null;
+    bankName?: string | null;
+    bankAccountNumber?: string | null;
+    bankAccountHolder?: string | null;
+    user: { id: string; fullName: string; email: string; phone?: string | null; emailVerified: boolean; status: string; createdAt: string };
+  };
+  partnerCourts: Record<ApprovalStatus, number>;
+  duplicateAddressCourts: Array<{ id: string; name: string; approvalStatus: ApprovalStatus; partner: { businessName: string } }>;
+  history: Array<{ id: string; action: string; reason?: string | null; createdAt: string; actor?: { fullName?: string | null; email?: string | null } | null }>;
+  review: { canApprove: boolean; blockers: string[]; checks: CourtReviewCheck[] };
 };
 
 export type AdminVoucher = {
@@ -917,11 +983,17 @@ export type PartnerWallet = {
   pendingBalance: number;
   totalEarned: number;
   totalWithdrawn: number;
+  /** Commission owed on money the partner collected itself that the wallet could not cover. */
+  commissionDebt: number;
   currency: string;
   updatedAt: string;
   bankName?: string | null;
   bankAccountNumber?: string | null;
   bankAccountHolder?: string | null;
+  /** Partner's own wallet only. */
+  commissionRate?: number;
+  debtTransfer?: { bankName: string; accountNumber: string; accountHolder: string; transferContent: string; qrCodeUrl: string } | null;
+  debtPayments?: CommissionDebtPayment[];
   partner?: {
     id: string;
     businessName: string;
@@ -991,10 +1063,14 @@ export type WithdrawalSummary = {
   byStatus: Record<string, { count: number; amount: number }>;
 };
 
+export type CommissionDebtPayment = { id: string; amount: number; note: string | null; createdAt: string };
+
 export type WalletAdminSummary = {
   walletCount: number;
   totalAvailable: number;
   totalPending: number;
   totalEarned: number;
   totalWithdrawn: number;
+  totalCommissionDebt: number;
+  debtorCount: number;
 };

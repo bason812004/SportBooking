@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Plus, Search, Tag, Edit3, Trash2, Box, Check, X, ShieldAlert, Layers, Image as ImageIcon } from "lucide-react";
@@ -12,6 +12,11 @@ import { useAuth } from "../../features/auth/hooks/useAuth";
 import type { Court } from "../../types/api";
 import { formatMoney } from "../../utils/formatters";
 import { compressImage, formatFileSize } from "../../utils/imageCompression";
+
+// Bottom padding of the dashboard layout's content area (pb-12).
+const LAYOUT_BOTTOM_PADDING = 48;
+// On short screens the list keeps a usable height; the page then scrolls a little instead.
+const MIN_LIST_HEIGHT = 360;
 
 const servicesKey = (filters: { categoryId: string; search: string; courtId: string }) =>
   ["partner-services", filters] as const;
@@ -29,6 +34,28 @@ export function PartnerServicesPage() {
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
   const [uploadNote, setUploadNote] = useState("");
+  const headerRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [listHeight, setListHeight] = useState<number>();
+
+  // The list fills the rest of the screen, so the page itself never scrolls and only products do.
+  // Re-measured when the window resizes or the filter bar wraps onto more lines.
+  useLayoutEffect(() => {
+    const update = () => {
+      const list = listRef.current;
+      if (!list) return;
+      const top = list.getBoundingClientRect().top + window.scrollY;
+      setListHeight(Math.max(MIN_LIST_HEIGHT, window.innerHeight - top - LAYOUT_BOTTOM_PADDING));
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    if (headerRef.current) observer.observe(headerRef.current);
+    window.addEventListener("resize", update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, []);
   const [uploadError, setUploadError] = useState("");
 
   // Form State
@@ -235,6 +262,7 @@ export function PartnerServicesPage() {
 
   return (
     <div className="space-y-6">
+      <div ref={headerRef} className="space-y-6">
       {/* Top Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -302,8 +330,14 @@ export function PartnerServicesPage() {
           ))}
         </div>
       </div>
+      </div>
 
-      {/* Services Grid */}
+      {/* Services Grid: scrolls on its own so the title and filters above stay in view. */}
+      <div
+        ref={listRef}
+        style={listHeight ? { height: listHeight } : undefined}
+        className="-mx-1 overflow-y-auto overscroll-contain px-1 pb-1 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-track]:bg-transparent"
+      >
       {loading ? (
         <div className="flex h-48 items-center justify-center rounded-2xl bg-white shadow-sm">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#24c866] border-t-transparent" />
@@ -426,6 +460,7 @@ export function PartnerServicesPage() {
           ))}
         </div>
       )}
+      </div>
 
       {/* Modal Add / Edit Service */}
       <Modal

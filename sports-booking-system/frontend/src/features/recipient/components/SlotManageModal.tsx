@@ -5,6 +5,7 @@ import { LayoutGrid, Lock, LockOpen, LogIn, LogOut, PhoneCall, User } from "luci
 import { Overlay } from "../../../components/common/Overlay";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
+import { formatCurrency } from "../../../lib/format";
 import { recipientApi } from "../api/recipientApi";
 import type { WeeklyScheduleSlot } from "../../../types/api";
 
@@ -70,7 +71,9 @@ export function SlotManageModal({
 
   const checkInMutation = useMutation({
     mutationFn: () => recipientApi.checkInBooking(slot.bookingId!),
-    onSuccess: () => onSuccess("Đã check-in"),
+    // Early check-in follows the court's policy; the extra amount is collected at checkout.
+    onSuccess: (result) =>
+      onSuccess(result.extraChargeAmount ? `Đã check-in sớm — cần thu thêm ${formatCurrency(result.extraChargeAmount)} khi thanh toán` : "Đã check-in"),
     onError: onError("Không thể check-in")
   });
 

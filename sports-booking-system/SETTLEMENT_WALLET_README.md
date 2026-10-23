@@ -114,6 +114,15 @@ Nếu booking bị CANCELLED trong khi settlement vẫn PENDING:
 - Settlement status: `CANCELLED`
 - Realtime emit
 
+### Tiền khách trả thẳng cho Partner (tiền mặt, QR của partner, chuyển khoản)
+Khi booking chuyển COMPLETED (mọi đường: checkout, partner, nhân viên, admin):
+- Hoa hồng chỉ tính trên **tiền sân** (giá sân + phụ thu check-in sớm/gia hạn − voucher), không tính dịch vụ bán tại quầy.
+- Phần đã trả online đã bị trừ hoa hồng qua settlement PLATFORM; phần còn lại tạo settlement `collected_by = PARTNER` (SETTLED).
+- Partner đang giữ số tiền đó, nên hoa hồng bị trừ vào `available_balance`; phần ví không đủ thành `commission_debt`.
+- Thu nhập online về sau (quyết toán, hoàn tiền rút bị từ chối) tự trả nợ trước. Còn nợ thì không tạo được yêu cầu rút tiền.
+- Partner có thể chuyển khoản vào tài khoản nền tảng (nội dung `HH <partnerId>`); admin ghi nhận để giảm nợ.
+- Admin huỷ settlement PARTNER = miễn hoa hồng đó (giảm nợ trước, phần còn lại trả về ví).
+
 ### Bước 8-9: Withdrawal
 1. Partner gọi `POST /api/partner/withdrawals` với amount + bank info
 2. Backend validate: `amount ≤ available_balance`
@@ -142,9 +151,10 @@ GET    /api/partner/withdrawals                        - Lịch sử rút tiền
 
 ### Admin (`requireRole(ADMIN)`)
 ```
-GET    /api/admin/wallets/partner-wallets              - Danh sách tất cả ví Partner
-GET    /api/admin/wallets/partner-wallets/:partnerId   - Chi tiết 1 ví Partner
-GET    /api/admin/wallets/partner-wallets/summary      - Tổng quan ví toàn hệ thống
+GET    /api/admin/wallets/partner-wallets              - Danh sách tất cả ví Partner (?hasDebt=true: chỉ ví đang nợ hoa hồng)
+GET    /api/admin/wallets/partner-wallets/:partnerId   - Chi tiết 1 ví Partner (kèm lịch sử trả nợ)
+GET    /api/admin/wallets/partner-wallets/summary      - Tổng quan ví toàn hệ thống (kèm tổng công nợ hoa hồng)
+POST   /api/admin/wallets/partner-wallets/:partnerId/debt-payments - Ghi nhận đối tác đã chuyển khoản trả công nợ { amount, note }
 
 GET    /api/admin/settlements                          - Danh sách tất cả settlement (filter theo partner, status, date range)
 GET    /api/admin/settlements/summary                  - Tổng quan settlement

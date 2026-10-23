@@ -16,7 +16,15 @@ import { partnerRepository } from "./partner.repository.js";
 import { hashPassword } from "../auth/auth.security.js";
 import { cashierRepository } from "../cashier/cashier.repository.js";
 import { courtImageService } from "../court-images/courtImage.service.js";
-import type { CourtSurfaceInput } from "./partner.validation.js";
+import type { CourtRegistrationInput, CourtSurfaceInput } from "./partner.validation.js";
+import { sportCourtName } from "../../shared/utils/courtSurface.js";
+import { toTimeChargePolicy, type TimeChargePolicy } from "../recipient/recipient.calculations.js";
+import { bookingRepository } from "../bookings/booking.repository.js";
+import { courtCancellationPayment, refundRequiredAdminEvent } from "../bookings/booking.calculations.js";
+import { enqueueAdminEvent } from "../notifications/notificationOutbox.repository.js";
+import { blogService } from "../blogs/blog.service.js";
+
+const partnerSave = { submit: false };
 
 async function getProfile(userId: string) {
   const profile = await partnerRepository.profileByUser(userId);
@@ -106,7 +114,8 @@ export const partnerService = {
       description: input.description,
       address: input.address,
       city: input.city,
-      district: input.district,
+      // No district level any more: address + ward + city (see partner.validation courtWriteSchema).
+      district: null,
       ward: input.ward,
       latitude: input.latitude,
       longitude: input.longitude,
@@ -117,18 +126,73 @@ export const partnerService = {
     }, input.depositPercent ?? null);
   },
 
+  async registerCourts(userId: string, input: CourtRegistrationInput) {
+    const profile = await getProfile(userId);
+    if (timeToMinutes(input.openingTime) >= timeToMinutes(input.closingTime)) throw new ValidationError("Gio mo cua khong hop le");
+    const categoryIds = input.sports.map((sport) => sport.categoryId);
+    const categories = new Map((await partnerRepository.activeCategoriesByIds(categoryIds)).map((category) => [category.id, category]));
+    if (categoryIds.some((id) => !categories.has(id))) throw new ValidationError("Môn thể thao không tồn tại hoặc đã ngừng hoạt động");
+
+    const multiSport = input.sports.length > 1;
+    const slugs = new Set<string>();
+    const entries = input.sports.map((sport) => {
+      const name = multiSport ? sportCourtName(input.name, categories.get(sport.categoryId)!.name) : input.name;
+      let slug = uniqueSlug(name);
+      for (let n = 2; slugs.has(slug); n += 1) slug = `${uniqueSlug(name)}-${n}`;
+      slugs.add(slug);
+      return {
+        data: {
+          partnerId: profile.id,
+          categoryId: sport.categoryId,
+          name,
+          slug,
+          description: input.description,
+          address: input.address,
+          city: input.city,
+          district: null,
+          ward: input.ward,
+          latitude: input.latitude,
+          longitude: input.longitude,
+          openingTime: timeToDate(input.openingTime),
+          closingTime: timeToDate(input.closingTime),
+          approvalStatus: "PENDING" as const,
+          activeStatus: "ACTIVE" as const
+        },
+        surfaces: sport.surfaces.map((surface) => ({ name: surface.name, surface: surface.surface, size: surface.size }))
+      };
+    });
+    return { courts: await partnerRepository.createCourts(entries, input.depositPercent ?? null) };
+  },
+
   async updateCourt(userId: string, courtId: string, input: any) {
     const profile = await getProfile(userId);
     const existing = await partnerRepository.courtByPartner(courtId, profile.id);
     if (!existing) throw new NotFoundError("Khong tim thay san cua ban");
     const { depositPercent, ...courtInput } = input;
+    // The form re-enters the address as address + ward + city, so an old district would no longer match it.
+    const addressChanged = ["address", "ward", "city"].some((field) => courtInput[field] !== undefined);
     return partnerRepository.updateCourt(courtId, {
       ...courtInput,
+      ...(addressChanged ? { district: null } : {}),
       slug: courtInput.name ? uniqueSlug(courtInput.name) : undefined,
       openingTime: courtInput.openingTime ? timeToDate(courtInput.openingTime) : undefined,
       closingTime: courtInput.closingTime ? timeToDate(courtInput.closingTime) : undefined,
       approvalStatus: "PENDING"
     }, depositPercent ?? null);
+  },
+
+  async timeChargePolicy(userId: string, courtId: string) {
+    const profile = await getProfile(userId);
+    const policy = await partnerRepository.courtTimeChargePolicy(courtId, profile.id);
+    if (!policy) throw new NotFoundError("Khong tim thay san cua ban");
+    return toTimeChargePolicy(policy);
+  },
+
+  /** Operational setting for the counter: saved directly, without sending the court back to approval. */
+  async updateTimeChargePolicy(userId: string, courtId: string, input: TimeChargePolicy) {
+    const profile = await getProfile(userId);
+    if (!(await partnerRepository.courtTimeChargePolicy(courtId, profile.id))) throw new NotFoundError("Khong tim thay san cua ban");
+    return toTimeChargePolicy(await partnerRepository.updateCourtTimeChargePolicy(courtId, input));
   },
 
   async deactivateCourt(userId: string, courtId: string) {
@@ -319,28 +383,35 @@ export const partnerService = {
     }
 
     const { updated, settlement } = await prisma.$transaction(async (tx) => {
+      const cancellation =
+        status === BookingStatus.CANCELLED
+          ? courtCancellationPayment(booking.paymentStatus, Number(booking.totalPrice), await bookingRepository.onlineCollectedAmount(tx, booking))
+          : null;
       const updatedBooking = await tx.booking.update({
         where: { id: booking.id },
-        data:
-          status === BookingStatus.CANCELLED
-            ? {
-                bookingStatus: status,
-                cancelReason: "Doi tac tu choi",
-                cancelledAt: new Date(),
-                refundAmount: booking.paymentStatus === "PAID" ? booking.totalPrice : 0,
-                platformRetainedAmount: 0,
-                paymentStatus: booking.paymentStatus === "PAID" ? "REFUNDED" : booking.paymentStatus
-              }
-            : {
-                bookingStatus: status
-              },
-        include: { court: { include: { partner: true } } }
+        data: cancellation
+          ? {
+              bookingStatus: status,
+              cancelReason: "Doi tac tu choi",
+              cancelledAt: new Date(),
+              refundAmount: cancellation.refundAmount,
+              platformRetainedAmount: 0,
+              paymentStatus: cancellation.paymentStatus
+            }
+          : {
+              bookingStatus: status
+            },
+        include: { court: { include: { partner: true } }, user: { select: { fullName: true, phone: true } } }
       });
+      if (cancellation?.refundByAdmin) {
+        await enqueueAdminEvent(tx, refundRequiredAdminEvent(updatedBooking, cancellation.refundByAdmin, "Đối tác"));
+      }
 
       let updatedSettlement = null;
       if (status === BookingStatus.COMPLETED || status === BookingStatus.NO_SHOW) {
         await commissionService.createEarning(updatedBooking, status, tx);
         updatedSettlement = await settlementService.settleForBooking(booking.id, tx);
+        if (status === BookingStatus.COMPLETED) await settlementService.chargePartnerCollected(booking.id, tx);
       } else if (status === BookingStatus.CANCELLED) {
         updatedSettlement = await settlementService.cancelForBooking(booking.id, tx);
       }
@@ -585,47 +656,40 @@ export const partnerService = {
     return voucherService.deleteForPartner(profile.id, voucherId);
   },
 
+  // Partner posts follow the same lifecycle as users' (blogService); partners keep a draft until they submit.
   async blogs(userId: string) {
     await getProfile(userId);
-    return partnerRepository.listBlogs(userId);
+    return blogService.listMine(userId);
   },
 
   async blogDetail(userId: string, id: string) {
     await getProfile(userId);
-    const [blog] = await partnerRepository.findBlog(id, userId);
-    if (!blog) throw new NotFoundError("Khong tim thay bai viet cua ban");
-    return blog;
+    return blogService.detailMine(id, userId);
   },
 
   async createBlog(userId: string, input: any) {
     await getProfile(userId);
-    const [blog] = await partnerRepository.createBlog(userId, { ...input, slug: uniqueSlug(input.title) });
-    return blog;
+    return blogService.createMine(userId, input, partnerSave);
   },
 
   async updateBlog(userId: string, id: string, input: any) {
-    await this.blogDetail(userId, id);
-    const [blog] = await partnerRepository.updateBlog(id, userId, { ...input, slug: uniqueSlug(input.title) });
-    if (!blog) throw new ValidationError("Chi co the sua bai viet nhap");
-    return blog;
+    await getProfile(userId);
+    return blogService.updateMine(id, userId, input, partnerSave);
   },
 
   async updateBlogComments(userId: string, id: string, allowComments: boolean) {
-    await this.blogDetail(userId, id);
-    const [blog] = await partnerRepository.updateBlogComments(id, userId, allowComments);
-    if (!blog) throw new ValidationError("Khong the cap nhat trang thai binh luan");
-    return blog;
+    await getProfile(userId);
+    return blogService.updateMineComments(id, userId, allowComments);
   },
 
   async submitBlog(userId: string, id: string) {
-    await this.blogDetail(userId, id);
-    if (!(await partnerRepository.submitBlog(id, userId))) throw new ValidationError("Chi co the gui duyet bai viet nhap");
-    return this.blogDetail(userId, id);
+    await getProfile(userId);
+    return blogService.submitMine(id, userId);
   },
 
   async deleteBlog(userId: string, id: string) {
     await getProfile(userId);
-    if (!(await partnerRepository.deleteBlog(id, userId))) throw new ValidationError("Chi co the xoa bai viet nhap");
+    await blogService.deleteMine(id, userId);
     return { id };
   },
 

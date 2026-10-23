@@ -8,6 +8,7 @@ import { Select } from "../../components/ui/Select";
 import { THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { PageHero } from "../../components/common/PageHero";
 import { adminApi } from "../../features/admin/api/adminApi";
+import { CommissionDebtPanel } from "../../features/admin/components/CommissionDebtPanel";
 import { SettlementStatusBadge } from "./StatusBadges";
 import type { Settlement } from "../../types/api";
 
@@ -71,6 +72,8 @@ export function AdminSettlementsPage() {
         <Summary label="Partner thực nhận" value={money(total.netAmount)} />
         <Summary label="Chờ quyết toán" value={`${pending?.count ?? 0} đơn · ${money(pending?.netAmount ?? 0)}`} />
       </div>
+
+      <CommissionDebtPanel />
 
       <section className="overflow-hidden rounded-2xl border border-line bg-white">
         {settlements.isLoading ? (

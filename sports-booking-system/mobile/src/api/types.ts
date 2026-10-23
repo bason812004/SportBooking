@@ -37,7 +37,7 @@ export type Court = {
   description?: string | null;
   address: string;
   city: string;
-  district: string;
+  district?: string | null;
   ward?: string | null;
   latitude?: number | null;
   longitude?: number | null;

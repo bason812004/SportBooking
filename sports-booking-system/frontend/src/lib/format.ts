@@ -65,6 +65,40 @@ export function formatDateTime(value: string | Date | null | undefined) {
   return dateTimeFormatter.format(d);
 }
 
+type CourtLocation = { address?: string | null; ward?: string | null; district?: string | null; city?: string | null };
+
+/**
+ * Full address. Since the 2025 administrative reform a court has address + ward + city; courts
+ * registered before also keep their (former) district.
+ */
+export function courtAddress(court: CourtLocation | null | undefined) {
+  if (!court) return "";
+  return [court.address, court.ward, court.district, court.city].filter(Boolean).join(", ");
+}
+
+/** Short area line ("Quận 1, TP.HCM" for older courts, "Phường Bến Thành, TP.HCM" for new ones). */
+export function courtArea(court: CourtLocation | null | undefined) {
+  if (!court) return "";
+  return [court.district || court.ward, court.city].filter(Boolean).join(", ");
+}
+
+/** The link only if it is http(s): partner-entered URLs must never become `javascript:` hrefs. */
+export function httpUrl(value: string | null | undefined) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Court name the server gives each sport of a multi-sport venue (mirrors backend shared/utils/courtSurface.ts). */
+export function sportCourtName(venueName: string, sportName: string) {
+  const suffix = ` - ${sportName.trim()}`;
+  return `${venueName.trim().slice(0, 180 - suffix.length).trimEnd()}${suffix}`;
+}
+
 export function timeText(value: string | Date | null | undefined) {
   if (!value) return "-";
   const s = value instanceof Date ? value.toISOString() : String(value);

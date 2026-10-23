@@ -1,12 +1,12 @@
 import type { Prisma } from "@prisma/client";
 import { env } from "../../config/env.js";
 import { prisma } from "../../config/db.js";
-import { NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
+import { ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
 import { parseLimit, parsePage } from "../../shared/utils/time.js";
 import { recordAdminAction } from "../admin/admin.audit.js";
 import { notificationService } from "../notifications/notification.service.js";
-import { payoutProvider } from "../payouts/providers/index.js";
+import { activePayoutProvider } from "../payouts/providers/index.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { walletRepository } from "../wallets/wallet.repository.js";
@@ -34,15 +34,37 @@ function emitWithdrawalUpdated(withdrawal: { partnerId: string } & Record<string
   realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: withdrawal.partnerId });
 }
 
+function money(amount: unknown) {
+  return `${asNumber(amount).toLocaleString("vi-VN")} VND`;
+}
+
+/** Tells the partner where their withdrawal stands; the change is already saved, so a failed notice only logs. */
+async function notifyPartner(
+  withdrawal: { id: string; partner?: { user?: { id: string } | null } | null } | null,
+  notice: { title: string; content: string; type: string }
+) {
+  const userId = withdrawal?.partner?.user?.id;
+  if (!userId) return;
+  try {
+    await notificationService.create({ userId, ...notice, metadata: { withdrawalId: withdrawal.id } });
+  } catch (error) {
+    console.error("[Withdrawal] Partner notification failed:", error);
+  }
+}
+
 // Calls the payout provider for a withdrawal already sitting at APPROVED, then moves
 // it to PROCESSING. Best-effort: if the provider call throws, the request just stays
 // APPROVED so an admin can still fall back to manual markPaid()/reject(). Shared by
 // both the admin "Duyệt" action and the auto-approve path in create().
+// Manual payouts (no provider, the default): nothing to call, the withdrawal waits at
+// APPROVED until an admin has transferred the money and confirms it with markPaid().
 async function triggerPayout(
   id: string,
   withdrawal: { amount: unknown; bankName: string | null; bankAccountNumber: string | null; bankAccountName: string | null },
   forceResult?: "SUCCESS" | "FAILED" | "TIMEOUT" | "RANDOM"
 ) {
+  const payoutProvider = activePayoutProvider();
+  if (!payoutProvider) return;
   try {
     const result = await payoutProvider.createPayout({
       withdrawalId: id,
@@ -84,7 +106,11 @@ export const withdrawalService = {
     }
 
     const withdrawal = await prisma.$transaction(async (tx) => {
-      await walletRepository.ensure(profile.id, tx);
+      const wallet = await walletRepository.ensure(profile.id, tx);
+      // Debt is normally already netted against the balance; this also covers money released meanwhile.
+      if (asNumber(wallet.commissionDebt) > 0) {
+        throw new ValidationError(`Bạn còn nợ hoa hồng ${money(wallet.commissionDebt)}. Hãy thanh toán công nợ trước khi rút tiền.`);
+      }
       const held = await walletRepository.holdAvailable(profile.id, amount, tx);
       if (held === 0) throw new ValidationError("So du kha dung khong du de tao yeu cau rut tien");
       return withdrawalRepository.create(
@@ -94,11 +120,13 @@ export const withdrawalService = {
     });
 
     let result: typeof withdrawal = withdrawal;
-    if (amount <= env.WITHDRAWAL_AUTO_APPROVE_LIMIT) {
+    // Off by default (limit 0): every withdrawal waits for an admin. When enabled, nobody is recorded
+    // as having processed it; the partner whose request triggered it is the audit actor.
+    if (env.WITHDRAWAL_AUTO_APPROVE_LIMIT > 0 && amount <= env.WITHDRAWAL_AUTO_APPROVE_LIMIT) {
       await withdrawalRepository.transition(
         withdrawal.id,
         ["PENDING"],
-        { status: "APPROVED", processedBy: userId, processedAt: new Date() },
+        { status: "APPROVED", processedAt: new Date() },
         prisma
       );
       await recordAdminAction(userId, "WITHDRAWAL_AUTO_APPROVED", "WITHDRAWAL", withdrawal.id, {
@@ -177,6 +205,13 @@ export const withdrawalService = {
 
     const updated = await withdrawalRepository.byId(id);
     emitWithdrawalUpdated(updated!);
+    await notifyPartner(updated, {
+      title: "Yêu cầu rút tiền đã được duyệt",
+      content: activePayoutProvider()
+        ? `Yêu cầu rút ${money(withdrawal.amount)} đã được duyệt và đang được chuyển khoản.`
+        : `Yêu cầu rút ${money(withdrawal.amount)} đã được duyệt. Bạn sẽ nhận thông báo khi admin chuyển khoản xong.`,
+      type: "WITHDRAWAL_APPROVED"
+    });
     return toDto(updated!);
   },
 
@@ -193,6 +228,7 @@ export const withdrawalService = {
       );
       if (count === 0) throw new ValidationError("Chi co the tu choi yeu cau dang cho xu ly hoac da duyet");
       await walletRepository.releaseHold(withdrawal.partnerId, asNumber(withdrawal.amount), tx);
+      await walletRepository.offsetDebt(withdrawal.partnerId, tx);
     });
 
     await recordAdminAction(actorId, "WITHDRAWAL_REJECTED", "WITHDRAWAL", id, {
@@ -202,6 +238,11 @@ export const withdrawalService = {
     });
     const updated = await withdrawalRepository.byId(id);
     emitWithdrawalUpdated(updated!);
+    await notifyPartner(updated, {
+      title: "Yêu cầu rút tiền bị từ chối",
+      content: `Yêu cầu rút ${money(withdrawal.amount)} bị từ chối${note ? `: ${note}` : ""}. Số tiền đã được hoàn lại vào số dư khả dụng.`,
+      type: "WITHDRAWAL_REJECTED"
+    });
     return toDto(updated!);
   },
 
@@ -226,10 +267,19 @@ export const withdrawalService = {
     });
     const updated = await withdrawalRepository.byId(id);
     emitWithdrawalUpdated(updated!);
+    const account = [withdrawal.bankName, withdrawal.bankAccountNumber].filter(Boolean).join(" ");
+    await notifyPartner(updated, {
+      title: "Rút tiền thành công",
+      content: `Admin đã chuyển khoản ${money(withdrawal.amount)}${account ? ` vào tài khoản ${account}` : ""}.`,
+      type: "WITHDRAWAL_PAID"
+    });
     return toDto(updated!);
   },
 
   async handleProviderWebhook(providerParam: string, payload: unknown, headers: Record<string, string | string[] | undefined>) {
+    // With manual payouts nothing can confirm a transfer except an admin: refuse every webhook.
+    const payoutProvider = activePayoutProvider();
+    if (!payoutProvider) throw new ForbiddenError("Chua bat nha cung cap chuyen khoan tu dong");
     const verified = await payoutProvider.verifyWebhook(payload, headers);
 
     const nextStatus = verified.status === "SUCCESS" ? "PAID" : "FAILED";
@@ -260,6 +310,7 @@ export const withdrawalService = {
         await walletRepository.markWithdrawn(withdrawal.partnerId, asNumber(withdrawal.amount), tx);
       } else {
         await walletRepository.releaseHold(withdrawal.partnerId, asNumber(withdrawal.amount), tx);
+        await walletRepository.offsetDebt(withdrawal.partnerId, tx);
       }
       return true;
     });

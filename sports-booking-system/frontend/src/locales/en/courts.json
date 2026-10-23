@@ -64,7 +64,29 @@
     "chooseSlot": "Choose time slot",
     "selectedSlotCount": "{{count}} time slots",
     "continueBooking": "Continue booking",
-    "closedOrNoSchedule": "This court is closed or has no schedule for this date."
+    "closedOrNoSchedule": "This court is closed or has no schedule for this date.",
+    "report": {
+      "button": "Report court",
+      "title": "Report this court",
+      "intro": "Your report will be sent to the administrators for review.",
+      "reasonLabel": "Reason",
+      "reasons": {
+        "wrongInfo": "Court information is inaccurate",
+        "notOperating": "Court is no longer operating",
+        "scam": "Signs of fraud",
+        "badService": "Poor service attitude",
+        "other": "Other reason"
+      },
+      "descriptionLabel": "Details",
+      "descriptionPlaceholder": "Describe the problem you ran into...",
+      "descriptionRequired": "Please describe the problem when choosing another reason.",
+      "cancel": "Cancel",
+      "submit": "Send report",
+      "submitting": "Sending...",
+      "success": "Report sent. Thank you for your feedback!",
+      "failed": "Could not send the report.",
+      "loginRequired": "Please log in to report a court."
+    }
   }
 }
 

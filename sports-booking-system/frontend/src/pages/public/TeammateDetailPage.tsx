@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { CalendarDays, Edit3, MapPin, MessageCircle, QrCode, UserRound, UsersRound, WalletCards, X } from "lucide-react";
+import { CalendarDays, Edit3, MapPin, MessageCircle, QrCode, Trash2, UserRound, UsersRound, WalletCards, X } from "lucide-react";
 import { toast } from "sonner";
+import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { contentApi } from "../../features/content/api/contentApi";
 import { useTeamPost } from "../../features/content/hooks/useContent";
@@ -23,6 +24,8 @@ export function TeammateDetailPage() {
   const navigate = useNavigate();
   const [qrOpen, setQrOpen] = useState(false);
   const [joining, setJoining] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removing, setRemoving] = useState(false);
 
   if (post.isLoading) return <div className="px-4 py-16"><LoadingState label="Đang tải bài đăng..." /></div>;
   if (post.isError) {
@@ -37,6 +40,24 @@ export function TeammateDetailPage() {
   const item = post.data;
   const playingDate = item.playingDate ? dateFormat.format(new Date(item.playingDate)) : "Linh hoạt";
   const isOwner = user?.id === item.createdBy.id;
+  // Team posts go live without review; admins remove the ones that break the rules (the owner is notified).
+  const canModerate = user?.role === "ADMIN" && !isOwner;
+
+  async function handleRemove() {
+    if (!id) return;
+    setRemoving(true);
+    try {
+      await contentApi.deleteTeamPost(id);
+      await queryClient.invalidateQueries({ queryKey: ["team-posts"] });
+      toast.success("Đã gỡ bài đăng và thông báo cho người đăng.");
+      navigate("/teammates", { replace: true });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không thể gỡ bài đăng.");
+    } finally {
+      setRemoving(false);
+      setRemoveOpen(false);
+    }
+  }
 
   async function handleJoin() {
     if (!isAuthenticated) {
@@ -131,10 +152,28 @@ export function TeammateDetailPage() {
                   {joining ? "Đang xử lý..." : "Tham gia và mở chat"}
                 </button>
               )}
+              {canModerate && (
+                <button
+                  onClick={() => setRemoveOpen(true)}
+                  disabled={removing}
+                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 px-5 py-3 text-sm font-black text-red-700 transition hover:bg-red-50 disabled:opacity-60"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Gỡ bài (quản trị)
+                </button>
+              )}
             </div>
           </aside>
         </div>
       </div>
+
+      <ConfirmModal
+        open={removeOpen}
+        title="Gỡ bài tìm đồng đội"
+        message="Bài đăng, thành viên và tin nhắn nhóm sẽ bị xoá vĩnh viễn. Người đăng sẽ nhận được thông báo."
+        onCancel={() => setRemoveOpen(false)}
+        onConfirm={() => void handleRemove()}
+      />
 
       {qrOpen && item.zaloQrImage && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 px-4" onClick={() => setQrOpen(false)}>

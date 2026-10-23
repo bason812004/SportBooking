@@ -36,6 +36,7 @@ import { useAuth } from "../../features/auth/hooks/useAuth";
 import { getSocket } from "../../lib/socket";
 import {
   bookingStatusLabel,
+  courtAddress,
   formatCurrency,
   formatDate,
   formatDateTime,
@@ -208,7 +209,7 @@ export function UserBookingDetailPage() {
   const isCancelled = data.bookingStatus === "CANCELLED";
   const canModifyServices = !["CANCELLED", "NO_SHOW", "COMPLETED"].includes(data.bookingStatus);
   const canPay = remainingAmount > 0 && !isCancelled;
-  const address = [court.address, court.district, court.city].filter(Boolean).join(", ") || "Chưa cập nhật địa chỉ";
+  const address = courtAddress(court) || "Chưa cập nhật địa chỉ";
 
   return (
     <div className="min-h-screen bg-[#f4f8f6] py-8 text-slate-950">

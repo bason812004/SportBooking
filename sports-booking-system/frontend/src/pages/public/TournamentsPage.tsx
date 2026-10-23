@@ -3,6 +3,7 @@ import { CalendarDays, MapPin, Trophy, UsersRound } from "lucide-react";
 import { Link } from "react-router-dom";
 import { EmptyState, ErrorState } from "../../components/common/States";
 import { useTournaments } from "../../features/content/hooks/useContent";
+import { courtArea } from "../../lib/format";
 
 const currency = new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 });
 const dateFormat = new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -106,7 +107,7 @@ export function TournamentsPage() {
                         </p>
                         <p className="flex items-center gap-2">
                           <MapPin className="h-4 w-4 text-emerald-700" />
-                          {tournament.court.district}, {tournament.court.city}
+                          {courtArea(tournament.court)}
                         </p>
                         <p className="flex items-center gap-2">
                           <UsersRound className="h-4 w-4 text-emerald-700" />

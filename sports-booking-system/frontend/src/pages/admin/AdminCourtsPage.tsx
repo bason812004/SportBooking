@@ -14,6 +14,7 @@ import { SortableTh } from "../../components/common/SortableTh";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { Table as SharedTable, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { useUrlSort } from "../../hooks/useUrlSort";
+import { courtAddress, courtArea } from "../../lib/format";
 
 const approvalLabels: Record<string, string> = {
   PENDING: "Chờ duyệt",
@@ -98,7 +99,7 @@ export function AdminCourtsPage() {
       <div className="grid gap-3 rounded-lg border bg-white p-4 md:grid-cols-2 xl:grid-cols-4">
         <Input label="Tìm kiếm" value={filters.search} onChange={(event) => updateFilter(setPage, setFilters, "search", event.target.value)} placeholder="Tên sân, địa chỉ, đối tác" />
         <Input label="Thành phố" value={filters.city} onChange={(event) => updateFilter(setPage, setFilters, "city", event.target.value)} />
-        <Input label="Quận/Huyện" value={filters.district} onChange={(event) => updateFilter(setPage, setFilters, "district", event.target.value)} />
+        <Input label="Phường/Xã (hoặc quận cũ)" value={filters.district} onChange={(event) => updateFilter(setPage, setFilters, "district", event.target.value)} />
         <Input label="ID đối tác" value={filters.partnerId} onChange={(event) => updateFilter(setPage, setFilters, "partnerId", event.target.value)} placeholder="pp0001" />
         <Select label="Duyệt sân" value={filters.approvalStatus} onChange={(event) => updateFilter(setPage, setFilters, "approvalStatus", event.target.value)} options={withAll(["PENDING", "APPROVED", "REJECTED"], approvalLabels)} />
         <Select label="Hoạt động" value={filters.activeStatus} onChange={(event) => updateFilter(setPage, setFilters, "activeStatus", event.target.value)} options={withAll(["ACTIVE", "INACTIVE"], activeLabels)} />
@@ -134,7 +135,7 @@ export function AdminCourtsPage() {
                 </div>
               </Td>
               <Td>{court.partner.businessName}<br /><span className="text-xs text-slate-500">{court.partner.user.email}</span></Td>
-              <Td>{court.district}, {court.city}<br /><span className="text-xs text-slate-500">{court.address}</span></Td>
+              <Td>{courtArea(court)}<br /><span className="text-xs text-slate-500">{court.address}</span></Td>
               <Td>{formatMoney(court.minPrice ?? 0)}</Td>
               <Td><StatusBadge value={court.approvalStatus} tones={approvalToneClasses} labels={approvalLabels} /></Td>
               <Td><StatusBadge value={court.activeStatus} tones={activeToneClasses} labels={activeLabels} /></Td>
@@ -218,7 +219,7 @@ function CourtDetail({ court, onUpdated }: { court: AdminCourt; onUpdated: () =>
       <section className="space-y-4">
         <div>
           <h2 className="text-2xl font-bold">{court.name}</h2>
-          <p className="text-sm text-slate-600">{court.address}, {court.district}, {court.city}</p>
+          <p className="text-sm text-slate-600">{courtAddress(court)}</p>
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">

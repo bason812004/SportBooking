@@ -137,7 +137,12 @@ function adminCourtWhere(filters: {
   }
   if (filters.partnerId) add("c.partner_id = ?", filters.partnerId);
   if (filters.city) add("c.city ilike ?", `%${filters.city}%`);
-  if (filters.district) add("c.district ilike ?", `%${filters.district}%`);
+  if (filters.district) {
+    // Area filter: courts registered after the 2025 reform only have a ward, older ones a district.
+    values.push(`%${filters.district}%`);
+    const index = values.length;
+    clauses.push(`(c.district ilike $${index} or c.ward ilike $${index})`);
+  }
   if (filters.approvalStatus) add("c.approval_status::text = ?", filters.approvalStatus);
   if (filters.activeStatus) add("c.active_status::text = ?", filters.activeStatus);
   if (filters.verified) add("c.verified = ?::boolean", filters.verified);
@@ -498,6 +503,7 @@ export const adminRepository = {
       let settlement = null;
       if (input.bookingStatus === "COMPLETED" || input.bookingStatus === "NO_SHOW") {
         settlement = await settlementService.settleForBooking(id, tx);
+        if (input.bookingStatus === "COMPLETED") await settlementService.chargePartnerCollected(id, tx);
       } else if (input.bookingStatus === "CANCELLED") {
         settlement = await settlementService.cancelForBooking(id, tx);
       }
@@ -1061,7 +1067,14 @@ export const adminRepository = {
     return Promise.all([
       prisma.court.findMany({
         where,
-        include: { category: true, partner: { include: { user: { select: { fullName: true, email: true } } } }, images: true },
+        include: {
+          category: true,
+          partner: { include: { user: { select: { fullName: true, email: true } } } },
+          images: { orderBy: { sortOrder: "asc" }, take: 1 },
+          // A newly registered court only has image requests until an admin reviews them.
+          imageRequests: { where: { status: "PENDING" }, orderBy: { sortOrder: "asc" }, take: 1, select: { imageUrl: true } },
+          _count: { select: { images: true, imageRequests: { where: { status: "PENDING" } } } }
+        },
         orderBy: { createdAt: "desc" },
         skip: (page - 1) * limit,
         take: limit
@@ -1070,8 +1083,73 @@ export const adminRepository = {
     ]);
   },
 
-  setCourtApproval(id: string, approvalStatus: "APPROVED" | "REJECTED", rejectionReason?: string) {
-    return prisma.court.update({ where: { id }, data: { approvalStatus, rejectionReason } });
+  async courtReview(id: string) {
+    const court = await prisma.court.findUnique({
+      where: { id },
+      select: {
+        id: true, partnerId: true, name: true, slug: true, description: true, address: true, ward: true, district: true, city: true,
+        latitude: true, longitude: true, mapUrl: true, contactPhone: true, contactEmail: true, openingTime: true, closingTime: true,
+        courtCount: true, approvalStatus: true, activeStatus: true, rejectionReason: true, updateRequestNote: true,
+        updateRequestedAt: true, createdAt: true, updatedAt: true, deposit_percent: true,
+        category: { select: { id: true, name: true } },
+        surfaces: { orderBy: { sortOrder: "asc" }, select: { id: true, code: true, name: true, surface: true, size: true, status: true } },
+        images: { orderBy: { sortOrder: "asc" }, select: { id: true, imageUrl: true, sortOrder: true } },
+        imageRequests: {
+          orderBy: { createdAt: "desc" },
+          take: 50,
+          select: { id: true, imageUrl: true, previousImageUrl: true, replaceImageId: true, status: true, reason: true, createdAt: true }
+        },
+        prices: { orderBy: [{ dayType: "asc" }, { startTime: "asc" }], select: { id: true, dayType: true, startTime: true, endTime: true, price: true, note: true } },
+        partner: {
+          select: {
+            id: true, businessName: true, address: true, approvalStatus: true, taxCode: true, verificationDocumentUrl: true,
+            bankName: true, bankAccountNumber: true, bankAccountHolder: true, createdAt: true,
+            user: { select: { id: true, fullName: true, email: true, phone: true, emailVerified: true, status: true, createdAt: true } }
+          }
+        }
+      }
+    });
+    if (!court) return null;
+    const [courtStats, duplicateAddressCourts] = await Promise.all([
+      prisma.court.groupBy({ by: ["approvalStatus"], where: { partnerId: court.partnerId }, _count: { _all: true } }),
+      // The same street address listed by another partner is a classic sign of a copied or fake venue.
+      prisma.court.findMany({
+        where: {
+          id: { not: id },
+          partnerId: { not: court.partnerId },
+          city: court.city,
+          address: { equals: court.address.trim(), mode: "insensitive" },
+          ward: court.ward ? { equals: court.ward.trim(), mode: "insensitive" } : null
+        },
+        select: { id: true, name: true, approvalStatus: true, partner: { select: { businessName: true } } },
+        take: 5
+      })
+    ]);
+    return { court, courtStats, duplicateAddressCourts };
+  },
+
+  // Checked and written in one statement so a partner rejected meanwhile, or a second admin tab, cannot slip through.
+  async approvePendingCourt(id: string) {
+    const { count } = await prisma.court.updateMany({
+      where: { id, approvalStatus: "PENDING", partner: { approvalStatus: "APPROVED" } },
+      data: { approvalStatus: "APPROVED", rejectionReason: null }
+    });
+    return count > 0;
+  },
+
+  async rejectPendingCourt(id: string, rejectionReason: string) {
+    const { count } = await prisma.court.updateMany({
+      where: { id, approvalStatus: "PENDING" },
+      data: { approvalStatus: "REJECTED", rejectionReason }
+    });
+    return count > 0;
+  },
+
+  courtApprovalState(id: string) {
+    return prisma.court.findUnique({
+      where: { id },
+      select: { id: true, approvalStatus: true, partner: { select: { approvalStatus: true } } }
+    });
   },
 
   categories() {
@@ -1291,13 +1369,20 @@ export const adminRepository = {
     ]);
   },
 
+  blogForModeration(id: string) {
+    return prisma.$queryRaw<Array<{ id: string; authorId: string; title: string; slug: string; status: string }>>`
+      select id, author_id as "authorId", title, slug, status::text as status from blog_posts where id = ${id} limit 1
+    `.then((rows) => rows[0] ?? null);
+  },
+
+  /** Publishing also restores a hidden post; published_at keeps the first publication date. */
   moderateBlog(id: string, status: "PUBLISHED" | "REJECTED") {
     return prisma.$executeRaw`
       update blog_posts set status = ${status}::blog_post_status,
-        published_at = case when ${status} = 'PUBLISHED' then now() else published_at end, updated_at = now()
+        published_at = case when ${status} = 'PUBLISHED' then coalesce(published_at, now()) else published_at end, updated_at = now()
       where id = ${id}
         and (
-          (${status} = 'PUBLISHED' and status in ('PENDING'::blog_post_status, 'REJECTED'::blog_post_status))
+          (${status} = 'PUBLISHED' and status in ('PENDING'::blog_post_status, 'REJECTED'::blog_post_status, 'HIDDEN'::blog_post_status))
           or (${status} = 'REJECTED' and status = 'PENDING'::blog_post_status)
         )
     `;

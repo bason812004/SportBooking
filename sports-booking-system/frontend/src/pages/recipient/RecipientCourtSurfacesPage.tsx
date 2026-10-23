@@ -23,6 +23,7 @@ import { useWalkInBooking, WalkInDetailsFields } from "../../features/recipient/
 import { StaffScheduleGrid, type ServiceTarget } from "../../features/recipient/components/StaffScheduleGrid";
 import { LiveBookingBillSummary, LiveBookingServicePanel } from "../../features/cashier/components/LiveBookingServicePanel";
 import { useLiveBookingServices } from "../../features/cashier/hooks/useLiveBookingServices";
+import { formatYmd } from "../../features/bookings/components/BookingCalendar/utils";
 import { formatMoney } from "../../utils/formatters";
 
 const statusMeta: Record<RecipientOperationItem["status"], { label: string; className: string; dotClassName: string }> = {
@@ -35,7 +36,8 @@ const statusMeta: Record<RecipientOperationItem["status"], { label: string; clas
 };
 
 const extendOptions = [15, 30, 60];
-const todayValue = () => new Date().toISOString().slice(0, 10);
+// Local date, not toISOString() (UTC): before 07:00 in Vietnam that would still be yesterday.
+const todayValue = () => formatYmd(new Date());
 
 function SummaryStat({
   label,
@@ -171,7 +173,33 @@ export function RecipientCourtSurfacesPage() {
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["recipient-operations"] });
     queryClient.invalidateQueries({ queryKey: ["recipient-surface-availability"] });
+    queryClient.invalidateQueries({ queryKey: ["recipient-time-charge-quote"] });
   };
+
+  // Prices on this surface's "+N phút" and "Check-in sớm" buttons, computed by the backend under the
+  // partner's policy exactly as it will charge them. Early check-in depends on the clock, hence the refetch.
+  const quoteBookingId =
+    selected?.status === "OVERDUE" ? selected.latestEndedBooking?.id : (selected?.currentBooking?.id ?? selected?.nextBooking?.id);
+  const timeChargeQuote = useQuery({
+    queryKey: ["recipient-time-charge-quote", quoteBookingId],
+    queryFn: () => recipientApi.timeChargeQuote(quoteBookingId!, extendOptions),
+    enabled: Boolean(quoteBookingId),
+    refetchInterval: 30_000
+  });
+  const extensionLabel = (minutes: number) => {
+    const amount = timeChargeQuote.data?.extensions.find((item) => item.minutes === minutes)?.amount;
+    return amount == null ? `+${minutes} phút` : `+${minutes} phút · ${formatMoney(amount)}`;
+  };
+  const earlyQuote = timeChargeQuote.data?.earlyCheckIn ?? null;
+  const earlyCheckInHint = !earlyQuote
+    ? null
+    : !earlyQuote.allowed
+      ? earlyQuote.maxMinutes === 0
+        ? "Sân không cho check-in sớm, khách đợi đến giờ đặt."
+        : `Chỉ được vào sớm tối đa ${earlyQuote.maxMinutes} phút — khách đang sớm ${earlyQuote.earlyMinutes} phút.`
+      : earlyQuote.chargedMinutes === 0
+        ? `Sớm ${earlyQuote.earlyMinutes} phút — miễn phí.`
+        : `Sớm ${earlyQuote.earlyMinutes} phút: miễn phí ${earlyQuote.freeMinutes} phút, tính ${earlyQuote.chargedMinutes} phút · ${formatMoney(earlyQuote.amount)}`;
 
   const [walkInDate, setWalkInDate] = useState(todayValue());
   useEffect(() => {
@@ -427,7 +455,8 @@ export function RecipientCourtSurfacesPage() {
                                     disabled={extendBooking.isPending}
                                     onClick={() => extendBooking.mutate({ id: selected.latestEndedBooking!.id, minutes })}
                                   >
-                                    <TimerReset className="h-4 w-4" />+{minutes} phút
+                                    <TimerReset className="h-4 w-4" />
+                                    {extensionLabel(minutes)}
                                   </Button>
                                 ))}
                               </div>
@@ -466,7 +495,8 @@ export function RecipientCourtSurfacesPage() {
                                     disabled={extendBooking.isPending}
                                     onClick={() => extendBooking.mutate({ id: selected.currentBooking!.id, minutes })}
                                   >
-                                    <TimerReset className="h-4 w-4" />+{minutes} phút
+                                    <TimerReset className="h-4 w-4" />
+                                    {extensionLabel(minutes)}
                                   </Button>
                                 ))}
                               </div>
@@ -482,10 +512,20 @@ export function RecipientCourtSurfacesPage() {
                             </Button>
                           </>
                         ) : selected.nextBooking ? (
-                          <Button className="w-full" variant="secondary" disabled={earlyCheckIn.isPending} onClick={() => earlyCheckIn.mutate(selected.nextBooking!.id)}>
-                            <LogIn className="h-4 w-4" />
-                            {earlyCheckIn.isPending ? "Đang check-in..." : "Check-in sớm"}
-                          </Button>
+                          <div className="space-y-1.5">
+                            <Button
+                              className="w-full"
+                              variant="secondary"
+                              disabled={earlyCheckIn.isPending || earlyQuote?.allowed === false}
+                              onClick={() => earlyCheckIn.mutate(selected.nextBooking!.id)}
+                            >
+                              <LogIn className="h-4 w-4" />
+                              {earlyCheckIn.isPending ? "Đang check-in..." : "Check-in sớm"}
+                            </Button>
+                            {earlyCheckInHint ? (
+                              <p className={`text-xs font-semibold ${earlyQuote?.allowed === false ? "text-amber-700" : "text-slate-600"}`}>{earlyCheckInHint}</p>
+                            ) : null}
+                          </div>
                         ) : null}
 
                         {canBookAdvance ? (

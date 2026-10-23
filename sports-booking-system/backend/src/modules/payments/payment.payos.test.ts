@@ -108,3 +108,29 @@ describe("payOS integration", () => {
     assert.equal(writes, 0);
   });
 });
+
+describe("manual (dev/QA) payment completion", () => {
+  const pending = { status: "PENDING", externalOrderId: "1790000000000", paymentReference: "BK123456", amount: 10000 };
+
+  it("is refused in production before anything is written", async () => {
+    const env = config as typeof config & { NODE_ENV?: string };
+    env.NODE_ENV = "production";
+    writes = 0;
+    try {
+      assert.equal(paymentService.manualCompletionAllowed(), false);
+      await assert.rejects(paymentService.devCompletePayment(pending, "staff"), /production/);
+      assert.equal(writes, 0);
+    } finally {
+      delete env.NODE_ENV;
+    }
+  });
+
+  it("goes through applyWebhook (settlement and wallet) outside production, and ignores closed payments", async () => {
+    writes = 0;
+    // The mocked repository finds no payment, so reaching it is what proves the webhook path was taken.
+    await assert.rejects(paymentService.devCompletePayment(pending, "staff"), /Khong tim thay giao dich/);
+    assert.equal(writes, 1);
+    assert.deepEqual(await paymentService.devCompletePayment({ ...pending, status: "EXPIRED" }, "staff"), { ok: true, idempotent: true });
+    assert.equal(writes, 1);
+  });
+});

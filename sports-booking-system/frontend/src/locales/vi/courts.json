@@ -64,7 +64,29 @@
     "chooseSlot": "Chọn khung giờ",
     "selectedSlotCount": "{{count}} khung giờ",
     "continueBooking": "Tiếp tục đặt sân",
-    "closedOrNoSchedule": "Sân đóng cửa hoặc chưa mở lịch cho ngày này."
+    "closedOrNoSchedule": "Sân đóng cửa hoặc chưa mở lịch cho ngày này.",
+    "report": {
+      "button": "Báo cáo sân",
+      "title": "Báo cáo sân này",
+      "intro": "Báo cáo sẽ được gửi tới quản trị viên để xem xét và xử lý.",
+      "reasonLabel": "Lý do báo cáo",
+      "reasons": {
+        "wrongInfo": "Thông tin sân không đúng thực tế",
+        "notOperating": "Sân không còn hoạt động",
+        "scam": "Có dấu hiệu lừa đảo",
+        "badService": "Thái độ phục vụ không tốt",
+        "other": "Lý do khác"
+      },
+      "descriptionLabel": "Mô tả chi tiết",
+      "descriptionPlaceholder": "Mô tả cụ thể vấn đề bạn gặp phải...",
+      "descriptionRequired": "Vui lòng mô tả vấn đề khi chọn lý do khác.",
+      "cancel": "Hủy",
+      "submit": "Gửi báo cáo",
+      "submitting": "Đang gửi...",
+      "success": "Đã gửi báo cáo. Cảm ơn bạn đã phản hồi!",
+      "failed": "Không thể gửi báo cáo.",
+      "loginRequired": "Vui lòng đăng nhập để báo cáo sân."
+    }
   }
 }
 

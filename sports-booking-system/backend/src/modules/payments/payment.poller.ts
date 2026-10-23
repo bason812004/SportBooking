@@ -36,11 +36,127 @@ export function startPaymentExpirySweep() {
   setInterval(expireOverduePayments, 60_000);
 }
 
+function providerPollingEnabled() {
+  const provider = env.PAYMENT_PROVIDER;
+  return (provider === "PAYOS" || provider === "SEPAY") && Boolean(env.PAYMENT_API_KEY && env.PAYMENT_SECRET_KEY);
+}
+
+type PendingPayment = {
+  id: string;
+  externalOrderId: string;
+  paymentReference: string;
+  amount: unknown;
+  booking: { courtId: string };
+};
+
+/**
+ * Asks the provider about one PENDING payment and applies the answer through applyWebhook, exactly
+ * as the background poller does. Also used by the counter's "Kiểm tra lại" button. No-op when no
+ * pollable provider is configured; provider errors are logged, not thrown.
+ */
+export async function syncPaymentWithProvider(payment: PendingPayment) {
+  if (!providerPollingEnabled()) return;
+  const provider = env.PAYMENT_PROVIDER;
+
+  if (provider === "PAYOS") {
+    const orderCode = Number.parseInt(payment.externalOrderId, 10);
+    if (Number.isNaN(orderCode)) return;
+
+    try {
+      const response = await fetch(`https://api-merchant.payos.vn/v2/payment-requests/${orderCode}`, {
+        method: "GET",
+        headers: {
+          "x-client-id": env.PAYMENT_API_KEY || "",
+          "x-api-key": env.PAYMENT_SECRET_KEY || "",
+          "Content-Type": "application/json"
+        }
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        console.warn(`[Poller] PayOS API returned error status ${response.status} for payment ${payment.id}: ${errText.slice(0, 100)}`);
+        return;
+      }
+
+      const resData = await response.json() as any;
+      if (response.ok && resData.code === "00" && resData.data) {
+        const payosStatus = resData.data.status;
+        if (payosStatus === "PAID") {
+          console.log(`[Poller] Payment ${payment.id} verified as PAID via PayOS API`);
+
+          const result = await paymentRepository.applyWebhook({
+            provider: "PAYOS",
+            externalOrderId: payment.externalOrderId,
+            externalTransactionId: resData.data.transactions?.[0]?.reference || `PAYOS_POLL_${Date.now()}`,
+            status: "PAID",
+            amount: Number(payment.amount),
+            rawPayload: resData.data
+          });
+
+          if (result) {
+            const updatedPayment = result.payment;
+            realtimeService.toUser(updatedPayment.userId, realtimeEvents.paymentPaid, updatedPayment);
+            realtimeService.toBooking(updatedPayment.bookingId, realtimeEvents.paymentPaid, updatedPayment);
+            realtimeService.toCourt(updatedPayment.booking.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: updatedPayment.booking.courtId });
+          }
+        } else if (payosStatus === "CANCELLED" || payosStatus === "EXPIRED") {
+          console.log(`[Poller] Payment ${payment.id} cancelled/expired on PayOS`);
+          await paymentRepository.cancelPendingPayment(payment.id);
+          releaseCourtSlots(payment.booking.courtId);
+        }
+      }
+    } catch (err) {
+      console.error(`[Poller] PayOS check failed for payment ${payment.id}:`, err);
+    }
+  }
+
+  if (provider === "SEPAY") {
+    try {
+      const response = await fetch("https://api.sepay.vn/user/api/transactions?limit=20", {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${env.PAYMENT_API_KEY || env.PAYMENT_SECRET_KEY || ""}`
+        }
+      });
+
+      const resData = await response.json() as any;
+      if (response.ok && resData.transactions && Array.isArray(resData.transactions)) {
+        const matchingTx = resData.transactions.find((tx: any) => {
+          const content = String(tx.transaction_content || tx.content || "");
+          return content.toUpperCase().includes(payment.paymentReference.toUpperCase());
+        });
+
+        if (matchingTx) {
+          const transferAmount = Number(matchingTx.transferAmount || matchingTx.amount_in || 0);
+          console.log(`[Poller] Payment ${payment.id} verified as PAID via SePay API`);
+
+          const result = await paymentRepository.applyWebhook({
+            provider: "SEPAY",
+            externalOrderId: payment.externalOrderId,
+            paymentReference: payment.paymentReference,
+            externalTransactionId: String(matchingTx.reference_code || matchingTx.id),
+            status: "PAID",
+            amount: transferAmount,
+            rawPayload: matchingTx
+          });
+
+          if (result) {
+            const updatedPayment = result.payment;
+            realtimeService.toUser(updatedPayment.userId, realtimeEvents.paymentPaid, updatedPayment);
+            realtimeService.toBooking(updatedPayment.bookingId, realtimeEvents.paymentPaid, updatedPayment);
+            realtimeService.toCourt(updatedPayment.booking.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: updatedPayment.booking.courtId });
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`[Poller] SePay check failed for payment ${payment.id}:`, err);
+    }
+  }
+}
+
 async function pollPayments() {
   try {
-    const provider = env.PAYMENT_PROVIDER;
-    const providerConfigured = Boolean(env.PAYMENT_API_KEY && env.PAYMENT_SECRET_KEY);
-    if ((provider !== "PAYOS" && provider !== "SEPAY") || !providerConfigured) {
+    if (!providerPollingEnabled()) {
       return;
     }
 
@@ -60,101 +176,7 @@ async function pollPayments() {
       if (payment.expiresAt.getTime() <= Date.now()) {
         continue;
       }
-
-      if (provider === "PAYOS") {
-        const orderCode = Number.parseInt(payment.externalOrderId, 10);
-        if (Number.isNaN(orderCode)) continue;
-
-        try {
-          const response = await fetch(`https://api-merchant.payos.vn/v2/payment-requests/${orderCode}`, {
-            method: "GET",
-            headers: {
-              "x-client-id": env.PAYMENT_API_KEY || "",
-              "x-api-key": env.PAYMENT_SECRET_KEY || "",
-              "Content-Type": "application/json"
-            }
-          });
-
-          if (!response.ok) {
-            const errText = await response.text();
-            console.warn(`[Poller] PayOS API returned error status ${response.status} for payment ${payment.id}: ${errText.slice(0, 100)}`);
-            continue;
-          }
-
-          const resData = await response.json() as any;
-          if (response.ok && resData.code === "00" && resData.data) {
-            const payosStatus = resData.data.status;
-            if (payosStatus === "PAID") {
-              console.log(`[Poller] Payment ${payment.id} verified as PAID via PayOS API`);
-              
-              const result = await paymentRepository.applyWebhook({
-                provider: "PAYOS",
-                externalOrderId: payment.externalOrderId,
-                externalTransactionId: resData.data.transactions?.[0]?.reference || `PAYOS_POLL_${Date.now()}`,
-                status: "PAID",
-                amount: Number(payment.amount),
-                rawPayload: resData.data
-              });
-
-              if (result) {
-                const updatedPayment = result.payment;
-                realtimeService.toUser(updatedPayment.userId, realtimeEvents.paymentPaid, updatedPayment);
-                realtimeService.toBooking(updatedPayment.bookingId, realtimeEvents.paymentPaid, updatedPayment);
-                realtimeService.toCourt(updatedPayment.booking.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: updatedPayment.booking.courtId });
-              }
-            } else if (payosStatus === "CANCELLED" || payosStatus === "EXPIRED") {
-              console.log(`[Poller] Payment ${payment.id} cancelled/expired on PayOS`);
-              await paymentRepository.cancelPendingPayment(payment.id);
-              releaseCourtSlots(payment.booking.courtId);
-            }
-          }
-        } catch (err) {
-          console.error(`[Poller] PayOS check failed for payment ${payment.id}:`, err);
-        }
-      }
-
-      if (provider === "SEPAY") {
-        try {
-          const response = await fetch("https://api.sepay.vn/user/api/transactions?limit=20", {
-            method: "GET",
-            headers: {
-              "Authorization": `Bearer ${env.PAYMENT_API_KEY || env.PAYMENT_SECRET_KEY || ""}`
-            }
-          });
-
-          const resData = await response.json() as any;
-          if (response.ok && resData.transactions && Array.isArray(resData.transactions)) {
-            const matchingTx = resData.transactions.find((tx: any) => {
-              const content = String(tx.transaction_content || tx.content || "");
-              return content.toUpperCase().includes(payment.paymentReference.toUpperCase());
-            });
-
-            if (matchingTx) {
-              const transferAmount = Number(matchingTx.transferAmount || matchingTx.amount_in || 0);
-              console.log(`[Poller] Payment ${payment.id} verified as PAID via SePay API`);
-              
-              const result = await paymentRepository.applyWebhook({
-                provider: "SEPAY",
-                externalOrderId: payment.externalOrderId,
-                paymentReference: payment.paymentReference,
-                externalTransactionId: String(matchingTx.reference_code || matchingTx.id),
-                status: "PAID",
-                amount: transferAmount,
-                rawPayload: matchingTx
-              });
-
-              if (result) {
-                const updatedPayment = result.payment;
-                realtimeService.toUser(updatedPayment.userId, realtimeEvents.paymentPaid, updatedPayment);
-                realtimeService.toBooking(updatedPayment.bookingId, realtimeEvents.paymentPaid, updatedPayment);
-                realtimeService.toCourt(updatedPayment.booking.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: updatedPayment.booking.courtId });
-              }
-            }
-          }
-        } catch (err) {
-          console.error(`[Poller] SePay check failed for payment ${payment.id}:`, err);
-        }
-      }
+      await syncPaymentWithProvider(payment);
     }
   } catch (error) {
     console.error("[Poller] Payment poller error:", error);

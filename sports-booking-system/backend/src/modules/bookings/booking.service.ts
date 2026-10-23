@@ -411,7 +411,7 @@ export const bookingService = {
     if (!matchingPrice) throw new ValidationError("Khung giờ này chưa có bảng giá. Vui lòng thiết lập bảng giá cho sân.");
 
     const serviceIds = input.services.map((service) => service.serviceId);
-    const services = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
+    const services = serviceIds.length ? await bookingRepository.services(serviceIds, input.courtId) : [];
     if (services.length !== serviceIds.length) throw new ValidationError("Dich vu khong hop le");
 
     const serviceLines = input.services.map((line) => {

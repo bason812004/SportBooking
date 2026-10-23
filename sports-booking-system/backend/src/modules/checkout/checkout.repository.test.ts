@@ -7,7 +7,7 @@ mock.module("../../config/db.js", { namedExports: { prisma: fake.client } });
 let ensureCalls = 0;
 mock.module("../services/service.repository.js", { namedExports: { ensureServiceTables: async () => { ensureCalls += 1; } } });
 const collections: any[] = [];
-mock.module("../settlements/settlement.service.js", { namedExports: { settlementService: { settleForBooking: async () => null, createFromCounterCollection: async (...args: any[]) => collections.push(args) } } });
+mock.module("../settlements/settlement.service.js", { namedExports: { settlementService: { settleForBooking: async () => null, chargePartnerCollected: async (...args: any[]) => collections.push(args) } } });
 const { checkoutRepository } = await import("./checkout.repository.js");
 
 function setup(overrides: any = {}) {
@@ -69,7 +69,8 @@ describe("open-tab checkout", () => {
     assert.equal(collections.length, 0);
     await checkoutRepository.processPayment({ checkoutId: "co1", amount: 150000, paymentMethod: "CASH" });
     assert.equal(state.booking.bookingStatus, "COMPLETED");
-    assert.equal(collections[0][1], 300000);
+    // The commission base (court money only) is computed by the settlement service itself.
+    assert.deepEqual(collections.map((args) => args[0]), ["bk1"]);
     state.booking.bookingServices.push({ quantity: 1, price: 10000, unitPrice: 10000, totalPrice: 10000 });
     const reopened = await checkoutRepository.getOrCreateCheckout("bk1");
     assert.equal(reopened.checkout.status, "PENDING");
@@ -79,7 +80,7 @@ describe("open-tab checkout", () => {
     state.checkout().status = "COMPLETED"; // stale status must not block a positive balance
     const result = await checkoutRepository.processPayment({ checkoutId: "co1", amount: 10000, paymentMethod: "CASH" });
     assert.equal(result.isCompleted, true);
-    assert.equal(collections[1][1], 310000);
+    assert.deepEqual(collections.map((args) => args[0]), ["bk1", "bk1"]);
     await checkoutRepository.getOrCreateCheckout("bk1");
     assert.equal(state.booking.bookingStatus, "COMPLETED");
   });

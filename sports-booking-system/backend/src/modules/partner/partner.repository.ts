@@ -5,7 +5,6 @@ import { ConflictError, NotFoundError } from "../../shared/errors/AppError.js";
 import { surfaceCode, surfaceName, normalizedSurfaceCode } from "../../shared/utils/courtSurface.js";
 
 const columnExistsCache = new Map<string, boolean>([
-  ["blog_posts.allow_comments", true],
   ["courts.deposit_percent", true]
 ]);
 
@@ -47,16 +46,6 @@ function bookingOrderBy(sortBy?: string, sortOrder?: string): Prisma.BookingOrde
     default:
       return [{ bookingDate: order }, { startTime: order }, { createdAt: "desc" }];
   }
-}
-
-async function ensureAllowCommentsColumn() {
-  if (await columnExists("blog_posts", "allow_comments")) return;
-
-  await prisma.$executeRaw`
-    alter table blog_posts
-    add column if not exists allow_comments boolean not null default true
-  `;
-  columnExistsCache.set("blog_posts.allow_comments", true);
 }
 
 async function ensureCourtDepositColumn() {
@@ -120,6 +109,41 @@ async function ensureCourtSurfaces<T extends { id: string; courtCount: number; s
     }
     return { ...court, courtCount: target, surfaces: existing };
   });
+}
+
+export type NewCourtSurface = { name: string; surface?: string | null; size?: string | null };
+
+function normalizeDeposit(depositPercent?: number | null) {
+  return depositPercent && depositPercent > 0 ? depositPercent : null;
+}
+
+/**
+ * Creates a court and its sub-courts (codes S01..SNN in the given order) inside the caller's transaction.
+ * courtCount matches the sub-courts so ensureCourtSurfaces never pads them; one createManyAndReturn keeps a
+ * 30-sub-court court to a couple of round-trips, well inside the 20s Supabase transaction budget.
+ */
+async function createCourtTx(
+  tx: Prisma.TransactionClient,
+  data: Prisma.CourtUncheckedCreateInput,
+  depositPercent: number | null,
+  surfaces: NewCourtSurface[]
+) {
+  const court = await tx.court.create({
+    data: { ...data, courtCount: surfaces.length, deposit_percent: depositPercent },
+    include: { category: true }
+  });
+  const rows = await tx.courtSurface.createManyAndReturn({
+    data: surfaces.map((surface, index) => ({
+      courtId: court.id,
+      code: surfaceCode(index + 1),
+      name: surface.name,
+      surface: surface.surface ?? null,
+      size: surface.size ?? null,
+      sortOrder: index,
+      status: "ACTIVE" as const
+    }))
+  });
+  return { ...court, surfaces: [...rows].sort((a, b) => a.sortOrder - b.sortOrder), depositPercent };
 }
 
 export const partnerRepository = {
@@ -217,17 +241,25 @@ export const partnerRepository = {
 
   async createCourt(data: Prisma.CourtUncheckedCreateInput, depositPercent?: number | null) {
     await ensureCourtDepositColumn();
-    const normalized = depositPercent && depositPercent > 0 ? depositPercent : null;
-    return prisma.$transaction(async (tx) => {
-      const court = await tx.court.create({
-        data: { ...data, courtCount: 1, deposit_percent: normalized },
-        include: { category: true }
-      });
-      const surface = await tx.courtSurface.create({
-        data: { courtId: court.id, code: surfaceCode(1), name: surfaceName(court.name, 1), sortOrder: 0, status: "ACTIVE" }
-      });
-      return { ...court, surfaces: [surface], depositPercent: normalized };
-    });
+    return prisma.$transaction((tx) => createCourtTx(tx, data, normalizeDeposit(depositPercent), [{ name: surfaceName(data.name, 1) }]));
+  },
+
+  /** A venue registered with several sports: one court per sport plus its sub-courts, all or nothing. */
+  async createCourts(entries: Array<{ data: Prisma.CourtUncheckedCreateInput; surfaces: NewCourtSurface[] }>, depositPercent?: number | null) {
+    await ensureCourtDepositColumn();
+    const deposit = normalizeDeposit(depositPercent);
+    return prisma.$transaction(
+      async (tx) => {
+        const courts = [];
+        for (const entry of entries) courts.push(await createCourtTx(tx, entry.data, deposit, entry.surfaces));
+        return courts;
+      },
+      { maxWait: 10000, timeout: 20000 }
+    );
+  },
+
+  activeCategoriesByIds(ids: string[]) {
+    return prisma.courtCategory.findMany({ where: { id: { in: ids }, status: "ACTIVE" }, select: { id: true, name: true, slug: true } });
   },
 
   async updateCourt(id: string, data: Prisma.CourtUpdateInput, depositPercent?: number | null) {
@@ -244,6 +276,24 @@ export const partnerRepository = {
       set deposit_percent = ${normalized}
       where id = ${id}
     `;
+  },
+
+  courtTimeChargePolicy(courtId: string, partnerId: string) {
+    return prisma.court.findFirst({
+      where: { id: courtId, partnerId },
+      select: { earlyFreeMinutes: true, earlyMaxMinutes: true, earlyPricePercent: true, extensionPricePercent: true }
+    });
+  },
+
+  updateCourtTimeChargePolicy(
+    courtId: string,
+    data: { earlyFreeMinutes: number; earlyMaxMinutes: number | null; earlyPricePercent: number; extensionPricePercent: number }
+  ) {
+    return prisma.court.update({
+      where: { id: courtId },
+      data,
+      select: { earlyFreeMinutes: true, earlyMaxMinutes: true, earlyPricePercent: true, extensionPricePercent: true }
+    });
   },
 
   addImage(data: Prisma.CourtImageUncheckedCreateInput) {
@@ -526,102 +576,6 @@ export const partnerRepository = {
 
   setCourtApproval(id: string, approvalStatus: ApprovalStatus) {
     return prisma.court.update({ where: { id }, data: { approvalStatus } });
-  },
-
-  async listBlogs(userId: string) {
-    const allowCommentsSelect = await columnExists("blog_posts", "allow_comments")
-      ? Prisma.sql`coalesce(allow_comments, true)`
-      : Prisma.sql`true`;
-
-    return prisma.$queryRaw<any[]>(Prisma.sql`
-      select b.id, b.title, b.slug, b.excerpt, b.content, b.cover_image_url as "coverImageUrl",
-        b.status::text, b.visibility::text, b.created_at as "createdAt", b.updated_at as "updatedAt",
-        b.published_at as "publishedAt", ${allowCommentsSelect} as "allowComments",
-        reject_reason.reason as "rejectionReason"
-      from blog_posts b
-      left join lateral (
-        select mh.reason from moderation_history mh
-        where mh.entity_type = 'BLOG' and mh.entity_id = b.id and mh.action = 'REJECTED'
-        order by mh.created_at desc
-        limit 1
-      ) reject_reason on true
-      where b.author_id = ${userId} order by b.created_at desc
-    `);
-  },
-
-  async findBlog(id: string, userId: string) {
-    const allowCommentsSelect = await columnExists("blog_posts", "allow_comments")
-      ? Prisma.sql`coalesce(allow_comments, true)`
-      : Prisma.sql`true`;
-
-    return prisma.$queryRaw<any[]>(Prisma.sql`
-      select b.id, b.title, b.slug, b.excerpt, b.content, b.cover_image_url as "coverImageUrl",
-        b.status::text, b.visibility::text, b.created_at as "createdAt", b.updated_at as "updatedAt",
-        b.published_at as "publishedAt", ${allowCommentsSelect} as "allowComments",
-        reject_reason.reason as "rejectionReason"
-      from blog_posts b
-      left join lateral (
-        select mh.reason from moderation_history mh
-        where mh.entity_type = 'BLOG' and mh.entity_id = b.id and mh.action = 'REJECTED'
-        order by mh.created_at desc
-        limit 1
-      ) reject_reason on true
-      where b.id = ${id} and b.author_id = ${userId} limit 1
-    `);
-  },
-
-  async createBlog(userId: string, input: any) {
-    await ensureAllowCommentsColumn();
-
-    return prisma.$queryRaw<any[]>`
-      insert into blog_posts (author_id, title, slug, excerpt, content, cover_image_url, visibility, status, allow_comments)
-      values (${userId}, ${input.title}, ${input.slug}, ${input.excerpt ?? null},
-        ${input.content}, ${input.coverImageUrl || null}, ${input.visibility}::blog_visibility, 'DRAFT'::blog_post_status,
-        ${input.allowComments ?? true})
-      returning id, title, slug, excerpt, content, cover_image_url as "coverImageUrl",
-        status::text, visibility::text, coalesce(allow_comments, true) as "allowComments",
-        created_at as "createdAt", updated_at as "updatedAt"
-    `;
-  },
-
-  async updateBlog(id: string, userId: string, input: any) {
-    await ensureAllowCommentsColumn();
-
-    return prisma.$queryRaw<any[]>`
-      update blog_posts set title = ${input.title}, slug = ${input.slug}, excerpt = ${input.excerpt ?? null},
-        content = ${input.content}, cover_image_url = ${input.coverImageUrl || null},
-        visibility = ${input.visibility}::blog_visibility, allow_comments = ${input.allowComments ?? true}, updated_at = now()
-      where id = ${id} and author_id = ${userId} and status = 'DRAFT'::blog_post_status
-      returning id, title, slug, excerpt, content, cover_image_url as "coverImageUrl",
-        status::text, visibility::text, coalesce(allow_comments, true) as "allowComments",
-        created_at as "createdAt", updated_at as "updatedAt"
-    `;
-  },
-
-  async updateBlogComments(id: string, userId: string, allowComments: boolean) {
-    await ensureAllowCommentsColumn();
-
-    return prisma.$queryRaw<any[]>`
-      update blog_posts set allow_comments = ${allowComments}, updated_at = now()
-      where id = ${id} and author_id = ${userId}
-      returning id, title, slug, excerpt, content, cover_image_url as "coverImageUrl",
-        status::text, visibility::text, coalesce(allow_comments, true) as "allowComments",
-        created_at as "createdAt", updated_at as "updatedAt", published_at as "publishedAt"
-    `;
-  },
-
-  submitBlog(id: string, userId: string) {
-    return prisma.$executeRaw`
-      update blog_posts set status = 'PENDING'::blog_post_status, updated_at = now()
-      where id = ${id} and author_id = ${userId} and status = 'DRAFT'::blog_post_status
-    `;
-  },
-
-  deleteBlog(id: string, userId: string) {
-    return prisma.$executeRaw`
-      delete from blog_posts where id = ${id} and author_id = ${userId}
-        and status = 'DRAFT'::blog_post_status
-    `;
   },
 
   listRecipients(partnerId: string) {

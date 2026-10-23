@@ -148,8 +148,9 @@ export async function calculateBookingPrice(input: CalculateBookingPriceInput): 
 
   if (input.services && input.services.length > 0) {
     const serviceIds = input.services.map((s) => s.serviceId);
-    const dbServices = await prisma.service.findMany({ where: { id: { in: serviceIds } } });
-    const courtServices = await prisma.courtService.findMany({ where: { id: { in: serviceIds }, status: "ACTIVE" } });
+    // Only this court's active catalog, as in bookingRepository.services: never another court's product.
+    const dbServices = await prisma.service.findMany({ where: { id: { in: serviceIds }, courtId: input.courtId, status: "ACTIVE" } });
+    const courtServices = await prisma.courtService.findMany({ where: { id: { in: serviceIds }, courtId: input.courtId, status: "ACTIVE" } });
 
     const svcMap = new Map<string, { id: string; name: string; price: number }>();
     dbServices.forEach((s) => svcMap.set(s.id, { id: s.id, name: s.name, price: Number(s.price) }));

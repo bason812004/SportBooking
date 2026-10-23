@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, FolderCheck, MapPin, XCircle } from "lucide-react";
+import { CheckCircle2, Eye, FolderCheck, ImageOff, MapPin, XCircle } from "lucide-react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
 import { LoadingState, ErrorState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
 import { AdminReasonModal } from "./AdminReasonModal";
 import { PageHero } from "../../components/common/PageHero";
+import { courtAddress } from "../../lib/format";
 
 export function AdminPendingCourtsPage() {
   const queryClient = useQueryClient();
@@ -25,6 +27,10 @@ export function AdminPendingCourtsPage() {
       toast.success("Đã duyệt sân");
       queryClient.invalidateQueries({ queryKey: ["admin-pending-courts"] });
       queryClient.invalidateQueries({ queryKey: ["admin-dashboard"] });
+    },
+    onError: (error) => {
+      toast.error(error.message);
+      queryClient.invalidateQueries({ queryKey: ["admin-pending-courts"] });
     }
   });
 
@@ -33,6 +39,11 @@ export function AdminPendingCourtsPage() {
     onSuccess: () => {
       toast.success("Đã từ chối sân");
       setRejectingId(null);
+      queryClient.invalidateQueries({ queryKey: ["admin-pending-courts"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-dashboard"] });
+    },
+    onError: (error) => {
+      toast.error(error.message);
       queryClient.invalidateQueries({ queryKey: ["admin-pending-courts"] });
     }
   });
@@ -54,37 +65,69 @@ export function AdminPendingCourtsPage() {
         </div>
       ) : (
         <div className="grid gap-4">
-          {items.map((court: any) => (
-            <article key={court.id} className="rounded-2xl border bg-white p-5">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap gap-2">
-                    <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">Chờ duyệt</span>
-                    {court.sportType && (
-                      <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-bold text-sky-800">{court.sportType}</span>
+          {items.map((court) => {
+            // A new court usually only has image requests: show those rather than a stock placeholder photo.
+            const thumbnail = court.images?.[0]?.imageUrl ?? court.imageRequests?.[0]?.imageUrl;
+            const imageCount = (court._count?.images ?? 0) + (court._count?.imageRequests ?? 0);
+            const partnerApproved = court.partner?.approvalStatus === "APPROVED";
+            return (
+              <article key={court.id} className="rounded-2xl border bg-white p-4 sm:p-5">
+                <div className="flex flex-wrap items-start gap-4">
+                  <Link to={`/admin/courts/pending/${court.id}`} className="block h-24 w-32 shrink-0 overflow-hidden rounded-xl bg-slate-100">
+                    {thumbnail ? (
+                      <img src={thumbnail} alt={court.name} className="h-full w-full object-cover" loading="lazy" />
+                    ) : (
+                      <span className="grid h-full w-full place-items-center text-slate-400"><ImageOff className="h-6 w-6" /></span>
                     )}
+                  </Link>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap gap-2">
+                      <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800">Chờ duyệt</span>
+                      {court.category?.name && (
+                        <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-bold text-sky-800">{court.category.name}</span>
+                      )}
+                      {(court.courtCount ?? 0) > 0 && (
+                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">{court.courtCount} sân con</span>
+                      )}
+                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">
+                        {imageCount ? `${imageCount} ảnh` : "Chưa có ảnh"}
+                        {court._count?.imageRequests ? ` · ${court._count.imageRequests} chờ duyệt` : ""}
+                      </span>
+                      {!partnerApproved && (
+                        <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-bold text-red-700">Đối tác chưa được duyệt</span>
+                      )}
+                    </div>
+                    <Link to={`/admin/courts/pending/${court.id}`} className="mt-2 block text-lg font-bold hover:text-emerald-700 hover:underline">
+                      {court.name}
+                    </Link>
+                    {court.address && (
+                      <p className="mt-1 flex items-center gap-1 text-sm text-slate-500">
+                        <MapPin className="h-3.5 w-3.5 shrink-0" /> {courtAddress(court)}
+                      </p>
+                    )}
+                    {court.partner && <p className="mt-1 text-sm text-slate-500">Đối tác: {court.partner.businessName}</p>}
                   </div>
-                  <h2 className="mt-2 text-lg font-bold">{court.name}</h2>
-                  {court.address && (
-                    <p className="mt-1 flex items-center gap-1 text-sm text-slate-500">
-                      <MapPin className="h-3.5 w-3.5" /> {court.address}
-                    </p>
-                  )}
-                  {court.partner && (
-                    <p className="mt-1 text-sm text-slate-500">Đối tác: {court.partner.businessName}</p>
-                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <Link to={`/admin/courts/pending/${court.id}`}>
+                      <Button variant="secondary">
+                        <Eye className="h-4 w-4" /> Xem chi tiết
+                      </Button>
+                    </Link>
+                    <Button
+                      disabled={approve.isPending || !partnerApproved}
+                      title={partnerApproved ? undefined : "Hãy duyệt hồ sơ đối tác trước"}
+                      onClick={() => approve.mutate(court.id)}
+                    >
+                      <CheckCircle2 className="h-4 w-4" /> Duyệt
+                    </Button>
+                    <Button disabled={reject.isPending} variant="danger" onClick={() => setRejectingId(court.id)}>
+                      <XCircle className="h-4 w-4" /> Từ chối
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button disabled={approve.isPending} onClick={() => approve.mutate(court.id)}>
-                    <CheckCircle2 className="h-4 w-4" /> Duyệt
-                  </Button>
-                  <Button disabled={reject.isPending} variant="danger" onClick={() => setRejectingId(court.id)}>
-                    <XCircle className="h-4 w-4" /> Từ chối
-                  </Button>
-                </div>
-              </div>
-            </article>
-          ))}
+              </article>
+            );
+          })}
         </div>
       )}
 

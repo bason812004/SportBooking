@@ -67,9 +67,9 @@ export const blogCommentRepository = {
       ? "coalesce(allow_comments, true)"
       : "true";
 
-    return prisma.$queryRawUnsafe<Array<{ id: string; allowComments: boolean }>>(
+    return prisma.$queryRawUnsafe<Array<{ id: string; authorId: string; allowComments: boolean }>>(
       `
-        select id, ${allowCommentsSelect} as "allowComments"
+        select id, author_id as "authorId", ${allowCommentsSelect} as "allowComments"
         from blog_posts
         where slug = $1
           and status = 'PUBLISHED'::blog_post_status

@@ -41,11 +41,14 @@ const envSchema = z.object({
   PAYMENT_BANK_OWNER: z.string().default("NGUYEN BA SON"),
   PAYMENT_QR_EXPIRES_MINUTES: z.coerce.number().int().positive().default(15),
   BOOKING_HOLD_EXPIRES_MINUTES: z.coerce.number().int().positive().default(15),
-  PAYOUT_PROVIDER: z.string().default("fake"),
+  // manual: an admin approves, transfers from the bank and confirms "Đã chuyển khoản".
+  // fake: development simulator that auto-confirms transfers without moving money (refused in production).
+  PAYOUT_PROVIDER: z.enum(["manual", "fake"]).default("manual"),
   PAYOUT_WEBHOOK_SECRET: z.string().optional(),
   PAYOUT_FAKE_SUCCESS_RATE: z.coerce.number().min(0).max(1).default(0.8),
   APP_BASE_URL: z.string().default("http://localhost:8080"),
-  WITHDRAWAL_AUTO_APPROVE_LIMIT: z.coerce.number().min(0).default(5_000_000),
+  // 0 = every withdrawal waits for an admin. A positive amount auto-approves requests up to it.
+  WITHDRAWAL_AUTO_APPROVE_LIMIT: z.coerce.number().min(0).default(0),
   ML_SERVICE_URL: z.string().optional(),
   ML_SERVICE_TIMEOUT_MS: z.coerce.number().int().positive().default(2000),
   ML_MIN_HISTORY: z.coerce.number().int().positive().default(50),

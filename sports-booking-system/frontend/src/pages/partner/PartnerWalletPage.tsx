@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Banknote, Clock3, TrendingUp, WalletCards } from "lucide-react";
+import { Banknote, Clock3, Receipt, TrendingUp, WalletCards } from "lucide-react";
 import { toast } from "sonner";
 import { ErrorState, LoadingState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
@@ -34,6 +34,8 @@ export function PartnerWalletPage() {
   if (wallet.isError) return <ErrorState message={wallet.error.message} />;
 
   const data = wallet.data!;
+  const hasDebt = data.commissionDebt > 0;
+  const rate = data.commissionRate ?? 0;
 
   return (
     <div className="space-y-6">
@@ -42,18 +44,25 @@ export function PartnerWalletPage() {
           <h1 className="text-3xl font-bold">Ví & Quyết toán</h1>
           <p className="mt-2 text-slate-600">Theo dõi doanh thu đã quyết toán và tạo yêu cầu rút tiền về tài khoản ngân hàng.</p>
         </div>
-        <Button disabled={data.availableBalance <= 0} onClick={() => setWithdrawOpen(true)}>
+        <Button
+          disabled={data.availableBalance <= 0 || hasDebt}
+          title={hasDebt ? "Hãy thanh toán công nợ hoa hồng trước khi rút tiền" : undefined}
+          onClick={() => setWithdrawOpen(true)}
+        >
           <Banknote className="h-4 w-4" />
           Rút tiền
         </Button>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <StatCard icon={<WalletCards className="h-5 w-5" />} label="Số dư khả dụng" value={money(data.availableBalance)} tone="text-emerald-700" />
         <StatCard icon={<Clock3 className="h-5 w-5" />} label="Chờ quyết toán" value={money(data.pendingBalance)} tone="text-amber-600" />
         <StatCard icon={<TrendingUp className="h-5 w-5" />} label="Tổng doanh thu" value={money(data.totalEarned)} />
         <StatCard icon={<Banknote className="h-5 w-5" />} label="Đã rút" value={money(data.totalWithdrawn)} />
+        <StatCard icon={<Receipt className="h-5 w-5" />} label="Công nợ hoa hồng" value={money(data.commissionDebt)} tone={hasDebt ? "text-red-600" : ""} />
       </div>
+
+      {hasDebt && <CommissionDebtCard wallet={data} />}
 
       <div className="flex flex-wrap gap-2">
         <TabButton active={tab === "overview"} onClick={() => setTab("overview")}>Tổng quan</TabButton>
@@ -69,17 +78,35 @@ export function PartnerWalletPage() {
               <li>Khi khách thanh toán online thành công, tiền thực nhận được cộng vào mục <b>Chờ quyết toán</b>.</li>
               <li>Khi đơn đặt sân hoàn thành, khoản tiền chuyển sang <b>Số dư khả dụng</b> và có thể rút.</li>
               <li>Nếu đơn bị hủy trước khi hoàn thành, khoản chờ quyết toán tương ứng sẽ bị thu hồi.</li>
-              <li>Đơn thanh toán tiền mặt tại sân không đi qua ví (bạn đã nhận tiền trực tiếp).</li>
+              <li>
+                Tiền khách trả trực tiếp cho bạn (tiền mặt, QR hoặc chuyển khoản vào tài khoản của bạn) không đi qua ví, nhưng vẫn tính{" "}
+                <b>{rate}% hoa hồng trên tiền sân</b> khi đơn hoàn thành. Dịch vụ bạn bán tại quầy không tính hoa hồng.
+              </li>
+              <li>Hoa hồng đó được trừ vào số dư khả dụng; nếu không đủ, phần thiếu được ghi thành <b>công nợ hoa hồng</b>.</li>
             </ul>
           </div>
           <div className="rounded-2xl border border-line bg-white p-5">
             <h2 className="text-lg font-bold">Quy tắc tính doanh thu</h2>
             <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-slate-600">
               <li>Doanh thu gốc = tổng tiền đơn (đã trừ voucher bạn tài trợ).</li>
-              <li>Thực nhận = doanh thu gốc − hoa hồng nền tảng theo tỷ lệ áp dụng cho bạn.</li>
+              <li>Thực nhận = doanh thu gốc − hoa hồng nền tảng theo tỷ lệ áp dụng cho bạn ({rate}%).</li>
               <li>Yêu cầu rút tiền sẽ tạm giữ số tiền tương ứng cho đến khi admin xử lý; nếu bị từ chối, tiền được hoàn lại ví.</li>
+              <li>Khi còn công nợ, tiền online mới về ví sẽ tự trừ nợ trước và bạn chưa thể tạo yêu cầu rút tiền.</li>
             </ul>
           </div>
+          {(data.debtPayments?.length ?? 0) > 0 && (
+            <div className="rounded-2xl border border-line bg-white p-5 lg:col-span-2">
+              <h2 className="text-lg font-bold">Lịch sử thanh toán công nợ</h2>
+              <ul className="mt-3 divide-y divide-slate-100 text-sm">
+                {data.debtPayments!.map((payment) => (
+                  <li key={payment.id} className="flex flex-wrap justify-between gap-2 py-2">
+                    <span>{new Date(payment.createdAt).toLocaleString("vi-VN")}{payment.note ? ` · ${payment.note}` : ""}</span>
+                    <b className="text-emerald-700">{money(payment.amount)}</b>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </section>
       )}
 
@@ -96,6 +123,7 @@ export function PartnerWalletPage() {
                   <THead>
                     <tr>
                       <Th>Mã booking</Th>
+                      <Th>Nguồn tiền</Th>
                       <Th>Ngày tạo</Th>
                       <Th className="text-right">Doanh thu gốc</Th>
                       <Th className="text-right">Hoa hồng</Th>
@@ -108,6 +136,13 @@ export function PartnerWalletPage() {
                     {(settlements.data?.items ?? []).map((item) => (
                       <Tr key={item.id}>
                         <Td className="font-medium">{item.booking?.bookingCode ?? item.bookingId}</Td>
+                        <Td>
+                          {item.collectedBy === "PARTNER" ? (
+                            <span title="Bạn đã nhận tiền trực tiếp; hoa hồng được trừ vào ví hoặc ghi công nợ">Bạn tự thu</span>
+                          ) : (
+                            "Qua nền tảng"
+                          )}
+                        </Td>
                         <Td>{new Date(item.createdAt).toLocaleString("vi-VN")}</Td>
                         <Td className="text-right">{money(item.grossAmount)}</Td>
                         <Td className="text-right text-red-600">
@@ -120,7 +155,7 @@ export function PartnerWalletPage() {
                     ))}
                     {(settlements.data?.items ?? []).length === 0 && (
                       <tr>
-                        <Td className="p-8 text-center text-slate-500" colSpan={7}>Chưa có quyết toán nào.</Td>
+                        <Td className="p-8 text-center text-slate-500" colSpan={8}>Chưa có quyết toán nào.</Td>
                       </tr>
                     )}
                   </TBody>
@@ -204,8 +239,10 @@ function WithdrawModal({ open, wallet, onClose }: { open: boolean; wallet: Partn
     onSuccess: async (result) => {
       if (result.status === "PENDING") {
         toast.success("Đã gửi yêu cầu rút tiền, chờ Admin duyệt");
-      } else if (result.status === "PROCESSING" || result.status === "APPROVED") {
-        toast.success("Yêu cầu rút tiền đã được duyệt tự động, đang chuyển khoản...");
+      } else if (result.status === "APPROVED") {
+        toast.success("Yêu cầu rút tiền đã được duyệt, chờ admin chuyển khoản");
+      } else if (result.status === "PROCESSING") {
+        toast.success("Yêu cầu rút tiền đã được duyệt, đang chuyển khoản...");
       } else if (result.status === "PAID") {
         toast.success("Rút tiền thành công");
       } else if (result.status === "FAILED") {
@@ -250,6 +287,36 @@ function WithdrawModal({ open, wallet, onClose }: { open: boolean; wallet: Partn
         </div>
       </div>
     </div>
+  );
+}
+
+/** Commission owed on money the partner collected itself, and how to pay it. */
+function CommissionDebtCard({ wallet }: { wallet: PartnerWallet }) {
+  const transfer = wallet.debtTransfer;
+  return (
+    <section className="grid gap-5 rounded-2xl border border-red-200 bg-red-50 p-5 md:grid-cols-[minmax(0,1fr)_200px]">
+      <div className="text-sm text-red-900">
+        <h2 className="text-lg font-bold">Bạn đang nợ {money(wallet.commissionDebt)} hoa hồng</h2>
+        <p className="mt-1">
+          Đây là hoa hồng trên tiền sân khách trả trực tiếp cho bạn mà số dư ví chưa đủ để trừ. Tiền online mới về ví sẽ tự trừ nợ trước;
+          bạn cũng có thể chuyển khoản để trả ngay. Khi còn nợ, bạn chưa thể rút tiền.
+        </p>
+        {transfer && (
+          <dl className="mt-3 grid gap-1 sm:grid-cols-[140px_minmax(0,1fr)]">
+            <dt className="font-semibold">Ngân hàng</dt>
+            <dd className="uppercase">{transfer.bankName}</dd>
+            <dt className="font-semibold">Số tài khoản</dt>
+            <dd className="font-mono">{transfer.accountNumber}</dd>
+            <dt className="font-semibold">Chủ tài khoản</dt>
+            <dd>{transfer.accountHolder}</dd>
+            <dt className="font-semibold">Nội dung</dt>
+            <dd className="font-mono font-bold">{transfer.transferContent}</dd>
+          </dl>
+        )}
+        <p className="mt-3 text-xs">Sau khi chuyển khoản, quản trị viên sẽ đối chiếu và ghi nhận; bạn sẽ nhận được thông báo.</p>
+      </div>
+      {transfer && <img src={transfer.qrCodeUrl} alt="QR thanh toán công nợ" className="w-full rounded-xl bg-white p-2" />}
+    </section>
   );
 }
 

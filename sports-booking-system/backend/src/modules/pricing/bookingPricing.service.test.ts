@@ -7,11 +7,13 @@ mock.module("../dynamic-pricing/dynamicPricing.service.js", { namedExports: { dy
   prefetch: async () => ({}), resolveFromPrefetched: () => ({ basePrice: 200000, dynamicAdjustmentAmount: 0, finalPrice: 200000 })
 } } });
 const { calculateBookingPrice } = await import("./bookingPricing.service.js");
+const serviceWheres: any[] = [];
 function setup(discount = 0) {
+  serviceWheres.length = 0;
   fake.setModels({
     court: { findFirst: async () => ({ id: "c1", name: "Court", address: "", deposit_percent: 50, surfaces: [], images: [] }) },
-    service: { findMany: async () => [{ id: "water", name: "Water", price: 50000 }] },
-    courtService: { findMany: async () => [] },
+    service: { findMany: async ({ where }: any) => { serviceWheres.push(where); return [{ id: "water", name: "Water", price: 50000 }]; } },
+    courtService: { findMany: async ({ where }: any) => { serviceWheres.push(where); return []; } },
     voucher: { findFirst: async () => ({ id: "v1", status: "ACTIVE", discountType: "FIXED", discountValue: discount, minBookingAmount: 0 }) }
   });
 }
@@ -21,6 +23,15 @@ it("200k court + 100k services requires only a 100k deposit and leaves 200k at c
   assert.equal(quote.depositBase, 200000);
   assert.equal(quote.depositAmount, 100000);
   assert.equal(quote.remainingAmount, 200000);
+});
+it("only looks up the booked court's active services", async () => {
+  setup();
+  await calculateBookingPrice({ courtId: "c1", slots: [{ date: "2026-09-19", startTime: "18:00", endTime: "19:00" }], services: [{ serviceId: "water", quantity: 1 }] });
+  assert.equal(serviceWheres.length, 2);
+  for (const where of serviceWheres) {
+    assert.equal(where.courtId, "c1");
+    assert.equal(where.status, "ACTIVE");
+  }
 });
 it("voucher reduces the court deposit base without making it negative", async () => {
   for (const [discount, base, deposit] of [[20000, 180000, 90000], [250000, 0, 0]]) {

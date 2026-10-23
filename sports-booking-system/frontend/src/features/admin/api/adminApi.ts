@@ -3,12 +3,14 @@ import type {
   ApiResponse,
   AdminBooking,
   AdminCourt,
+  AdminCourtReview,
   AdminDashboard,
   AdminFinanceReport,
   AdminFinanceTransaction,
   AdminNotificationCampaign,
   AdminRefund,
   AdminPartner,
+  AdminPendingCourt,
   AdminVoucher,
   AdminVoucherInput,
   AuditLog,
@@ -165,7 +167,11 @@ export const adminApi = {
     return data.data;
   },
   async pendingCourts(params: Record<string, string | number | undefined> = {}) {
-    const { data } = await api.get<ApiResponse<Paginated<Court>>>("/admin/courts/pending", { params: clean(params) });
+    const { data } = await api.get<ApiResponse<Paginated<AdminPendingCourt>>>("/admin/courts/pending", { params: clean(params) });
+    return data.data;
+  },
+  async courtReview(id: string) {
+    const { data } = await api.get<ApiResponse<AdminCourtReview>>(`/admin/courts/${id}/review`);
     return data.data;
   },
   async approveCourt(id: string) {
@@ -282,6 +288,11 @@ export const adminApi = {
   },
   async partnerWalletDetail(partnerId: string) {
     const { data } = await api.get<ApiResponse<PartnerWallet>>(`/admin/wallets/partner-wallets/${partnerId}`);
+    return data.data;
+  },
+  /** The partner transferred commission debt to the platform account. */
+  async recordCommissionDebtPayment(partnerId: string, payload: { amount: number; note?: string }) {
+    const { data } = await api.post<ApiResponse<PartnerWallet>>(`/admin/wallets/partner-wallets/${partnerId}/debt-payments`, payload);
     return data.data;
   },
   async settlements(params: Record<string, string | number | undefined> = {}) {

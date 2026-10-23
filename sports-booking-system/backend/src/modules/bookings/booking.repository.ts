@@ -239,10 +239,26 @@ export const bookingRepository = {
     return Number(row?.depositPercent ?? 0);
   },
 
-  async services(ids: string[]) {
+  /**
+   * What the platform collected online for this booking (its share of an order's QR), or 0 when it was
+   * paid at the counter. Webhooks allocate the received amount to each booking's depositAmount.
+   */
+  async onlineCollectedAmount(tx: Prisma.TransactionClient, booking: { id: string; bookingOrderId: string | null; depositAmount: unknown }) {
+    const paid = await tx.payment.findFirst({
+      where: { status: "PAID", OR: [{ bookingId: booking.id }, ...(booking.bookingOrderId ? [{ bookingOrderId: booking.bookingOrderId }] : [])] },
+      select: { id: true }
+    });
+    return paid ? Number(booking.depositAmount) : 0;
+  },
+
+  /**
+   * Active services sold at this court — the same rows its catalog lists — so a crafted request cannot
+   * attach, or draw down the inventory of, another court's or another partner's product.
+   */
+  async services(ids: string[], courtId: string) {
     await ensureServiceTables();
-    const courtSvcs = await prisma.courtService.findMany({ where: { id: { in: ids }, status: "ACTIVE" } });
-    const directSvcs = await prisma.service.findMany({ where: { id: { in: ids } } });
+    const courtSvcs = await prisma.courtService.findMany({ where: { id: { in: ids }, courtId, status: "ACTIVE" } });
+    const directSvcs = await prisma.service.findMany({ where: { id: { in: ids }, courtId, status: "ACTIVE" } });
     const map = new Map<string, { id: string; name: string; price: any }>();
     courtSvcs.forEach((s) => map.set(s.id, { id: s.id, name: s.name, price: s.price }));
     directSvcs.forEach((s) => map.set(s.id, { id: s.id, name: s.name, price: s.price }));

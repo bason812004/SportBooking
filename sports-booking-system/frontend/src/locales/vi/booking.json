@@ -64,7 +64,7 @@
     "platformCollected": "Nền tảng thu",
     "partnerCollected": "Partner thu tại quầy",
     "settlementDescription": "Theo dõi doanh thu và hoa hồng theo nguồn thu online hoặc tại quầy.",
-    "counterCancellation": "Hủy ghi nhận thu tại quầy; số dư ví không thay đổi.",
+    "counterCancellation": "Hủy ghi nhận thu tại quầy và miễn hoa hồng của khoản này: công nợ hoa hồng được giảm trước, phần còn lại hoàn vào ví đối tác.",
     "counterInstructions": "Vui lòng thanh toán tại quầy. Nhân viên sẽ xác nhận số tiền đã thu; hóa đơn tự cập nhật."
   }
 }

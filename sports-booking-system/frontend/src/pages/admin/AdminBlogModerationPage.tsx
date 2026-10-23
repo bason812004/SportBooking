@@ -69,7 +69,8 @@ export function AdminBlogModerationPage() {
   const [status, setStatus] = useState("PENDING");
   const [authorRole, setAuthorRole] = useState("");
   const [page, setPage] = useState(1);
-  const [pending, setPending] = useState<{ id: string; action: "approve" | "reject" | "hide" } | null>(null);
+  // "restore" publishes a hidden post again (the approve endpoint accepts HIDDEN posts).
+  const [pending, setPending] = useState<{ id: string; action: "approve" | "reject" | "hide" | "restore" } | null>(null);
   const [detail, setDetail] = useState<PendingBlog | null>(null);
 
   const blogs = useQuery({
@@ -79,9 +80,9 @@ export function AdminBlogModerationPage() {
   });
 
   const action = useMutation({
-    mutationFn: ({ id, action, reason }: { id: string; action: "approve" | "reject" | "hide"; reason: string }) => {
+    mutationFn: ({ id, action, reason }: { id: string; action: "approve" | "reject" | "hide" | "restore"; reason: string }) => {
       if (action === "hide") return adminApi.hideBlog(id, reason);
-      return adminApi.moderateBlog(id, action, reason);
+      return adminApi.moderateBlog(id, action === "restore" ? "approve" : action, reason);
     },
     onSuccess: async () => {
       toast.success("Đã kiểm duyệt bài viết");
@@ -102,7 +103,8 @@ export function AdminBlogModerationPage() {
   const modalTitleMap: Record<string, string> = {
     approve: "Xuất bản bài viết",
     reject: "Từ chối bài viết",
-    hide: "Ẩn bài viết"
+    hide: "Ẩn bài viết",
+    restore: "Hiện lại bài viết"
   };
 
   return (
@@ -188,6 +190,12 @@ export function AdminBlogModerationPage() {
                         <Button disabled={action.isPending} onClick={() => setPending({ id: blog.id, action: "approve" })}>
                           <CheckCircle2 className="h-4 w-4" />
                           Duyệt lại
+                        </Button>
+                      )}
+                      {blog.status === "HIDDEN" && (
+                        <Button disabled={action.isPending} onClick={() => setPending({ id: blog.id, action: "restore" })}>
+                          <Eye className="h-4 w-4" />
+                          Hiện lại
                         </Button>
                       )}
                     </div>

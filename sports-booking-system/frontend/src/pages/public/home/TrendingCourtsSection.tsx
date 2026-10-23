@@ -1,6 +1,7 @@
 import { useCourts } from "../../../features/courts/hooks/useCourts";
 import { CourtCard } from "./CourtCard";
 import { Reveal, SectionShell, SkeletonCard } from "./homeUtils";
+import { courtArea } from "../../../lib/format";
 
 const FALLBACK_IMAGES = [
   "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=900&q=80",
@@ -34,7 +35,7 @@ export function TrendingCourtsSection() {
   const displayItems = items.slice(0, 4).map((court, index) => ({
     id: court.id,
     name: court.name,
-    area: `${court.district}, ${court.city}`,
+    area: courtArea(court),
     price: `${Number(court.minPrice ?? 150000).toLocaleString("vi-VN")}đ/giờ`,
     rating: court.averageRating ?? 4.7,
     bookings: court.reviewCount ? court.reviewCount * 32 : 980 + index * 310,

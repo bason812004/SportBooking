@@ -1,6 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 import { settlementService } from "../settlements/settlement.service.js";
+import { latePaymentRefundAdminEvent } from "../bookings/booking.calculations.js";
+import { enqueueAdminEvent } from "../notifications/notificationOutbox.repository.js";
 
 const webhookBookingInclude = {
   booking: {
@@ -118,6 +120,8 @@ export const paymentRepository = {
           where: { id: { in: lateBookings.map((b) => b.id) } },
           data: { bookingStatus: "CANCELLED", paymentStatus: "PAID", cancelReason: LATE_PAYMENT_CANCEL_REASON }
         });
+        // Queued in this transaction, so the admin notice exists exactly when the money is recorded.
+        await enqueueAdminEvent(tx, latePaymentRefundAdminEvent(latePayment.id, lateBookings, input.amount));
         console.log(`[applyWebhook] Late payment ${payment.id} (${payment.status}) received ${input.amount}; bookings kept cancelled, refund needed.`);
         return { payment: latePayment, idempotent: false, bookings: lateBookings, lateRefund: { amount: input.amount } };
       }

@@ -15,7 +15,7 @@ export const teamPostController = {
 
   update: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.update(req.params.id, req.user!.id, req.body))),
 
-  delete: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.delete(req.params.id, req.user!.id))),
+  delete: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.delete(req.params.id, req.user!))),
 
   join: asyncHandler(async (req, res) => sendSuccess(res, await teamPostService.join(req.params.id, req.user!.id))),
 

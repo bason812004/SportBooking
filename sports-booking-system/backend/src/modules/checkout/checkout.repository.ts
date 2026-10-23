@@ -158,8 +158,8 @@ export const checkoutRepository = {
       });
 
       if (isCompleted) {
-        await settlementService.createFromCounterCollection(checkout.bookingId, Number(checkout.totalAmount), tx);
         await settlementService.settleForBooking(checkout.bookingId, tx);
+        await settlementService.chargePartnerCollected(checkout.bookingId, tx);
         await tx.booking.update({
           where: { id: checkout.bookingId },
           data: {

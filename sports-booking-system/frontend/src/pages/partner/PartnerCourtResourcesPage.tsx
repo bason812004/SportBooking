@@ -22,6 +22,7 @@ import { BlockHistoryList } from "../../components/partner/BlockHistoryList";
 import { PriceScheduleGrid, type PriceRule, type PriceScheduleRow } from "../../components/partner/PriceScheduleGrid";
 import { PricePopover } from "../../components/partner/PricePopover";
 import { partnerApi, type PartnerSurfaceSlot } from "../../features/partner/api/partnerApi";
+import { CourtTimeChargePolicyCard } from "../../features/partner/components/CourtTimeChargePolicyCard";
 import { timeText } from "../../lib/format";
 
 type PriceForm = { dayType: string; startTime: string; endTime: string; price: number; note?: string };
@@ -497,6 +498,8 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
                 ))}
             </div>
           )}
+
+          <CourtTimeChargePolicyCard courtId={id} />
         </>
       )}
 

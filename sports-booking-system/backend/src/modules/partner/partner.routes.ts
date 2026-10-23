@@ -5,6 +5,7 @@ import { authMiddleware } from "../../middlewares/auth.middleware.js";
 import { requireRole } from "../../middlewares/role.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
 import {
+  courtRegistrationSchema,
   courtWriteSchema,
   courtStatusSchema,
   courtSurfaceStatusSchema,
@@ -16,8 +17,6 @@ import {
   courtBlockBulkWriteSchema,
   courtAvailabilityGridQuerySchema,
   bookingQuerySchema,
-  blogCommentsToggleSchema,
-  blogWriteSchema,
   calendarQuerySchema,
   imageSchema,
   imageOrderSchema,
@@ -26,9 +25,12 @@ import {
   serviceWriteSchema,
   voucherWriteSchema,
   recipientWriteSchema,
-  recipientUpdateSchema
+  recipientUpdateSchema,
+  timeChargePolicySchema
 } from "./partner.validation.js";
 import { partnerController } from "./partner.controller.js";
+// Partners write posts with the same rules as users (see blogService).
+import { blogCommentsToggleSchema, blogWriteSchema } from "../blogs/blog.validation.js";
 import { courtImageController } from "../court-images/courtImage.controller.js";
 import { imageCourtParams, imageRequestParams } from "../court-images/courtImage.validation.js";
 
@@ -41,7 +43,10 @@ partnerRoutes.get("/profile", partnerController.profile);
 partnerRoutes.put("/profile", validate(profileUpdateSchema), partnerController.updateProfile);
 partnerRoutes.get("/courts", partnerController.courts);
 partnerRoutes.post("/courts", validate(courtWriteSchema), partnerController.createCourt);
+partnerRoutes.post("/courts/register", validate(courtRegistrationSchema), partnerController.registerCourts);
 partnerRoutes.get("/courts/:id", partnerController.courtDetail);
+partnerRoutes.get("/courts/:id/time-charge-policy", partnerController.timeChargePolicy);
+partnerRoutes.put("/courts/:id/time-charge-policy", validate(timeChargePolicySchema), partnerController.updateTimeChargePolicy);
 partnerRoutes.get("/courts/:id/surfaces", partnerController.courtSurfaces);
 partnerRoutes.post("/courts/:id/surfaces", validate(courtSurfaceCreateSchema), partnerController.createCourtSurface);
 partnerRoutes.delete("/courts/:id/surfaces/:surfaceId", validate(courtSurfaceParamsSchema), partnerController.deleteCourtSurface);

@@ -4,6 +4,7 @@ import { env } from "../../config/env.js";
 import { prisma } from "../../config/db.js";
 import { verifyAccessToken } from "../auth/auth.security.js";
 import { invalidateWeeklyScheduleCache } from "../weekly-schedule/weeklySchedule.service.js";
+import { canWatchBooking, type SocketUser } from "./realtime.access.js";
 import { registerRealtimeServer, registerWeeklyScheduleCacheInvalidator } from "./realtime.service.js";
 
 export function initRealtime(httpServer: HttpServer) {
@@ -28,7 +29,7 @@ export function initRealtime(httpServer: HttpServer) {
   });
 
   io.on("connection", async (socket) => {
-    const user = socket.data.user as { id: string; role: "USER" | "PARTNER" | "ADMIN" };
+    const user = socket.data.user as SocketUser;
     socket.join(`user:${user.id}`);
     if (user.role === "ADMIN") socket.join("admin");
 
@@ -43,8 +44,14 @@ export function initRealtime(httpServer: HttpServer) {
     socket.on("court:unsubscribe", (courtId: string) => {
       if (courtId) socket.leave(`court:${courtId}`);
     });
-    socket.on("booking:subscribe", (bookingId: string) => {
-      if (bookingId) socket.join(`booking:${bookingId}`);
+    // Court rooms only carry availability, which every court page shows anyway; booking rooms are checked.
+    socket.on("booking:subscribe", async (bookingId: string) => {
+      try {
+        if (await canWatchBooking(user, bookingId)) socket.join(`booking:${bookingId}`);
+        else socket.emit("booking:subscribe-error", { bookingId, reason: "FORBIDDEN" });
+      } catch {
+        socket.emit("booking:subscribe-error", { bookingId });
+      }
     });
     socket.on("booking:unsubscribe", (bookingId: string) => {
       if (bookingId) socket.leave(`booking:${bookingId}`);

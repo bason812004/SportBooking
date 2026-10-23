@@ -6,5 +6,8 @@ export const walletController = {
   myWallet: asyncHandler(async (req, res) => sendSuccess(res, await walletService.myWallet(req.user!.id))),
   adminList: asyncHandler(async (req, res) => sendSuccess(res, await walletService.adminList(req.query as Record<string, string>))),
   adminSummary: asyncHandler(async (_req, res) => sendSuccess(res, await walletService.adminSummary())),
-  adminDetail: asyncHandler(async (req, res) => sendSuccess(res, await walletService.adminDetail(req.params.partnerId)))
+  adminDetail: asyncHandler(async (req, res) => sendSuccess(res, await walletService.adminDetail(req.params.partnerId))),
+  recordDebtPayment: asyncHandler(async (req, res) =>
+    sendSuccess(res, await walletService.recordDebtPayment(req.user!.id, req.params.partnerId, req.body), 201, "Đã ghi nhận thanh toán công nợ")
+  )
 };

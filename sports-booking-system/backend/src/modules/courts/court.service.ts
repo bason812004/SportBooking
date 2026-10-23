@@ -108,7 +108,7 @@ export const courtService = {
     if (!court) throw new NotFoundError("Khong tim thay san hoac san chua duoc duyet");
     const [courtWithReviews, nearby] = await Promise.all([
       attachReviews(court),
-      courtRepository.nearby(court.id, court.city, court.district).then(attachReviewsList)
+      courtRepository.nearby(court.id, court.city, court.district ?? undefined).then(attachReviewsList)
     ]);
     return {
       ...summarizeCourt(courtWithReviews),

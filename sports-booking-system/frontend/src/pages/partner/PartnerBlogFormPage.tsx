@@ -119,13 +119,24 @@ export function PartnerBlogFormPage() {
       };
       return id ? partnerApi.updateBlog(id, payload) : partnerApi.createBlog(payload);
     },
-    onSuccess: async () => {
-      toast.success("Đã lưu bài viết");
+    onSuccess: async (blog) => {
+      toast.success(blog?.status === "PENDING" ? "Đã lưu và gửi admin duyệt lại" : "Đã lưu bài viết");
       await queryClient.invalidateQueries({ queryKey: ["partner-blogs"] });
       navigate("/partner/blogs");
     },
     onError: (error) => toast.error(error.message)
   });
+
+  // Same rule as the backend (blog.calculations.ts): a draft stays a draft, any other edit is re-reviewed,
+  // a private post is saved without review.
+  const isDraft = !id || detail.data?.status === "DRAFT";
+  const isPrivate = form.watch("visibility") === "PRIVATE";
+  const saveLabel = isDraft ? "Lưu bản nháp" : isPrivate ? "Lưu bài" : "Lưu và gửi duyệt lại";
+  const saveHint = isPrivate
+    ? "Bài riêng tư chỉ mình bạn xem nên được lưu ngay, không cần duyệt."
+    : isDraft
+      ? "Lưu bản nháp trước, sau đó gửi admin duyệt để xuất bản."
+      : "Bài này đã gửi duyệt hoặc đã đăng: lưu thay đổi sẽ gửi admin duyệt lại, bài tạm ẩn khỏi trang blog cho đến khi được duyệt.";
 
   if (id && detail.isLoading) return <LoadingState />;
   if (id && detail.isError) return <ErrorState message={detail.error.message} />;
@@ -134,7 +145,7 @@ export function PartnerBlogFormPage() {
     <form className="space-y-5 rounded-2xl border bg-white p-6" onSubmit={form.handleSubmit((values) => save.mutate(values))}>
       <div>
         <h1 className="text-3xl font-bold">{id ? "Sửa bài viết" : "Viết bài mới"}</h1>
-        <p className="mt-2 text-sm font-semibold text-slate-600">Lưu bản nháp trước, sau đó gửi admin duyệt để xuất bản.</p>
+        <p className="mt-2 text-sm font-semibold text-slate-600">{saveHint}</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -211,7 +222,7 @@ export function PartnerBlogFormPage() {
       </div>
       <div className="flex gap-2">
         <Button disabled={save.isPending || isUploading}>
-          {save.isPending ? "Đang lưu..." : "Lưu bản nháp"}
+          {save.isPending ? "Đang lưu..." : saveLabel}
         </Button>
         <Button type="button" variant="secondary" onClick={() => navigate("/partner/blogs")}>Hủy</Button>
       </div>

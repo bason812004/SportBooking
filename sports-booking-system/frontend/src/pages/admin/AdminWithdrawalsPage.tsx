@@ -114,7 +114,7 @@ export function AdminWithdrawalsPage() {
       <PageHero
         eyebrow="Tài chính"
         title="Yêu cầu rút tiền"
-        subtitle="Duyệt và xác nhận chuyển khoản cho yêu cầu rút tiền của partner."
+        subtitle="Duyệt yêu cầu, chuyển khoản cho partner từ tài khoản ngân hàng của nền tảng, rồi bấm “Đã chuyển khoản” để hoàn tất."
       >
         <div className="flex flex-wrap items-end gap-3 rounded-xl bg-white p-3 shadow-md">
           <DatePicker label="Từ ngày" value={fromDate} onChange={(value) => { setPage(1); setFromDate(value); }} />

@@ -57,48 +57,6 @@ function textSearchCondition(fields: Array<"name" | "description" | "address" | 
   };
 }
 
-let surfacesSeeded = false;
-
-export async function ensureCourtSurfacesSeeded() {
-  if (surfacesSeeded) return;
-  surfacesSeeded = true;
-  try {
-    const courts = await prisma.court.findMany({
-      select: {
-        id: true,
-        name: true,
-        surfaces: { select: { id: true } }
-      }
-    });
-
-    for (const c of courts) {
-      if (c.surfaces.length < 3) {
-        const needed = 3 - c.surfaces.length;
-        const startIndex = c.surfaces.length + 1;
-        for (let i = 0; i < needed; i++) {
-          const num = startIndex + i;
-          const code = `S0${num}`;
-          const name = `${c.name} - Sân 0${num}`;
-          await prisma.$executeRawUnsafe(
-            `INSERT INTO court_surfaces (court_id, code, name, capacity, surface, size, status, sort_order, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', $7, NOW())
-             ON CONFLICT DO NOTHING;`,
-            c.id,
-            code,
-            name,
-            "7 người / Đôi",
-            "Cỏ nhân tạo / Thảm cao cấp",
-            "Tiêu chuẩn",
-            num
-          );
-        }
-      }
-    }
-  } catch (err) {
-    console.error("[CourtRepository] Seeding surfaces warning:", err);
-  }
-}
-
 export const courtRepository = {
   async list(query: CourtListQuery, page: number, limit: number) {
     const categoryFilter: Prisma.CourtCategoryWhereInput = {};
@@ -110,7 +68,7 @@ export const courtRepository = {
 
     const keyword = query.keyword ?? query.q;
     if (keyword) {
-      andConditions.push(textSearchCondition(["name", "description", "address", "city", "district"], keyword));
+      andConditions.push(textSearchCondition(["name", "description", "address", "city", "district", "ward"], keyword));
     }
     const city = query.province ?? query.city;
     if (city) andConditions.push(textSearchCondition(["city"], city));
@@ -198,7 +156,6 @@ export const courtRepository = {
   },
 
   async findPublicById(id: string) {
-    await ensureCourtSurfacesSeeded();
     return prisma.court.findFirst({
       where: { id, approvalStatus: "APPROVED", activeStatus: "ACTIVE" },
       include: courtDetailInclude

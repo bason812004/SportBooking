@@ -56,11 +56,8 @@ export const cashierService = {
     });
 
     if (detail.booking?.courtId) {
-      realtimeService.toCourt(detail.booking.courtId, "court:booking-updated", {
-        bookingId,
-        grandTotal: detail.grandTotal,
-        remainingAmount: detail.remainingAmount
-      });
+      // Court rooms are joined by public court pages: no invoice amounts (they go to the booking room).
+      realtimeService.toCourt(detail.booking.courtId, "court:booking-updated", { bookingId });
     }
 
     return { result, totals: detail };
@@ -91,11 +88,8 @@ export const cashierService = {
     });
 
     if (detail.booking?.courtId) {
-      realtimeService.toCourt(detail.booking.courtId, "court:booking-updated", {
-        bookingId,
-        grandTotal: detail.grandTotal,
-        remainingAmount: detail.remainingAmount
-      });
+      // Court rooms are joined by public court pages: no invoice amounts (they go to the booking room).
+      realtimeService.toCourt(detail.booking.courtId, "court:booking-updated", { bookingId });
     }
 
     return { result, totals: detail };
@@ -125,11 +119,8 @@ export const cashierService = {
     });
 
     if (detail.booking?.courtId) {
-      realtimeService.toCourt(detail.booking.courtId, "court:booking-updated", {
-        bookingId,
-        grandTotal: detail.grandTotal,
-        remainingAmount: detail.remainingAmount
-      });
+      // Court rooms are joined by public court pages: no invoice amounts (they go to the booking room).
+      realtimeService.toCourt(detail.booking.courtId, "court:booking-updated", { bookingId });
     }
 
     return { result, totals: detail };

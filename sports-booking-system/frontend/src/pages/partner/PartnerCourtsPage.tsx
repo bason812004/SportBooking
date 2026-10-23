@@ -12,7 +12,7 @@ import { StatusBadge } from "../../components/common/StatusBadge";
 import { Button } from "../../components/ui/Button";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { useLanguage } from "../../lib/i18n";
-import { timeText } from "../../lib/format";
+import { courtArea, timeText } from "../../lib/format";
 
 const fallbackCourtImage = "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=640&q=80";
 
@@ -41,6 +41,7 @@ export function PartnerCourtsPage() {
   const queryClient = useQueryClient();
   const [deactivateTarget, setDeactivateTarget] = useState<{ id: string; name: string } | null>(null);
   const courts = useQuery({ queryKey: ["partner-courts"], queryFn: partnerApi.courts });
+  const profile = useQuery({ queryKey: ["partner-profile"], queryFn: partnerApi.profile });
 
   const toggleStatus = useMutation({
     mutationFn: ({ id, activeStatus }: { id: string; activeStatus: "ACTIVE" | "INACTIVE" }) => partnerApi.updateCourtStatus(id, activeStatus),
@@ -68,6 +69,16 @@ export function PartnerCourtsPage() {
         subtitle={t("Quản lý cụm sân, giá, dịch vụ và lịch nghỉ của bạn.")}
         actions={<Link to="/partner/courts/create"><Button variant="secondary"><Plus className="h-4 w-4" />{t("Thêm sân")}</Button></Link>}
       />
+
+      {/* Admin only approves courts of an approved partner, so explain why courts may stay pending. */}
+      {profile.data && profile.data.approvalStatus !== "APPROVED" && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          {profile.data.approvalStatus === "REJECTED"
+            ? "Hồ sơ đối tác của bạn đã bị từ chối nên sân chưa thể được duyệt. Hãy cập nhật hồ sơ hoặc liên hệ quản trị viên."
+            : "Hồ sơ đối tác của bạn đang chờ duyệt. Sân chỉ được duyệt sau khi hồ sơ được duyệt."}{" "}
+          <Link to="/partner/settings" className="font-semibold underline">Xem hồ sơ</Link>
+        </div>
+      )}
 
       {totalCourts > 0 && (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -102,7 +113,7 @@ export function PartnerCourtsPage() {
               <p className="text-lg font-bold leading-tight">{court.name}</p>
               <p className="mt-1 flex items-center gap-1 text-sm text-slate-500">
                 <MapPin className="h-3.5 w-3.5 shrink-0" />
-                {court.category?.name} · {court.district}, {court.city}
+                {court.category?.name} · {courtArea(court)}
               </p>
               <p className="mt-1 flex items-center gap-1 text-sm text-slate-500">
                 <Clock className="h-3.5 w-3.5 shrink-0" />

@@ -3,6 +3,7 @@ import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Filter } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { adminApi } from "../../features/admin/api/adminApi";
 import type { AdminBooking } from "../../types/api";
 import { Button } from "../../components/ui/Button";
@@ -15,6 +16,7 @@ import { SortableTh } from "../../components/common/SortableTh";
 import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { useUrlSort } from "../../hooks/useUrlSort";
 import { usePeriodRange } from "../../hooks/usePeriodRange";
+import { courtArea } from "../../lib/format";
 
 const bookingStatuses = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"];
 const paymentStatuses = ["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"];
@@ -69,7 +71,20 @@ const SORT_FIELDS: SortField[] = ["bookingCode", "customerName", "bookingDate", 
 export function AdminBookingsPage() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
-  const [selected, setSelected] = useState<string | null>(null);
+  // ?bookingId= (from a refund notification) opens that booking whatever the list filters are.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [selected, setSelected] = useState<string | null>(() => searchParams.get("bookingId"));
+  useEffect(() => {
+    const bookingId = searchParams.get("bookingId");
+    if (bookingId) setSelected(bookingId);
+  }, [searchParams]);
+  const closeDetail = () => {
+    setSelected(null);
+    if (!searchParams.has("bookingId")) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("bookingId");
+    setSearchParams(next, { replace: true });
+  };
   const [filters, setFilters] = useState<Filters>(defaultFilters);
   const period = usePeriodRange({ defaultMode: "day", onChange: () => setPage(1) });
 
@@ -176,7 +191,7 @@ export function AdminBookingsPage() {
 
       <Pager page={page} total={list.data?.meta.totalPages ?? 1} setPage={setPage} />
 
-      <BookingDetailModal open={Boolean(selected)} onClose={() => setSelected(null)}>
+      <BookingDetailModal open={Boolean(selected)} onClose={closeDetail}>
         {detail.isLoading && <LoadingState />}
         {detail.isError && <ErrorState message={detail.error.message} />}
         {detail.data && (
@@ -261,7 +276,7 @@ function BookingDetail({ booking, onUpdated }: { booking: AdminBooking; onUpdate
         <div className="grid gap-3 md:grid-cols-2">
           <Info title="Khách hàng" lines={[booking.user?.fullName, booking.user?.email, booking.user?.phone]} />
           <Info title="Đối tác" lines={[booking.court.partner?.businessName, booking.court.partner?.user?.email, booking.court.partner?.user?.phone]} />
-          <Info title="Địa điểm" lines={[booking.court.address, [booking.court.district, booking.court.city].filter(Boolean).join(", ")]} />
+          <Info title="Địa điểm" lines={[booking.court.address, courtArea(booking.court)]} />
           <Info title="Ghi chú vận hành" lines={[booking.adminNote || "Chưa có ghi chú nội bộ", booking.cancelReason ? `Lý do hủy: ${booking.cancelReason}` : undefined]} />
         </div>
 

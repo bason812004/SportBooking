@@ -37,7 +37,8 @@ type SortField = "customerName" | "bookingDate" | "totalPrice" | "bookingStatus"
 const SORT_FIELDS: SortField[] = ["customerName", "bookingDate", "totalPrice", "bookingStatus", "paymentStatus"];
 
 function todayValue() {
-  return new Date().toISOString().slice(0, 10);
+  // Local date, not toISOString() (UTC): before 07:00 in Vietnam that would still be yesterday.
+  return formatYmd(new Date());
 }
 
 function currentYearRange() {

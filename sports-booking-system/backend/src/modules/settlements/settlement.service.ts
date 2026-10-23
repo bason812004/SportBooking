@@ -4,6 +4,7 @@ import { NotFoundError, ForbiddenError, ValidationError } from "../../shared/err
 import { paginationMeta } from "../../shared/utils/response.js";
 import { parseLimit, parsePage } from "../../shared/utils/time.js";
 import { toDbDate } from "../../shared/utils/time.js";
+import { courtAmount } from "../checkout/checkout.calculations.js";
 import { commissionService } from "../commission/commission.service.js";
 import { recordAdminAction } from "../admin/admin.audit.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
@@ -19,6 +20,11 @@ function asNumber(value: unknown) {
 
 function round2(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+/** Court time the customer pays for (incl. early check-in and extensions) after the voucher; no services. */
+export function commissionableCourtAmount(booking: { basePrice?: unknown; dynamicAdjustmentAmount?: unknown; totalPrice: unknown; voucherDiscountAmount?: unknown }) {
+  return Math.max(0, round2(courtAmount(booking) - asNumber(booking.voucherDiscountAmount)));
 }
 
 function toDto(settlement: {
@@ -121,35 +127,45 @@ export const settlementService = {
     return settlement;
   },
 
-  /** Counter cash is already held by the partner. Never credit it to the wallet.
-   * Separate rows preserve the source when the booking also has an online deposit.
-   * grossAmount is the cumulative invoice total, making repeated completion idempotent.
+  /**
+   * Commission on court money the partner collected itself (cash, the partner's own QR, bank transfer).
+   * Called whenever a booking becomes COMPLETED, however it was paid: the commission follows the court
+   * time played, so collecting off the system does not avoid it. The partner already holds that money,
+   * so the commission is taken from the wallet and whatever the wallet cannot cover becomes debt.
+   * Only court time is commissionable (services sold at the counter are the partner's own sales), and the
+   * part paid online was already charged through the PLATFORM settlement.
+   * Idempotent: the PARTNER row keeps the gross already charged, so a reopened checkout (an extension)
+   * only charges the increase. A row an admin cancelled means the commission was waived.
    */
-  async createFromCounterCollection(bookingId: string, grossAmount: number, tx: DbClient) {
+  async chargePartnerCollected(bookingId: string, tx: DbClient) {
     const booking = await settlementRepository.bookingForCollection(bookingId, tx);
     if (!booking) throw new NotFoundError("Booking không tồn tại");
     const platform = await settlementRepository.byBookingId(bookingId, tx);
     const existing = await settlementRepository.byBookingId(bookingId, tx, "PARTNER");
-    const counterGross = Math.max(0, round2(grossAmount - (platform && platform.status !== "CANCELLED" ? asNumber(platform.grossAmount) : 0)));
-    const extraGross = round2(counterGross - asNumber(existing?.grossAmount));
+    if (existing && existing.status !== "SETTLED") return existing;
+
+    const courtTotal = commissionableCourtAmount(booking);
+    const onlineGross = platform && platform.status !== "CANCELLED" ? asNumber(platform.grossAmount) : 0;
+    const partnerGross = Math.max(0, round2(courtTotal - onlineGross));
+    const extraGross = round2(partnerGross - asNumber(existing?.grossAmount));
     let result = existing;
     if (extraGross > 0) {
       const rate = existing ? asNumber(existing.commissionRate) : await commissionService.effectiveRate(booking.court.partner, tx);
       const commission = round2(extraGross * rate / 100);
       if (existing) {
-        if (existing.status !== "SETTLED") throw new ValidationError("Đối soát tại quầy đã bị hủy");
         await settlementRepository.incrementAmounts(existing.id, ["SETTLED"], { grossAmount: extraGross, commissionAmount: commission, netAmount: extraGross - commission }, tx);
         result = await settlementRepository.byBookingId(bookingId, tx, "PARTNER");
       } else {
         result = await settlementRepository.create({
           bookingId, partnerId: booking.court.partner.id, paymentId: null,
           collectedBy: "PARTNER", status: "SETTLED", settledAt: new Date(),
-          grossAmount: counterGross, voucherDiscount: 0, platformDiscount: 0, partnerDiscount: 0,
-          commissionRate: rate, commissionAmount: commission, serviceFee: 0, netAmount: counterGross - commission
+          grossAmount: partnerGross, voucherDiscount: 0, platformDiscount: 0, partnerDiscount: 0,
+          commissionRate: rate, commissionAmount: commission, serviceFee: 0, netAmount: partnerGross - commission
         }, tx);
       }
+      await walletRepository.chargeCommission(booking.court.partner.id, commission, tx);
     }
-    await commissionService.createEarning(booking, "COMPLETED", tx, grossAmount);
+    await commissionService.createEarning(booking, "COMPLETED", tx, courtTotal);
     return result;
   },
 
@@ -203,6 +219,8 @@ export const settlementService = {
     if (moved === 0) {
       throw new ValidationError("So du cho quyet toan cua vi khong khop voi settlement");
     }
+    // Newly available online earnings pay off commission owed on money the partner collected itself.
+    await walletRepository.offsetDebt(settlement.partnerId, tx);
     return { ...settlement, status: "SETTLED" as SettlementStatus, settledAt: new Date() };
   },
 
@@ -236,6 +254,7 @@ export const settlementService = {
       if (count === 0) throw new ValidationError("Settlement da duoc xu ly boi thao tac khac");
       const moved = await walletRepository.settlePending(settlement.partnerId, asNumber(settlement.netAmount), tx);
       if (moved === 0) throw new ValidationError("So du cho quyet toan cua vi khong du");
+      await walletRepository.offsetDebt(settlement.partnerId, tx);
     });
 
     await recordAdminAction(actorId, "SETTLEMENT_COMPLETED", "SETTLEMENT", id, {
@@ -259,7 +278,11 @@ export const settlementService = {
       const fromStatus = settlement.status as SettlementStatus;
       const count = await settlementRepository.transitionById(id, [fromStatus], { status: "CANCELLED" }, tx);
       if (count === 0) throw new ValidationError("Settlement da duoc xu ly boi thao tac khac");
-      if (settlement.collectedBy === "PARTNER") return;
+      // The partner holds that money; cancelling waives the commission charged on it.
+      if (settlement.collectedBy === "PARTNER") {
+        await walletRepository.refundCommission(settlement.partnerId, asNumber(settlement.commissionAmount), tx);
+        return;
+      }
       const netAmount = asNumber(settlement.netAmount);
       const reverted =
         fromStatus === "PENDING"

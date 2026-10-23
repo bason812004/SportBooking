@@ -1,4 +1,4 @@
-import { NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
+import { ConflictError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
 import { parseLimit, parsePage } from "../../shared/utils/time.js";
 import { slugify } from "../../shared/utils/slug.js";
@@ -8,7 +8,19 @@ import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { voucherRepository } from "../vouchers/voucher.repository.js";
 import { recordAdminAction, verifyAuditChain } from "./admin.audit.js";
+import { courtReviewChecks } from "./admin.courtReview.js";
 import { adminRepository } from "./admin.repository.js";
+
+/** Why a court approval/rejection changed nothing: the court is gone, already decided, or its partner is not approved. */
+async function courtDecisionError(id: string) {
+  const court = await adminRepository.courtApprovalState(id);
+  if (!court) return new NotFoundError("Khong tim thay san");
+  if (court.approvalStatus !== "PENDING") return new ConflictError("Sân không còn ở trạng thái chờ duyệt, hãy tải lại trang");
+  if (court.partner.approvalStatus !== "APPROVED") {
+    return new ConflictError("Đối tác chưa được duyệt hồ sơ. Hãy duyệt đối tác trước khi duyệt sân.");
+  }
+  return new ConflictError("Không thể cập nhật trạng thái sân, hãy thử lại");
+}
 
 const paginatedRaw = (items: any[], countRows: Array<{ count: bigint }>, page: number, limit: number) => ({
   items,
@@ -41,6 +53,35 @@ const csvCell = (value: unknown) => {
   const text = value === null || value === undefined ? "" : String(value);
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 };
+
+const blogAuthorNotices = {
+  PUBLISHED: { title: "Bài viết đã được duyệt", type: "BLOG_PUBLISHED", body: (title: string) => `Bài "${title}" đã được xuất bản trên trang blog.` },
+  RESTORED: { title: "Bài viết đã được hiển thị lại", type: "BLOG_PUBLISHED", body: (title: string) => `Bài "${title}" đã hiển thị lại trên trang blog.` },
+  REJECTED: { title: "Bài viết bị từ chối", type: "BLOG_REJECTED", body: (title: string) => `Bài "${title}" chưa được duyệt.` },
+  HIDDEN: { title: "Bài viết đã bị ẩn", type: "BLOG_HIDDEN", body: (title: string) => `Bài "${title}" đã bị ẩn khỏi trang blog.` }
+} as const;
+
+/** Tells the author what moderation decided; the decision is already saved, so a failed notice only logs. */
+async function notifyBlogAuthor(
+  blog: { id: string; authorId: string; title: string; slug: string },
+  outcome: keyof typeof blogAuthorNotices,
+  reason?: string
+) {
+  const notice = blogAuthorNotices[outcome];
+  const followUp = outcome === "REJECTED" || outcome === "HIDDEN" ? " Bạn có thể sửa bài và gửi duyệt lại." : "";
+  const why = reason?.trim().replace(/[.\s]+$/, "");
+  try {
+    await notificationService.create({
+      userId: blog.authorId,
+      title: notice.title,
+      content: `${notice.body(blog.title)}${why ? ` Lý do: ${why}.` : ""}${followUp}`,
+      type: notice.type,
+      metadata: { blogId: blog.id, slug: blog.slug }
+    });
+  } catch (error) {
+    console.error("[BlogModeration] Author notification failed:", error);
+  }
+}
 
 export const adminService = {
   async dashboard() {
@@ -408,17 +449,51 @@ export const adminService = {
     const [items, total] = await adminRepository.pendingCourts(page, limit);
     return { items, meta: paginationMeta(page, limit, total) };
   },
+  async courtReview(id: string) {
+    const found = await adminRepository.courtReview(id);
+    if (!found) throw new NotFoundError("Khong tim thay san");
+    const { court, courtStats, duplicateAddressCourts } = found;
+    const history = await adminRepository.moderationHistory("COURT", id);
+    const partnerCourts = { APPROVED: 0, PENDING: 0, REJECTED: 0 };
+    for (const row of courtStats) partnerCourts[row.approvalStatus] = row._count._all;
+    const pendingImages = court.imageRequests.filter((request) => request.status === "PENDING").length;
+    const { deposit_percent, latitude, longitude, prices, ...rest } = court;
+    return {
+      ...rest,
+      depositPercent: deposit_percent == null ? null : Number(deposit_percent),
+      latitude: latitude == null ? null : Number(latitude),
+      longitude: longitude == null ? null : Number(longitude),
+      prices: prices.map((price) => ({ ...price, price: Number(price.price) })),
+      partnerCourts,
+      duplicateAddressCourts,
+      history,
+      review: courtReviewChecks({
+        courtStatus: court.approvalStatus,
+        partnerStatus: court.partner.approvalStatus,
+        publishedImages: court.images.length,
+        pendingImages,
+        duplicateAddressCourts: duplicateAddressCourts.length,
+        partnerRejectedCourts: partnerCourts.REJECTED,
+        accountCreatedAt: court.partner.user.createdAt,
+        emailVerified: court.partner.user.emailVerified,
+        phone: court.partner.user.phone,
+        taxCode: court.partner.taxCode,
+        verificationDocumentUrl: court.partner.verificationDocumentUrl,
+        bankAccountHolder: court.partner.bankAccountHolder
+      })
+    };
+  },
   async approveCourt(actorId: string, id: string) {
-    const result = await adminRepository.setCourtApproval(id, "APPROVED", undefined);
+    if (!(await adminRepository.approvePendingCourt(id))) throw await courtDecisionError(id);
     await adminRepository.addModerationHistory({ entityType: "COURT", entityId: id, action: "APPROVED", actorId });
     await recordAdminAction(actorId, "COURT_APPROVED", "COURT", id);
-    return result;
+    return { id, approvalStatus: "APPROVED" as const };
   },
   async rejectCourt(actorId: string, id: string, reason: string) {
-    const result = await adminRepository.setCourtApproval(id, "REJECTED", reason);
+    if (!(await adminRepository.rejectPendingCourt(id, reason))) throw await courtDecisionError(id);
     await adminRepository.addModerationHistory({ entityType: "COURT", entityId: id, action: "REJECTED", reason, actorId });
     await recordAdminAction(actorId, "COURT_REJECTED", "COURT", id, { reason });
-    return result;
+    return { id, approvalStatus: "REJECTED" as const, rejectionReason: reason };
   },
 
   categories() { return adminRepository.categories(); },
@@ -507,17 +582,21 @@ export const adminService = {
     return paginatedRaw(items, count, page, limit);
   },
   async moderateBlog(actorId: string, id: string, status: "PUBLISHED" | "REJECTED", reason?: string) {
-    if (!(await adminRepository.moderateBlog(id, status))) throw new ValidationError("Bai viet khong con cho duyet");
+    const blog = await adminRepository.blogForModeration(id);
+    if (!blog || !(await adminRepository.moderateBlog(id, status))) throw new ValidationError("Bai viet khong con cho duyet");
     await adminRepository.addModerationHistory({ entityType: "BLOG", entityId: id, action: status, reason, actorId });
-    await recordAdminAction(actorId, `BLOG_${status}`, "BLOG", id, { reason });
+    await recordAdminAction(actorId, `BLOG_${status}`, "BLOG", id, { reason, from: blog.status });
     realtimeService.toPublic(realtimeEvents.blogUpdated, {});
+    await notifyBlogAuthor(blog, status === "REJECTED" ? "REJECTED" : blog.status === "HIDDEN" ? "RESTORED" : "PUBLISHED", reason);
     return { id, status };
   },
   async hideBlog(actorId: string, id: string, reason?: string) {
-    if (!(await adminRepository.hideBlog(id))) throw new ValidationError("Bai viet khong the an (chi an bai da xuat ban)");
+    const blog = await adminRepository.blogForModeration(id);
+    if (!blog || !(await adminRepository.hideBlog(id))) throw new ValidationError("Bai viet khong the an (chi an bai da xuat ban)");
     await adminRepository.addModerationHistory({ entityType: "BLOG", entityId: id, action: "HIDDEN", reason, actorId });
     await recordAdminAction(actorId, "BLOG_HIDDEN", "BLOG", id, { reason });
     realtimeService.toPublic(realtimeEvents.blogUpdated, {});
+    await notifyBlogAuthor(blog, "HIDDEN", reason);
     return { id, status: "HIDDEN" };
   },
 
