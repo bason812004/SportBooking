@@ -188,8 +188,10 @@ export function BookingServiceModal({
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
               {filteredServices.map((service) => {
-                const stock = service.inventoryQuantity ?? service.stock ?? 50;
-                const isOutOfStock = service.trackInventory && stock <= 0;
+                // The court list sends what can still be ordered; an item it does not count has no limit.
+                const counted = Boolean(service.inventory);
+                const stock = service.inventory?.quantity ?? service.inventoryQuantity ?? service.stock ?? 50;
+                const isOutOfStock = counted && stock <= 0;
                 const qty = quantities[service.id] || 1;
                 const isAdding = addingServiceId === service.id;
 
@@ -245,7 +247,7 @@ export function BookingServiceModal({
                             <span className="inline-block rounded-md bg-rose-50 px-2 py-0.5 text-[10px] font-black text-rose-600">
                               Hết hàng
                             </span>
-                          ) : service.trackInventory ? (
+                          ) : counted ? (
                             <span className="inline-block rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
                               Còn {stock} {service.unit}
                             </span>
@@ -273,8 +275,8 @@ export function BookingServiceModal({
                         <span className="w-7 text-center text-xs font-black text-slate-800">{qty}</span>
                         <button
                           type="button"
-                          onClick={() => handleQuantityChange(service.id, 1, stock)}
-                          disabled={isOutOfStock || (service.trackInventory && qty >= stock)}
+                          onClick={() => handleQuantityChange(service.id, 1, counted ? stock : undefined)}
+                          disabled={isOutOfStock || (counted && qty >= stock)}
                           className="grid h-6 w-6 place-items-center rounded-lg bg-white text-slate-600 shadow-sm hover:bg-slate-100 disabled:opacity-40 transition"
                         >
                           <Plus className="h-3 w-3" />

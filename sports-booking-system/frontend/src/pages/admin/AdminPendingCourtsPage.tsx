@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
 import { LoadingState, ErrorState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
-import { AdminReasonModal } from "./AdminReasonModal";
+import { ReasonModal } from "../../components/common/ReasonModal";
 import { PageHero } from "../../components/common/PageHero";
 import { courtAddress } from "../../lib/format";
 
@@ -133,7 +133,7 @@ export function AdminPendingCourtsPage() {
 
       <Pager page={page} total={courts.data?.meta?.totalPages ?? 1} setPage={setPage} />
 
-      <AdminReasonModal
+      <ReasonModal
         open={Boolean(rejectingId)}
         title="Từ chối sân"
         required

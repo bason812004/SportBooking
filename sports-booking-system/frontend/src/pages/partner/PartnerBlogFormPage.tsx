@@ -89,7 +89,7 @@ export function PartnerBlogFormPage() {
       setCoverImageUrl(data.data.url);
       toast.success("Tải ảnh thành công");
     } catch (error: any) {
-      toast.error(error.response?.data?.message || "Không thể tải ảnh lên");
+      toast.error(error.message || "Không thể tải ảnh lên");
       setCoverImagePreview("");
     } finally {
       setIsUploading(false);

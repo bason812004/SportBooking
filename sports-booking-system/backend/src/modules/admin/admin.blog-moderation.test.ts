@@ -8,6 +8,8 @@ mock.module("../../config/db.js", { namedExports: { prisma: fake.client } });
 let blog: any = null;
 let changed = 1;
 mock.module("./admin.repository.js", { namedExports: { adminRepository: {
+  // One transaction per action: the writes and the audit entry get the same client.
+  transaction: async (work: (tx: unknown) => unknown) => work("tx"),
   blogForModeration: async () => blog,
   moderateBlog: async () => changed,
   hideBlog: async () => changed,

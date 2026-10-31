@@ -6,6 +6,8 @@ import {
   calculateMinimumDeposit,
   canCreateBookingCheckout,
   checkBookingOverlap,
+  COURT_BOOKING_TRANSITIONS,
+  counterCollectedAmount,
   courtCancellationPayment,
   expirePendingPaymentAndReleaseSlots,
   refundRequiredAdminEvent,
@@ -93,6 +95,17 @@ test("court cancellation: online money stays PAID for an admin refund, counter m
   assert.deepEqual(courtCancellationPayment("PAID", 300000, 150000), { paymentStatus: "PAID", refundAmount: 0, refundByAdmin: 150000 });
   assert.deepEqual(courtCancellationPayment("PAID", 300000, 0), { paymentStatus: "REFUNDED", refundAmount: 300000, refundByAdmin: 0 });
   assert.deepEqual(courtCancellationPayment("UNPAID", 300000, 0), { paymentStatus: "UNPAID", refundAmount: 0, refundByAdmin: 0 });
+});
+
+test("the counter refunds what it took: the deposit or court charge, not services still on the tab", () => {
+  assert.equal(counterCollectedAmount({ depositAmount: 100000, totalPrice: 450000 }), 100000);
+  assert.equal(counterCollectedAmount({ depositAmount: "0", totalPrice: "300000" }), 300000);
+});
+
+test("a court finishes, cancels or marks no-show only from the statuses that allow it", () => {
+  assert.deepEqual(COURT_BOOKING_TRANSITIONS.DEPOSIT_PAID, ["COMPLETED", "NO_SHOW", "CANCELLED"]);
+  assert.deepEqual(COURT_BOOKING_TRANSITIONS.IN_PROGRESS, ["COMPLETED"]);
+  assert.equal(COURT_BOOKING_TRANSITIONS.COMPLETED, undefined);
 });
 
 test("refund notice names the court, booking, customer and amount", () => {

@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { settlementService } from "../settlements/settlement.service.js";
-import { serviceLineTotal, courtAmount } from "./checkout.calculations.js";
+import { checkoutBreakdown } from "./checkout.calculations.js";
 import { prisma } from "../../config/db.js";
 import { NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { ensureServiceTables } from "../services/service.repository.js";
@@ -30,16 +30,13 @@ export const checkoutRepository = {
 
       if (!booking) throw new NotFoundError("Booking không tồn tại");
 
-      const courtSubtotal = courtAmount(booking);
-      const serviceSubtotal = booking.bookingServices.reduce(
-        (sum, item) => sum + serviceLineTotal(item),
-        0
-      );
-      const voucherDiscount = Number(booking.voucherDiscountAmount) || 0;
-      const grandTotal = Math.max(0, courtSubtotal + serviceSubtotal - voucherDiscount);
-
-      // Total deposit / paid prior to checkout
-      const depositPaid = ["UNPAID", "FAILED", "REFUNDED"].includes(booking.paymentStatus) || booking.bookingStatus === "PENDING_PAYMENT" ? 0 : Number(booking.depositAmount) || 0;
+      const {
+        subtotalCourt: courtSubtotal,
+        subtotalService: serviceSubtotal,
+        discount: voucherDiscount,
+        totalAmount: grandTotal,
+        depositPaid
+      } = checkoutBreakdown(booking, booking.bookingServices);
 
       let checkout = await tx.checkout.findUnique({
         where: { bookingId },
@@ -182,30 +179,5 @@ export const checkoutRepository = {
         isCompleted
       };
     }, CHECKOUT_TX_OPTIONS);
-  },
-
-  async listCheckouts(partnerId: string) {
-    await ensureServiceTables();
-    const courts = await prisma.court.findMany({
-      where: { partnerId },
-      select: { id: true }
-    });
-    const courtIds = courts.map((c) => c.id);
-
-    return prisma.checkout.findMany({
-      where: {
-        booking: { courtId: { in: courtIds } }
-      },
-      include: {
-        booking: {
-          include: {
-            user: { select: { fullName: true, phone: true } },
-            court: { select: { name: true } }
-          }
-        },
-        payments: true
-      },
-      orderBy: { createdAt: "desc" }
-    });
   }
 };

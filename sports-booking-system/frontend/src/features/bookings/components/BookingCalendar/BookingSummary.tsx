@@ -400,6 +400,11 @@ export function BookingSummary(props: BookingSummaryStandaloneProps) {
                 +{formatCurrency(dynamicAdjustment)} {language === "en" ? "added" : "cộng thêm"}
               </p>
             )}
+            {dynamicAdjustment < 0 && (
+              <p className="mt-3 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-black text-emerald-700">
+                -{formatCurrency(-dynamicAdjustment)} {language === "en" ? "off" : "được giảm"}
+              </p>
+            )}
           </>
         ) : (
           <p className="mt-3 text-xs text-slate-500">

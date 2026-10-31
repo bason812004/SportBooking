@@ -9,6 +9,8 @@ let state: { id: string; approvalStatus: string; partner: { approvalStatus: stri
 let history: any[];
 let audits: any[];
 mock.module("./admin.repository.js", { namedExports: { adminRepository: {
+  // One transaction per action: the writes and the audit entry get the same client.
+  transaction: async (work: (tx: unknown) => unknown) => work("tx"),
   approvePendingCourt: async () => updated,
   rejectPendingCourt: async () => updated,
   courtApprovalState: async () => state,

@@ -3,6 +3,8 @@ import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { LayoutGrid, Lock, LockOpen, LogIn, LogOut, PhoneCall, User } from "lucide-react";
 import { Overlay } from "../../../components/common/Overlay";
+import { ReasonModal } from "../../../components/common/ReasonModal";
+import { useBalanceDueRedirect } from "../../cashier/hooks/useBalanceDueRedirect";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
 import { formatCurrency } from "../../../lib/format";
@@ -18,12 +20,22 @@ const bookingActionLabel: Record<BookingAction, string> = {
   "no-show": "Khách không đến"
 };
 
+// A guest already checked in can only be finished; finishing needs the bill paid (otherwise the cashier opens).
 const bookingActionsForStatus = (status: string): BookingAction[] =>
-  status === "PENDING" ? ["confirm", "reject"] : status === "CONFIRMED" ? ["complete", "no-show", "reject"] : [];
+  status === "PENDING"
+    ? ["confirm", "reject"]
+    : status === "CONFIRMED" || status === "DEPOSIT_PAID"
+      ? ["complete", "no-show", "reject"]
+      : status === "IN_PROGRESS" || status === "CHECKOUT_PENDING"
+        ? ["complete"]
+        : [];
 
 const bookingStatusMeta: Record<string, { label: string; className: string }> = {
   PENDING: { label: "Chờ xác nhận", className: "bg-amber-100 text-amber-700" },
   CONFIRMED: { label: "Đã xác nhận", className: "bg-blue-100 text-blue-700" },
+  DEPOSIT_PAID: { label: "Đã đặt cọc", className: "bg-blue-100 text-blue-700" },
+  IN_PROGRESS: { label: "Đang chơi", className: "bg-indigo-100 text-indigo-700" },
+  CHECKOUT_PENDING: { label: "Chờ thanh toán", className: "bg-amber-100 text-amber-700" },
   COMPLETED: { label: "Hoàn thành", className: "bg-emerald-100 text-emerald-700" },
   CANCELLED: { label: "Đã huỷ", className: "bg-rose-100 text-rose-700" },
   NO_SHOW: { label: "Không đến", className: "bg-rose-100 text-rose-700" }
@@ -49,23 +61,29 @@ export function SlotManageModal({
   onChanged: () => void;
 }) {
   const [reason, setReason] = useState("");
+  const [rejecting, setRejecting] = useState(false);
+  const openCashierIfOwed = useBalanceDueRedirect("/recipient/cashier");
 
   const onSuccess = (message: string) => {
     toast.success(message);
     onChanged();
     onClose();
   };
-  const onError = (fallback: string) => (error: any) => toast.error(error.message || fallback);
+  // Finishing a booking that still owes money opens the cashier on it instead.
+  const onError = (fallback: string) => (error: any) => {
+    if (slot.bookingId && openCashierIfOwed(error, slot.bookingId)) return;
+    toast.error(error.message || fallback);
+  };
 
   const statusMutation = useMutation({
-    mutationFn: (action: BookingAction) => {
+    mutationFn: ({ action, reason: cancelReason }: { action: BookingAction; reason?: string }) => {
       const id = slot.bookingId!;
       if (action === "confirm") return recipientApi.confirmBooking(id);
-      if (action === "reject") return recipientApi.rejectBooking(id);
+      if (action === "reject") return recipientApi.rejectBooking(id, cancelReason ?? "");
       if (action === "complete") return recipientApi.completeBooking(id);
       return recipientApi.noShowBooking(id);
     },
-    onSuccess: () => onSuccess("Đã cập nhật đơn đặt sân"),
+    onSuccess: (_data, variables) => onSuccess(variables.action === "reject" ? "Đã huỷ đơn và báo lý do cho khách" : "Đã cập nhật đơn đặt sân"),
     onError: onError("Có lỗi xảy ra")
   });
 
@@ -73,13 +91,13 @@ export function SlotManageModal({
     mutationFn: () => recipientApi.checkInBooking(slot.bookingId!),
     // Early check-in follows the court's policy; the extra amount is collected at checkout.
     onSuccess: (result) =>
-      onSuccess(result.extraChargeAmount ? `Đã check-in sớm — cần thu thêm ${formatCurrency(result.extraChargeAmount)} khi thanh toán` : "Đã check-in"),
+      onSuccess(result.extraChargeAmount ? `Đã check-in sớm — cần thu thêm ${formatCurrency(result.extraChargeAmount)} ở Thu ngân` : "Đã check-in, khách bắt đầu chơi"),
     onError: onError("Không thể check-in")
   });
 
   const checkOutMutation = useMutation({
     mutationFn: () => recipientApi.earlyCheckOutBooking(slot.bookingId!),
-    onSuccess: () => onSuccess("Đã check-out"),
+    onSuccess: () => onSuccess("Đã check-out, đơn hoàn thành"),
     onError: onError("Không thể check-out")
   });
 
@@ -175,7 +193,7 @@ export function SlotManageModal({
                     key={action}
                     variant={action === "reject" || action === "no-show" ? "danger" : "secondary"}
                     disabled={pending}
-                    onClick={() => statusMutation.mutate(action)}
+                    onClick={() => (action === "reject" ? setRejecting(true) : statusMutation.mutate({ action }))}
                   >
                     {bookingActionLabel[action]}
                   </Button>
@@ -206,6 +224,18 @@ export function SlotManageModal({
           </Button>
         </div>
       )}
+      <ReasonModal
+        open={rejecting}
+        required
+        title="Huỷ đơn đặt sân?"
+        description="Đơn bị huỷ và áp dụng chính sách hoàn tiền. Khách nhận thông báo kèm lý do bạn nhập."
+        label="Lý do huỷ (gửi cho khách)"
+        placeholder="Ví dụ: sân bảo trì đột xuất, xin lỗi vì sự bất tiện"
+        confirmLabel="Huỷ đơn"
+        pending={statusMutation.isPending}
+        onClose={() => setRejecting(false)}
+        onConfirm={(cancelReason) => statusMutation.mutate({ action: "reject", reason: cancelReason })}
+      />
     </Overlay>
   );
 }

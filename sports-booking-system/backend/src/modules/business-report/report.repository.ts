@@ -1,13 +1,20 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
-import { toDbDate, timeToMinutes } from "../../shared/utils/time.js";
+import { activeBookingServiceWhere } from "../../shared/utils/bookingServices.js";
+import { timeToMinutes } from "../../shared/utils/time.js";
+import { occupiedSurfaceHours, servicesOutsideLedger } from "./report.calculations.js";
 
 export interface ReportScope {
   partnerId?: string;
   courtId?: string;
 }
 
-const activeBookingStatuses = ["PENDING", "PENDING_PAYMENT", "CONFIRMED", "COMPLETED"] as const;
+// Bookings that hold the court for their hours: confirmed or paid, being played, played, or not shown up for.
+// Unpaid holds (PENDING, PENDING_PAYMENT) and bookings that ended unplayed do not.
+const occupyingBookingStatuses = ["CONFIRMED", "DEPOSIT_PAID", "IN_PROGRESS", "CHECKOUT_PENDING", "COMPLETED", "NO_SHOW"] as const;
+
+// Money still waiting for its booking to finish; cancelled or failed settlements are not revenue at all.
+const waitingSettlementStatuses = ["PENDING", "PROCESSING"];
 
 function dbTime(value: Date) {
   return value.toISOString().slice(11, 16);
@@ -25,26 +32,23 @@ function courtScopeWhere(scope: ReportScope): Prisma.CourtWhereInput {
   return {};
 }
 
-export const reportRepository = {
-  async revenueRows(scope: ReportScope, from: Date, to: Date) {
-    if (scope.courtId) {
-      const bookings = await prisma.booking.findMany({
-        where: { ...bookingScopeWhere(scope), bookingDate: { gte: from, lte: to }, paymentStatus: "PAID" },
-        select: { bookingDate: true, totalPrice: true }
-      });
-      return bookings.map((booking) => ({
-        bookingDate: booking.bookingDate,
-        grossAmount: Number(booking.totalPrice),
-        commissionAmount: 0,
-        netAmount: Number(booking.totalPrice)
-      }));
-    }
+/** Settlements of the scope's bookings played in the range: a court's staff see their court's rows of the same ledger. */
+function settlementScopeWhere(scope: ReportScope, from: Date, to: Date): Prisma.SettlementWhereInput {
+  return {
+    ...(scope.partnerId ? { partnerId: scope.partnerId } : {}),
+    booking: { bookingDate: { gte: from, lte: to }, ...(scope.courtId ? { courtId: scope.courtId } : {}) }
+  };
+}
 
+export const reportRepository = {
+  /**
+   * The wallet's ledger, for every view (admin, partner, a court's staff): only settled money is revenue (see
+   * pendingSettlements for what still waits). It holds money received online and the court money a partner collected;
+   * services sold at the counter are the partner's own sales and are counted by counterServiceRevenue.
+   */
+  async revenueRows(scope: ReportScope, from: Date, to: Date) {
     const settlements = await prisma.settlement.findMany({
-      where: {
-        ...(scope.partnerId ? { partnerId: scope.partnerId } : {}),
-        booking: { bookingDate: { gte: from, lte: to } }
-      },
+      where: { ...settlementScopeWhere(scope, from, to), status: "SETTLED" },
       select: { grossAmount: true, commissionAmount: true, netAmount: true, booking: { select: { bookingDate: true } } }
     });
     return settlements.map((row) => ({
@@ -55,6 +59,16 @@ export const reportRepository = {
     }));
   },
 
+  /** Settlements of bookings played in the range whose money is not released yet (the booking has not finished). */
+  async pendingSettlements(scope: ReportScope, from: Date, to: Date) {
+    const totals = await prisma.settlement.aggregate({
+      where: { ...settlementScopeWhere(scope, from, to), status: { in: waitingSettlementStatuses } },
+      _sum: { grossAmount: true, netAmount: true },
+      _count: { _all: true }
+    });
+    return { grossAmount: Number(totals._sum.grossAmount ?? 0), netAmount: Number(totals._sum.netAmount ?? 0), count: totals._count._all };
+  },
+
   async bookingBreakdown(scope: ReportScope, from: Date, to: Date) {
     return prisma.booking.groupBy({
       by: ["bookingStatus"],
@@ -63,11 +77,12 @@ export const reportRepository = {
     });
   },
 
+  /** What was sold, per service, on bookings that finished (a finished booking has its bill paid). */
   async serviceSales(scope: ReportScope, from: Date, to: Date) {
     const rows = await prisma.bookingService.findMany({
       where: {
-        status: "ACTIVE",
-        booking: { ...bookingScopeWhere(scope), bookingDate: { gte: from, lte: to } }
+        ...activeBookingServiceWhere,
+        booking: { ...bookingScopeWhere(scope), bookingDate: { gte: from, lte: to }, bookingStatus: "COMPLETED" }
       },
       select: {
         quantity: true,
@@ -88,6 +103,39 @@ export const reportRepository = {
     return Array.from(byName.values()).sort((a, b) => b.revenue - a.revenue);
   },
 
+  /**
+   * Service money of finished bookings that is not in the settlement ledger (see servicesOutsideLedger), so it adds to
+   * the revenue above without counting anything twice.
+   */
+  async counterServiceRevenue(scope: ReportScope, from: Date, to: Date) {
+    const bookings = await prisma.booking.findMany({
+      where: {
+        ...bookingScopeWhere(scope),
+        bookingDate: { gte: from, lte: to },
+        bookingStatus: "COMPLETED",
+        bookingServices: { some: activeBookingServiceWhere }
+      },
+      select: {
+        basePrice: true,
+        dynamicAdjustmentAmount: true,
+        totalPrice: true,
+        voucherDiscountAmount: true,
+        bookingServices: { where: activeBookingServiceWhere, select: { quantity: true, price: true, unitPrice: true, totalPrice: true } },
+        settlements: { where: { collectedBy: "PLATFORM", status: "SETTLED" }, select: { grossAmount: true } }
+      }
+    });
+    return bookings.reduce(
+      (sum, booking) =>
+        sum +
+        servicesOutsideLedger({
+          ...booking,
+          services: booking.bookingServices,
+          platformGross: booking.settlements.reduce((total, row) => total + Number(row.grossAmount), 0)
+        }),
+      0
+    );
+  },
+
   async occupancy(scope: ReportScope, from: Date, to: Date) {
     const courts = await prisma.court.findMany({
       where: courtScopeWhere(scope),
@@ -105,7 +153,14 @@ export const reportRepository = {
       where: { courtId: { in: courtIds }, status: "ACTIVE", blockDate: { gte: from, lte: to } },
       select: { courtId: true, courtSurfaceId: true, startTime: true, endTime: true }
     });
-    const blockedHoursByScope = blocks.reduce((sum, block) => sum + Math.max(0, timeToMinutes(dbTime(block.endTime)) - timeToMinutes(dbTime(block.startTime))) / 60, 0);
+    // A block of the whole court closes every sub-court counted below; a sub-court block only its own (and only when
+    // that sub-court is counted, i.e. active).
+    const countedSurfaces = new Map(courts.map((court) => [court.id, court.surfaces.length ? court.surfaces.map((surface) => surface.id) : [null]]));
+    const blockedHoursByScope = blocks.reduce((sum, block) => {
+      const counted = countedSurfaces.get(block.courtId) ?? [];
+      const surfaces = block.courtSurfaceId ? counted.filter((id) => id === block.courtSurfaceId).length : counted.length;
+      return sum + (surfaces * Math.max(0, timeToMinutes(dbTime(block.endTime)) - timeToMinutes(dbTime(block.startTime)))) / 60;
+    }, 0);
 
     const dayCount = Math.floor((to.getTime() - from.getTime()) / 86_400_000) + 1;
 
@@ -125,11 +180,12 @@ export const reportRepository = {
       where: {
         ...bookingScopeWhere(scope),
         bookingDate: { gte: from, lte: to },
-        bookingStatus: { in: [...activeBookingStatuses] as any }
+        bookingStatus: { in: [...occupyingBookingStatuses] }
       },
-      select: { startTime: true, endTime: true }
+      select: { courtId: true, courtSurfaceId: true, startTime: true, endTime: true }
     });
-    const bookedHours = bookings.reduce((sum, booking) => sum + Math.max(0, timeToMinutes(dbTime(booking.endTime)) - timeToMinutes(dbTime(booking.startTime))) / 60, 0);
+    // Measured like the hours available: a whole-court booking fills every counted sub-court, a paused one none.
+    const bookedHours = bookings.reduce((sum, booking) => sum + occupiedSurfaceHours(booking, countedSurfaces), 0);
 
     return { bookedHours, totalHours, occupancyRate: totalHours > 0 ? Math.min(1, bookedHours / totalHours) : 0 };
   },

@@ -1,11 +1,12 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+import { partnerAccountActive } from "../../shared/utils/publicCourt.js";
 import { timeToDate, toDbDate } from "../../shared/utils/time.js";
 
 export const dynamicPricingRepository = {
   courtWithBasePrices(courtId: string) {
     return prisma.court.findFirst({
-      where: { id: courtId, approvalStatus: "APPROVED", activeStatus: "ACTIVE" },
+      where: { id: courtId, approvalStatus: "APPROVED", activeStatus: "ACTIVE", ...partnerAccountActive },
       include: { prices: true, basePrices: true }
     });
   },

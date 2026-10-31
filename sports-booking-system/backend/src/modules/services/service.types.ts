@@ -16,7 +16,10 @@ export interface CreateServiceInput {
   unit?: string;
   imageUrl?: string | null;
   trackInventory?: boolean;
-  initialStock?: number;
+  /** One row, with its own stock, per court. */
+  courtIds: string[];
+  /** On hand at each court; products start at 0 when left out, rental gear left out is not counted. */
+  initialStock?: number | null;
   minimumStock?: number;
 }
 
@@ -33,7 +36,11 @@ export interface UpdateServiceInput {
   status?: "ACTIVE" | "INACTIVE";
   trackInventory?: boolean;
   minimumStock?: number;
+  /** Only to place a service that has no court yet. */
+  courtId?: string;
 }
+
+export type ServiceViewer = { id: string; role: string } | undefined;
 
 export interface CourtServiceOverrideInput {
   courtId: string;

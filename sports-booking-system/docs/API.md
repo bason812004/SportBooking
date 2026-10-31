@@ -39,12 +39,25 @@ Loi:
 - `POST /bookings`
 - `GET /bookings/:id`
 - `PUT /bookings/:id/cancel`
+- `GET /reviews/eligibility?courtId=`
+  Whether the signed-in user may review the court now, and the booking the review would go with.
 - `POST /reviews`
+  Customers (USER) only, for a `COMPLETED` booking of theirs at that court that has no review yet (the given `bookingId`, or the latest); one review per booking.
+- `PUT /reviews/:id`, `DELETE /reviews/:id`
+  The author only. An edit keeps an admin's decision to hide the review.
 - `POST /reports`
+  Customers (role USER) report a public court: `{ courtId, reason (3-160), description? (≤ 1000) }`. One open report per customer and court: sending again while it waits answers 409 with code `ALREADY_REPORTED`.
 
 ## Partner
 
 - `GET /partner/dashboard`
+- `GET /partner/bookings/overdue` (also `GET /recipient/bookings/overdue` for the staff member's court, `GET /admin/bookings/overdue` for every court)
+  Bookings over but still open (not checked in, or never checked out), with `finishesAt`. The booking-overdue job (every `BOOKING_OVERDUE_INTERVAL_MS`, default 15 min) reminds the court's staff `BOOKING_OVERDUE_REMIND_HOURS` (default 2) after the end time and finishes the booking after `BOOKING_AUTO_FINISH_HOURS` (default 48; 0 turns a step off): checked in or court fully paid online → `COMPLETED`, otherwise → `NO_SHOW`, with the same settlement and commission steps as staff finishing it, and `autoFinishedAt` set. Each finish is audited in the same transaction as `BOOKING_AUTO_FINISHED` with no actor (shown as "Hệ thống") and what the decision rested on (check-in, online paid, court due). Only bookings dated from `system_settings.BOOKING_AUTO_FINISH_FROM_DATE` (set by database/28_booking_auto_finish.sql) are handled. A system no-show can be turned into `COMPLETED` with the usual `PUT .../complete` for 7 days.
+- `GET /partner/reviews`
+  Reviews of the partner's courts (reviewer emails left out) with `summary`: the average of visible reviews, the hidden count and the spread by stars. Filters: `courtId`, `status`, `rating`, `search`, `replied` (`true`/`false`). Hiding or removing reviews stays with admins.
+- `PUT /partner/reviews/:id/reply`
+  Body `{ reply }` (2-1000 characters): writes or rewrites the court owner's public reply, one per review (table `review_replies`). Not on a review an admin hid. The customer is notified on the first reply.
+- `DELETE /partner/reviews/:id/reply`
 - `GET /partner/courts`
 - `POST /partner/courts`
   Creates the venue and its default active sub-court (`code: "S01"`, `name: "<venue name> - Sân 01"`) in one transaction. The response includes `surfaces`; failure rolls back both records.
@@ -59,27 +72,78 @@ Loi:
 
 Sub-court operations enforce partner ownership, preserve venue approval and synchronize `court_count` on add/delete. Web management: `/partner/courts/:id/surfaces`. No database migration is needed.
 
+- `GET /partner/courts` returns each court with `minPrice`, `averageRating`, `reviewCount` and what an admin said: `rejectionReason`, `updateRequestNote`, `adminLockedAt`, `adminLockReason`.
 - `PUT /partner/courts/:id`
-- `DELETE /partner/courts/:id`
+  Only a change of `name`, `address`, `ward`, `city` or `categoryId` sends the court back to `PENDING`; description, hours and `depositPercent` (0 to under 50) apply at once, and the slug never changes. Customers whose upcoming bookings fall outside new hours are notified (`BOOKING_COURT_CHANGED`). Returns the court with `reviewRequired` and `notifiedBookings`.
+- `GET /partner/courts/:id/affected-bookings?surfaceId=&openingTime=&closingTime=`: upcoming bookings a pause (of the court or one sub-court) or new hours would touch, for the confirmation shown before the change.
+- `PUT /partner/courts/:id/status` (and `DELETE /partner/courts/:id`, which pauses): pausing notifies the customers of upcoming bookings, which stand. A court an admin locked (`adminLockedAt`) answers 403 until an admin opens it. Pausing a sub-court (`PUT .../surfaces/:surfaceId/status`) notifies its customers the same way.
+- `POST /partner/courts/:id/blocks` and `/blocks/bulk`: 409 when the block covers an active booking (court-wide blocks cover every sub-court); `GET /partner/courts/:id/blocks` lists blocks from today on.
 - `POST /partner/courts/:id/images`
-- `POST /partner/courts/:id/prices`
-- `PUT /partner/prices/:priceId`
+- `POST /partner/courts/:id/prices`, `PUT /partner/prices/:priceId`
+  A row must end after it starts and must not partly overlap, or repeat, another row of the same day type; a row nested inside another is allowed. Pricing everywhere (quote, checkout, walk-in, weekly schedule, availability grids) cuts a booking where rows begin or end and prices each piece with the narrowest row covering it (newer row on a tie); on a date in `system_holidays` `HOLIDAY` rows come first, then the date's weekday/weekend rows. A piece no row covers is not for sale: the quote refuses it and schedules show the hour `BLOCKED` ("Chưa có bảng giá") or with `price: null`.
 - `DELETE /partner/prices/:priceId`
 - `POST /partner/courts/:id/services`
 - `PUT /partner/services/:serviceId`
 - `DELETE /partner/services/:serviceId`
 - `GET /partner/bookings`
 - `PUT /partner/bookings/:id/confirm`
-- `PUT /partner/bookings/:id/reject`
+- `PUT /partner/bookings/:id/reject` with `{ reason }` (3-500 characters, stored as the cancel reason and sent to the customer)
 - `PUT /partner/bookings/:id/complete`
 - `PUT /partner/bookings/:id/no-show`
-- `GET /partner/statistics/revenue`
+  The status moves only from the one it was read with (409 when staff, another tab or the overdue job changed it meanwhile). Allowed moves (partner and staff alike): `PENDING` → confirm/cancel; `CONFIRMED`, `DEPOSIT_PAID` → complete/no-show/cancel; `IN_PROGRESS`, `CHECKOUT_PENDING` → complete. Completing needs the bill paid in full (court + services − voucher − deposit − cashier payments): otherwise 409 `BOOKING_BALANCE_DUE` ("Khách còn nợ ...") and the screen opens the cashier on that booking, which completes it once paid. A court cancelling money it took at the counter refunds what it took (`depositAmount`, the court charge or deposit), not services still on the tab. The customer is notified of a confirmation (`BOOKING_CONFIRMED`), a cancellation with its reason and refund (`BOOKING_CANCELLED`) and a no-show (`BOOKING_NO_SHOW`); staff decisions (`/recipient/bookings/:id/...`) follow the same rules, and `PUT /recipient/bookings/:id/reject` needs `{ reason }` too (3-500 characters, sent to the customer).
+
+Cashier (`/cashier`, partner, staff and admin; an admin sees every partner's courts):
+
+- `POST /cashier/bookings/:bookingId/check-in` (and `POST /recipient/bookings/:id/check-in`, same rule): only a `CONFIRMED`/`DEPOSIT_PAID` booking not checked in yet, on its day, until 1 hour after its end; it becomes `IN_PROGRESS` and keeps its payment and deposit. Before its start the court's early check-in policy applies (`early_check_in_max_minutes`, free minutes, the rest at `early_check_in_price_percent` of the hour-by-hour price, added to the bill), the start moves to now, and the sub-court must be free (no booking or block) until then. The answer carries `extraChargeAmount`. Selling a service checks the guest in only once the booked time has begun.
+- `POST` / `DELETE /cashier/bookings/:bookingId/invoice-lock`: locks the invoice's services for every device (adding, changing or removing one answers 409 `INVOICE_LOCKED`); payments still go through. The booking carries `invoiceLockedAt`.
+- `POST /cashier/rentals/return` with `{ rentalItemId, status: RETURNED | DAMAGED | LOST, notes? }`: only for gear rented at the actor's court, only once (409 after). Rental gear with a stock row holds `reserved_quantity` while out (renting more than is free is refused); returning frees it, damaged or lost gear also leaves `quantity`.
+
+Staff counter (`/recipient`, database/35_staff_counter.sql):
+
+- `POST /recipient/operations/walk-in-quote` with `{ slots, occurrences?, paymentMethod, paymentType, services? }` writes nothing and returns `{ sessions, skipped, courtTotal, servicesTotal, collectNow, depositPercent }`. `collectNow` is what is taken now: the court charge, its deposit, or 0 when paying at the court; services are always paid later at the cashier. A weekly series lists the weeks already taken in `skipped`.
+- `POST /recipient/operations/walk-in-booking`, `/walk-in-booking-order`, `/recurring-walk-in-booking`: paying cash now (`paymentMethod: CASH`, not `PAY_AT_COURT`) needs `cashReceived` equal to the quote's `collectNow` (400 without it, 409 `WALK_IN_CASH_MISMATCH` with the right amount otherwise), since the booking is recorded as paid. A weekly series where a week was taken between the quote and the creation answers the same 409 for cash; one with every week taken answers 409 `WALK_IN_BOOKING_CONFLICT`. The customer account (new walk-in account or the existing USER with that phone) is made inside the booking transaction. Slots must fit the sub-court's own opening hours when it has them.
+- `POST /recipient/bookings/:id/extend` with `{ minutes, targetSurfaceId? }`: refused past the sub-court's closing time; the added minutes must be free of bookings and blocks (409 `BOOKING_EXTENSION_CONFLICT`). Moving the guest to `targetSurfaceId` (an active sub-court) needs it free from now (or the start) to the new end. `GET /recipient/bookings/:id/time-charge-quote` gives each extension `{ minutes, allowed, amount }` (`amount: null` when not allowed); `GET /recipient/bookings/:id/extend-options` lists only active sub-courts that qualify.
+- `POST /recipient/bookings/:id/early-check-out`: the guest leaves early; the booking completes now and frees the rest of its time, only once the bill is paid (409 `BOOKING_BALANCE_DUE`).
+- `GET /recipient/court-surfaces/:id/affected-bookings`: upcoming bookings on the sub-court, shown before pausing it. `PUT /recipient/court-surfaces/:id/status` notifies those customers (`BOOKING_COURT_CHANGED`) like the partner's pause and returns `notifiedBookings`; `court_surfaces.paused_by_role` records who paused it, and staff can reopen only a sub-court staff paused (403 otherwise). `/recipient/operations` gives `surface.pausedByRole`, and never shows a booking already completed at the cashier as overdue.
+- `POST /recipient/court-surfaces/:id/lock`: within the sub-court's opening hours, not over already, and not over a booking or another block (409 `LOCK_SLOT_CONFLICT`).
+- `GET /recipient/customers/:id/history` answers 404 for a customer who never booked at the staff member's court.
+- `PUT /inventory/purchase-orders/:id` and `POST /inventory/purchase-orders/:id/cancel` on a draft: a receptionist may change only drafts they proposed (403 for one the partner wrote).
+
+Services, stock and staff (database/32_partner_catalog_staff_pricing.sql):
+
+- Every service row belongs to one court (`courtId`), with its own price and stock. `POST /services/partner` takes `courtIds` (at least one of the partner's courts) and creates one row per court; it returns the array. `initialStock` is what is on hand at each court: products start at 0 when it is left out (stock then comes in through purchase orders), rental gear left out is not counted (never limited). A name already sold at one of the courts answers 409 `SERVICE_NAME_TAKEN`. `PATCH /services/partner/:id` accepts `courtId` only to place a service that has none yet. Wrong owner answers 403.
+- `DELETE /services/partner/:id` returns `{ deleted, deactivated }`: a service never sold, rented, ordered or moved in stock is deleted; otherwise it only becomes `INACTIVE` (history kept).
+- Public `GET /services?courtId=` (or `?partnerId=`), `/services/courts/:courtId`, `/services/:id`: customers get no `costPrice`, and of the stock only `inventory: { quantity }` = what can still be ordered (null when the item is not counted). The court's own partner, its receptionist and admins (signed in) get the full rows. Without `courtId` or `partnerId` the list answers 400. Creating a service category (`POST /services/categories`) is admin-only. Nothing seeds or deletes services from a request any more; demo catalogs come from `npx tsx src/scripts/seed_all_services.ts --court=<id,...>` (only courts that sell nothing yet).
+- `POST /inventory/adjust`: `ADJUSTMENT` sets the counted quantity and logs the signed difference; removals (`DAMAGED`, `LOST`, `SALE`) cannot take more than is free (stock minus rental gear out), and a count cannot go below the gear that is out.
+- `PUT /partner/recipients/:id` (fix: `managedCourtId` is a court id such as `c0001`; an empty `phone` clears it). Passwords need 8+ characters and are taken as typed. A new password signs the staff member out everywhere: refresh tokens are revoked and access tokens issued before `users.sessions_revoked_at` are refused (401 "Phien dang nhap da het hieu luc").
+- `PUT /partner/recipients/:id/status` with `{ status: ACTIVE | LOCKED }`: a locked account is signed out at once and cannot sign in.
+- `DELETE /partner/recipients/:id` returns `{ id, deleted, locked }`: an account that served bookings, ordered stock or left audit rows is locked instead of deleted.
+
+Dynamic pricing (`/partner/dynamic-pricing/rules`):
+
+- Every rule that applies adds its own amount, a percentage always taken of the base price (two +20% rules make +40%). `minPrice`/`maxPrice` apply once, to the total: the highest minimum and the lowest maximum of the rules that apply. A limit only stops the move the rules make; it never pushes the price the other way. When a limit cuts the total, the adjustments carry a `Giới hạn giá` line so they still add up.
+- The value may be negative (a discount): `OFF_PEAK_HOUR` and `LOW_DEMAND` must be negative, `PEAK_HOUR`, `WEEKEND`, `HOLIDAY` and `HIGH_DEMAND` positive, `CUSTOM` either; never 0, a percentage within -90..+300. Both times or neither, start before end, `minPrice <= maxPrice`. On update, `null` clears `dayType`, the time window, a limit or the description. Changes refresh the weekly schedule at once. `HIGH_DEMAND`/`LOW_DEMAND` are labels: they apply by day type and time window, not by the demand forecast.
+- Public `GET /courts/:courtId/demand-prediction` only reads; it no longer stores a prediction or an analytics event per call.
+- `GET /partner/statistics/revenue?month=YYYY-MM` reads the settlement ledger (the wallet's), by booking date: `{ month, settled, pending, items }`. Settled money is revenue, `pending` is money of bookings not finished yet, cancelled or failed settlements are left out. Bookings paid at the counter before 2026-10-22 have no settlement and are not in it. The commission ledger stays for the admin finance pages; their months (`monthRange`) now start at 00:00 Vietnam time.
+- `GET /partner/report/*`, `/admin/report/*` and `/recipient/report/*` (a court's staff, their court only): revenue comes only from `SETTLED` settlements, by play date; the overview adds `pendingRevenue`/`pendingCount` (PENDING/PROCESSING settlements). Staff get the same rows as the partner for their court, gross only: no `totalCommission`/`netRevenue`, and their revenue series has only `period` and `grossAmount`. The revenue series lists every day, week or month of the range (0 when nothing settled). `totalServiceRevenue` is service money of `COMPLETED` bookings that is not in the ledger (what the customer paid online beyond the court is already in its PLATFORM settlement), so it adds to the revenue without overlap; `/services` lists what was sold on `COMPLETED` bookings. Occupancy counts bookings that hold the court (confirmed, deposit paid, in progress, checkout pending, completed, no-show); a whole-court booking fills every counted (active) sub-court, a booking on a paused sub-court none, and a whole-court block closes every counted sub-court. Exports are in Vietnamese with status labels; the staff file is `bao-cao-san`.
+- `GET /recipient/dashboard`: `bookingsToday` by the Vietnam date; `revenue` is this month's settled gross of the court, the same figure as the report.
+- `PUT /partner/reviews/:id/reply` answers 400 on a review whose reply an admin took down (`REPLY_REMOVED`); review lists carry `replyRemoval: { reason, removedAt }`.
+- `PUT /partner/profile`: changing `bankName`, `bankAccountNumber` or `bankAccountHolder` needs `currentPassword` (400 otherwise, nothing saved); the partner then gets a `BANK_ACCOUNT_CHANGED` notification and an email, `bankAccountChangedAt` is set and withdrawals open 24 hours later (admins see "TK mới đổi" on requests within 7 days of a change). The bank account no longer sends the profile back to review; business name, tax code and verification document still do. Formats: phone `0` + 9–10 digits or `+84…`, tax code 10 digits (+ 3-digit branch), account number 6–20 digits; the holder name is stored upper case; `avatarUrl`/`verificationDocumentUrl` must be http(s); an empty phone or avatar clears it.
+- `POST /partner/profile/document` (multipart `file`, JPEG/PNG/WebP or PDF up to 10MB) uploads a verification document and returns `{ url, fileName, size }`; the link is saved with the profile. PDFs are Cloudinary raw files.
+- `PUT /auth/change-password` (every role): a wrong current password is a 400 (not 401) and after 5 wrong answers in 15 minutes the account waits (also counted by the bank-account confirmation). The new password must differ from the current one. Every other device is signed out (refresh tokens revoked, older access tokens refused by HTTP and Socket.IO); the answer carries `{ user, accessToken, refreshToken }` for this device, and an email tells the owner.
+- `POST /partner/withdrawals` takes only `{ amount }`: whole dong, at least 50.000, always paid to the bank account in the profile (400 when there is none). `PUT /partner/withdrawals/:id/cancel` takes back a `PENDING` request (status `CANCELLED`, the amount returns to the available balance). database/33_partner_withdrawals.sql lets the status column hold `PROCESSING`, `FAILED` and `CANCELLED`.
 
 ## Received notifications
 
-`GET /users/me/notifications?page=1&limit=10` returns `{ items, unreadCount, meta }` inside `data`. `unreadCount` is the total unread count for the authenticated account across all pages. Existing read-one/read-all endpoints remain owner-scoped.
+`GET /users/me/notifications?page=1&limit=10&unread=true` returns `{ items, unreadCount, meta }` inside `data`; `unread=true` lists only unread ones. `unreadCount` is the total unread count for the authenticated account across all pages. Existing read-one/read-all endpoints remain owner-scoped and set `readAt` on the first read (database/27_notification_read_at_and_recall.sql).
 
-The bell loads more pages, scopes its cache by user ID and refreshes after socket connect/reconnect, `notification:new`, focus and every 30 seconds while visible. ADMIN notification links route to the appropriate moderation/report/withdrawal screen. `/admin/notifications` remains the outgoing campaign interface.
+The bell loads more pages, scopes its cache by user ID and refreshes after socket connect/reconnect, `notification:new`, focus and every 30 seconds while visible. ADMIN notification links route to the appropriate moderation/report/withdrawal screen; a notification with no screen of its own (an admin announcement) opens `/notifications`, the full-text inbox every signed-in role has. `/admin/notifications` remains the outgoing campaign interface:
+
+- `GET /admin/notifications/audience?targetType=&targetRole=&targetUserId=&targetPartnerId=` returns `{ count }`, the active accounts a campaign would reach (shown in the confirmation). `ALL` and `ROLE` leave out the sending admin; `targetRole` is `USER`, `PARTNER`, `RECIPIENT` or `ADMIN`.
+- `POST /admin/notifications/campaigns` takes the same audience fields plus `title`, `content` and `type` (`SYSTEM`, `MAINTENANCE`, `INCIDENT`, `FINANCE`, `PROMOTION`; workflow types such as approvals are no longer sent by hand).
+- `GET /admin/notifications/campaigns` filters by `search`, `type`, `targetType`, `targetRole`; each campaign carries `readCount` and `recalledAt`.
+- `GET /admin/notifications/campaigns/:id` returns `readCount`/`unreadCount` over every recipient; `GET /admin/notifications/campaigns/:id/recipients?search=&read=` pages through the recipients with `readAt`.
+- `POST /admin/notifications/campaigns/:id/recall` with `{ reason }` deletes the campaign's notifications from every inbox; the campaign stays in the history with `recalledAt` and the reason.
 
 Review events are queued transactionally by `admin_notification_outbox.sql`; the worker persists recipient notices exactly once per queued event before emitting realtime. Repeated worker runs do not create duplicate notices. Different business changes are separate events; this does not add request idempotency to business APIs. Older payment/refund notices keep their existing delivery path and now link to the booking screen.
 
@@ -125,10 +189,39 @@ Partner: court image management → “Thay ảnh đại diện”. ADMIN: “T�
 - `PUT /admin/categories/:id`
 - `DELETE /admin/categories/:id`
 - `GET /admin/reviews`
+  Filters: `search` (comment, author name or email, court), `status` (`VISIBLE`/`HIDDEN`), `rating`, `partnerId`, `courtId`.
 - `PUT /admin/reviews/:id/hide`
+  Body `{ reason }` (required): saved to the moderation history and sent to the author.
 - `PUT /admin/reviews/:id/show`
+  Body `{ reason? }`.
 - `DELETE /admin/reviews/:id`
-- `GET /admin/reports`
-- `PUT /admin/reports/:id/resolve`
-- `PUT /admin/reports/:id/reject`
+  Body `{ reason }` (required); the deleted content is kept in the audit log and the author is told.
+- `DELETE /admin/reviews/:id/reply`
+  Body `{ reason }` (required): takes down the court owner's reply, keeps it in the audit log and tells the partner.
+- `GET /admin/blogs/pending`
+  The moderation queue, public posts only (private posts are their author's own and skip review). Filters: `status` (`PENDING` by default, `PUBLISHED`, `REJECTED`, `HIDDEN`, `ALL`), `authorRole` (`USER`/`PARTNER`), `search` (title, content, author name or email). Waiting posts come oldest first. Returns `counts` per status; each post carries its category, comment count, `publishedAt` (set on a waiting post means an edit of a published post) and the last decision with its reason.
+- `PUT /admin/blogs/:id/approve` (optional `{ reason }`), `PUT /admin/blogs/:id/reject` and `PUT /admin/blogs/:id/hide` (`{ reason }` required, sent to the author)
+  404 for an unknown post, 400 when the post's status does not allow the decision, 409 when another admin decided meanwhile.
+- `GET /admin/blogs/:id/history`: every moderation decision on the post.
+- `GET /admin/blogs/:id/comments`, `DELETE /admin/blogs/:id/comments/:commentId` with `{ reason }`
+  Removes a comment; its content is kept in the audit log and the commenter is told why. On the public post page only the commenter and the post's author delete comments, and only the commenter edits them.
+- `GET /admin/reports?status=&search=`
+  Each report carries the court (status, partner), reporter, `resolver`, `adminNote` and `courtPendingCount` (reports still waiting on that court); `counts` gives the reports per status under the same search.
+- `PUT /admin/reports/:id/resolve` with optional `{ note }`, `PUT /admin/reports/:id/reject` with `{ note }` (required)
+  Only a waiting report (409 when it was decided already or meanwhile, 404 when unknown). The decision, the admin and the note are stored; the reporter is notified (`REPORT_RESOLVED` / `REPORT_REJECTED`).
+- `GET /admin/audit-logs?search=&action=&entityType=&actorRole=&fromDate=&toDate=`
+  `actorRole` is a role or `SYSTEM` (entries without an actor); dates are Vietnam days; `search` also matches an entry's id. Entries carry `metadata`. `GET /admin/audit-logs/filter-options` lists the actions and entity types present.
+- `GET /admin/audit-logs/verify`: recomputes the hash chain, `{ valid, checked, brokenAt, headMismatch? }`; `headMismatch` means the last entry is not the recorded chain head (entries cut from the end). Entries are hashed over canonical JSON (keys sorted) and chained under a row lock on `audit_chain_head` (database/30_audit_chain_head.sql), which also refuses a Serializable writer whose snapshot is stale; `audit_logs` refuses updates and deletes (database/29_audit_and_reports.sql). Every audited action writes its entry in the same transaction as the change it records.
+- `GET /admin/blockchain-logs?search=`: the anchoring queue, each row with its `audit` entry. No blockchain provider is configured, so rows stay `PENDING` on network `NOT_CONFIGURED`; the retry endpoint was removed.
 - `GET /admin/statistics`
+
+Admin finance (money reaches partners only through withdrawals; the manual payout endpoint `PATCH /admin/finance/payouts/:partnerId` was removed):
+
+- `GET /admin/finance/reconciliation?month=YYYY-MM`, `GET /admin/finance/export?month=` (CSV)
+  Per partner: the month's commission ledger (`grossAmount`, `commissionAmount`, `netAmount` including money the partner collected at the court, `transactionCount`), refunds dated by cancellation (`refundAmount`, `platformRetainedAmount`, `refundCount`), withdrawals paid that month (`paidOutAmount`, `paidOutCount`) and the wallet as it stands now (`walletPending`, `walletAvailable`, `commissionDebt`). `summary` sums the same fields.
+- `GET /admin/finance/transactions` (`transactionType` is `EARNING`, `ADJUSTMENT` or `REVERSAL`), `GET /admin/finance/refunds`
+- `GET /admin/settlements` and `/summary`: filters `status`, `partnerId`, `collectedBy`, `search` (booking code or partner name), `fromDate`/`toDate` (Vietnam days). The summary ignores `status`.
+- `PUT /admin/settlements/:id/settle`: only once the booking is `COMPLETED` or `NO_SHOW` (400 otherwise).
+- `PUT /admin/settlements/:id/cancel` with `{ reason }` (required): cancels a pending settlement or takes back a settled one; the partner is notified.
+- `PUT /admin/withdrawals/:id/reject` with `{ note }` (required, the reason) and `PUT /admin/withdrawals/:id/paid` with `{ note }` (required, the bank transfer reference). `GET /admin/withdrawals` takes `fromDate`/`toDate` as Vietnam days and each item carries `partner.wallet { availableBalance, commissionDebt }`.
+- `GET /admin/commission/default` returns `{ rate, partnersUsingDefault, overrides: [{ partnerId, businessName, rate }] }`; `GET /admin/commission/history` lists the latest default and partner rate changes with the previous rate.

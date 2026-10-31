@@ -44,16 +44,16 @@ export const notificationService = {
     await Promise.all(admins.map((admin) => this.create({ userId: admin.id, ...input })));
   },
 
-  async list(userId: string, query: { page?: string; limit?: string }) {
+  async list(userId: string, query: { page?: string; limit?: string; unread?: string }) {
     const page = parsePage(query.page);
     const limit = parseLimit(query.limit);
-    const [items, total, unreadCount] = await notificationRepository.listByUser(userId, page, limit);
+    const [items, total, unreadCount] = await notificationRepository.listByUser(userId, page, limit, query.unread === "true");
     return { items, unreadCount, meta: paginationMeta(page, limit, total) };
   },
 
   async markRead(userId: string, id: string) {
     const result = await notificationRepository.markRead(id, userId);
-    if (!result.count) throw new NotFoundError("Khong tim thay thong bao");
+    if (!result.count) throw new NotFoundError("Không tìm thấy thông báo");
     return notificationRepository.findById(id);
   },
 

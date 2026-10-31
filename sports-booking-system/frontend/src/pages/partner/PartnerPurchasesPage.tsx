@@ -5,6 +5,7 @@ import { Truck, Plus, ShoppingCart, UserCheck, Pencil, Send, PackageCheck, XCirc
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Modal } from "../../components/ui/Modal";
+import { ConfirmModal } from "../../components/common/ConfirmModal";
 import {
   inventoryApi,
   type PurchaseOrder,
@@ -41,11 +42,11 @@ const ACTION_COPY: Record<PoAction, { success: string; confirm?: string }> = {
   cancel: { success: "Đã hủy đơn nhập hàng.", confirm: "Hủy đơn nhập hàng này? Tồn kho sẽ không thay đổi." }
 };
 
-// Validation errors carry a generic message; the actual reason ("Số lượng nhập phải lớn hơn 0") is in `errors`.
+// Validation errors carry a generic message; the actual reason ("Số lượng nhập phải lớn hơn 0") is in `fieldErrors`
+// (see lib/axios.ts, which rejects with a plain Error carrying the server's message).
 function errorMessage(err: any, fallback: string) {
-  const data = err?.response?.data;
-  const firstFieldError = Object.values((data?.errors ?? {}) as Record<string, string[]>).flat()[0];
-  return firstFieldError || data?.message || fallback;
+  const firstFieldError = Object.values((err?.fieldErrors ?? {}) as Record<string, string[]>).flat()[0];
+  return firstFieldError || err?.message || fallback;
 }
 
 const formatTime = (value?: string | null) => (value ? new Date(value).toLocaleString("vi-VN") : "");
@@ -66,6 +67,7 @@ export function PartnerPurchasesPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [courtFilter, setCourtFilter] = useState("");
   const [busyOrderId, setBusyOrderId] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<{ po: PurchaseOrder; action: PoAction } | null>(null);
   const [creatingDraft, setCreatingDraft] = useState(false);
 
   // /partner/courts is partner-only; a receptionist's court comes from their (server-scoped) products.
@@ -254,9 +256,13 @@ export function PartnerPurchasesPage() {
     }
   };
 
-  const runAction = async (po: PurchaseOrder, action: PoAction) => {
+  const runAction = async (po: PurchaseOrder, action: PoAction, confirmed = false) => {
     const copy = ACTION_COPY[action];
-    if (copy.confirm && !window.confirm(`${po.orderCode}: ${copy.confirm}`)) return;
+    if (copy.confirm && !confirmed) {
+      setConfirming({ po, action });
+      return;
+    }
+    setConfirming(null);
     setBusyOrderId(po.id);
     try {
       if (action === "order") await inventoryApi.orderPurchaseOrder(po.id);
@@ -444,6 +450,8 @@ export function PartnerPurchasesPage() {
                     const shortfall = po.status === "COMPLETED" && po.receivedAmount != null && Number(po.receivedAmount) !== Number(po.totalAmount);
                     const busy = busyOrderId === po.id;
                     const proposedByStaff = po.createdBy?.id !== undefined && po.createdBy.id !== user?.id;
+                    // A receptionist edits or withdraws only their own proposals (the server refuses the rest).
+                    const canChangeDraft = po.status === "DRAFT" && (isPartner || po.createdBy?.id === user?.id);
                     return (
                       <tr key={po.id} className="hover:bg-slate-50/80 transition">
                         <td className="p-4">
@@ -473,7 +481,7 @@ export function PartnerPurchasesPage() {
                         <td className="p-4 text-xs text-slate-500">{po.note || "---"}</td>
                         <td className="p-4">
                           <div className="flex flex-wrap justify-end gap-1.5">
-                            {po.status === "DRAFT" ? (
+                            {canChangeDraft ? (
                               <Button size="sm" variant="secondary" disabled={busy} onClick={() => openEditPO(po)}>
                                 <Pencil className="h-3.5 w-3.5" /> Sửa
                               </Button>
@@ -488,7 +496,7 @@ export function PartnerPurchasesPage() {
                                 <PackageCheck className="h-3.5 w-3.5" /> Nhận hàng
                               </Button>
                             ) : null}
-                            {po.status === "DRAFT" || (isPartner && po.status === "ORDERED") ? (
+                            {canChangeDraft || (isPartner && po.status === "ORDERED") ? (
                               <Button size="sm" variant="ghost" className="text-rose-600" disabled={busy} onClick={() => runAction(po, "cancel")}>
                                 <XCircle className="h-3.5 w-3.5" /> {isPartner ? "Hủy" : "Rút đề xuất"}
                               </Button>
@@ -913,6 +921,14 @@ export function PartnerPurchasesPage() {
           </div>
         ) : null}
       </Modal>
+
+      <ConfirmModal
+        open={Boolean(confirming)}
+        title={confirming ? `Đơn ${confirming.po.orderCode}` : ""}
+        message={confirming ? ACTION_COPY[confirming.action].confirm ?? "" : ""}
+        onConfirm={() => confirming && runAction(confirming.po, confirming.action, true)}
+        onCancel={() => setConfirming(null)}
+      />
     </div>
   );
 }

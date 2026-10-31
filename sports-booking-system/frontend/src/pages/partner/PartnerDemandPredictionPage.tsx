@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { addDays, format } from "date-fns";
 import { BrainCircuit, CalendarClock, Database, TrendingUp } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { BarChart } from "../../components/charts/BarChart";
 import { PageHero } from "../../components/common/PageHero";
 import { StatCard } from "../../components/common/StatCard";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
@@ -13,12 +13,16 @@ import { partnerApi } from "../../features/partner/api/partnerApi";
 import { usePartnerCourtOverview, usePartnerDemandForecast, usePartnerDemandOverview } from "../../features/demandPrediction/hooks/useDemandPrediction";
 import type { PartnerDemandForecastSlot } from "../../types/api";
 
-const LEVEL_COLORS: Record<NonNullable<PartnerDemandForecastSlot["predictionLevel"]>, string> = {
+type DemandLevel = NonNullable<PartnerDemandForecastSlot["predictionLevel"]>;
+
+const LEVEL_COLORS: Record<DemandLevel, string> = {
   LOW: "#94a3b8",
   MEDIUM: "#10b981",
   HIGH: "#f59e0b",
   VERY_HIGH: "#f43f5e"
 };
+
+const DEMAND_LEVELS: DemandLevel[] = ["LOW", "MEDIUM", "HIGH", "VERY_HIGH"];
 
 export function PartnerDemandPredictionPage() {
   const courts = useQuery({ queryKey: ["partner-courts"], queryFn: partnerApi.courts });
@@ -132,19 +136,26 @@ export function PartnerDemandPredictionPage() {
         ) : (
           <>
             <div className="mt-5 h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={forecastChartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="hour" />
-                  <YAxis domain={[0, 100]} />
-                  <Tooltip formatter={(value) => [`${value}/100`, "Điểm nhu cầu"]} />
-                  <Bar dataKey="score" radius={[6, 6, 0, 0]}>
-                    {forecastChartData.map((row) => (
-                      <Cell key={row.hour} fill={row.level ? LEVEL_COLORS[row.level] : LEVEL_COLORS.LOW} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              <BarChart
+                title="Dự báo nhu cầu theo khung giờ"
+                categoryLabel="Khung giờ"
+                seriesLabel="Điểm nhu cầu"
+                labels={forecastChartData.map((row) => row.hour)}
+                values={forecastChartData.map((row) => row.score)}
+                color={forecastChartData.map((row) => LEVEL_COLORS[row.level ?? "LOW"])}
+                max={100}
+                formatValue={(value) => `${value}/100`}
+                tooltipLabel={(value, index) => `${value}/100 · ${predictionLabel(forecastChartData[index].level, "vi")}`}
+              />
+            </div>
+            {/* The bar color is a demand level, so it is spelled out here and in the tooltip, never color alone. */}
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
+              {DEMAND_LEVELS.map((level) => (
+                <span key={level} className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: LEVEL_COLORS[level] }} />
+                  {predictionLabel(level, "vi")}
+                </span>
+              ))}
             </div>
             <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
               {generatedSlots.map((slot) => {
@@ -178,15 +189,15 @@ export function PartnerDemandPredictionPage() {
           </div>
         ) : (
           <div className="mt-5 h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="hour" />
-                <YAxis allowDecimals={false} />
-                <Tooltip />
-                <Bar dataKey="bookingCount" fill="#16a34a" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <BarChart
+              title="Lượt đặt theo khung giờ trong ngày"
+              categoryLabel="Khung giờ"
+              seriesLabel="Lượt đặt"
+              labels={chartData.map((row) => row.hour)}
+              values={chartData.map((row) => row.bookingCount)}
+              color="#16a34a"
+              integer
+            />
           </div>
         )}
       </section>

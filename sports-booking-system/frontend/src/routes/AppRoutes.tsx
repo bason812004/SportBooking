@@ -1,7 +1,8 @@
 import { lazy, Suspense } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import { PublicLayout } from "../components/layout/PublicLayout";
 import { DashboardLayout } from "../components/layout/DashboardLayout";
+import { RoleLayout } from "../components/layout/RoleLayout";
 import { ProtectedRoute } from "./ProtectedRoute";
 import { LoadingState } from "../components/common/States";
 import { HomePage } from "../pages/public/HomePage";
@@ -37,7 +38,6 @@ const RecipientDashboardPage = lazy(() => import("../pages/recipient/RecipientDa
 const RecipientBookingsPage = lazy(() => import("../pages/recipient/RecipientBookingsPage").then((m) => ({ default: m.RecipientBookingsPage })));
 const RecipientCourtSurfacesPage = lazy(() => import("../pages/recipient/RecipientCourtSurfacesPage").then((m) => ({ default: m.RecipientCourtSurfacesPage })));
 const RecipientReportPage = lazy(() => import("../pages/recipient/RecipientReportPage").then((m) => ({ default: m.RecipientReportPage })));
-const CashierBookingPosPage = lazy(() => import("../pages/cashier/CashierBookingPosPage").then((m) => ({ default: m.CashierBookingPosPage })));
 const PartnerStaffPage = lazy(() => import("../pages/partner/PartnerStaffPage").then((m) => ({ default: m.PartnerStaffPage })));
 const PartnerDashboardPage = lazy(() => import("../pages/partner/PartnerDashboardPage").then((m) => ({ default: m.PartnerDashboardPage })));
 const PartnerCourtsPage = lazy(() => import("../pages/partner/PartnerCourtsPage").then((m) => ({ default: m.PartnerCourtsPage })));
@@ -51,6 +51,8 @@ const PartnerDynamicPricingFormPage = lazy(() => import("../pages/partner/Partne
 const PartnerDemandPredictionPage = lazy(() => import("../pages/partner/PartnerDemandPredictionPage").then((m) => ({ default: m.PartnerDemandPredictionPage })));
 const PartnerVouchersPage = lazy(() => import("../pages/partner/PartnerVouchersPage").then((m) => ({ default: m.PartnerVouchersPage })));
 const PartnerVoucherFormPage = lazy(() => import("../pages/partner/PartnerVoucherFormPage").then((m) => ({ default: m.PartnerVoucherFormPage })));
+const PartnerReviewsPage = lazy(() => import("../pages/partner/PartnerReviewsPage").then((m) => ({ default: m.PartnerReviewsPage })));
+const NotificationsPage = lazy(() => import("../pages/shared/NotificationsPage").then((m) => ({ default: m.NotificationsPage })));
 const PartnerCourtResourcesPage = lazy(() => import("../pages/partner/PartnerCourtResourcesPage").then((m) => ({ default: m.PartnerCourtResourcesPage })));
 const PartnerSettingsPage = lazy(() => import("../pages/partner/PartnerSettingsPage").then((m) => ({ default: m.PartnerSettingsPage })));
 const PartnerBlogsPage = lazy(() => import("../pages/partner/PartnerBlogsPage").then((m) => ({ default: m.PartnerBlogsPage })));
@@ -62,7 +64,6 @@ const PartnerServicesPage = lazy(() => import("../pages/partner/PartnerServicesP
 const PartnerInventoryPage = lazy(() => import("../pages/partner/PartnerInventoryPage").then((m) => ({ default: m.PartnerInventoryPage })));
 const PartnerPurchasesPage = lazy(() => import("../pages/partner/PartnerPurchasesPage").then((m) => ({ default: m.PartnerPurchasesPage })));
 const PartnerCashierPage = lazy(() => import("../pages/partner/PartnerCashierPage").then((m) => ({ default: m.PartnerCashierPage })));
-const PartnerCheckoutsPage = lazy(() => import("../pages/partner/PartnerCheckoutsPage").then((m) => ({ default: m.PartnerCheckoutsPage })));
 const BookingCheckoutPage = lazy(() => import("../pages/user/BookingCheckoutPage").then((m) => ({ default: m.BookingCheckoutPage })));
 const AdminDashboardPage = lazy(() => import("../pages/admin/AdminDashboardPage").then((m) => ({ default: m.AdminDashboardPage })));
 const AdminBookingsPage = lazy(() => import("../pages/admin/AdminBookingsPage").then((m) => ({ default: m.AdminBookingsPage })));
@@ -88,6 +89,12 @@ const AdminBlogModerationPage = lazy(() => import("../pages/admin/AdminBlogModer
 const AdminTournamentModerationPage = lazy(() => import("../pages/admin/AdminTournamentModerationPage").then((m) => ({ default: m.AdminTournamentModerationPage })));
 const AdminSettlementsPage = lazy(() => import("../pages/admin/AdminSettlementsPage").then((m) => ({ default: m.AdminSettlementsPage })));
 const AdminWithdrawalsPage = lazy(() => import("../pages/admin/AdminWithdrawalsPage").then((m) => ({ default: m.AdminWithdrawalsPage })));
+
+/** The old per-booking POS screen: the counter now opens with that booking selected. */
+function LegacyPosRedirect({ base }: { base: string }) {
+  const { bookingId = "" } = useParams();
+  return <Navigate to={`${base}?bookingId=${encodeURIComponent(bookingId)}`} replace />;
+}
 
 function RouteFallback() {
   return (
@@ -146,6 +153,13 @@ export function AppRoutes() {
           </Route>
         </Route>
 
+        {/* Every signed-in role reads its notifications in full here, inside its own layout. */}
+        <Route element={<ProtectedRoute />}>
+          <Route element={<RoleLayout />}>
+            <Route path="notifications" element={<NotificationsPage />} />
+          </Route>
+        </Route>
+
         <Route element={<ProtectedRoute roles={["PARTNER"]} />}>
           <Route element={<DashboardLayout />}>
             <Route path="partner/dashboard" element={<PartnerDashboardPage />} />
@@ -161,6 +175,7 @@ export function AppRoutes() {
             <Route path="partner/vouchers" element={<PartnerVouchersPage />} />
             <Route path="partner/vouchers/create" element={<PartnerVoucherFormPage />} />
             <Route path="partner/vouchers/:id/edit" element={<PartnerVoucherFormPage />} />
+            <Route path="partner/reviews" element={<PartnerReviewsPage />} />
             <Route path="partner/tournaments" element={<PartnerTournamentsPage />} />
             <Route path="partner/tournaments/create" element={<PartnerTournamentFormPage />} />
             <Route path="partner/tournaments/:id/edit" element={<PartnerTournamentFormPage />} />
@@ -179,8 +194,7 @@ export function AppRoutes() {
             <Route path="partner/inventory" element={<PartnerInventoryPage />} />
             <Route path="partner/purchases" element={<PartnerPurchasesPage />} />
             <Route path="partner/cashier" element={<PartnerCashierPage />} />
-            <Route path="partner/pos/:bookingId" element={<CashierBookingPosPage />} />
-            <Route path="partner/checkouts" element={<PartnerCheckoutsPage />} />
+            <Route path="partner/pos/:bookingId" element={<LegacyPosRedirect base="/partner/cashier" />} />
             <Route path="partner/settings" element={<PartnerSettingsPage />} />
             <Route path="partner/staff" element={<PartnerStaffPage />} />
           </Route>
@@ -191,11 +205,10 @@ export function AppRoutes() {
             <Route path="recipient/dashboard" element={<RecipientDashboardPage />} />
             <Route path="recipient/report" element={<RecipientReportPage />} />
             <Route path="recipient/cashier" element={<PartnerCashierPage />} />
-            <Route path="recipient/pos/:bookingId" element={<CashierBookingPosPage />} />
+            <Route path="recipient/pos/:bookingId" element={<LegacyPosRedirect base="/recipient/cashier" />} />
             <Route path="recipient/services" element={<PartnerServicesPage />} />
             <Route path="recipient/inventory" element={<PartnerInventoryPage />} />
             <Route path="recipient/purchases" element={<PartnerPurchasesPage />} />
-            <Route path="recipient/checkouts" element={<PartnerCheckoutsPage />} />
             <Route path="recipient/bookings" element={<RecipientBookingsPage />} />
             <Route path="recipient/calendar" element={<Navigate to="/recipient/bookings?view=calendar" replace />} />
             <Route path="recipient/court-surfaces" element={<RecipientCourtSurfacesPage />} />

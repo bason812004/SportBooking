@@ -7,9 +7,12 @@ import {
   type RecipientCustomerMatch,
   type RecipientSurfaceAvailabilitySlot,
   type RecipientWalkInCustomer,
-  type RecipientWalkInPayment
+  type RecipientWalkInPayment,
+  type RecipientWalkInQuote,
+  type RecipientWalkInQuotePayload
 } from "../api/recipientApi";
 import { Button } from "../../../components/ui/Button";
+import { Modal } from "../../../components/ui/Modal";
 import { Input } from "../../../components/ui/Input";
 import { Select } from "../../../components/ui/Select";
 import { SlotGrid, type SlotGridSelection } from "../../../components/booking/SlotGrid";
@@ -294,8 +297,42 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
     }
   });
 
+  // Cash is recorded as paid when the booking is made: staff first see the exact amount (from the server) and
+  // confirm taking it; that amount goes with the booking and must match.
+  const takesCashNow = walkInForm.paymentType !== "PAY_AT_COURT" && walkInForm.paymentMethod === "CASH";
+  const [cashQuote, setCashQuote] = useState<RecipientWalkInQuote | null>(null);
+  const quotePayload = (): RecipientWalkInQuotePayload => {
+    if (!repeatWeekly && mode === "now") {
+      if (!customStart) throw new Error("Chọn giờ bắt đầu");
+      return {
+        slots: [{ courtSurfaceId, bookingDate: effectiveDate, startTime: customStart, minutes: customMinutes }],
+        paymentMethod: walkInForm.paymentMethod,
+        paymentType: walkInForm.paymentType,
+        services: servicesPayload.length ? servicesPayload : undefined
+      };
+    }
+    if (slotClusters.length === 0) throw new Error("Chọn ít nhất một khung giờ");
+    return {
+      slots: slotClusters.map((cluster) => ({
+        courtSurfaceId: cluster.courtSurfaceId ?? courtSurfaceId,
+        bookingDate: cluster.date ?? effectiveDate,
+        startTime: cluster.startTime,
+        minutes: minutesBetween(cluster.startTime, cluster.endTime)
+      })),
+      occurrences: repeatWeekly ? occurrences : undefined,
+      paymentMethod: walkInForm.paymentMethod,
+      paymentType: walkInForm.paymentType,
+      services: servicesPayload.length ? servicesPayload : undefined
+    };
+  };
+  const quoteCash = useMutation({
+    mutationFn: () => recipientApi.quoteWalkIn(quotePayload()),
+    onSuccess: setCashQuote,
+    onError: (error: any) => toast.error(error.message || "Không tính được số tiền cần thu")
+  });
+
   const createWalkIn = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (cashReceived?: number) => {
       if (mode === "now") {
         if (!customStart) throw new Error("Chọn giờ bắt đầu");
         const result = await recipientApi.createWalkInBooking({
@@ -308,7 +345,8 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
           paymentMethod: walkInForm.paymentMethod,
           paymentType: walkInForm.paymentType,
           note: walkInForm.note || undefined,
-          services: servicesPayload.length ? servicesPayload : undefined
+          services: servicesPayload.length ? servicesPayload : undefined,
+          cashReceived
         });
         return { bookingsCount: 1, payment: result.payment, customer: result.customer };
       }
@@ -327,7 +365,8 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
           paymentMethod: walkInForm.paymentMethod,
           paymentType: walkInForm.paymentType,
           note: walkInForm.note || undefined,
-          services: servicesPayload.length ? servicesPayload : undefined
+          services: servicesPayload.length ? servicesPayload : undefined,
+          cashReceived
         });
         return { bookingsCount: 1, payment: result.payment, customer: result.customer };
       }
@@ -347,7 +386,8 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
         paymentMethod: walkInForm.paymentMethod,
         paymentType: walkInForm.paymentType,
         note: walkInForm.note || undefined,
-        services: servicesPayload.length ? servicesPayload : undefined
+        services: servicesPayload.length ? servicesPayload : undefined,
+        cashReceived
       });
       return { bookingsCount: slotClusters.length, payment: orderResult.payment, customer: orderResult.customer };
     },
@@ -370,7 +410,7 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
   });
 
   const createRecurringWalkIn = useMutation({
-    mutationFn: () => {
+    mutationFn: (cashReceived?: number) => {
       if (slotClusters.length === 0) throw new Error("Chọn ít nhất một khung giờ cho chuỗi lặp");
       // Each selected slot repeats weekly independently — lets staff set up different
       // day/time combos (e.g. Tue 18h + Thu 20h) that all recur together.
@@ -388,7 +428,8 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
         paymentMethod: walkInForm.paymentMethod,
         paymentType: walkInForm.paymentType,
         note: walkInForm.note || undefined,
-        services: servicesPayload.length ? servicesPayload : undefined
+        services: servicesPayload.length ? servicesPayload : undefined,
+        cashReceived
       });
     },
     onSuccess: (result) => {
@@ -413,6 +454,21 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
     },
     onError: (error: any) => toast.error(error.message || "Không thể tạo chuỗi lặp")
   });
+
+  /** Submitting the form: cash first shows what to collect; anything else is created at once. */
+  const submit = () => {
+    if (takesCashNow) quoteCash.mutate();
+    else if (repeatWeekly) createRecurringWalkIn.mutate(undefined);
+    else createWalkIn.mutate(undefined);
+  };
+  const confirmCash = () => {
+    if (!cashQuote) return;
+    const amount = cashQuote.collectNow;
+    setCashQuote(null);
+    if (repeatWeekly) createRecurringWalkIn.mutate(amount);
+    else createWalkIn.mutate(amount);
+  };
+  const submitting = quoteCash.isPending || createWalkIn.isPending || createRecurringWalkIn.isPending;
 
   const confirmWalkInPayment = useMutation({
     mutationFn: (paymentId: string) => recipientApi.confirmPayment(paymentId),
@@ -494,6 +550,12 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
     walkInPaymentStatus,
     createWalkIn,
     createRecurringWalkIn,
+    takesCashNow,
+    cashQuote,
+    setCashQuote,
+    submit,
+    confirmCash,
+    submitting,
     confirmWalkInPayment,
     syncWalkInPayment,
     customerMatches,
@@ -550,6 +612,50 @@ function WalkInPaymentPanel({ walkIn }: { walkIn: WalkInBooking }) {
         </Button>
       ) : null}
     </div>
+  );
+}
+
+/** Shows exactly what to take in cash now (from the server) before the booking is recorded as paid. */
+function WalkInCashConfirm({ walkIn }: { walkIn: WalkInBooking }) {
+  const { cashQuote, setCashQuote, confirmCash } = walkIn;
+  return (
+    <Modal isOpen={Boolean(cashQuote)} onClose={() => setCashQuote(null)} title="Thu tiền mặt" maxWidth="max-w-md">
+      {cashQuote ? (
+        <div className="space-y-3 text-sm">
+          <div className="rounded-xl bg-emerald-50 p-3 text-center">
+            <p className="text-xs font-black uppercase tracking-wide text-emerald-700">Cần thu ngay</p>
+            <p className="text-3xl font-black text-emerald-700">{formatCurrency(cashQuote.collectNow)}</p>
+            <p className="text-xs font-semibold text-emerald-800">
+              {cashQuote.depositPercent ? `Tiền cọc ${cashQuote.depositPercent}% tiền sân` : "Tiền sân"}
+              {cashQuote.sessions > 1 ? ` cho ${cashQuote.sessions} buổi` : ""}
+            </p>
+          </div>
+          <ul className="space-y-1 text-slate-600">
+            <li className="flex justify-between">
+              <span>Tiền sân{cashQuote.sessions > 1 ? ` (${cashQuote.sessions} buổi)` : ""}</span>
+              <span className="font-semibold">{formatCurrency(cashQuote.courtTotal)}</span>
+            </li>
+            {cashQuote.servicesTotal > 0 ? (
+              <li className="flex justify-between">
+                <span>Dịch vụ — thu sau ở Thu ngân</span>
+                <span className="font-semibold">{formatCurrency(cashQuote.servicesTotal)}</span>
+              </li>
+            ) : null}
+          </ul>
+          {cashQuote.skipped.length ? (
+            <p className="rounded-lg bg-amber-50 p-2 text-xs font-semibold text-amber-800">
+              Bỏ qua {cashQuote.skipped.length} buổi trùng lịch: {cashQuote.skipped.map((item) => shortDate(item.date)).join(", ")}
+            </p>
+          ) : null}
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="secondary" onClick={() => setCashQuote(null)}>
+              Chưa thu
+            </Button>
+            <Button onClick={confirmCash}>Đã nhận {formatCurrency(cashQuote.collectNow)}</Button>
+          </div>
+        </div>
+      ) : null}
+    </Modal>
   );
 }
 
@@ -806,8 +912,9 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
     depositPercent,
     walkInForm,
     setWalkInForm,
-    createWalkIn,
-    createRecurringWalkIn,
+    submit,
+    submitting,
+    takesCashNow,
     mode,
     customStart,
     slotClusters,
@@ -840,8 +947,7 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
       className="space-y-2 rounded-xl border border-emerald-100 bg-emerald-50/60 p-2"
       onSubmit={(event) => {
         event.preventDefault();
-        if (repeatWeekly) createRecurringWalkIn.mutate();
-        else createWalkIn.mutate();
+        submit();
       }}
     >
       <p className="flex items-center gap-1 text-xs font-bold uppercase tracking-wide text-emerald-700">
@@ -924,10 +1030,35 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
                   ))}
                 </li>
               ) : null}
-              <li className="flex items-center justify-between border-t border-slate-200 pt-1.5 font-black text-slate-900">
-                <span>Tạm tính</span>
-                <span>{formatCurrency(walkInSubtotal + servicesSubtotal)}</span>
-              </li>
+              {(() => {
+                // Services stay on the open tab and are paid at the cashier; only the court (or its deposit) is taken now.
+                const weeks = repeatWeekly ? occurrences : 1;
+                const court = walkInSubtotal * weeks;
+                const now =
+                  walkInForm.paymentType === "PAY_AT_COURT"
+                    ? 0
+                    : walkInForm.paymentType === "DEPOSIT" && depositPercent
+                      ? Math.ceil((court * depositPercent) / 100)
+                      : court;
+                return (
+                  <>
+                    <li className="flex items-center justify-between border-t border-slate-200 pt-1.5 font-semibold text-slate-700">
+                      <span>Tiền sân{weeks > 1 ? ` × ${weeks} tuần` : ""}</span>
+                      <span>{formatCurrency(court)}</span>
+                    </li>
+                    {servicesSubtotal > 0 ? (
+                      <li className="flex items-center justify-between font-semibold text-slate-700">
+                        <span>Dịch vụ (thu sau ở Thu ngân)</span>
+                        <span>{formatCurrency(servicesSubtotal)}</span>
+                      </li>
+                    ) : null}
+                    <li className="flex items-center justify-between font-black text-slate-900">
+                      <span>Cần thu ngay{weeks > 1 ? " (ước tính)" : ""}</span>
+                      <span>{formatCurrency(now)}</span>
+                    </li>
+                  </>
+                );
+              })()}
             </ul>
             <div className="flex items-center justify-between gap-2">
               <button type="button" onClick={() => setWalkInSlots([])} className="rounded-md px-1.5 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-50">
@@ -993,14 +1124,17 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
               {selectedMatch.fullName} — {selectedMatch.bookingsCount > 0 ? `đã đặt ${selectedMatch.bookingsCount} lần` : "chưa đặt tại sân này"}
               {selectedMatch.lastBookingDate ? `, gần nhất ${new Date(selectedMatch.lastBookingDate).toLocaleDateString("vi-VN")}` : ""}
             </span>
-            <button
-              type="button"
-              className="flex shrink-0 items-center gap-1 rounded-md border border-emerald-300 px-2 py-1 font-bold text-emerald-700 hover:bg-emerald-100"
-              onClick={() => setSelectedHistoryCustomerId(selectedMatch.id)}
-            >
-              <History className="h-3 w-3" />
-              Lịch sử
-            </button>
+            {/* History is only kept for customers who booked at this court. */}
+            {selectedMatch.bookingsCount > 0 ? (
+              <button
+                type="button"
+                className="flex shrink-0 items-center gap-1 rounded-md border border-emerald-300 px-2 py-1 font-bold text-emerald-700 hover:bg-emerald-100"
+                onClick={() => setSelectedHistoryCustomerId(selectedMatch.id)}
+              >
+                <History className="h-3 w-3" />
+                Lịch sử
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -1052,26 +1186,22 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
       <Input dense label="Ghi chú" value={walkInForm.note} onChange={(event) => setWalkInForm({ ...walkInForm, note: event.target.value })} />
       <Button
         className="w-full"
-        disabled={
-          repeatWeekly
-            ? createRecurringWalkIn.isPending || slotClusters.length === 0
-            : createWalkIn.isPending || (mode === "now" ? !customStart : slotClusters.length === 0)
-        }
+        disabled={submitting || (repeatWeekly ? slotClusters.length === 0 : mode === "now" ? !customStart : slotClusters.length === 0)}
       >
-        {repeatWeekly
-          ? createRecurringWalkIn.isPending
-            ? "Đang tạo..."
-            : slotClusters.length > 1
+        {submitting
+          ? "Đang xử lý..."
+          : repeatWeekly
+            ? slotClusters.length > 1
               ? `Tạo ${slotClusters.length} khung giờ × ${occurrences} tuần lặp`
               : `Tạo ${occurrences} buổi lặp`
-          : createWalkIn.isPending
-            ? "Đang tạo..."
             : mode === "grid" && slotClusters.length > 1
               ? `Xác nhận nhận sân (${slotClusters.length} buổi)`
               : "Xác nhận nhận sân"}
       </Button>
+      {takesCashNow ? <p className="text-[11px] font-semibold text-slate-500">Tiền mặt: bạn sẽ thấy số tiền cần thu và xác nhận đã nhận trước khi tạo đơn.</p> : null}
     </form>
     <CustomerHistoryOverlay walkIn={walkIn} />
+    <WalkInCashConfirm walkIn={walkIn} />
     </>
   );
 }
@@ -1086,11 +1216,12 @@ export function WalkInBookingForm(props: UseWalkInBookingArgs) {
   if (walkIn.activeWalkInPayment) return <WalkInPaymentPanel walkIn={walkIn} />;
 
   return (
+    <>
     <form
       className="space-y-2.5 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3"
       onSubmit={(event) => {
         event.preventDefault();
-        walkIn.createWalkIn.mutate();
+        walkIn.submit();
       }}
     >
       <p className="flex items-center gap-1 text-xs font-bold uppercase tracking-wide text-emerald-700">
@@ -1117,9 +1248,11 @@ export function WalkInBookingForm(props: UseWalkInBookingArgs) {
         ]}
       />}
       <Input label="Ghi chú" value={walkIn.walkInForm.note} onChange={(event) => walkIn.setWalkInForm({ ...walkIn.walkInForm, note: event.target.value })} />
-      <Button className="w-full" disabled={walkIn.createWalkIn.isPending || (walkIn.mode === "now" ? !walkIn.customStart : walkIn.walkInSlots.length === 0)}>
-        {walkIn.createWalkIn.isPending ? "Đang tạo..." : "Xác nhận nhận sân"}
+      <Button className="w-full" disabled={walkIn.submitting || (walkIn.mode === "now" ? !walkIn.customStart : walkIn.walkInSlots.length === 0)}>
+        {walkIn.submitting ? "Đang xử lý..." : "Xác nhận nhận sân"}
       </Button>
     </form>
+    <WalkInCashConfirm walkIn={walkIn} />
+    </>
   );
 }

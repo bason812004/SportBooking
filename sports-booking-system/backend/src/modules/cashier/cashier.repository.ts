@@ -1,9 +1,9 @@
-import { nowWithinPlayWindow } from "./cashier.calculations.js";
+import { nowWithinPlayWindow, playHasStarted } from "./cashier.calculations.js";
 import { checkoutRepository } from "../checkout/checkout.repository.js";
 import { serviceLineTotal, courtAmount } from "../checkout/checkout.calculations.js";
 import { BookingStatus, Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
-import { NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
+import { ConflictError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { ensureServiceTables } from "../services/service.repository.js";
 import type { AddServiceToBookingInput, ReturnRentalItemInput } from "./cashier.types.js";
 
@@ -27,8 +27,81 @@ async function ensureInventoryRowLocked(tx: Prisma.TransactionClient, serviceId:
   return rows[0];
 }
 
+/** The stock row of a rental service, locked; null when the service has none (its rentals are not limited). */
+async function rentalStockLocked(tx: Prisma.TransactionClient, serviceId: string) {
+  const rows: any = await tx.$queryRawUnsafe(
+    `SELECT quantity, reserved_quantity as "reservedQuantity" FROM service_inventories WHERE service_id::text = $1::text FOR UPDATE;`,
+    serviceId
+  );
+  return Array.isArray(rows) && rows.length ? rows[0] : null;
+}
+
+/** Gear out with a customer holds stock; `count` pieces come back, `lost` of them for good. */
+async function releaseRentalStock(tx: Prisma.TransactionClient, serviceId: string, count: number, lost = 0) {
+  if (count <= 0) return;
+  await tx.$executeRawUnsafe(
+    `UPDATE service_inventories SET reserved_quantity = GREATEST(reserved_quantity - $1, 0), quantity = quantity - $2, updated_at = NOW()
+     WHERE service_id::text = $3::text;`,
+    count, lost, serviceId
+  );
+}
+
+/** Puts back the most recent `count` pieces of a rental line still out, releasing the stock they held. */
+async function returnRentedPieces(tx: Prisma.TransactionClient, bookingServiceId: string, serviceId: string, count: number, note: string) {
+  if (count <= 0) return 0;
+  const returned = await tx.$executeRawUnsafe(
+    `UPDATE rental_items SET status = 'RETURNED', returned_at = NOW(), notes = $3, updated_at = NOW()
+     WHERE id IN (
+       SELECT id FROM rental_items WHERE booking_service_id::text = $1::text AND status = 'RENTED'
+       ORDER BY created_at DESC LIMIT $2
+     );`,
+    bookingServiceId, count, note
+  );
+  await releaseRentalStock(tx, serviceId, Number(returned));
+  return Number(returned);
+}
+
+/** Services can no longer change on an invoice locked at the counter. */
+function assertInvoiceOpen(booking: { invoiceLockedAt?: Date | null }) {
+  if (booking.invoiceLockedAt) throw new ConflictError("Hoá đơn đã được khoá, hãy mở khoá trước khi thay đổi dịch vụ", "INVOICE_LOCKED");
+}
+
 export const cashierRepository = {
-  async getActiveBookings(partnerId: string, courtId?: string, search?: string, filter?: string) {
+  /** Who a cashier works for: a partner's own courts, a staff member's court; an admin sees every partner. */
+  async scopeFor(userId: string, role: string): Promise<{ partnerId: string | null; courtId?: string | null; all?: boolean }> {
+    if (role === "PARTNER") {
+      const partner = await prisma.partnerProfile.findUnique({ where: { userId }, select: { id: true } });
+      return { partnerId: partner?.id ?? null };
+    }
+    if (role === "RECIPIENT") {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { partnerId: true, managedCourtId: true, managedCourt: { select: { partnerId: true } } }
+      });
+      return { partnerId: user?.partnerId || user?.managedCourt?.partnerId || null, courtId: user?.managedCourtId ?? null };
+    }
+    if (role === "ADMIN") return { partnerId: null, all: true };
+    return { partnerId: null };
+  },
+
+  async setInvoiceLock(bookingId: string, lockedBy: string | null) {
+    return prisma.booking.update({
+      where: { id: bookingId },
+      data: lockedBy ? { invoiceLockedAt: new Date(), invoiceLockedBy: lockedBy } : { invoiceLockedAt: null, invoiceLockedBy: null },
+      select: { id: true, invoiceLockedAt: true, invoiceLockedBy: true }
+    });
+  },
+
+  /** The booking a rented piece belongs to, for the access check. */
+  async rentalItemBooking(rentalItemId: string) {
+    const rows: any = await prisma.$queryRawUnsafe(
+      `SELECT bs.booking_id as "bookingId" FROM rental_items ri JOIN booking_services bs ON bs.id = ri.booking_service_id WHERE ri.id::text = $1::text LIMIT 1;`,
+      rentalItemId
+    );
+    return Array.isArray(rows) && rows.length ? (rows[0].bookingId as string) : null;
+  },
+
+  async getActiveBookings(partnerId: string | null, courtId?: string, search?: string, filter?: string) {
     await ensureServiceTables();
 
     // 1. Fetch Courts
@@ -36,7 +109,7 @@ export const cashierRepository = {
       `SELECT c.id, c.name, cc.name as "categoryName"
        FROM courts c
        LEFT JOIN court_categories cc ON c.category_id = cc.id
-       WHERE c.partner_id = $1::text AND ($2::text IS NULL OR c.id = $2::text);`,
+       WHERE ($1::text IS NULL OR c.partner_id = $1::text) AND ($2::text IS NULL OR c.id = $2::text);`,
       partnerId, courtId ?? null
     ).catch(() => [])) as any[];
 
@@ -73,7 +146,7 @@ export const cashierRepository = {
               b.booking_date as "bookingDate", b.start_time as "startTime", b.end_time as "endTime",
               b.base_price as "basePrice", b.dynamic_adjustment_amount as "dynamicAdjustmentAmount", b.voucher_discount_amount as "voucherDiscountAmount", b.checked_in_at as "checkedInAt", b.total_price as "totalPrice", b.deposit_amount as "depositAmount", b.booking_status as "bookingStatus",
               b.payment_status as "paymentStatus", b.payment_method as "paymentMethod",
-              b.checked_in_at as "checkedInAt",
+              b.checked_in_at as "checkedInAt", b.invoice_locked_at as "invoiceLockedAt",
               u.full_name as "userName", u.phone as "userPhone", u.email as "userEmail",
               c.name as "courtName",
               COALESCE(cs.id, cs_slot.id) as "courtSurfaceId",
@@ -180,6 +253,7 @@ export const cashierRepository = {
         totalPrice: b.totalPrice,
         depositAmount: b.depositAmount,
         checkedInAt: b.checkedInAt,
+        invoiceLockedAt: b.invoiceLockedAt ?? null,
         bookingStatus: b.bookingStatus,
         paymentStatus: b.paymentStatus,
         paymentMethod: b.paymentMethod,
@@ -218,7 +292,7 @@ export const cashierRepository = {
               b.booking_date as "bookingDate", b.start_time as "startTime", b.end_time as "endTime",
               b.base_price as "basePrice", b.dynamic_adjustment_amount as "dynamicAdjustmentAmount", b.voucher_discount_amount as "voucherDiscountAmount", b.checked_in_at as "checkedInAt", b.total_price as "totalPrice", b.deposit_amount as "depositAmount", b.booking_status as "bookingStatus",
               b.payment_status as "paymentStatus", b.payment_method as "paymentMethod", b.admin_note as "adminNote", b.note,
-              b.checked_in_at as "checkedInAt",
+              b.checked_in_at as "checkedInAt", b.invoice_locked_at as "invoiceLockedAt",
               u.full_name as "userName", u.phone as "userPhone", u.email as "userEmail",
               c.name as "courtName", c.partner_id as "partnerId",
               COALESCE(cs.id, cs_slot.id) as "courtSurfaceId",
@@ -334,11 +408,12 @@ export const cashierRepository = {
     const result = await prisma.$transaction(async (tx) => {
       // 1. Get booking
       const bRows: any = await tx.$queryRawUnsafe(
-        `SELECT b.id, b.court_id as "courtId", b.booking_code as "bookingCode", b.booking_date as "bookingDate", b.start_time as "startTime", b.checked_in_at as "checkedInAt", b.end_time as "endTime", b.booking_status as "bookingStatus" FROM bookings b WHERE b.id::text = $1::text LIMIT 1 FOR UPDATE;`,
+        `SELECT b.id, b.court_id as "courtId", b.booking_code as "bookingCode", b.booking_date as "bookingDate", b.start_time as "startTime", b.checked_in_at as "checkedInAt", b.end_time as "endTime", b.booking_status as "bookingStatus", b.invoice_locked_at as "invoiceLockedAt" FROM bookings b WHERE b.id::text = $1::text LIMIT 1 FOR UPDATE;`,
         bookingId
       );
       if (!Array.isArray(bRows) || bRows.length === 0) throw new NotFoundError("Booking không tồn tại");
       const booking = bRows[0];
+      assertInvoiceOpen(booking);
 
       // 2. Get service
       const sRows: any = await tx.$queryRawUnsafe(
@@ -359,9 +434,12 @@ export const cashierRepository = {
       if (!["CONFIRMED", "DEPOSIT_PAID", "IN_PROGRESS", "CHECKOUT_PENDING", "COMPLETED"].includes(booking.bookingStatus)) {
         throw new ValidationError("Trạng thái booking không cho phép thêm dịch vụ");
       }
-      if (!booking.checkedInAt) {
-        if (!nowWithinPlayWindow(booking)) throw new ValidationError("Booking chưa tới giờ chơi hoặc đã quá giờ phục vụ, không thể thêm dịch vụ");
-        // A COMPLETED booking keeps its status; only an un-started one moves to IN_PROGRESS.
+      if (!booking.checkedInAt && !nowWithinPlayWindow(booking)) {
+        throw new ValidationError("Booking chưa tới giờ chơi hoặc đã quá giờ phục vụ, không thể thêm dịch vụ");
+      }
+      // Selling during the booked time checks the customer in; before it only the check-in button does, which applies
+      // the court's early check-in policy. A COMPLETED booking keeps its status; an un-started one moves to IN_PROGRESS.
+      if (!booking.checkedInAt && playHasStarted(booking)) {
         await tx.$executeRawUnsafe(
           `UPDATE bookings SET checked_in_at = NOW(),
                   booking_status = CASE WHEN booking_status IN ('CONFIRMED', 'DEPOSIT_PAID') THEN 'IN_PROGRESS'::booking_status ELSE booking_status END
@@ -388,6 +466,21 @@ export const cashierRepository = {
            VALUES (gen_random_uuid(), $1, 'SALE', $2, $3, 'BOOKING_SERVICE', $4, $5, NOW());`,
           service.id, input.quantity, Number(service.costPrice || 0), bookingId, `Bán dịch vụ cho booking ${booking.bookingCode}`
         );
+      }
+
+      // 3b. Rental gear: pieces out are held in stock until they come back (services without stock row: no limit)
+      if (service.type === "RENTAL_SERVICE") {
+        const stock = await rentalStockLocked(tx, service.id);
+        if (stock) {
+          const available = Number(stock.quantity) - Number(stock.reservedQuantity);
+          if (available < input.quantity) {
+            throw new ValidationError(`"${service.name}" chỉ còn ${Math.max(0, available)} để cho thuê`);
+          }
+          await tx.$executeRawUnsafe(
+            `UPDATE service_inventories SET reserved_quantity = reserved_quantity + $1, updated_at = NOW() WHERE service_id::text = $2::text;`,
+            input.quantity, service.id
+          );
+        }
       }
 
       // 4. Calculate pricing
@@ -453,8 +546,13 @@ export const cashierRepository = {
     await ensureServiceTables();
 
     const result = await prisma.$transaction(async (tx) => {
+      const lockRows: any = await tx.$queryRawUnsafe(
+        `SELECT invoice_locked_at as "invoiceLockedAt" FROM bookings WHERE id::text = $1::text FOR UPDATE;`,
+        bookingId
+      );
+      if (Array.isArray(lockRows) && lockRows.length) assertInvoiceOpen(lockRows[0]);
       const bsRows: any = await tx.$queryRawUnsafe(
-        `SELECT bs.id, bs.booking_id as "bookingId", bs.service_id as "serviceId", bs.quantity, bs.price, bs.unit_price as "unitPrice", s.unit, s.track_inventory as "trackInventory", s.type
+        `SELECT bs.id, bs.booking_id as "bookingId", bs.service_id as "serviceId", bs.quantity, bs.price, bs.unit_price as "unitPrice", s.unit, s.track_inventory as "trackInventory", s.type, s.name
          FROM booking_services bs
          LEFT JOIN services s ON bs.service_id::text = s.id::text
          WHERE bs.booking_id::text = $1::text AND (bs.service_id::text = $2::text OR bs.id::text = $2::text OR bs.court_service_id::text = $2::text)
@@ -473,6 +571,29 @@ export const cashierRepository = {
       if (diff === 0) return item;
 
       const tracksInventory = Boolean(item.serviceId && item.trackInventory && item.type === "PRODUCT");
+      const isRental = Boolean(item.serviceId && item.type === "RENTAL_SERVICE");
+
+      // Rental gear: fewer pieces put the latest ones back; more pieces need free stock and new rental items.
+      if (isRental && diff < 0) {
+        await returnRentedPieces(tx, item.id, item.serviceId, quantity <= 0 ? currentQty : Math.abs(diff), "Bớt khỏi hoá đơn");
+      } else if (isRental && diff > 0) {
+        const stock = await rentalStockLocked(tx, item.serviceId);
+        if (stock) {
+          const available = Number(stock.quantity) - Number(stock.reservedQuantity);
+          if (available < diff) throw new ValidationError(`"${item.name}" chỉ còn ${Math.max(0, available)} để cho thuê`);
+          await tx.$executeRawUnsafe(
+            `UPDATE service_inventories SET reserved_quantity = reserved_quantity + $1, updated_at = NOW() WHERE service_id::text = $2::text;`,
+            diff, item.serviceId
+          );
+        }
+        for (let piece = 0; piece < diff; piece += 1) {
+          await tx.$executeRawUnsafe(
+            `INSERT INTO rental_items (id, booking_service_id, service_id, status, rental_start_time, created_at, updated_at)
+             VALUES (gen_random_uuid(), $1::text, $2, 'RENTED', NOW(), NOW(), NOW());`,
+            item.id, item.serviceId
+          );
+        }
+      }
 
       if (quantity <= 0) {
         await tx.$executeRawUnsafe(
@@ -543,25 +664,6 @@ export const cashierRepository = {
     return result;
   },
 
-  async checkInBooking(bookingId: string) {
-    await ensureServiceTables();
-    return prisma.$transaction(async (tx) => {
-      const b = await tx.booking.findUnique({ where: { id: bookingId } });
-      if (!b) throw new NotFoundError("Booking không tồn tại");
-      if (["CANCELLED", "REJECTED", "EXPIRED"].includes(b.bookingStatus)) {
-        throw new ValidationError("Booking không thể check-in do đã bị hủy");
-      }
-      const updated = await tx.booking.update({
-        where: { id: bookingId },
-        data: {
-          checkedInAt: new Date(),
-          bookingStatus: b.bookingStatus === "COMPLETED" ? "COMPLETED" : "IN_PROGRESS"
-        }
-      });
-      return updated;
-    });
-  },
-
   async removeBookingService(bookingId: string, serviceId: string) {
     return this.updateBookingServiceQuantity(bookingId, serviceId, 0);
   },
@@ -575,14 +677,14 @@ export const cashierRepository = {
       });
       if (!item) throw new NotFoundError("Thiết bị thuê không tồn tại");
 
-      const updated = await tx.rentalItem.update({
-        where: { id: input.rentalItemId },
-        data: {
-          status: input.status as any,
-          returnedAt: new Date(),
-          notes: input.notes ?? null
-        }
+      // Only a piece still out: a second click or another counter cannot return it (or write off stock) twice.
+      const { count } = await tx.rentalItem.updateMany({
+        where: { id: input.rentalItemId, status: "RENTED" },
+        data: { status: input.status as any, returnedAt: new Date(), notes: input.notes ?? null }
       });
+      if (!count) throw new ConflictError("Thiết bị này đã được xử lý trả rồi");
+      const updated = await tx.rentalItem.findUniqueOrThrow({ where: { id: input.rentalItemId } });
+      await releaseRentalStock(tx, item.serviceId, 1, input.status === "DAMAGED" || input.status === "LOST" ? 1 : 0);
 
       if (input.status === "DAMAGED" || input.status === "LOST") {
         await tx.inventoryTransaction.create({
@@ -661,14 +763,11 @@ export const cashierRepository = {
         .catch(() => {});
     }
 
-    const rentalBsIds = bsRows.filter((bs) => bs.service?.type === "RENTAL_SERVICE").map((bs) => bs.id);
-    if (rentalBsIds.length) {
-      await prisma.rentalItem
-        .updateMany({
-          where: { bookingServiceId: { in: rentalBsIds }, status: "RENTED" },
-          data: { status: "RETURNED", returnedAt: new Date(), notes: reason }
-        })
-        .catch(() => {});
+    const rentalRows = bsRows.filter((bs) => bs.service?.type === "RENTAL_SERVICE" && bs.serviceId);
+    for (const bs of rentalRows) {
+      await prisma
+        .$transaction((tx) => returnRentedPieces(tx, bs.id, bs.serviceId!, Number(bs.quantity) || 1_000, reason))
+        .catch((error) => console.error("[Cashier] Releasing rental pieces failed:", error));
     }
   }
 };

@@ -36,9 +36,9 @@ function timeText(value?: string | null) {
 }
 
 function adjustmentText(rule: DynamicPricingRule) {
-  return rule.priceAdjustmentType === "PERCENTAGE"
-    ? `${Number(rule.priceAdjustmentValue)}%`
-    : money(rule.priceAdjustmentValue);
+  const value = Number(rule.priceAdjustmentValue);
+  const sign = value < 0 ? "-" : "+";
+  return rule.priceAdjustmentType === "PERCENTAGE" ? `${sign}${Math.abs(value)}%` : `${sign}${money(Math.abs(value))}`;
 }
 
 export function PartnerDynamicPricingPage() {
@@ -72,7 +72,7 @@ export function PartnerDynamicPricingPage() {
   }, [rules.data, search, statusFilter]);
 
   if (rules.isLoading) return <LoadingState />;
-  if (rules.isError) return <ErrorState message={rules.error.message} />;
+  if (rules.isError) return <ErrorState message={rules.error.message} onRetry={() => rules.refetch()} />;
 
   return (
     <div className="space-y-6">
@@ -114,8 +114,7 @@ export function PartnerDynamicPricingPage() {
                         <p className="mt-1 text-sm font-semibold text-blue-700">{ruleTypeLabels[rule.ruleType] ?? rule.ruleType}</p>
                       </div>
                     </div>
-                    <p className="text-lg font-bold text-emerald-700">
-                      {rule.priceAdjustmentType === "PERCENTAGE" && Number(rule.priceAdjustmentValue) < 0 ? "" : "+"}
+                    <p className={`text-lg font-bold ${Number(rule.priceAdjustmentValue) < 0 ? "text-sky-700" : "text-emerald-700"}`}>
                       {adjustmentText(rule)}
                     </p>
                   </div>

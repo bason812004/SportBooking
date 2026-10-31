@@ -8,6 +8,8 @@ import {
   courtRegistrationSchema,
   courtWriteSchema,
   courtStatusSchema,
+  affectedBookingsQuerySchema,
+  bookingRejectSchema,
   courtSurfaceStatusSchema,
   courtSurfaceUpdateSchema,
   courtSurfaceCreateSchema,
@@ -23,9 +25,13 @@ import {
   priceWriteSchema,
   profileUpdateSchema,
   serviceWriteSchema,
-  voucherWriteSchema,
   recipientWriteSchema,
   recipientUpdateSchema,
+  recipientParamsSchema,
+  recipientStatusSchema,
+  reviewParamsSchema,
+  reviewQuerySchema,
+  reviewReplySchema,
   timeChargePolicySchema
 } from "./partner.validation.js";
 import { partnerController } from "./partner.controller.js";
@@ -35,12 +41,16 @@ import { courtImageController } from "../court-images/courtImage.controller.js";
 import { imageCourtParams, imageRequestParams } from "../court-images/courtImage.validation.js";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 3 * 1024 * 1024 } });
+// Verification documents may be scanned PDFs, so they get more room than court photos.
+const documentUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 export const partnerRoutes = Router();
 
 partnerRoutes.use(authMiddleware, requireRole(UserRole.PARTNER));
 partnerRoutes.get("/dashboard", partnerController.dashboard);
 partnerRoutes.get("/profile", partnerController.profile);
 partnerRoutes.put("/profile", validate(profileUpdateSchema), partnerController.updateProfile);
+// Uploads only; the returned link is saved with the profile ("Lưu hồ sơ"), which sends it to admin review.
+partnerRoutes.post("/profile/document", documentUpload.single("file"), partnerController.uploadProfileDocument);
 partnerRoutes.get("/courts", partnerController.courts);
 partnerRoutes.post("/courts", validate(courtWriteSchema), partnerController.createCourt);
 partnerRoutes.post("/courts/register", validate(courtRegistrationSchema), partnerController.registerCourts);
@@ -55,6 +65,7 @@ partnerRoutes.put("/courts/:id/surfaces/:surfaceId", validate(courtSurfaceUpdate
 partnerRoutes.put("/courts/:id", validate(courtWriteSchema.partial()), partnerController.updateCourt);
 partnerRoutes.delete("/courts/:id", partnerController.deactivateCourt);
 partnerRoutes.put("/courts/:id/status", validate(courtStatusSchema), partnerController.updateCourtStatus);
+partnerRoutes.get("/courts/:id/affected-bookings", validate(affectedBookingsQuerySchema), partnerController.affectedBookings);
 partnerRoutes.get("/courts/:id/availability-grid", validate(courtAvailabilityGridQuerySchema), partnerController.courtAvailabilityGrid);
 partnerRoutes.get("/courts/:id/blocks", partnerController.courtBlocks);
 partnerRoutes.post("/courts/:id/blocks", validate(courtBlockWriteSchema), partnerController.createCourtBlock);
@@ -72,19 +83,16 @@ partnerRoutes.post("/courts/:id/services", validate(serviceWriteSchema), partner
 partnerRoutes.put("/services/:serviceId", validate(serviceWriteSchema.partial()), partnerController.updateService);
 partnerRoutes.delete("/services/:serviceId", partnerController.deleteService);
 partnerRoutes.get("/bookings", validate(bookingQuerySchema), partnerController.bookings);
+partnerRoutes.get("/bookings/overdue", partnerController.overdueBookings);
 partnerRoutes.put("/bookings/:id/confirm", partnerController.confirm);
-partnerRoutes.put("/bookings/:id/reject", partnerController.reject);
+partnerRoutes.put("/bookings/:id/reject", validate(bookingRejectSchema), partnerController.reject);
 partnerRoutes.put("/bookings/:id/complete", partnerController.complete);
 partnerRoutes.put("/bookings/:id/no-show", partnerController.noShow);
 partnerRoutes.get("/statistics/revenue", partnerController.revenue);
 partnerRoutes.get("/calendar", validate(calendarQuerySchema), partnerController.calendar);
-partnerRoutes.get("/vouchers", partnerController.vouchers);
-partnerRoutes.post("/vouchers", validate(voucherWriteSchema), partnerController.createVoucher);
-partnerRoutes.get("/vouchers/:id", partnerController.voucherDetail);
-partnerRoutes.put("/vouchers/:id", validate(voucherWriteSchema), partnerController.updateVoucher);
-partnerRoutes.put("/vouchers/:id/activate", partnerController.activateVoucher);
-partnerRoutes.put("/vouchers/:id/disable", partnerController.disableVoucher);
-partnerRoutes.delete("/vouchers/:id", partnerController.deleteVoucher);
+partnerRoutes.get("/reviews", validate(reviewQuerySchema), partnerController.reviews);
+partnerRoutes.put("/reviews/:id/reply", validate(reviewReplySchema), partnerController.replyReview);
+partnerRoutes.delete("/reviews/:id/reply", validate(reviewParamsSchema), partnerController.deleteReviewReply);
 partnerRoutes.get("/blogs", partnerController.blogs);
 partnerRoutes.post("/blogs", validate(blogWriteSchema), partnerController.createBlog);
 partnerRoutes.get("/blogs/:id", partnerController.blogDetail);
@@ -96,4 +104,5 @@ partnerRoutes.delete("/blogs/:id", partnerController.deleteBlog);
 partnerRoutes.get("/recipients", partnerController.listRecipients);
 partnerRoutes.post("/recipients", validate(recipientWriteSchema), partnerController.createRecipient);
 partnerRoutes.put("/recipients/:id", validate(recipientUpdateSchema), partnerController.updateRecipient);
-partnerRoutes.delete("/recipients/:id", partnerController.deleteRecipient);
+partnerRoutes.put("/recipients/:id/status", validate(recipientStatusSchema), partnerController.setRecipientStatus);
+partnerRoutes.delete("/recipients/:id", validate(recipientParamsSchema), partnerController.deleteRecipient);

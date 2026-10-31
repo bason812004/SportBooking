@@ -13,7 +13,7 @@ export function Input({ label, error, className, dense, ...props }: Props) {
       {label && <span className={dense ? "text-xs" : undefined}>{label}</span>}
       <input
         className={clsx(
-          "rounded-md border border-line bg-white outline-none focus:border-action",
+          "rounded-md border border-line bg-white outline-none focus:border-action disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500",
           dense ? "h-8 px-2 text-xs" : "h-10 px-3 text-sm",
           className
         )}

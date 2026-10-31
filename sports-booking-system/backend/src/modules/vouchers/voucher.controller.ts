@@ -22,6 +22,7 @@ export const voucherController = {
     }))
   ),
   partnerList: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.listPartner(req.user!.id))),
+  partnerDetail: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.detailPartner(req.user!.id, req.params.id))),
   partnerCreate: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.createPartner(req.user!.id, req.body), 201)),
   partnerUpdate: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.updatePartner(req.user!.id, req.params.id, req.body))),
   partnerDelete: asyncHandler(async (req, res) => sendSuccess(res, await voucherService.deletePartner(req.user!.id, req.params.id))),

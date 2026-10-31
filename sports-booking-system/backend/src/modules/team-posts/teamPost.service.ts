@@ -64,9 +64,12 @@ export const teamPostService = {
    */
   async delete(id: string, user: { id: string; role: string }) {
     if (user.role === "ADMIN") {
-      const removed = await teamPostRepository.deleteAny(id);
+      const removed = await teamPostRepository.transaction(async (tx) => {
+        const row = await teamPostRepository.deleteAny(id, tx);
+        if (row) await recordAdminAction(user.id, "TEAM_POST_REMOVED", "TEAM_POST", id, { title: row.title, ownerId: row.userId }, tx);
+        return row;
+      });
       if (!removed) throw new NotFoundError("Khong tim thay bai dang tim dong doi");
-      await recordAdminAction(user.id, "TEAM_POST_REMOVED", "TEAM_POST", id, { title: removed.title, ownerId: removed.userId });
       if (removed.userId !== user.id) {
         await notificationService
           .create({

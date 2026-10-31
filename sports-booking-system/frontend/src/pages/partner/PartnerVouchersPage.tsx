@@ -8,6 +8,13 @@ import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
+import { describeVoucherConditions } from "../../components/voucher/VoucherConditionsFields";
+import {
+  voucherActivationBlocker,
+  VoucherLockedBadge,
+  VoucherStatusBadge,
+  voucherStatusOptions
+} from "../../components/voucher/VoucherStatusBadge";
 import { partnerApi } from "../../features/partner/api/partnerApi";
 import type { PartnerVoucher } from "../../types/api";
 
@@ -15,38 +22,51 @@ const money = (value: number) => `${value.toLocaleString("vi-VN")} đ`;
 const date = (value: string) => new Date(value).toLocaleDateString("vi-VN");
 const dateTime = (value: string) => new Date(value).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" });
 
-const statusOptions = [
-  { value: "", label: "Tất cả trạng thái" },
-  { value: "DRAFT", label: "Nháp" },
-  { value: "ACTIVE", label: "Đang hoạt động" },
-  { value: "DISABLED", label: "Đã tắt" },
-  { value: "EXPIRED", label: "Hết hạn" }
-];
-
 function discount(voucher: PartnerVoucher) {
   return voucher.discountType === "PERCENTAGE"
     ? `${voucher.discountValue}%${voucher.maxDiscountAmount ? `, tối đa ${money(voucher.maxDiscountAmount)}` : ""}`
     : money(voucher.discountValue);
 }
 
+type VoucherAction = "activate" | "disable" | "delete";
+
+const actionMessages: Record<VoucherAction, (code: string) => string> = {
+  activate: (code) => `Đã kích hoạt voucher ${code}`,
+  disable: (code) => `Đã tắt voucher ${code}`,
+  delete: (code) => `Đã xóa voucher ${code}`
+};
+
+/** Disabling and deleting are asked again: one stops a code customers may be using, the other cannot be undone. */
+const confirmCopy: Record<"disable" | "delete", { title: string; message: string }> = {
+  disable: {
+    title: "Tắt voucher",
+    message: "Khách hàng sẽ không dùng được mã này nữa cho đến khi bạn kích hoạt lại. Các đơn đã đặt vẫn giữ ưu đãi."
+  },
+  delete: { title: "Xác nhận xóa voucher", message: "Voucher nháp này sẽ bị xóa vĩnh viễn và không thể khôi phục." }
+};
+
 export function PartnerVouchersPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<{ voucher: PartnerVoucher; type: "disable" | "delete" } | null>(null);
   const vouchers = useQuery({ queryKey: ["partner-vouchers"], queryFn: partnerApi.vouchers });
   const action = useMutation({
-    mutationFn: ({ id, type }: { id: string; type: "activate" | "disable" | "delete" }) => {
-      if (type === "activate") return partnerApi.activateVoucher(id);
-      if (type === "disable") return partnerApi.disableVoucher(id);
-      return partnerApi.deleteVoucher(id);
+    mutationFn: ({ voucher, type }: { voucher: PartnerVoucher; type: VoucherAction }) => {
+      if (type === "activate") return partnerApi.activateVoucher(voucher.id);
+      if (type === "disable") return partnerApi.disableVoucher(voucher.id);
+      return partnerApi.deleteVoucher(voucher.id);
     },
-    onSuccess: () => {
-      toast.success("Đã cập nhật voucher");
-      setDeleteConfirm(null);
+    onSuccess: (_result, { voucher, type }) => {
+      toast.success(actionMessages[type](voucher.code));
+      setConfirm(null);
       queryClient.invalidateQueries({ queryKey: ["partner-vouchers"] });
     },
-    onError: (error) => toast.error(error.message)
+    // A conflict means the voucher changed meanwhile (e.g. an admin disabled it): show what it is now.
+    onError: (error) => {
+      toast.error(error.message);
+      queryClient.invalidateQueries({ queryKey: ["partner-vouchers"] });
+    }
   });
 
   const visibleVouchers = useMemo(() => {
@@ -79,88 +99,89 @@ export function PartnerVouchersPage() {
         <>
           <div className="flex flex-wrap gap-3 rounded-2xl border border-line bg-white p-4">
             <Input label="Tìm kiếm" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tên voucher, mã, sân áp dụng" />
-            <Select label="Trạng thái" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} options={statusOptions} />
+            <Select label="Trạng thái" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} options={voucherStatusOptions} />
           </div>
 
           {visibleVouchers.length === 0 ? (
             <EmptyState title="Không tìm thấy voucher phù hợp." />
           ) : (
             <div className="grid gap-4 xl:grid-cols-2">
-              {visibleVouchers.map((voucher) => (
-                <article key={voucher.id} className="rounded-2xl border border-line bg-white p-5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex gap-3">
-                      <span className="rounded-xl bg-emerald-50 p-3 text-emerald-700">
-                        <TicketPercent className="h-6 w-6" />
-                      </span>
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="text-xl font-bold">{voucher.title}</h2>
-                          <Status value={voucher.status} />
+              {visibleVouchers.map((voucher) => {
+                const locked = Boolean(voucher.lockedByAdmin) && voucher.status === "DISABLED";
+                const canTurnOn = voucher.status === "DRAFT" || (voucher.status === "DISABLED" && !locked);
+                const blocker = canTurnOn ? voucherActivationBlocker(voucher) : null;
+                return (
+                  <article key={voucher.id} className="rounded-2xl border border-line bg-white p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex gap-3">
+                        <span className="rounded-xl bg-emerald-50 p-3 text-emerald-700">
+                          <TicketPercent className="h-6 w-6" />
+                        </span>
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h2 className="text-xl font-bold">{voucher.title}</h2>
+                            <VoucherStatusBadge status={voucher.status} />
+                            {locked && <VoucherLockedBadge />}
+                          </div>
+                          <p className="mt-1 font-mono font-bold text-blue-700">{voucher.code}</p>
                         </div>
-                        <p className="mt-1 font-mono font-bold text-blue-700">{voucher.code}</p>
                       </div>
+                      <p className="text-lg font-bold text-emerald-700">Giảm {discount(voucher)}</p>
                     </div>
-                    <p className="text-lg font-bold text-emerald-700">Giảm {discount(voucher)}</p>
-                  </div>
 
-                  <div className="mt-5 grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
-                    <p>Áp dụng: <strong>{voucher.court?.name ?? "Tất cả sân"}</strong></p>
-                    <p>Đơn tối thiểu: <strong>{money(voucher.minBookingAmount)}</strong></p>
-                    <p>Thời hạn: <strong>{date(voucher.startDate)} - {date(voucher.endDate)}</strong></p>
-                    <p>Lượt dùng: <strong>{voucher.usedCount}/{voucher.usageLimit ?? "Không giới hạn"}</strong></p>
-                    <p>Ngày tạo: <strong>{dateTime(voucher.createdAt)}</strong></p>
-                  </div>
+                    <div className="mt-5 grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
+                      <p>Áp dụng: <strong>{voucher.court?.name ?? "Tất cả sân"}</strong></p>
+                      <p>Đơn tối thiểu: <strong>{money(voucher.minBookingAmount)}</strong></p>
+                      <p>Thời hạn: <strong>{date(voucher.startDate)} - {date(voucher.endDate)}</strong></p>
+                      <p>Lượt dùng: <strong>{voucher.usedCount}/{voucher.usageLimit ?? "Không giới hạn"}</strong></p>
+                      <p>Ngày tạo: <strong>{dateTime(voucher.createdAt)}</strong></p>
+                      <p className="sm:col-span-2">Điều kiện: <strong>{describeVoucherConditions(voucher) ?? "Mọi ngày, mọi khung giờ"}</strong></p>
+                    </div>
 
-                  <div className="mt-5 flex flex-wrap gap-2">
-                    {voucher.status === "DRAFT" && (
-                      <>
-                        <Link to={`/partner/vouchers/${voucher.id}/edit`}><Button variant="secondary">Chỉnh sửa</Button></Link>
-                        <Button onClick={() => action.mutate({ id: voucher.id, type: "activate" })}>Kích hoạt</Button>
-                        <Button variant="danger" onClick={() => setDeleteConfirm(voucher.id)}>
+                    {locked && (
+                      <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-800">
+                        Quản trị viên đã tạm ngưng voucher này{voucher.lockReason ? `. Lý do: ${voucher.lockReason.replace(/[.\s]+$/, "")}` : ""}. Liên hệ
+                        quản trị viên để được kích hoạt lại.
+                      </p>
+                    )}
+
+                    <div className="mt-5 flex flex-wrap items-center gap-2">
+                      {/* An activated voucher can still change its wording, end date and usage limit. */}
+                      <Link to={`/partner/vouchers/${voucher.id}/edit`}>
+                        <Button variant="secondary">{voucher.status === "EXPIRED" || blocker ? "Gia hạn / chỉnh sửa" : "Chỉnh sửa"}</Button>
+                      </Link>
+                      {canTurnOn && !blocker && (
+                        <Button disabled={action.isPending} onClick={() => action.mutate({ voucher, type: "activate" })}>
+                          {voucher.status === "DRAFT" ? "Kích hoạt" : "Kích hoạt lại"}
+                        </Button>
+                      )}
+                      {voucher.status === "DRAFT" && (
+                        <Button variant="danger" disabled={action.isPending} onClick={() => setConfirm({ voucher, type: "delete" })}>
                           Xóa
                         </Button>
-                      </>
-                    )}
-                    {voucher.status === "ACTIVE" && (
-                      <Button variant="secondary" onClick={() => action.mutate({ id: voucher.id, type: "disable" })}>
-                        Vô hiệu hóa
-                      </Button>
-                    )}
-                    {voucher.status === "DISABLED" && (
-                      <Button onClick={() => action.mutate({ id: voucher.id, type: "activate" })}>Kích hoạt lại</Button>
-                    )}
-                  </div>
-                </article>
-              ))}
+                      )}
+                      {voucher.status === "ACTIVE" && (
+                        <Button variant="secondary" disabled={action.isPending} onClick={() => setConfirm({ voucher, type: "disable" })}>
+                          Vô hiệu hóa
+                        </Button>
+                      )}
+                      {blocker && <span className="text-xs text-slate-500">{blocker}</span>}
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           )}
         </>
       )}
 
       <ConfirmModal
-        open={Boolean(deleteConfirm)}
-        title="Xác nhận xóa voucher"
-        message="Voucher nháp này sẽ bị xóa vĩnh viễn và không thể khôi phục."
-        onCancel={() => setDeleteConfirm(null)}
-        onConfirm={() => deleteConfirm && action.mutate({ id: deleteConfirm, type: "delete" })}
+        open={Boolean(confirm)}
+        title={confirm ? `${confirmCopy[confirm.type].title} ${confirm.voucher.code}` : ""}
+        message={confirm ? confirmCopy[confirm.type].message : ""}
+        onCancel={() => setConfirm(null)}
+        onConfirm={() => confirm && !action.isPending && action.mutate(confirm)}
       />
     </div>
   );
-}
-
-function Status({ value }: { value: string }) {
-  const tones: Record<string, string> = {
-    DRAFT: "bg-slate-100 text-slate-700",
-    ACTIVE: "bg-emerald-100 text-emerald-800",
-    DISABLED: "bg-amber-100 text-amber-800",
-    EXPIRED: "bg-red-100 text-red-700"
-  };
-  const labels: Record<string, string> = {
-    DRAFT: "Nháp",
-    ACTIVE: "Đang hoạt động",
-    DISABLED: "Đã tắt",
-    EXPIRED: "Hết hạn"
-  };
-  return <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${tones[value] ?? tones.DRAFT}`}>{labels[value] ?? value}</span>;
 }

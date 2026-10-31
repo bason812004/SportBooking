@@ -6,17 +6,20 @@ export const adminController = {
   dashboard: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.dashboard())),
   users: asyncHandler(async (req, res) => sendSuccess(res, await adminService.users(req.query))),
   bookings: asyncHandler(async (req, res) => sendSuccess(res, await adminService.bookings(req.query))),
+  bookingFilterOptions: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.bookingFilterOptions())),
+  overdueBookings: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.overdueBookings())),
   bookingDetail: asyncHandler(async (req, res) => sendSuccess(res, await adminService.bookingDetail(req.params.id))),
   updateBookingAdmin: asyncHandler(async (req, res) =>
     sendSuccess(res, await adminService.updateBookingAdmin(req.user!.id, req.params.id, req.body))
   ),
-  lockUser: asyncHandler(async (req, res) => sendSuccess(res, await adminService.lockUser(req.user!.id, req.params.id))),
+  lockUser: asyncHandler(async (req, res) => sendSuccess(res, await adminService.lockUser(req.user!.id, req.params.id, req.body.reason))),
   unlockUser: asyncHandler(async (req, res) => sendSuccess(res, await adminService.unlockUser(req.user!.id, req.params.id))),
   partners: asyncHandler(async (req, res) => sendSuccess(res, await adminService.partners(req.query))),
   partnerDetail: asyncHandler(async (req, res) => sendSuccess(res, await adminService.partnerDetail(req.params.id))),
   approvePartner: asyncHandler(async (req, res) => sendSuccess(res, await adminService.approvePartner(req.user!.id, req.params.id, req.body.reason))),
   rejectPartner: asyncHandler(async (req, res) => sendSuccess(res, await adminService.rejectPartner(req.user!.id, req.params.id, req.body.reason))),
   commissionDefault: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.commissionDefault())),
+  commissionHistory: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.commissionHistory())),
   updateCommissionDefault: asyncHandler(async (req, res) =>
     sendSuccess(res, await adminService.updateCommissionDefault(req.user!.id, req.body.rate))
   ),
@@ -34,9 +37,6 @@ export const adminController = {
   financeReconciliation: asyncHandler(async (req, res) =>
     sendSuccess(res, await adminService.financeReconciliation(req.query.month as string | undefined))
   ),
-  updatePayout: asyncHandler(async (req, res) =>
-    sendSuccess(res, await adminService.updatePayout(req.user!.id, req.params.partnerId, req.query.month as string | undefined, req.body))
-  ),
   financeExport: asyncHandler(async (req, res) => {
     const file = await adminService.financeExport(req.query.month as string | undefined);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -49,6 +49,15 @@ export const adminController = {
   ),
   createNotificationCampaign: asyncHandler(async (req, res) =>
     sendSuccess(res, await adminService.createNotificationCampaign(req.user!.id, req.body), 201)
+  ),
+  notificationCampaignRecipients: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.notificationCampaignRecipients(req.params.id, req.query))
+  ),
+  notificationAudience: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.notificationAudience(req.user!.id, req.query as any))
+  ),
+  recallNotificationCampaign: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.recallNotificationCampaign(req.user!.id, req.params.id, req.body.reason))
   ),
   courts: asyncHandler(async (req, res) => sendSuccess(res, await adminService.courts(req.query))),
   courtDetail: asyncHandler(async (req, res) => sendSuccess(res, await adminService.courtDetail(req.params.id))),
@@ -67,12 +76,17 @@ export const adminController = {
   updateCategory: asyncHandler(async (req, res) => sendSuccess(res, await adminService.updateCategory(req.user!.id, req.params.id, req.body))),
   deleteCategory: asyncHandler(async (req, res) => sendSuccess(res, await adminService.deleteCategory(req.user!.id, req.params.id))),
   reviews: asyncHandler(async (req, res) => sendSuccess(res, await adminService.reviews(req.query))),
-  hideReview: asyncHandler(async (req, res) => sendSuccess(res, await adminService.hideReview(req.user!.id, req.params.id))),
-  showReview: asyncHandler(async (req, res) => sendSuccess(res, await adminService.showReview(req.user!.id, req.params.id))),
-  deleteReview: asyncHandler(async (req, res) => sendSuccess(res, await adminService.deleteReview(req.user!.id, req.params.id))),
+  hideReview: asyncHandler(async (req, res) => sendSuccess(res, await adminService.setReviewDisplay(req.user!.id, req.params.id, "HIDDEN", req.body.reason))),
+  showReview: asyncHandler(async (req, res) => sendSuccess(res, await adminService.setReviewDisplay(req.user!.id, req.params.id, "VISIBLE", req.body.reason))),
+  deleteReview: asyncHandler(async (req, res) => sendSuccess(res, await adminService.deleteReview(req.user!.id, req.params.id, req.body.reason))),
+  removeReviewReply: asyncHandler(async (req, res) => sendSuccess(res, await adminService.removeReviewReply(req.user!.id, req.params.id, req.body.reason))),
   reports: asyncHandler(async (req, res) => sendSuccess(res, await adminService.reports(req.query))),
-  resolveReport: asyncHandler(async (req, res) => sendSuccess(res, await adminService.resolveReport(req.user!.id, req.params.id))),
-  rejectReport: asyncHandler(async (req, res) => sendSuccess(res, await adminService.rejectReport(req.user!.id, req.params.id))),
+  resolveReport: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.decideReport(req.user!.id, req.params.id, "RESOLVED", req.body.note))
+  ),
+  rejectReport: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.decideReport(req.user!.id, req.params.id, "REJECTED", req.body.note))
+  ),
   statistics: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.statistics())),
   vouchers: asyncHandler(async (req, res) => sendSuccess(res, await adminService.vouchers(req.query))),
   disableVoucher: asyncHandler(async (req, res) => sendSuccess(res, await adminService.setVoucherStatus(req.user!.id, req.params.id, "DISABLED", req.body.reason))),
@@ -84,11 +98,16 @@ export const adminController = {
   approveBlog: asyncHandler(async (req, res) => sendSuccess(res, await adminService.moderateBlog(req.user!.id, req.params.id, "PUBLISHED", req.body.reason))),
   rejectBlog: asyncHandler(async (req, res) => sendSuccess(res, await adminService.moderateBlog(req.user!.id, req.params.id, "REJECTED", req.body.reason))),
   hideBlog: asyncHandler(async (req, res) => sendSuccess(res, await adminService.hideBlog(req.user!.id, req.params.id, req.body.reason))),
+  blogHistory: asyncHandler(async (req, res) => sendSuccess(res, await adminService.blogHistory(req.params.id))),
+  blogComments: asyncHandler(async (req, res) => sendSuccess(res, await adminService.blogComments(req.params.id))),
+  removeBlogComment: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.removeBlogComment(req.user!.id, req.params.id, req.params.commentId, req.body.reason))
+  ),
   pendingTournaments: asyncHandler(async (req, res) => sendSuccess(res, await adminService.pendingTournaments(req.query))),
   approveTournament: asyncHandler(async (req, res) => sendSuccess(res, await adminService.moderateTournament(req.user!.id, req.params.id, "APPROVED", req.body.reason))),
   rejectTournament: asyncHandler(async (req, res) => sendSuccess(res, await adminService.moderateTournament(req.user!.id, req.params.id, "REJECTED", req.body.reason))),
   auditLogs: asyncHandler(async (req, res) => sendSuccess(res, await adminService.auditLogs(req.query))),
+  auditLogFilterOptions: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.auditLogFilterOptions())),
   verifyAuditLogs: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.verifyAuditLogs())),
-  blockchainLogs: asyncHandler(async (req, res) => sendSuccess(res, await adminService.blockchainLogs(req.query))),
-  retryBlockchainLog: asyncHandler(async (req, res) => sendSuccess(res, await adminService.retryBlockchainLog(req.user!.id, req.params.id)))
+  blockchainLogs: asyncHandler(async (req, res) => sendSuccess(res, await adminService.blockchainLogs(req.query)))
 };

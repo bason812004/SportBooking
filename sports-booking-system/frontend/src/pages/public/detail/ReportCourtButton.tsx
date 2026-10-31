@@ -39,7 +39,15 @@ export function ReportCourtButton({ courtId }: { courtId: string }) {
       toast.success(t("detail.report.success"));
       close();
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : t("detail.report.failed"))
+    onError: (error) => {
+      // An earlier report of this court is still being reviewed: nothing more to send.
+      if ((error as { code?: string }).code === "ALREADY_REPORTED") {
+        toast.info(t("detail.report.alreadyReported"));
+        close();
+        return;
+      }
+      toast.error(error instanceof Error ? error.message : t("detail.report.failed"));
+    }
   });
 
   // Only customer accounts can report (POST /reports requires role USER).

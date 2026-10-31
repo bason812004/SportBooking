@@ -330,8 +330,13 @@ export const teamPostRepository = {
   },
 
   /** Moderation removal of any post; members and messages go with it (ON DELETE CASCADE). */
-  deleteAny(id: string) {
-    return prisma.$queryRaw<Array<{ userId: string; title: string }>>`
+  /** One transaction for an admin removal and its audit entry. */
+  transaction<T>(work: (tx: Prisma.TransactionClient) => Promise<T>) {
+    return prisma.$transaction(work);
+  },
+
+  deleteAny(id: string, db: Prisma.TransactionClient | typeof prisma = prisma) {
+    return db.$queryRaw<Array<{ userId: string; title: string }>>`
       delete from team_recruitment_posts
       where id = ${id}
       returning user_id as "userId", title

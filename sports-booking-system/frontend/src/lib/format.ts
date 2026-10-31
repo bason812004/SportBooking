@@ -65,6 +65,16 @@ export function formatDateTime(value: string | Date | null | undefined) {
   return dateTimeFormatter.format(d);
 }
 
+/** YYYY-MM-DD of the day in the browser's time zone (toISOString gives the UTC day, which is yesterday before 7am in Vietnam). */
+export function localDateKey(date: Date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+/** YYYY-MM of the month in the browser's time zone. */
+export function localMonthKey(date: Date = new Date()) {
+  return localDateKey(date).slice(0, 7);
+}
+
 type CourtLocation = { address?: string | null; ward?: string | null; district?: string | null; city?: string | null };
 
 /**
@@ -127,7 +137,10 @@ export const BOOKING_STATUS_LABELS: Record<string, { label: string; tone: string
   PENDING_PAYMENT: { label: "Chờ thanh toán", tone: "bg-amber-100 text-amber-800" },
   AWAITING_PAYMENT: { label: "Chờ thanh toán", tone: "bg-amber-100 text-amber-800" },
   CONFIRMED: { label: "Đã xác nhận", tone: "bg-sky-100 text-sky-800" },
+  DEPOSIT_PAID: { label: "Đã đặt cọc", tone: "bg-blue-100 text-blue-800" },
   DEPOSITED: { label: "Đã đặt cọc", tone: "bg-blue-100 text-blue-800" },
+  IN_PROGRESS: { label: "Đang chơi", tone: "bg-teal-100 text-teal-800" },
+  CHECKOUT_PENDING: { label: "Chờ checkout", tone: "bg-amber-100 text-amber-800" },
   COMPLETED: { label: "Hoàn tất", tone: "bg-emerald-100 text-emerald-800" },
   CANCELLED: { label: "Đã hủy", tone: "bg-slate-200 text-slate-700" },
   NO_SHOW: { label: "Không đến", tone: "bg-rose-100 text-rose-700" },

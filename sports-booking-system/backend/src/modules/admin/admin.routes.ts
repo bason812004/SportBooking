@@ -6,10 +6,17 @@ import { validate } from "../../middlewares/validate.middleware.js";
 import { adminController } from "./admin.controller.js";
 import { courtImageController } from "../court-images/courtImage.controller.js";
 import { imageReviewSchema } from "../court-images/courtImage.validation.js";
+import { voucherIdParamsSchema, voucherUpdateSchema, voucherWriteSchema } from "../vouchers/voucher.validation.js";
 import {
   adminCourtQuerySchema,
+  auditLogQuerySchema,
   adminCourtRequestUpdateSchema,
   adminCourtUpdateSchema,
+  blogApproveSchema,
+  blogCommentRemovalSchema,
+  blogDecisionSchema,
+  blogIdParamsSchema,
+  blogModerationQuerySchema,
   bookingAdminUpdateSchema,
   bookingQuerySchema,
   categoryCreateSchema,
@@ -21,13 +28,24 @@ import {
   financeRefundQuerySchema,
   financeTransactionQuerySchema,
   listQuerySchema,
+  lockUserSchema,
   moderationSchema,
+  notificationAudienceQuerySchema,
   notificationCampaignCreateSchema,
+  notificationCampaignIdSchema,
   notificationCampaignQuerySchema,
-  payoutUpdateSchema,
+  notificationCampaignRecallSchema,
+  notificationCampaignRecipientsSchema,
   partnerQuerySchema,
-  rejectSchema
-  ,userQuerySchema
+  rejectSchema,
+  reportListQuerySchema,
+  reportRejectSchema,
+  reportResolveSchema,
+  reviewDecisionSchema,
+  reviewListQuerySchema,
+  reviewRestoreSchema,
+  userQuerySchema,
+  voucherListQuerySchema
 } from "./admin.validation.js";
 
 export const adminRoutes = Router();
@@ -37,9 +55,11 @@ adminRoutes.get("/court-image-requests", courtImageController.pending);
 adminRoutes.post("/court-image-requests/:id/review", validate(imageReviewSchema), courtImageController.review);
 adminRoutes.get("/dashboard", adminController.dashboard);
 adminRoutes.get("/users", validate(userQuerySchema), adminController.users);
-adminRoutes.put("/users/:id/lock", adminController.lockUser);
+adminRoutes.put("/users/:id/lock", validate(lockUserSchema), adminController.lockUser);
 adminRoutes.put("/users/:id/unlock", adminController.unlockUser);
 adminRoutes.get("/bookings", validate(bookingQuerySchema), adminController.bookings);
+adminRoutes.get("/bookings/filter-options", adminController.bookingFilterOptions);
+adminRoutes.get("/bookings/overdue", adminController.overdueBookings);
 adminRoutes.get("/bookings/:id", adminController.bookingDetail);
 adminRoutes.patch("/bookings/:id/admin", validate(bookingAdminUpdateSchema), adminController.updateBookingAdmin);
 adminRoutes.get("/partners", validate(partnerQuerySchema), adminController.partners);
@@ -47,6 +67,7 @@ adminRoutes.get("/partners/:id", adminController.partnerDetail);
 adminRoutes.put("/partners/:id/approve", validate(moderationSchema), adminController.approvePartner);
 adminRoutes.put("/partners/:id/reject", validate(rejectSchema), adminController.rejectPartner);
 adminRoutes.get("/commission/default", adminController.commissionDefault);
+adminRoutes.get("/commission/history", adminController.commissionHistory);
 adminRoutes.patch("/commission/default", validate(defaultCommissionRateSchema), adminController.updateCommissionDefault);
 adminRoutes.get("/commission/partner/:id", adminController.partnerCommission);
 adminRoutes.patch("/commission/partner/:id", validate(commissionRateSchema), adminController.updatePartnerCommission);
@@ -55,10 +76,12 @@ adminRoutes.get("/finance/transactions", validate(financeTransactionQuerySchema)
 adminRoutes.get("/finance/refunds", validate(financeRefundQuerySchema), adminController.financeRefunds);
 adminRoutes.get("/finance/reconciliation", validate(financeMonthSchema), adminController.financeReconciliation);
 adminRoutes.get("/finance/export", validate(financeMonthSchema), adminController.financeExport);
-adminRoutes.patch("/finance/payouts/:partnerId", validate(financeMonthSchema), validate(payoutUpdateSchema), adminController.updatePayout);
 adminRoutes.get("/notifications/campaigns", validate(notificationCampaignQuerySchema), adminController.notificationCampaigns);
 adminRoutes.post("/notifications/campaigns", validate(notificationCampaignCreateSchema), adminController.createNotificationCampaign);
-adminRoutes.get("/notifications/campaigns/:id", adminController.notificationCampaignDetail);
+adminRoutes.get("/notifications/audience", validate(notificationAudienceQuerySchema), adminController.notificationAudience);
+adminRoutes.get("/notifications/campaigns/:id", validate(notificationCampaignIdSchema), adminController.notificationCampaignDetail);
+adminRoutes.get("/notifications/campaigns/:id/recipients", validate(notificationCampaignRecipientsSchema), adminController.notificationCampaignRecipients);
+adminRoutes.post("/notifications/campaigns/:id/recall", validate(notificationCampaignRecallSchema), adminController.recallNotificationCampaign);
 adminRoutes.get("/courts/pending", adminController.pendingCourts);
 adminRoutes.get("/courts", validate(adminCourtQuerySchema), adminController.courts);
 adminRoutes.get("/courts/:id", adminController.courtDetail);
@@ -71,28 +94,32 @@ adminRoutes.get("/categories", adminController.categories);
 adminRoutes.post("/categories", validate(categoryCreateSchema), adminController.createCategory);
 adminRoutes.put("/categories/:id", validate(categoryUpdateSchema), adminController.updateCategory);
 adminRoutes.delete("/categories/:id", adminController.deleteCategory);
-adminRoutes.get("/reviews", adminController.reviews);
-adminRoutes.put("/reviews/:id/hide", adminController.hideReview);
-adminRoutes.put("/reviews/:id/show", adminController.showReview);
-adminRoutes.delete("/reviews/:id", adminController.deleteReview);
-adminRoutes.get("/reports", adminController.reports);
-adminRoutes.put("/reports/:id/resolve", adminController.resolveReport);
-adminRoutes.put("/reports/:id/reject", adminController.rejectReport);
+adminRoutes.get("/reviews", validate(reviewListQuerySchema), adminController.reviews);
+adminRoutes.put("/reviews/:id/hide", validate(reviewDecisionSchema), adminController.hideReview);
+adminRoutes.put("/reviews/:id/show", validate(reviewRestoreSchema), adminController.showReview);
+adminRoutes.delete("/reviews/:id", validate(reviewDecisionSchema), adminController.deleteReview);
+adminRoutes.delete("/reviews/:id/reply", validate(reviewDecisionSchema), adminController.removeReviewReply);
+adminRoutes.get("/reports", validate(reportListQuerySchema), adminController.reports);
+adminRoutes.put("/reports/:id/resolve", validate(reportResolveSchema), adminController.resolveReport);
+adminRoutes.put("/reports/:id/reject", validate(reportRejectSchema), adminController.rejectReport);
 adminRoutes.get("/statistics", adminController.statistics);
-adminRoutes.get("/vouchers", validate(listQuerySchema), adminController.vouchers);
+adminRoutes.get("/vouchers", validate(voucherListQuerySchema), adminController.vouchers);
 adminRoutes.put("/vouchers/:id/disable", validate(moderationSchema), adminController.disableVoucher);
 adminRoutes.put("/vouchers/:id/activate", validate(moderationSchema), adminController.activateVoucher);
-adminRoutes.get("/vouchers/:id", adminController.voucherDetail);
-adminRoutes.post("/vouchers", adminController.createVoucher);
-adminRoutes.put("/vouchers/:id", adminController.updateVoucher);
-adminRoutes.get("/blogs/pending", validate(listQuerySchema), adminController.pendingBlogs);
-adminRoutes.put("/blogs/:id/approve", validate(moderationSchema), adminController.approveBlog);
-adminRoutes.put("/blogs/:id/reject", validate(rejectSchema), adminController.rejectBlog);
-adminRoutes.put("/blogs/:id/hide", validate(moderationSchema), adminController.hideBlog);
+adminRoutes.get("/vouchers/:id", validate(voucherIdParamsSchema), adminController.voucherDetail);
+adminRoutes.post("/vouchers", validate(voucherWriteSchema), adminController.createVoucher);
+adminRoutes.put("/vouchers/:id", validate(voucherUpdateSchema), adminController.updateVoucher);
+adminRoutes.get("/blogs/pending", validate(blogModerationQuerySchema), adminController.pendingBlogs);
+adminRoutes.get("/blogs/:id/history", validate(blogIdParamsSchema), adminController.blogHistory);
+adminRoutes.get("/blogs/:id/comments", validate(blogIdParamsSchema), adminController.blogComments);
+adminRoutes.delete("/blogs/:id/comments/:commentId", validate(blogCommentRemovalSchema), adminController.removeBlogComment);
+adminRoutes.put("/blogs/:id/approve", validate(blogApproveSchema), adminController.approveBlog);
+adminRoutes.put("/blogs/:id/reject", validate(blogDecisionSchema), adminController.rejectBlog);
+adminRoutes.put("/blogs/:id/hide", validate(blogDecisionSchema), adminController.hideBlog);
 adminRoutes.get("/tournaments/pending", validate(listQuerySchema), adminController.pendingTournaments);
 adminRoutes.put("/tournaments/:id/approve", validate(moderationSchema), adminController.approveTournament);
 adminRoutes.put("/tournaments/:id/reject", validate(rejectSchema), adminController.rejectTournament);
-adminRoutes.get("/audit-logs", validate(listQuerySchema), adminController.auditLogs);
+adminRoutes.get("/audit-logs", validate(auditLogQuerySchema), adminController.auditLogs);
+adminRoutes.get("/audit-logs/filter-options", adminController.auditLogFilterOptions);
 adminRoutes.get("/audit-logs/verify", adminController.verifyAuditLogs);
 adminRoutes.get("/blockchain-logs", validate(listQuerySchema), adminController.blockchainLogs);
-adminRoutes.put("/blockchain-logs/:id/retry", adminController.retryBlockchainLog);

@@ -8,12 +8,15 @@ export type NotificationItem = {
   type: string;
   metadata?: unknown;
   isRead: boolean;
+  readAt?: string | null;
   createdAt: string;
 };
 
 export const notificationApi = {
-  async listMine(page = 1) {
-    const { data } = await api.get<ApiResponse<Paginated<NotificationItem> & { unreadCount: number }>>("/users/me/notifications", { params: { page } });
+  async listMine(page = 1, options: { unread?: boolean; limit?: number } = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<NotificationItem> & { unreadCount: number }>>("/users/me/notifications", {
+      params: { page, limit: options.limit, unread: options.unread ? "true" : undefined }
+    });
     return data.data;
   },
   async markRead(id: string) {

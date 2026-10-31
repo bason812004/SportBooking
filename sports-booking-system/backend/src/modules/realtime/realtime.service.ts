@@ -50,5 +50,9 @@ export const realtimeService = {
   },
   toPublic(event: string, payload: unknown) {
     io?.emit(event, payload);
+  },
+  /** Drops a user's live connections, e.g. once an admin locks the account; reconnecting is refused then. */
+  disconnectUser(userId: string) {
+    io?.in(`user:${userId}`).disconnectSockets(true);
   }
 };

@@ -33,6 +33,8 @@ export function AdminPartnerCommissionPage() {
       toast.success("Đã cập nhật hoa hồng đối tác");
       queryClient.invalidateQueries({ queryKey: ["partner-commission", id] });
       queryClient.invalidateQueries({ queryKey: ["admin-partners"] });
+      queryClient.invalidateQueries({ queryKey: ["commission-default"] });
+      queryClient.invalidateQueries({ queryKey: ["commission-history"] });
     },
     onError: (error) => toast.error(error.message)
   });

@@ -8,7 +8,12 @@ const saved: any[] = [];
 mock.module("./partner.repository.js", { namedExports: { partnerRepository: {
   profileByUser: async () => ({ id: "p1", user: { email: "p@x.vn" } }),
   createCourt: async (data: any) => { saved.push(data); return { id: "c1", ...data }; },
-  courtByPartner: async () => ({ id: "c1" }),
+  // Stored before the reform: an old district, and a court already approved.
+  courtByPartner: async () => ({
+    id: "c1", name: "Sân A", categoryId: "cat1", address: "5 Nguyễn Huệ", ward: null, city: "TP.HCM", district: "Quận 1",
+    openingTime: new Date("1970-01-01T06:00:00Z"), closingTime: new Date("1970-01-01T22:00:00Z"), approvalStatus: "APPROVED"
+  }),
+  upcomingBookings: async () => [],
   updateCourt: async (_id: string, data: any) => { saved.push(data); return { id: "c1", ...data }; }
 } } });
 const { partnerService } = await import("./partner.service.js");
@@ -39,5 +44,20 @@ describe("court address after the 2025 reform (address + ward + city)", () => {
     await partnerService.updateCourt("user1", "c1", { name: "Sân A mới" });
     assert.equal(saved[0].district, null);
     assert.equal("district" in saved[1], false);
+  });
+
+  it("sends the court back to review only when what identifies it changes, and keeps its link", async () => {
+    saved.length = 0;
+    await partnerService.updateCourt("user1", "c1", { name: "Sân A mới" });
+    await partnerService.updateCourt("user1", "c1", { description: "Có bãi giữ xe", openingTime: "05:00", closingTime: "22:00" });
+    await partnerService.updateCourt("user1", "c1", { name: "  Sân  A ", city: "TP.HCM" });
+    assert.equal(saved[0].approvalStatus, "PENDING");
+    assert.equal("slug" in saved[0], false, "renaming keeps the court's address");
+    assert.equal("approvalStatus" in saved[1], false, "description and hours apply at once");
+    assert.equal("approvalStatus" in saved[2], false, "the same name with other spacing is no change");
+  });
+
+  it("refuses hours that close before they open", async () => {
+    await assert.rejects(partnerService.updateCourt("user1", "c1", { openingTime: "22:00" }), (error: any) => error.statusCode === 400);
   });
 });

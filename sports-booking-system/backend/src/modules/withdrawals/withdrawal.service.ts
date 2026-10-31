@@ -12,7 +12,7 @@ import { realtimeService } from "../realtime/realtime.service.js";
 import { walletRepository } from "../wallets/wallet.repository.js";
 import { getPartnerProfileByUser } from "../wallets/wallet.service.js";
 import { withdrawalRepository } from "./withdrawal.repository.js";
-import type { CreateWithdrawalInput, WithdrawalListQuery } from "./withdrawal.types.js";
+import { BANK_CHANGE_COOLDOWN_MS, MIN_WITHDRAWAL_AMOUNT, type CreateWithdrawalInput, type WithdrawalListQuery } from "./withdrawal.types.js";
 
 function asNumber(value: unknown) {
   return Number(value ?? 0);
@@ -95,14 +95,23 @@ async function triggerPayout(
 export const withdrawalService = {
   async create(userId: string, input: CreateWithdrawalInput) {
     const profile = await getPartnerProfileByUser(userId);
-    const amount = round2(input.amount);
-    if (amount <= 0) throw new ValidationError("So tien rut phai lon hon 0");
+    const amount = input.amount;
+    if (!Number.isInteger(amount)) throw new ValidationError("Số tiền rút phải là số nguyên (đồng)");
+    if (amount < MIN_WITHDRAWAL_AMOUNT) throw new ValidationError(`Số tiền rút tối thiểu ${money(MIN_WITHDRAWAL_AMOUNT)}`);
 
-    const bankName = input.bankName?.trim() || profile.bankName;
-    const bankAccountNumber = input.bankAccountNumber?.trim() || profile.bankAccountNumber;
-    const bankAccountName = input.bankAccountName?.trim() || profile.bankAccountHolder;
+    // Only to the account saved in the profile: a stolen session cannot send the money anywhere else, since
+    // changing that account needs the password and is notified to the partner.
+    const bankName = profile.bankName?.trim();
+    const bankAccountNumber = profile.bankAccountNumber?.trim();
+    const bankAccountName = profile.bankAccountHolder?.trim();
     if (!bankName || !bankAccountNumber || !bankAccountName) {
-      throw new ValidationError("Vui long cung cap day du thong tin ngan hang de rut tien");
+      throw new ValidationError("Hãy lưu tài khoản ngân hàng nhận tiền trong Cài đặt trước khi rút tiền");
+    }
+    // A newly set or changed account waits a day, so the real owner sees the notice before money can move.
+    const changedAt = profile.bankAccountChangedAt ? new Date(profile.bankAccountChangedAt).getTime() : null;
+    if (changedAt !== null && Date.now() - changedAt < BANK_CHANGE_COOLDOWN_MS) {
+      const openAt = new Date(changedAt + BANK_CHANGE_COOLDOWN_MS).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
+      throw new ValidationError(`Tài khoản nhận tiền vừa được đổi; để an toàn bạn rút được tiền từ ${openAt}`);
     }
 
     const withdrawal = await prisma.$transaction(async (tx) => {
@@ -123,15 +132,12 @@ export const withdrawalService = {
     // Off by default (limit 0): every withdrawal waits for an admin. When enabled, nobody is recorded
     // as having processed it; the partner whose request triggered it is the audit actor.
     if (env.WITHDRAWAL_AUTO_APPROVE_LIMIT > 0 && amount <= env.WITHDRAWAL_AUTO_APPROVE_LIMIT) {
-      await withdrawalRepository.transition(
-        withdrawal.id,
-        ["PENDING"],
-        { status: "APPROVED", processedAt: new Date() },
-        prisma
-      );
-      await recordAdminAction(userId, "WITHDRAWAL_AUTO_APPROVED", "WITHDRAWAL", withdrawal.id, {
-        partnerId: profile.id,
-        amount
+      await prisma.$transaction(async (tx) => {
+        await withdrawalRepository.transition(withdrawal.id, ["PENDING"], { status: "APPROVED", processedAt: new Date() }, tx);
+        await recordAdminAction(userId, "WITHDRAWAL_AUTO_APPROVED", "WITHDRAWAL", withdrawal.id, {
+          partnerId: profile.id,
+          amount
+        }, tx);
       });
       await triggerPayout(withdrawal.id, withdrawal);
       result = (await withdrawalRepository.byId(withdrawal.id))!;
@@ -139,6 +145,33 @@ export const withdrawalService = {
 
     emitWithdrawalUpdated(result, true);
     return toDto(result);
+  },
+
+  /** The partner takes back a request no admin has handled yet; the held amount returns to the available balance. */
+  async cancelMine(userId: string, id: string) {
+    const profile = await getPartnerProfileByUser(userId);
+    const withdrawal = await withdrawalRepository.byId(id);
+    if (!withdrawal || withdrawal.partnerId !== profile.id) throw new NotFoundError("Không tìm thấy yêu cầu rút tiền của bạn");
+
+    await prisma.$transaction(async (tx) => {
+      const count = await withdrawalRepository.transition(
+        id,
+        ["PENDING"],
+        { status: "CANCELLED", processedAt: new Date(), note: "Đối tác tự huỷ yêu cầu" },
+        tx
+      );
+      if (count === 0) throw new ValidationError("Chỉ huỷ được yêu cầu đang chờ duyệt; yêu cầu này đã được xử lý");
+      await walletRepository.releaseHold(withdrawal.partnerId, asNumber(withdrawal.amount), tx);
+      await walletRepository.offsetDebt(withdrawal.partnerId, tx);
+      await recordAdminAction(userId, "WITHDRAWAL_CANCELLED_BY_PARTNER", "WITHDRAWAL", id, {
+        partnerId: withdrawal.partnerId,
+        amount: asNumber(withdrawal.amount)
+      }, tx);
+    });
+
+    const updated = await withdrawalRepository.byId(id);
+    emitWithdrawalUpdated(updated!);
+    return toDto(updated!);
   },
 
   async listMine(userId: string, query: WithdrawalListQuery) {
@@ -188,17 +221,18 @@ export const withdrawalService = {
     const withdrawal = await withdrawalRepository.byId(id);
     if (!withdrawal) throw new NotFoundError("Khong tim thay yeu cau rut tien");
 
-    const count = await withdrawalRepository.transition(
-      id,
-      ["PENDING"],
-      { status: "APPROVED", processedBy: actorId, processedAt: new Date() },
-      prisma
-    );
-    if (count === 0) throw new ValidationError("Chi co the duyet yeu cau dang cho xu ly");
-
-    await recordAdminAction(actorId, "WITHDRAWAL_APPROVED", "WITHDRAWAL", id, {
-      partnerId: withdrawal.partnerId,
-      amount: asNumber(withdrawal.amount)
+    await prisma.$transaction(async (tx) => {
+      const count = await withdrawalRepository.transition(
+        id,
+        ["PENDING"],
+        { status: "APPROVED", processedBy: actorId, processedAt: new Date() },
+        tx
+      );
+      if (count === 0) throw new ValidationError("Chi co the duyet yeu cau dang cho xu ly");
+      await recordAdminAction(actorId, "WITHDRAWAL_APPROVED", "WITHDRAWAL", id, {
+        partnerId: withdrawal.partnerId,
+        amount: asNumber(withdrawal.amount)
+      }, tx);
     });
 
     await triggerPayout(id, withdrawal, forceResult);
@@ -229,13 +263,13 @@ export const withdrawalService = {
       if (count === 0) throw new ValidationError("Chi co the tu choi yeu cau dang cho xu ly hoac da duyet");
       await walletRepository.releaseHold(withdrawal.partnerId, asNumber(withdrawal.amount), tx);
       await walletRepository.offsetDebt(withdrawal.partnerId, tx);
+      await recordAdminAction(actorId, "WITHDRAWAL_REJECTED", "WITHDRAWAL", id, {
+        partnerId: withdrawal.partnerId,
+        amount: asNumber(withdrawal.amount),
+        note: note ?? null
+      }, tx);
     });
 
-    await recordAdminAction(actorId, "WITHDRAWAL_REJECTED", "WITHDRAWAL", id, {
-      partnerId: withdrawal.partnerId,
-      amount: asNumber(withdrawal.amount),
-      note: note ?? null
-    });
     const updated = await withdrawalRepository.byId(id);
     emitWithdrawalUpdated(updated!);
     await notifyPartner(updated, {
@@ -259,12 +293,13 @@ export const withdrawalService = {
       );
       if (count === 0) throw new ValidationError("Chi co the xac nhan chuyen khoan cho yeu cau da duyet");
       await walletRepository.markWithdrawn(withdrawal.partnerId, asNumber(withdrawal.amount), tx);
+      await recordAdminAction(actorId, "WITHDRAWAL_PAID", "WITHDRAWAL", id, {
+        partnerId: withdrawal.partnerId,
+        amount: asNumber(withdrawal.amount),
+        reference: note ?? null
+      }, tx);
     });
 
-    await recordAdminAction(actorId, "WITHDRAWAL_PAID", "WITHDRAWAL", id, {
-      partnerId: withdrawal.partnerId,
-      amount: asNumber(withdrawal.amount)
-    });
     const updated = await withdrawalRepository.byId(id);
     emitWithdrawalUpdated(updated!);
     const account = [withdrawal.bankName, withdrawal.bankAccountNumber].filter(Boolean).join(" ");
@@ -312,6 +347,12 @@ export const withdrawalService = {
         await walletRepository.releaseHold(withdrawal.partnerId, asNumber(withdrawal.amount), tx);
         await walletRepository.offsetDebt(withdrawal.partnerId, tx);
       }
+      // The provider confirmed it, not a person: the admin who approved the request, or no actor at all.
+      await recordAdminAction(withdrawal.processedBy ?? null, `WITHDRAWAL_${nextStatus}`, "WITHDRAWAL", verified.withdrawalId, {
+        partnerId: withdrawal.partnerId,
+        amount: asNumber(withdrawal.amount),
+        provider: verified.provider
+      }, tx);
       return true;
     });
 
@@ -320,12 +361,6 @@ export const withdrawalService = {
       console.warn(`[Payout] Webhook for ${verified.withdrawalId} ignored — not in PROCESSING anymore.`);
       return { ignored: true };
     }
-
-    await recordAdminAction(withdrawal.processedBy ?? "system", `WITHDRAWAL_${nextStatus}`, "WITHDRAWAL", verified.withdrawalId, {
-      partnerId: withdrawal.partnerId,
-      amount: asNumber(withdrawal.amount),
-      provider: verified.provider
-    });
 
     const updated = await withdrawalRepository.byId(verified.withdrawalId);
     emitWithdrawalUpdated(updated!);

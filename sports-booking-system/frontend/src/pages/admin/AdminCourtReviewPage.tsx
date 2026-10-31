@@ -10,7 +10,7 @@ import { adminApi } from "../../features/admin/api/adminApi";
 import { courtImageApi } from "../../features/court-images/api/courtImageApi";
 import { courtAddress, formatDate, formatDateTime, formatCurrency, httpUrl, timeText } from "../../lib/format";
 import type { AdminCourtReview, CourtReviewCheck } from "../../types/api";
-import { AdminReasonModal } from "./AdminReasonModal";
+import { ReasonModal } from "../../components/common/ReasonModal";
 
 type GalleryItem = {
   key: string;
@@ -294,7 +294,7 @@ export function AdminCourtReviewPage() {
           </Card>
         </div>
 
-        <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
+        <aside className="space-y-4 lg:sticky lg:top-20 lg:self-start">
           <section className="rounded-2xl border border-line bg-white p-5 shadow-sm">
             <h2 className="font-bold text-slate-900">Mức độ tin cậy</h2>
             <ul className="mt-3 space-y-2">
@@ -407,14 +407,14 @@ export function AdminCourtReviewPage() {
         </Overlay>
       )}
 
-      <AdminReasonModal
+      <ReasonModal
         open={Boolean(rejectingImage)}
         title="Từ chối ảnh"
         required
         onClose={() => setRejectingImage(null)}
         onConfirm={(reason) => rejectingImage && reviewImage.mutate({ requestId: rejectingImage, decision: "REJECTED", reason })}
       />
-      <AdminReasonModal
+      <ReasonModal
         open={rejectingCourt}
         title="Từ chối sân"
         required

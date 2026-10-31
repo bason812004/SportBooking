@@ -20,3 +20,7 @@ export const updateReviewSchema = z.object({
 export const deleteReviewSchema = z.object({
   params: z.object({ id: z.string().trim().min(1) })
 });
+
+export const reviewEligibilitySchema = z.object({
+  query: z.object({ courtId: z.string().trim().min(1).max(40) })
+});

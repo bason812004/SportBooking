@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { normalizeVietnamPhone } from "../../shared/utils/phone.js";
 
-const clockTime = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, "Gio khong hop le, vi du 06:30");
+const clockTime = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, "Giờ không hợp lệ, ví dụ 06:30");
 
 // Normalized so "0901 234 567" and "+84901234567" find the same customer instead of creating a second one.
 const customerPhone = z
@@ -9,7 +9,7 @@ const customerPhone = z
   .trim()
   .max(30)
   .transform(normalizeVietnamPhone)
-  .pipe(z.string().regex(/^0\d{9,10}$/, "So dien thoai khong hop le, vi du 0901234567"));
+  .pipe(z.string().regex(/^0\d{9,10}$/, "Số điện thoại không hợp lệ, ví dụ 0901234567"));
 
 const walkInServicesSchema = z
   .array(
@@ -20,6 +20,33 @@ const walkInServicesSchema = z
   )
   .max(50)
   .optional();
+
+// Cash is recorded as paid when the booking is made: staff confirm the amount the quote showed (see quoteWalkIn).
+const cashReceived = z.number().int().min(0).optional();
+
+const walkInSlot = z.object({
+  courtSurfaceId: z.string().trim().min(1).max(40),
+  bookingDate: z.string().date(),
+  startTime: clockTime,
+  minutes: z.number().int().positive().max(240)
+});
+const paymentMethod = z.enum(["CASH", "BANK_TRANSFER"]).default("CASH");
+const paymentType = z.enum(["FULL_PAYMENT", "DEPOSIT", "PAY_AT_COURT"]).default("FULL_PAYMENT");
+
+/** What a walk-in would cost and what is collected now: one slot, an order of several, or a weekly series. */
+export const walkInQuoteSchema = z.object({
+  body: z.object({
+    slots: z.array(walkInSlot).min(1).max(14),
+    occurrences: z.number().int().min(2).max(26).optional(),
+    paymentMethod,
+    paymentType,
+    services: walkInServicesSchema
+  })
+});
+
+export const courtSurfaceParamSchema = z.object({
+  params: z.object({ id: z.string().trim().min(1).max(40) })
+});
 
 export const operationsQuerySchema = z.object({
   query: z.object({
@@ -79,10 +106,11 @@ export const walkInBookingSchema = z.object({
     bookingDate: z.string().date(),
     startTime: clockTime,
     minutes: z.number().int().positive().max(240),
-    paymentMethod: z.enum(["CASH", "BANK_TRANSFER"]).default("CASH"),
-    paymentType: z.enum(["FULL_PAYMENT", "DEPOSIT", "PAY_AT_COURT"]).default("FULL_PAYMENT"),
+    paymentMethod,
+    paymentType,
     note: z.string().trim().max(500).optional(),
-    services: walkInServicesSchema
+    services: walkInServicesSchema,
+    cashReceived
   })
 });
 
@@ -90,21 +118,12 @@ export const walkInBookingOrderSchema = z.object({
   body: z.object({
     customerName: z.string().trim().min(2).max(120),
     customerPhone,
-    slots: z
-      .array(
-        z.object({
-          courtSurfaceId: z.string().trim().min(1).max(40),
-          bookingDate: z.string().date(),
-          startTime: clockTime,
-          minutes: z.number().int().positive().max(240)
-        })
-      )
-      .min(2)
-      .max(14),
-    paymentMethod: z.enum(["CASH", "BANK_TRANSFER"]).default("CASH"),
-    paymentType: z.enum(["FULL_PAYMENT", "DEPOSIT", "PAY_AT_COURT"]).default("FULL_PAYMENT"),
+    slots: z.array(walkInSlot).min(2).max(14),
+    paymentMethod,
+    paymentType,
     note: z.string().trim().max(500).optional(),
-    services: walkInServicesSchema
+    services: walkInServicesSchema,
+    cashReceived
   })
 });
 
@@ -128,7 +147,7 @@ export const blockIdParamSchema = z.object({
 
 export const customerLookupQuerySchema = z.object({
   query: z.object({
-    phone: z.string().trim().max(30).transform(normalizeVietnamPhone).pipe(z.string().min(4, "Nhap it nhat 4 so"))
+    phone: z.string().trim().max(30).transform(normalizeVietnamPhone).pipe(z.string().min(4, "Nhập ít nhất 4 số"))
   })
 });
 
@@ -142,21 +161,12 @@ export const recurringWalkInBookingSchema = z.object({
   body: z.object({
     customerName: z.string().trim().min(2).max(120),
     customerPhone,
-    slots: z
-      .array(
-        z.object({
-          courtSurfaceId: z.string().trim().min(1).max(40),
-          bookingDate: z.string().date(),
-          startTime: clockTime,
-          minutes: z.number().int().positive().max(240)
-        })
-      )
-      .min(1)
-      .max(14),
+    slots: z.array(walkInSlot).min(1).max(14),
     occurrences: z.number().int().min(2).max(26),
-    paymentMethod: z.enum(["CASH", "BANK_TRANSFER"]).default("CASH"),
-    paymentType: z.enum(["FULL_PAYMENT", "DEPOSIT", "PAY_AT_COURT"]).default("FULL_PAYMENT"),
+    paymentMethod,
+    paymentType,
     note: z.string().trim().max(500).optional(),
-    services: walkInServicesSchema
+    services: walkInServicesSchema,
+    cashReceived
   })
 });

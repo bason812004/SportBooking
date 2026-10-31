@@ -32,7 +32,8 @@ export const userRepository = {
     return rows[0] ?? null;
   },
 
-  async updateMe(id: string, data: { fullName?: string; phone?: string; avatarUrl?: string }) {
+  /** Undefined leaves a field as it is; `null` clears the phone or the avatar. */
+  async updateMe(id: string, data: { fullName?: string; phone?: string | null; avatarUrl?: string | null }) {
     const rows = await prisma.$queryRaw<Array<{
       id: string;
       fullName: string;
@@ -48,8 +49,8 @@ export const userRepository = {
       update users
       set
         full_name = coalesce(${data.fullName ?? null}, full_name),
-        phone = coalesce(${data.phone ?? null}, phone),
-        avatar_url = coalesce(${data.avatarUrl ?? null}, avatar_url),
+        phone = case when ${data.phone === null} then null else coalesce(${data.phone ?? null}::varchar, phone) end,
+        avatar_url = case when ${data.avatarUrl === null} then null else coalesce(${data.avatarUrl ?? null}::text, avatar_url) end,
         updated_at = now()
       where id = ${id}
       returning

@@ -2,7 +2,6 @@ import { env } from "../../config/env.js";
 import { ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { calculateDemandScore, type DemandScoreResult } from "../../shared/utils/businessRules.js";
 import { dayTypeFor, timeToMinutes, vietnamNow } from "../../shared/utils/time.js";
-import { trackEvent } from "../analytics/analytics.service.js";
 import {
   fromMlResponse,
   historyCutoff,
@@ -163,6 +162,7 @@ async function partnerProfile(userId: string) {
 }
 
 export const demandPredictionService = {
+  /** Public and unauthenticated, so it only reads: nothing is stored per call. */
   async predict(courtId: string, input: { date: string; startTime: string; endTime: string }) {
     if (timeToMinutes(input.startTime) >= timeToMinutes(input.endTime)) throw new ValidationError("Gio bat dau phai nho hon gio ket thuc");
     const court = await demandPredictionRepository.court(courtId);
@@ -194,27 +194,6 @@ export const demandPredictionService = {
         cancellationCount,
         minHistory: RULE_BASED_MIN_HISTORY
       });
-
-    await demandPredictionRepository.savePrediction({
-      courtId,
-      predictionDate: input.date,
-      startTime: input.startTime,
-      endTime: input.endTime,
-      predictedDemandScore: result.predictedDemandScore,
-      predictedOccupancyRate: result.predictedOccupancyRate,
-      confidenceScore: result.confidenceScore,
-      predictionLevel: result.predictionLevel,
-      status: result.status,
-      modelVersion
-    });
-
-    await trackEvent({
-      partnerId: court.partnerId,
-      eventType: "DEMAND_PREDICTION_GENERATED",
-      entityType: "COURT",
-      entityId: courtId,
-      metadataJson: { date: input.date, startTime: input.startTime, endTime: input.endTime, status: result.status }
-    });
 
     return {
       courtId,

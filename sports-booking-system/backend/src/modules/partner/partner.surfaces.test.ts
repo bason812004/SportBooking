@@ -10,13 +10,17 @@ mock.module("../../config/db.js", { namedExports: { prisma: {} } });
 for (const [path, name] of [
   ["../commission/commission.service.js", "commissionService"],
   ["../settlements/settlement.service.js", "settlementService"],
+  ["../booking-overdue/bookingOverdue.service.js", "bookingOverdueService"],
   ["../vouchers/voucher.service.js", "voucherService"],
   ["../users/user.repository.js", "userRepository"],
   ["../cashier/cashier.repository.js", "cashierRepository"],
   ["../../shared/services/cloudinary.service.js", "cloudinaryService"],
   ["../court-images/courtImage.service.js", "courtImageService"]
 ]) mock.module(path, { namedExports: { [name]: {} } });
-mock.module("../auth/auth.security.js", { namedExports: { hashPassword: async () => "unused" } });
+mock.module("../auth/auth.security.js", { namedExports: { hashPassword: async () => "unused", comparePassword: async () => false } });
+mock.module("../auth/auth.repository.js", { namedExports: { authRepository: {} } });
+mock.module("../auth/auth.service.js", { namedExports: { authService: {} } });
+mock.module("../email/email.service.js", { namedExports: { emailService: {} } });
 mock.module("../realtime/realtime.service.js", { namedExports: { realtimeService: { toCourt: () => { emitted++; } } } });
 mock.module("./partner.repository.js", { namedExports: { partnerRepository: {
   profileByUser: async () => ({ id: "p1" }),

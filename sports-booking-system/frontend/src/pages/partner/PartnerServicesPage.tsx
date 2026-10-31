@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, Search, Tag, Edit3, Trash2, Box, Check, X, ShieldAlert, Layers, Image as ImageIcon } from "lucide-react";
+import { Plus, Search, Edit3, Trash2, Box, Check, X, AlertTriangle, Image as ImageIcon } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Modal } from "../../components/ui/Modal";
+import { ConfirmModal } from "../../components/common/ConfirmModal";
+import { ErrorState } from "../../components/common/States";
 import { ServiceImage } from "../../components/common/ServiceImage";
 import { serviceApi, type ServiceCategory, type ServiceItem } from "../../features/services/api/serviceApi";
 import { partnerApi } from "../../features/partner/api/partnerApi";
@@ -31,6 +33,8 @@ export function PartnerServicesPage() {
   const [selectedCourt, setSelectedCourt] = useState<string>("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingService, setEditingService] = useState<ServiceItem | null>(null);
+  const [deleting, setDeleting] = useState<ServiceItem | null>(null);
+  const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
   const [uploadNote, setUploadNote] = useState("");
@@ -68,9 +72,13 @@ export function PartnerServicesPage() {
     costPrice: 0,
     unit: "cái",
     imageUrl: "",
-    initialStock: 50,
+    // Text so a rental can leave it empty (gear not counted); products start from 0 and come in through Nhập hàng.
+    initialStock: "0",
     minimumStock: 5,
-    description: ""
+    description: "",
+    // New product: one row per chosen court. Editing: only a service without a court picks one.
+    courtIds: [] as string[],
+    courtId: ""
   });
 
   // Only the settled value reaches the query key, so typing no longer fires a request per keystroke.
@@ -127,9 +135,11 @@ export function PartnerServicesPage() {
         costPrice: service.costPrice || 0,
         unit: service.unit || "cái",
         imageUrl: service.imageUrl || "",
-        initialStock: service.inventory?.quantity || 0,
+        initialStock: String(service.inventory?.quantity ?? 0),
         minimumStock: service.inventory?.minimumStock || 5,
-        description: service.description || ""
+        description: service.description || "",
+        courtIds: [],
+        courtId: service.courtId || ""
       });
     } else {
       setEditingService(null);
@@ -142,9 +152,12 @@ export function PartnerServicesPage() {
         costPrice: 10000,
         unit: "cái",
         imageUrl: "",
-        initialStock: 50,
+        initialStock: "0",
         minimumStock: 5,
-        description: ""
+        description: "",
+        // The court the list is narrowed to, or the only court the partner has.
+        courtIds: selectedCourt ? [selectedCourt] : courts.length === 1 ? [courts[0].id] : [],
+        courtId: ""
       });
     }
     setUploadError("");
@@ -173,7 +186,7 @@ export function PartnerServicesPage() {
     } catch (err: any) {
       setUploadNote("");
       setUploadError(
-        err.response?.data?.message ||
+        err.message ||
           "Tải ảnh lên thất bại (mạng yếu hoặc bị ngắt). Bạn có thể dán link ảnh vào ô bên dưới thay vì tải file."
       );
     } finally {
@@ -195,6 +208,11 @@ export function PartnerServicesPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!editingService && formData.courtIds.length === 0) {
+      toast.error("Chọn ít nhất một sân bán dịch vụ này.");
+      return;
+    }
+    setSaving(true);
     try {
       if (editingService) {
         const saved = await serviceApi.updateService(editingService.id, {
@@ -207,12 +225,14 @@ export function PartnerServicesPage() {
           unit: formData.unit,
           imageUrl: formData.imageUrl || null,
           minimumStock: Number(formData.minimumStock),
-          description: formData.description
+          description: formData.description,
+          ...(!editingService.courtId && formData.courtId ? { courtId: formData.courtId } : {})
         });
         const imageChanged = (editingService.imageUrl || "") !== (formData.imageUrl || "");
         patchServices((items) => mergeSavedService(items, saved, imageChanged));
         toast.success("Đã lưu thay đổi.");
       } else {
+        const stockText = formData.initialStock.trim();
         const created = await serviceApi.createService({
           name: formData.name,
           categoryId: formData.categoryId || null,
@@ -222,30 +242,44 @@ export function PartnerServicesPage() {
           costPrice: Number(formData.costPrice),
           unit: formData.unit,
           imageUrl: formData.imageUrl || null,
-          initialStock: Number(formData.initialStock),
+          courtIds: formData.courtIds,
+          initialStock: stockText === "" ? null : Number(stockText),
           minimumStock: Number(formData.minimumStock),
           description: formData.description
         });
-        patchServices((items) => (items.some((item) => item.id === created.id) ? items : [created, ...items]));
-        toast.success("Đã tạo sản phẩm mới.");
+        // One row per court, possibly outside the current court filter: reload instead of guessing.
+        queryClient.invalidateQueries({ queryKey: ["partner-services"] });
+        toast.success(created.length > 1 ? `Đã tạo sản phẩm cho ${created.length} sân.` : "Đã tạo sản phẩm mới.");
       }
       setIsModalOpen(false);
     } catch (err: any) {
-      toast.error(err.response?.data?.message || "Lỗi lưu dịch vụ");
+      toast.error(err.message || "Lỗi lưu dịch vụ");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Bạn có chắc chắn muốn xóa dịch vụ này?")) return;
-    const snapshot = patchServices((items) => items.filter((item) => item.id !== id));
+  const handleDelete = async (service: ServiceItem) => {
+    setDeleting(null);
     try {
-      await serviceApi.deleteService(id);
-      toast.success("Đã xóa dịch vụ.");
+      const result = await serviceApi.deleteService(service.id);
+      if (result.deleted) {
+        patchServices((items) => items.filter((item) => item.id !== service.id));
+        toast.success("Đã xóa dịch vụ.");
+      } else {
+        patchServices((items) => items.map((item) => (item.id === service.id ? { ...item, status: "INACTIVE" } : item)));
+        toast.info("Dịch vụ đã có lịch sử bán hoặc nhập kho nên được chuyển sang Ngừng bán thay vì xóa.");
+      }
     } catch (err: any) {
-      restoreServices(snapshot);
-      toast.error(err.response?.data?.message || "Lỗi xóa dịch vụ");
+      toast.error(err.message || "Lỗi xóa dịch vụ");
     }
   };
+
+  const toggleCourt = (courtId: string) =>
+    setFormData((prev) => ({
+      ...prev,
+      courtIds: prev.courtIds.includes(courtId) ? prev.courtIds.filter((id) => id !== courtId) : [...prev.courtIds, courtId]
+    }));
 
   const handleToggleStatus = async (service: ServiceItem) => {
     const nextStatus = service.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
@@ -256,7 +290,7 @@ export function PartnerServicesPage() {
       await serviceApi.updateService(service.id, { status: nextStatus });
     } catch (err: any) {
       restoreServices(snapshot);
-      toast.error(err.response?.data?.message || "Lỗi đổi trạng thái");
+      toast.error(err.message || "Lỗi đổi trạng thái");
     }
   };
 
@@ -271,9 +305,11 @@ export function PartnerServicesPage() {
             Quản lý nước uống, đồ ăn, trái cây, bán dụng cụ và cho thuê thiết bị theo từng môn thể thao.
           </p>
         </div>
-        <Button className="flex items-center gap-2 bg-[#24c866] font-bold text-[#05270e] hover:bg-[#1fa955]" onClick={() => handleOpenModal()}>
-          <Plus className="h-4 w-4" /> Thêm sản phẩm / dịch vụ
-        </Button>
+        {isPartner && (
+          <Button className="flex items-center gap-2 bg-[#24c866] font-bold text-[#05270e] hover:bg-[#1fa955]" onClick={() => handleOpenModal()}>
+            <Plus className="h-4 w-4" /> Thêm sản phẩm / dịch vụ
+          </Button>
+        )}
       </div>
 
       {/* Filter Bar */}
@@ -342,14 +378,18 @@ export function PartnerServicesPage() {
         <div className="flex h-48 items-center justify-center rounded-2xl bg-white shadow-sm">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-[#24c866] border-t-transparent" />
         </div>
+      ) : servicesQuery.isError && !servicesQuery.data ? (
+        <ErrorState message={(servicesQuery.error as Error)?.message || "Không tải được danh sách dịch vụ"} onRetry={() => servicesQuery.refetch()} />
       ) : services.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-sm">
           <Box className="h-12 w-12 text-slate-300" />
           <h3 className="mt-3 text-lg font-bold text-slate-700">Chưa có sản phẩm hoặc dịch vụ nào</h3>
           <p className="mt-1 text-sm text-slate-500">Tạo dịch vụ đầu tiên để phục vụ khách hàng tại sân.</p>
-          <Button className="mt-4 bg-[#02712a] text-white" onClick={() => handleOpenModal()}>
-            <Plus className="mr-2 h-4 w-4" /> Thêm ngay
-          </Button>
+          {isPartner && (
+            <Button className="mt-4 bg-[#02712a] text-white" onClick={() => handleOpenModal()}>
+              <Plus className="mr-2 h-4 w-4" /> Thêm ngay
+            </Button>
+          )}
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -376,7 +416,7 @@ export function PartnerServicesPage() {
                       service.status === "ACTIVE" ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-600"
                     }`}
                   >
-                    {service.status === "ACTIVE" ? "Đang bán" : "Tạm ngưng"}
+                    {service.status === "ACTIVE" ? "Đang bán" : "Ngừng bán"}
                   </span>
                 </div>
 
@@ -397,10 +437,17 @@ export function PartnerServicesPage() {
                       {service.category?.name || "Khác"} • {service.sportType || "Tất cả sân"}
                     </p>
                     <p className="text-xs font-bold text-slate-600">
-                      {service.court?.name ?? <span className="text-slate-400">Chưa gán sân</span>}
+                      {service.court?.name ?? <span className="text-amber-700">Chưa gắn sân</span>}
                     </p>
                   </div>
                 </div>
+
+                {!service.courtId && (
+                  <p className="mt-2.5 flex items-start gap-1.5 rounded-lg bg-amber-50 p-2 text-[11px] font-semibold text-amber-800">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    Khách và quầy thu ngân không thấy món này vì chưa gắn sân. Bấm sửa để chọn sân.
+                  </p>
+                )}
 
                 {service.description && (
                   <p className="mt-2.5 text-xs text-slate-600 line-clamp-2">{service.description}</p>
@@ -415,6 +462,16 @@ export function PartnerServicesPage() {
                     <span className="text-slate-500">Giá vốn nhập:</span>
                     <span className="font-semibold text-slate-700">{formatMoney(service.costPrice)}</span>
                   </div>
+                  {service.type === "RENTAL_SERVICE" && (
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-500">Số đồ cho thuê:</span>
+                      <span className="font-bold text-slate-800">
+                        {service.inventory
+                          ? `${service.inventory.quantity} ${service.unit}${service.inventory.reservedQuantity ? ` (${service.inventory.reservedQuantity} đang cho thuê)` : ""}`
+                          : "Không giới hạn"}
+                      </span>
+                    </div>
+                  )}
                   {service.type === "PRODUCT" && (
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-slate-500">Tồn kho hiện tại:</span>
@@ -432,7 +489,8 @@ export function PartnerServicesPage() {
                 </div>
               </div>
 
-              {/* Card Footer Actions */}
+              {/* Card Footer Actions: changing the catalog is the partner's (the server refuses staff). */}
+              {isPartner && (
               <div className="mt-5 flex items-center justify-end gap-1.5 border-t border-slate-100 pt-3">
                 <button
                   onClick={() => handleToggleStatus(service)}
@@ -449,13 +507,14 @@ export function PartnerServicesPage() {
                   <Edit3 className="h-4 w-4" />
                 </button>
                 <button
-                  onClick={() => handleDelete(service.id)}
+                  onClick={() => setDeleting(service)}
                   title="Xóa"
                   className="rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
               </div>
+              )}
             </div>
           ))}
         </div>
@@ -469,6 +528,47 @@ export function PartnerServicesPage() {
         title={editingService ? "Chỉnh Sửa Dịch Vụ / Sản Phẩm" : "Thêm Dịch Vụ / Sản Phẩm Mới"}
       >
         <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+          {!editingService ? (
+            <div>
+              <label className="block text-xs font-bold uppercase text-slate-700 mb-1">Bán tại sân (*)</label>
+              <p className="mb-1.5 text-[11px] text-slate-500">Mỗi sân có giá và tồn kho riêng cho món này.</p>
+              <div className="flex flex-wrap gap-1.5">
+                {courts.map((court) => {
+                  const on = formData.courtIds.includes(court.id);
+                  return (
+                    <button
+                      key={court.id}
+                      type="button"
+                      onClick={() => toggleCourt(court.id)}
+                      className={`rounded-xl border px-3 py-1.5 text-xs font-bold transition ${
+                        on ? "border-[#02712a] bg-[#02712a] text-white" : "border-slate-300 bg-white text-slate-700 hover:border-green-600"
+                      }`}
+                    >
+                      {on && <Check className="mr-1 inline h-3 w-3" />}
+                      {court.name}
+                    </button>
+                  );
+                })}
+                {courts.length === 0 && <p className="text-xs font-semibold text-rose-600">Bạn chưa có sân nào để bán dịch vụ.</p>}
+              </div>
+            </div>
+          ) : !editingService.courtId ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+              <label className="block text-xs font-bold uppercase text-amber-800 mb-1">Gắn vào sân</label>
+              <p className="mb-1.5 text-[11px] text-amber-800">Món này chưa thuộc sân nào nên chưa ai thấy. Chọn sân để bắt đầu bán.</p>
+              <select
+                className="w-full rounded-xl border border-slate-300 p-2.5 text-sm font-semibold focus:border-green-600 focus:outline-none"
+                value={formData.courtId}
+                onChange={(e) => setFormData({ ...formData, courtId: e.target.value })}
+              >
+                <option value="">Chưa chọn</option>
+                {courts.map((court) => (
+                  <option key={court.id} value={court.id}>{court.name}</option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
           <div>
             <label className="block text-xs font-bold uppercase text-slate-700 mb-1">Tên sản phẩm / dịch vụ (*)</label>
             <Input
@@ -485,7 +585,11 @@ export function PartnerServicesPage() {
               <select
                 className="w-full rounded-xl border border-slate-300 p-2.5 text-sm font-semibold focus:border-green-600 focus:outline-none"
                 value={formData.type}
-                onChange={(e) => setFormData({ ...formData, type: e.target.value as any })}
+                onChange={(e) => {
+                  const type = e.target.value as "PRODUCT" | "RENTAL_SERVICE";
+                  // Rental gear is not counted unless the partner says how many pieces they own.
+                  setFormData({ ...formData, type, initialStock: type === "RENTAL_SERVICE" ? "" : "0" });
+                }}
               >
                 <option value="PRODUCT">Sản phẩm (Đồ ăn, Thức uống, Vớ...)</option>
                 <option value="RENTAL_SERVICE">Dịch vụ cho thuê (Vợt...)</option>
@@ -553,16 +657,34 @@ export function PartnerServicesPage() {
             </div>
           </div>
 
+          {!editingService && formData.type === "RENTAL_SERVICE" && (
+            <div className="rounded-xl bg-slate-50 p-3 border border-slate-200">
+              <label className="block text-xs font-bold text-slate-700 mb-1">Số đồ cho thuê đang có (mỗi sân)</label>
+              <Input
+                type="number"
+                min={0}
+                step={1}
+                placeholder="Để trống = không giới hạn"
+                value={formData.initialStock}
+                onChange={(e) => setFormData({ ...formData, initialStock: e.target.value })}
+              />
+              <p className="mt-1 text-[11px] text-slate-500">Nhập số vợt/bóng sân đang có để không cho thuê quá số đồ thật.</p>
+            </div>
+          )}
+
           {!editingService && formData.type === "PRODUCT" && (
             <div className="grid grid-cols-2 gap-3 rounded-xl bg-slate-50 p-3 border border-slate-200">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Số lượng nhập ban đầu</label>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Tồn kho hiện có (mỗi sân)</label>
                 <Input
                   type="number"
                   min={0}
+                  step={1}
+                  required
                   value={formData.initialStock}
-                  onChange={(e) => setFormData({ ...formData, initialStock: Number(e.target.value) })}
+                  onChange={(e) => setFormData({ ...formData, initialStock: e.target.value })}
                 />
+                <p className="mt-1 text-[11px] text-slate-500">Để 0 nếu chưa có hàng; nhập hàng sau ở mục Nhập hàng & NCC.</p>
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Mức tồn kho tối thiểu</label>
@@ -657,12 +779,24 @@ export function PartnerServicesPage() {
             <Button type="button" variant="secondary" onClick={() => setIsModalOpen(false)}>
               Hủy
             </Button>
-            <Button type="submit" className="bg-[#02712a] text-white">
-              {editingService ? "Lưu thay đổi" : "Tạo sản phẩm"}
+            <Button type="submit" className="bg-[#02712a] text-white" disabled={saving}>
+              {saving ? "Đang lưu..." : editingService ? "Lưu thay đổi" : "Tạo sản phẩm"}
             </Button>
           </div>
         </form>
       </Modal>
+
+      <ConfirmModal
+        open={Boolean(deleting)}
+        title="Xóa dịch vụ?"
+        message={
+          deleting
+            ? `"${deleting.name}"${deleting.court ? ` ở ${deleting.court.name}` : ""} sẽ bị xóa. Nếu món đã từng được bán, cho thuê hoặc nhập kho, hệ thống giữ lịch sử và chỉ chuyển sang Ngừng bán.`
+            : ""
+        }
+        onConfirm={() => deleting && handleDelete(deleting)}
+        onCancel={() => setDeleting(null)}
+      />
     </div>
   );
 }

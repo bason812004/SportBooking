@@ -77,6 +77,8 @@ export type BookingCheckoutInput = BookingQuoteInput & {
 };
 
 import { calculateBookingPrice } from "../pricing/bookingPricing.service.js";
+import { holidayRepository } from "../holidays/holiday.repository.js";
+import { piecesTotal, priceBands, priceOrThrow } from "../../shared/utils/courtPricing.js";
 
 export const bookingService = {
   async quote(userId: string, input: BookingQuoteInput) {
@@ -98,7 +100,8 @@ export const bookingService = {
       slots: flatSlots,
       services: input.services,
       voucherId: input.voucherId,
-      voucherCode: input.voucherCode
+      voucherCode: input.voucherCode,
+      userId
     });
 
     const daysMap = new Map<string, any[]>();
@@ -145,7 +148,8 @@ export const bookingService = {
       requiresDeposit: calculated.requiresDeposit,
       currency: "VND" as const,
       quoteExpiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
-      voucherId: calculated.voucherId
+      voucherId: calculated.voucherId,
+      voucherIssue: calculated.voucherIssue
     };
   },
 
@@ -155,6 +159,10 @@ export const bookingService = {
     }
 
     const quoteData = await this.quote(userId, input);
+    // A voucher the customer picked but that no longer applies must not silently vanish from the price.
+    if (quoteData.voucherIssue) {
+      throw new ValidationError(quoteData.voucherIssue.message, { voucher: [quoteData.voucherIssue.code] });
+    }
     const { totalAmount, minimumDepositAmount, depositPercent } = quoteData;
 
     if (!canCreateBookingCheckout({ totalAmount, paymentType: input.paymentType, depositPercent })) {
@@ -382,33 +390,14 @@ export const bookingService = {
     const court = await bookingRepository.courtWithPricing(input.courtId);
     if (!court) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
 
-    const dayType = dayTypeFor(input.bookingDate);
-    const startMin = timeToMinutes(input.startTime);
-    const endMin = timeToMinutes(input.endTime);
-
-    const allPrices = court.prices.map((p) => ({
-      dayType: p.dayType,
-      startMin: timeToMinutes(p.startTime.toISOString().slice(11, 16)),
-      endMin: timeToMinutes(p.endTime.toISOString().slice(11, 16)),
-      price: Number(p.price)
-    }));
-
-    let matchingPrice = allPrices.find(
-      (p) => p.dayType === dayType && p.startMin <= startMin && p.endMin >= endMin
+    // Priced piece by piece like every booking (see coverWithPrices); an hour without a price refuses the booking.
+    const pieces = priceOrThrow(
+      priceBands(court.prices),
+      input.bookingDate,
+      timeToMinutes(input.startTime),
+      timeToMinutes(input.endTime),
+      await holidayRepository.all()
     );
-    if (!matchingPrice) {
-      matchingPrice = allPrices.find(
-        (p) => p.dayType === dayType && p.startMin < endMin && p.endMin > startMin
-      );
-    }
-    if (!matchingPrice) {
-      matchingPrice = allPrices.find((p) => p.dayType === dayType);
-    }
-    if (!matchingPrice && allPrices.length > 0) {
-      matchingPrice = allPrices[0];
-    }
-
-    if (!matchingPrice) throw new ValidationError("Khung giờ này chưa có bảng giá. Vui lòng thiết lập bảng giá cho sân.");
 
     const serviceIds = input.services.map((service) => service.serviceId);
     const services = serviceIds.length ? await bookingRepository.services(serviceIds, input.courtId) : [];
@@ -419,7 +408,7 @@ export const bookingService = {
       return { serviceId: line.serviceId, quantity: line.quantity, price: Number(service.price) };
     });
 
-    const courtTotal = matchingPrice.price * durationHours(input.startTime, input.endTime);
+    const courtTotal = Math.round(piecesTotal(pieces));
     const serviceTotal = serviceLines.reduce((sum, line) => sum + line.price * line.quantity, 0);
 
     return bookingRepository.createWithServices({

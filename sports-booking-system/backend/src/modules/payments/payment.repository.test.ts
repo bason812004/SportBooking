@@ -6,6 +6,8 @@ import { createFakePrisma } from "../../shared/testing/fakePrisma.js";
 let caseId = 0;
 // Admin notices queued through the outbox inside applyWebhook's transaction.
 const adminEvents: any[] = [];
+// Bookings whose voucher use was given back, per call.
+const voucherReleases: string[][] = [];
 
 async function loadRepository(
   t: TestContext,
@@ -14,7 +16,11 @@ async function loadRepository(
 ) {
   const fakePrisma = createFakePrisma(models);
   adminEvents.length = 0;
+  voucherReleases.length = 0;
   t.mock.module("../../config/db.js", { namedExports: { prisma: fakePrisma } });
+  t.mock.module("../vouchers/voucher.repository.js", {
+    namedExports: { voucherRepository: { releaseVoucherUses: async (ids: string[]) => { voucherReleases.push(ids); return 0; } } }
+  });
   t.mock.module("../notifications/notificationOutbox.repository.js", {
     namedExports: { enqueueAdminEvent: async (tx: any, event: any) => adminEvents.push({ sameTransaction: tx === fakePrisma, ...event }) }
   });
@@ -188,6 +194,7 @@ describe("payment.repository applyWebhook", () => {
     assert.equal(bookingUpdateArgs.data.paymentStatus, "FAILED");
     assert.equal(cancelCalledWithBookingId, "bk0001");
     assert.equal(createCalled, false);
+    assert.deepEqual(voucherReleases, [["bk0001"]], "a failed payment gives the voucher use back");
   });
 
   it("settles every booking in a multi-booking order, not just the first", async (t) => {
@@ -273,6 +280,7 @@ describe("payment.repository expirePendingPayment", () => {
     assert.deepEqual(bookingUpdateArgs.where.id.in, ["bk1"]);
     assert.equal(bookingUpdateArgs.data.bookingStatus, "CANCELLED");
     assert.equal(bookingUpdateArgs.data.paymentStatus, "EXPIRED");
+    assert.deepEqual(voucherReleases, [["bk1"]]);
   });
 });
 
@@ -329,6 +337,7 @@ describe("payment.repository cancelPendingPayment", () => {
     assert.deepEqual(bookingUpdateArgs.where.id.in, ["bk1", "bk2", "bk3"]);
     assert.deepEqual(bookingUpdateArgs.data, { bookingStatus: "CANCELLED", paymentStatus: "CANCELLED" });
     assert.equal(paymentUpdateArgs.data.status, "CANCELLED");
+    assert.deepEqual(voucherReleases, [["bk1", "bk2", "bk3"]], "the whole order's voucher use is offered back");
   });
 
   it("leaves a payment that was already paid alone", async (t) => {

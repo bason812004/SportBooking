@@ -18,6 +18,17 @@ export function errorMiddleware(error: Error, _req: Request, res: Response, _nex
     });
   }
 
+  // Two Serializable transactions (or row locks) collided: nothing was saved, the request can simply be sent again.
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+    const message = "Dữ liệu vừa được thay đổi bởi một thao tác khác, vui lòng thử lại";
+    return res.status(409).json({
+      success: false,
+      message,
+      errors: {},
+      error: { code: "TRANSACTION_CONFLICT", message, fieldErrors: {} }
+    });
+  }
+
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     const status = error.code === "P2002" ? 409 : 400;
     return res.status(status).json({

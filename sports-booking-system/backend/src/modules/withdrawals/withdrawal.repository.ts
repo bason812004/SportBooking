@@ -21,7 +21,11 @@ const listInclude = {
     select: {
       id: true,
       businessName: true,
-      user: { select: { id: true, fullName: true, email: true } }
+      // When the payout account was last set or changed: a request soon after it gets a closer look.
+      bankAccountChangedAt: true,
+      user: { select: { id: true, fullName: true, email: true } },
+      // Shown when approving: a partner owing commission is better settled before more money goes out.
+      wallet: { select: { availableBalance: true, commissionDebt: true } }
     }
   },
   processor: { select: { id: true, fullName: true } }
@@ -84,8 +88,9 @@ export const withdrawalRepository = {
       createdAt:
         filters.fromDate || filters.toDate
           ? {
-              gte: filters.fromDate ? new Date(`${filters.fromDate}T00:00:00`) : undefined,
-              lte: filters.toDate ? new Date(`${filters.toDate}T23:59:59.999`) : undefined
+              // Vietnam days, whatever the server's time zone.
+              gte: filters.fromDate ? new Date(`${filters.fromDate}T00:00:00+07:00`) : undefined,
+              lte: filters.toDate ? new Date(`${filters.toDate}T23:59:59.999+07:00`) : undefined
             }
           : undefined
     };

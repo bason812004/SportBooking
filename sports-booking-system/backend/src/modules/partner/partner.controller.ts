@@ -33,10 +33,19 @@ export const partnerController = {
   updateService: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateService(req.user!.id, req.params.serviceId, req.body))),
   deleteService: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deleteService(req.user!.id, req.params.serviceId))),
   bookings: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.bookings(req.user!.id, req.query))),
+  overdueBookings: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.overdueBookings(req.user!.id))),
   confirm: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.CONFIRMED))),
-  reject: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.CANCELLED))),
+  reject: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.CANCELLED, req.body.reason))
+  ),
+  affectedBookings: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.affectedBookings(req.user!.id, req.params.id, req.query as Record<string, string>))
+  ),
   complete: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.COMPLETED))),
   noShow: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateBookingStatus(req.user!.id, req.params.id, BookingStatus.NO_SHOW))),
+  uploadProfileDocument: asyncHandler(async (req, res) =>
+    sendSuccess(res, await partnerService.uploadProfileDocument(req.user!.id, req.file), 201, "Đã tải giấy tờ lên")
+  ),
   revenue: asyncHandler(async (req, res) =>
     sendSuccess(res, await partnerService.revenue(req.user!.id, req.query.month as string | undefined))
   ),
@@ -46,25 +55,9 @@ export const partnerController = {
   deleteCourtSurface: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deleteCourtSurface(req.user!.id, req.params.id, req.params.surfaceId))),
   updateCourtSurfaceStatus: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateCourtSurfaceStatus(req.user!.id, req.params.id, req.params.surfaceId, req.body.status))),
   updateCourtSurface: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateCourtSurface(req.user!.id, req.params.id, req.params.surfaceId, req.body))),
-  vouchers: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.vouchers(req.user!.id))),
-  voucherDetail: asyncHandler(async (req, res) =>
-    sendSuccess(res, await partnerService.voucherDetail(req.user!.id, req.params.id))
-  ),
-  createVoucher: asyncHandler(async (req, res) =>
-    sendSuccess(res, await partnerService.createVoucher(req.user!.id, req.body), 201)
-  ),
-  updateVoucher: asyncHandler(async (req, res) =>
-    sendSuccess(res, await partnerService.updateVoucher(req.user!.id, req.params.id, req.body))
-  ),
-  activateVoucher: asyncHandler(async (req, res) =>
-    sendSuccess(res, await partnerService.activateVoucher(req.user!.id, req.params.id))
-  ),
-  disableVoucher: asyncHandler(async (req, res) =>
-    sendSuccess(res, await partnerService.disableVoucher(req.user!.id, req.params.id))
-  ),
-  deleteVoucher: asyncHandler(async (req, res) =>
-    sendSuccess(res, await partnerService.deleteVoucher(req.user!.id, req.params.id))
-  ),
+  reviews: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.reviews(req.user!.id, req.query))),
+  replyReview: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.replyReview(req.user!.id, req.params.id, req.body.reply))),
+  deleteReviewReply: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deleteReviewReply(req.user!.id, req.params.id))),
   blogs: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.blogs(req.user!.id))),
   blogDetail: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.blogDetail(req.user!.id, req.params.id))),
   createBlog: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.createBlog(req.user!.id, req.body), 201)),
@@ -75,5 +68,17 @@ export const partnerController = {
   listRecipients: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.listRecipients(req.user!.id))),
   createRecipient: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.createRecipient(req.user!.id, req.body), 201)),
   updateRecipient: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.updateRecipient(req.user!.id, req.params.id, req.body))),
-  deleteRecipient: asyncHandler(async (req, res) => sendSuccess(res, await partnerService.deleteRecipient(req.user!.id, req.params.id)))
+  setRecipientStatus: asyncHandler(async (req, res) => {
+    const result = await partnerService.setRecipientStatus(req.user!.id, req.params.id, req.body.status);
+    return sendSuccess(res, result, 200, req.body.status === "LOCKED" ? "Đã khoá tài khoản nhân viên" : "Đã mở khoá tài khoản nhân viên");
+  }),
+  deleteRecipient: asyncHandler(async (req, res) => {
+    const result = await partnerService.deleteRecipient(req.user!.id, req.params.id);
+    return sendSuccess(
+      res,
+      result,
+      200,
+      result.deleted ? "Đã xoá nhân viên" : "Nhân viên đã có lịch sử thao tác nên tài khoản được khoá thay vì xoá"
+    );
+  })
 };

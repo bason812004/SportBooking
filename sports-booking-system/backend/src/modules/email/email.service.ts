@@ -1,8 +1,8 @@
 import nodemailer from "nodemailer";
 import { env } from "../../config/env.js";
 import { ValidationError } from "../../shared/errors/AppError.js";
-import { registrationOtpTemplate } from "./email.templates.js";
-import type { RegistrationOtpEmail } from "./email.types.js";
+import { bankAccountChangedTemplate, passwordChangedTemplate, registrationOtpTemplate } from "./email.templates.js";
+import type { BankAccountChangedEmail, PasswordChangedEmail, RegistrationOtpEmail } from "./email.types.js";
 
 let transporter: ReturnType<typeof nodemailer.createTransport> | null = null;
 
@@ -26,6 +26,22 @@ export const emailService = {
       from: { name: env.MAIL_FROM_NAME, address: env.MAIL_FROM_ADDRESS! },
       to: input.to,
       ...template
+    });
+  },
+
+  async sendPasswordChanged(input: PasswordChangedEmail) {
+    await getTransporter().sendMail({
+      from: { name: env.MAIL_FROM_NAME, address: env.MAIL_FROM_ADDRESS! },
+      to: input.to,
+      ...passwordChangedTemplate(input)
+    });
+  },
+
+  async sendBankAccountChanged(input: BankAccountChangedEmail) {
+    await getTransporter().sendMail({
+      from: { name: env.MAIL_FROM_NAME, address: env.MAIL_FROM_ADDRESS! },
+      to: input.to,
+      ...bankAccountChangedTemplate(input)
     });
   }
 };

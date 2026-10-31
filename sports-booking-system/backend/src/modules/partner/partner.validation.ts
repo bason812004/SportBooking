@@ -19,7 +19,7 @@ const courtVenueFields = z.object({
   longitude: z.number().optional(),
   openingTime: time,
   closingTime: time,
-  depositPercent: z.coerce.number().min(0).max(100).optional().nullable()
+  depositPercent: z.coerce.number().min(0).max(49.99, "Cọc phải dưới 50%").optional().nullable()
 });
 
 export const courtWriteSchema = z.object({
@@ -124,12 +124,34 @@ export const bookingQuerySchema = z.object({
     limit: z.string().optional(),
     courtId: optionalQuery(id),
     status: optionalQuery(z.enum(["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"])),
+    serving: optionalQuery(z.enum(["true", "false"])),
     search: optionalQuery(z.string().trim().min(1).max(120)),
     fromDate: optionalQuery(z.string().date()),
     toDate: optionalQuery(z.string().date()),
     sortBy: optionalQuery(z.enum(["bookingDate", "customerName", "totalPrice", "bookingStatus", "paymentStatus"])),
     sortOrder: optionalQuery(z.enum(["asc", "desc"]))
   })
+});
+
+export const reviewQuerySchema = z.object({
+  query: z.object({
+    page: z.string().optional(),
+    limit: z.string().optional(),
+    courtId: optionalQuery(id),
+    status: optionalQuery(z.enum(["VISIBLE", "HIDDEN"])),
+    rating: optionalQuery(z.coerce.number().int().min(1).max(5)),
+    search: optionalQuery(z.string().trim().min(1).max(120)),
+    replied: optionalQuery(z.enum(["true", "false"]))
+  })
+});
+
+export const reviewReplySchema = z.object({
+  params: z.object({ id }),
+  body: z.object({ reply: z.string().trim().min(2, "Phản hồi có ít nhất 2 ký tự").max(1000, "Phản hồi tối đa 1000 ký tự") })
+});
+
+export const reviewParamsSchema = z.object({
+  params: z.object({ id })
 });
 
 export const calendarQuerySchema = z.object({
@@ -140,39 +162,42 @@ export const calendarQuerySchema = z.object({
   })
 });
 
+// Only web links: a stored "javascript:" or "data:" link would run or load in whoever opens it.
+const webUrl = z
+  .string()
+  .trim()
+  .url()
+  .refine((value) => /^https?:\/\//i.test(value), "Chỉ chấp nhận đường dẫn http(s)");
+const blankable = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((value) => (typeof value === "string" && value.trim() === "" ? null : value), schema.nullable().optional());
+
 export const profileUpdateSchema = z.object({
   body: z.object({
     fullName: z.string().trim().min(2).max(120),
-    phone: z.string().trim().max(30).optional(),
-    avatarUrl: z.union([z.string().url(), z.literal(""), z.null()]).optional(),
+    // Vietnamese numbers: 0 + 9 or 10 digits (mobile, landline) or +84; spaces, dots and dashes are dropped.
+    phone: blankable(
+      z.preprocess(
+        (value) => (typeof value === "string" ? value.replace(/[\s.-]/g, "") : value),
+        z.string().regex(/^(0\d{9,10}|\+84\d{9,10})$/, "Số điện thoại không hợp lệ")
+      )
+    ),
+    avatarUrl: blankable(webUrl),
     businessName: z.string().trim().min(2).max(180),
     address: z.string().trim().min(5),
-    verificationDocumentUrl: z.union([z.string().url(), z.literal(""), z.null()]).optional(),
-    bankName: z.string().trim().max(120).optional(),
-    bankAccountNumber: z.string().trim().max(60).optional(),
-    bankAccountHolder: z.string().trim().max(160).optional(),
-    taxCode: z.string().trim().max(60).optional()
-  })
-});
-
-const nullablePositiveNumber = z.union([z.number().positive(), z.null()]).optional();
-
-export const voucherWriteSchema = z.object({
-  body: z.object({
-    courtId: z.union([id, z.null()]).optional(),
-    code: z.string().trim().min(3).max(40).regex(/^[A-Za-z0-9_-]+$/),
-    title: z.string().trim().min(3).max(160),
-    description: z.string().trim().max(1000).optional(),
-    discountType: z.enum(["PERCENTAGE", "FIXED_AMOUNT"]),
-    discountValue: z.number().positive(),
-    maxDiscountAmount: z.union([z.number().nonnegative(), z.null()]).optional(),
-    minBookingAmount: z.number().nonnegative().default(0),
-    usageLimit: nullablePositiveNumber.refine(
-      (value) => value === undefined || value === null || Number.isInteger(value),
-      "Gioi han luot dung phai la so nguyen"
+    verificationDocumentUrl: blankable(webUrl),
+    bankName: blankable(z.string().trim().max(120)),
+    // Digits only; spaces and dashes typed for readability are dropped.
+    bankAccountNumber: blankable(
+      z.preprocess(
+        (value) => (typeof value === "string" ? value.replace(/[\s-]/g, "") : value),
+        z.string().regex(/^\d{6,20}$/, "Số tài khoản chỉ gồm 6–20 chữ số")
+      )
     ),
-    startDate: z.string().datetime(),
-    endDate: z.string().datetime()
+    bankAccountHolder: blankable(z.string().trim().max(160)),
+    // Mã số thuế: 10 digits, or 10 + a 3-digit branch suffix.
+    taxCode: blankable(z.string().trim().regex(/^\d{10}(-?\d{3})?$/, "Mã số thuế gồm 10 chữ số hoặc 10 chữ số kèm 3 số chi nhánh")),
+    // Required only when the bank account changes (withdrawals go to it); taken as typed.
+    currentPassword: z.string().max(100).optional()
   })
 });
 
@@ -180,9 +205,25 @@ export const recipientWriteSchema = z.object({
   body: z.object({
     fullName: z.string().trim().min(2).max(120),
     emailSuffix: z.string().trim().min(1).regex(/^[A-Za-z0-9_-]+$/, "Phần đuôi email chỉ được chứa chữ cái, số và dấu gạch dưới/gạch ngang"),
-    password: z.string().trim().min(6),
+    // Same rule as every other account; a password is taken as typed (no trimming).
+    password: z.string().min(8, "Mật khẩu tối thiểu 8 ký tự").max(100),
     phone: z.string().trim().max(30).optional(),
     managedCourtId: id
+  })
+});
+
+/** Rejecting or cancelling a booking: the reason goes to the customer. */
+export const bookingRejectSchema = z.object({
+  params: z.object({ id }),
+  body: z.object({ reason: z.string().trim().min(3, "Nhập lý do huỷ đơn (ít nhất 3 ký tự)").max(500) })
+});
+
+export const affectedBookingsQuerySchema = z.object({
+  params: z.object({ id }),
+  query: z.object({
+    surfaceId: optionalQuery(id),
+    openingTime: optionalQuery(time),
+    closingTime: optionalQuery(time)
   })
 });
 
@@ -251,10 +292,21 @@ export const courtBlockBulkWriteSchema = z.object({
 });
 
 export const recipientUpdateSchema = z.object({
+  params: z.object({ id }),
   body: z.object({
     fullName: z.string().trim().min(2).max(120).optional(),
-    password: z.string().trim().min(6).optional(),
+    password: z.preprocess((value) => (value === "" ? undefined : value), z.string().min(8, "Mật khẩu tối thiểu 8 ký tự").max(100).optional()),
+    // An empty phone clears it.
     phone: z.string().trim().max(30).optional(),
-    managedCourtId: z.string().uuid().optional()
+    managedCourtId: id.optional()
   })
+});
+
+export const recipientParamsSchema = z.object({
+  params: z.object({ id })
+});
+
+export const recipientStatusSchema = z.object({
+  params: z.object({ id }),
+  body: z.object({ status: z.enum(["ACTIVE", "LOCKED"]) })
 });

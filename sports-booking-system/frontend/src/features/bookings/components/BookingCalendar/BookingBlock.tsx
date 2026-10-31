@@ -149,6 +149,12 @@ function SlotTooltip({ slot, language }: { slot: WeeklyScheduleSlot; language: L
           {formatCurrency(slot.dynamicAdjustmentAmount)}
         </p>
       )}
+      {slot.dynamicAdjustmentAmount < 0 && (
+        <p>
+          <span className="text-emerald-300">{language === "en" ? "Discount" : "Giảm giá"}:</span> -
+          {formatCurrency(-slot.dynamicAdjustmentAmount)}
+        </p>
+      )}
       <p className="text-emerald-200">
         <span className="text-slate-300">{language === "en" ? "Final" : "Tổng"}:</span>{" "}
         {formatCurrency(slot.finalPrice)}

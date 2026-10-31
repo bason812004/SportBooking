@@ -7,7 +7,7 @@ import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { ErrorState, LoadingState } from "../../components/common/States";
 import { PageHero } from "../../components/common/PageHero";
-import { AdminReasonModal } from "./AdminReasonModal";
+import { ReasonModal } from "../../components/common/ReasonModal";
 
 type PendingTournament = {
   id: string;
@@ -120,7 +120,7 @@ export function AdminTournamentModerationPage() {
 
       <Pager page={page} total={q.data?.meta?.totalPages ?? 1} setPage={setPage} />
 
-      <AdminReasonModal
+      <ReasonModal
         open={Boolean(pending)}
         title={pending?.action === "approve" ? "Duyệt giải đấu" : "Từ chối giải đấu"}
         required={pending?.action === "reject"}

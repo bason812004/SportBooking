@@ -9,10 +9,11 @@ import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { ErrorState, LoadingState } from "../../components/common/States";
 import { useCategories } from "../../features/courts/hooks/useCourts";
-import { partnerApi } from "../../features/partner/api/partnerApi";
+import { partnerApi, type AffectedBooking } from "../../features/partner/api/partnerApi";
+import { AffectedBookingsModal } from "../../features/partner/components/AffectedBookingsModal";
 import { CourtSportsSection, newSport, type SportValues } from "../../features/partner/components/CourtSportsSection";
 import { VIETNAM_PROVINCES } from "../../lib/constants";
-import { courtAddress } from "../../lib/format";
+import { courtAddress, formatDateTime } from "../../lib/format";
 import type { Court } from "../../types/api";
 
 // Since the 2025 administrative reform an address is street address + ward/commune + province/city.
@@ -70,6 +71,8 @@ export function PartnerCourtFormPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  // New opening hours wait here while the partner looks at the bookings outside them.
+  const [hoursCheck, setHoursCheck] = useState<{ values: FormValues; bookings?: AffectedBooking[] } | null>(null);
   const form = useForm<FormValues>({
     defaultValues: { openingTime: "06:00", closingTime: "22:00", city: "", categoryId: "", sports: [newSport()] }
   });
@@ -151,8 +154,12 @@ export function PartnerCourtFormPage() {
       return { courts, failedImages, totalImages: files.length * courts.length };
     },
     onSuccess: ({ courts, failedImages, totalImages }) => {
-      if (editing) toast.success("Đã cập nhật sân và gửi admin duyệt lại");
-      else toast.success(courts.length > 1 ? `Đã gửi đăng ký ${courts.length} sân, chờ admin duyệt` : "Đã gửi đăng ký sân, chờ admin duyệt");
+      setHoursCheck(null);
+      if (editing) {
+        const saved = courts[0] as Court & { reviewRequired?: boolean; notifiedBookings?: number };
+        toast.success(saved.reviewRequired ? "Đã lưu. Sân chờ admin duyệt lại vì đổi tên, địa chỉ hoặc môn" : "Đã lưu thay đổi");
+        if (saved.notifiedBookings) toast.info(`Đã báo cho ${saved.notifiedBookings} khách có đơn ngoài giờ mới`);
+      } else toast.success(courts.length > 1 ? `Đã gửi đăng ký ${courts.length} sân, chờ admin duyệt` : "Đã gửi đăng ký sân, chờ admin duyệt");
       if (failedImages) toast.warning(`${failedImages}/${totalImages} ảnh chưa tải lên được. Hãy thêm lại ở trang Hình ảnh của sân.`);
       queryClient.invalidateQueries({ queryKey: ["partner-courts"] });
       if (editing) queryClient.invalidateQueries({ queryKey: ["partner-court", id] });
@@ -162,6 +169,22 @@ export function PartnerCourtFormPage() {
     onSettled: () => setUploadStatus(null)
   });
 
+  // Changing the hours of a saved court first shows the upcoming bookings outside them.
+  const submit = async (values: FormValues) => {
+    const hoursChanged =
+      editing && court.data && (values.openingTime !== timeValue(court.data.openingTime) || values.closingTime !== timeValue(court.data.closingTime));
+    if (!hoursChanged) return mutation.mutate(values);
+    setHoursCheck({ values });
+    try {
+      const bookings = await partnerApi.affectedBookings(id!, { openingTime: values.openingTime, closingTime: values.closingTime });
+      if (!bookings.length) return mutation.mutate(values);
+      setHoursCheck({ values, bookings });
+    } catch (error) {
+      setHoursCheck(null);
+      toast.error((error as Error).message);
+    }
+  };
+
   if (editing && court.isLoading) return <LoadingState />;
   if (editing && court.isError) return <ErrorState message={court.error.message} />;
 
@@ -170,7 +193,7 @@ export function PartnerCourtFormPage() {
 
   return (
     <FormProvider {...form}>
-      <form className="mx-auto max-w-6xl space-y-5" onSubmit={form.handleSubmit((values) => mutation.mutate(values))}>
+      <form className="mx-auto max-w-6xl space-y-5" onSubmit={form.handleSubmit(submit)}>
         <div>
           <Link to="/partner/courts" className="inline-flex items-center gap-1 text-sm font-semibold text-slate-500 hover:text-emerald-700">
             <ArrowLeft className="h-4 w-4" />
@@ -179,9 +202,10 @@ export function PartnerCourtFormPage() {
           <h1 className="mt-2 text-3xl font-bold">{editing ? "Chỉnh sửa sân" : "Đăng ký sân mới"}</h1>
           <p className="mt-1 text-slate-600">
             {editing
-              ? "Lưu thay đổi thông tin hoặc ảnh sẽ đưa sân về trạng thái chờ admin duyệt lại."
+              ? "Đổi tên, địa chỉ hoặc môn sẽ đưa sân về chờ admin duyệt lại. Mô tả, giờ mở cửa và % cọc áp dụng ngay; ảnh mới được admin duyệt riêng."
               : "Điền thông tin cơ sở, các môn và sân con. Admin sẽ duyệt trước khi sân hiển thị cho khách đặt."}
           </p>
+          {editing && court.data && <EditFeedback court={court.data} />}
         </div>
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
@@ -303,7 +327,7 @@ export function PartnerCourtFormPage() {
                 error={errors.closingTime?.message}
               />
               <Input
-                label="% cọc giữ sân"
+                label="% cọc giữ sân (dưới 50%)"
                 type="number"
                 min={0}
                 max={49.99}
@@ -382,15 +406,15 @@ export function PartnerCourtFormPage() {
             </Section>
           </div>
 
-          <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
+          <aside className="space-y-4 lg:sticky lg:top-20 lg:self-start">
             <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 p-5">
               <h3 className="font-bold text-emerald-900">Quy trình duyệt sân</h3>
               <ol className="mt-3 space-y-3 text-sm text-emerald-900">
                 {[
                   editing ? "Bạn lưu thay đổi thông tin sân" : "Bạn gửi đăng ký cơ sở cùng các môn và sân con",
-                  editing ? "Admin kiểm tra thông tin và hình ảnh" : "Admin kiểm tra thông tin và hình ảnh của từng sân",
+                  editing ? "Đổi tên, địa chỉ hoặc môn: admin duyệt lại; các thay đổi khác áp dụng ngay" : "Admin kiểm tra thông tin và hình ảnh của từng sân",
                   editing
-                    ? "Sân hiển thị cho khách. Hãy thiết lập sân con và bảng giá để nhận đặt sân"
+                    ? "Đổi giờ mở cửa: khách có đơn ngoài giờ mới được báo"
                     : "Sân hiển thị cho khách. Hãy thiết lập bảng giá cho từng sân để nhận đặt sân"
                 ].map((text, index) => (
                   <li key={text} className="flex gap-3">
@@ -418,13 +442,42 @@ export function PartnerCourtFormPage() {
             {mutation.isPending
               ? uploadStatus ?? (editing ? "Đang lưu..." : "Đang đăng ký...")
               : editing
-                ? "Lưu và gửi duyệt lại"
+                ? "Lưu thay đổi"
                 : courtCount > 1
                   ? `Đăng ký ${courtCount} sân`
                   : "Đăng ký sân"}
           </Button>
         </div>
       </form>
+      <AffectedBookingsModal
+        open={Boolean(hoursCheck?.bookings)}
+        title="Đổi giờ hoạt động?"
+        description={hoursCheck ? `Giờ mới ${hoursCheck.values.openingTime}-${hoursCheck.values.closingTime}. Các đơn dưới đây nằm ngoài giờ mới.` : null}
+        bookings={hoursCheck?.bookings}
+        loading={false}
+        confirmLabel="Lưu và báo khách"
+        pending={mutation.isPending}
+        onClose={() => setHoursCheck(null)}
+        onConfirm={() => hoursCheck && mutation.mutate(hoursCheck.values)}
+      />
     </FormProvider>
+  );
+}
+
+/** What an admin said about the court: the lock, the rejection, the update they asked for. */
+function EditFeedback({ court }: { court: Court }) {
+  const notes = [
+    court.adminLockedAt && `Quản trị viên đã khoá sân${court.adminLockReason ? `: ${court.adminLockReason}` : "."} Chỉ quản trị viên mở lại được.`,
+    court.approvalStatus === "REJECTED" && court.rejectionReason && `Lý do từ chối: ${court.rejectionReason}`,
+    court.updateRequestNote &&
+      `Quản trị viên yêu cầu cập nhật${court.updateRequestedAt ? ` (${formatDateTime(court.updateRequestedAt)})` : ""}: ${court.updateRequestNote}`
+  ].filter(Boolean) as string[];
+  if (!notes.length) return null;
+  return (
+    <div className="mt-3 space-y-2">
+      {notes.map((note) => (
+        <p key={note} className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">{note}</p>
+      ))}
+    </div>
   );
 }

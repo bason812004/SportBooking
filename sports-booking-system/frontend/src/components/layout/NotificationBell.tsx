@@ -8,7 +8,8 @@ import { useMarkAllNotificationsRead, useMarkNotificationRead, useMyNotification
 import type { NotificationItem } from "../../features/notifications/api/notificationApi";
 import type { Role } from "../../types/api";
 
-function resolveNotificationRoute(item: NotificationItem, role?: Role): string | null {
+/** Where a notification leads, or null for one that is only text (an admin announcement, for instance). */
+export function resolveNotificationRoute(item: NotificationItem, role?: Role): string | null {
   const metadata = (item.metadata ?? {}) as Record<string, unknown>;
   switch (item.type) {
     case "BOOKING_CREATED":
@@ -46,10 +47,46 @@ function resolveNotificationRoute(item: NotificationItem, role?: Role): string |
     case "TOURNAMENT_APPROVED":
     case "TOURNAMENT_REJECTED":
       return role === "PARTNER" ? "/partner/tournaments" : null;
+    // The partner profile review outcome; the settings page shows the reason and lets them resubmit.
+    case "PARTNER_APPROVED":
+    case "PARTNER_REJECTED":
+      return role === "PARTNER" ? "/partner/settings" : null;
+    case "REVIEW_CREATED":
+    case "REVIEW_REPLY_REMOVED":
+      return role === "PARTNER" ? "/partner/reviews" : null;
+    // For the review's author (moderation outcomes, the owner's reply): the court page shows what is published now.
+    case "REVIEW_HIDDEN":
+    case "REVIEW_RESTORED":
+    case "REVIEW_DELETED":
+    case "REVIEW_REPLIED":
+    // For the customer who reported a court: what came of it.
+    case "REPORT_RESOLVED":
+    case "REPORT_REJECTED":
+      return typeof metadata.courtId === "string" ? `/courts/${metadata.courtId}` : null;
+    // An admin disabled or re-enabled one of the partner's vouchers.
+    case "VOUCHER_DISABLED":
+    case "VOUCHER_ENABLED":
+      return role === "PARTNER" ? "/partner/vouchers" : null;
     // Moderation outcomes for the post's author.
     case "BLOG_PUBLISHED":
       if (typeof metadata.slug === "string") return `/blogs/${metadata.slug}`;
       return role === "PARTNER" ? "/partner/blogs" : "/user/blogs";
+    // Bookings over but still open, and those the system finished: the court's bookings list shows them.
+    case "BOOKING_OVERDUE":
+    case "BOOKING_AUTO_FINISHED":
+      return role === "PARTNER" ? "/partner/bookings" : role === "RECIPIENT" ? "/recipient/bookings" : null;
+    case "BOOKING_NO_SHOW":
+    // The court confirmed the booking, or paused / changed hours with the booking still standing.
+    case "BOOKING_CONFIRMED":
+    case "BOOKING_COURT_CHANGED":
+      return role === "USER" && typeof metadata.bookingId === "string" ? `/user/bookings/${metadata.bookingId}` : null;
+    // An admin locked or reopened one of the partner's courts.
+    case "COURT_LOCKED":
+    case "COURT_UNLOCKED":
+      return role === "PARTNER" ? "/partner/courts" : null;
+    // An admin removed one of the user's comments: the post shows what is left.
+    case "BLOG_COMMENT_REMOVED":
+      return typeof metadata.slug === "string" ? `/blogs/${metadata.slug}` : null;
     case "BLOG_REJECTED":
     case "BLOG_HIDDEN":
       return role === "PARTNER" ? "/partner/blogs" : role === "USER" ? "/user/blogs" : null;
@@ -148,11 +185,9 @@ export function NotificationBell() {
                 key={item.id}
                 onClick={() => {
                   if (!item.isRead) markRead.mutate(item.id);
-                  const target = resolveNotificationRoute(item, user?.role);
-                  if (target) {
-                    setOpen(false);
-                    navigate(target);
-                  }
+                  // One with nowhere to go opens the notifications page, where its whole text is shown.
+                  setOpen(false);
+                  navigate(resolveNotificationRoute(item, user?.role) ?? `/notifications#${item.id}`);
                 }}
                 className={`block w-full border-b border-slate-50 px-4 py-3 text-left transition hover:bg-slate-50 ${
                   item.isRead ? "" : "bg-teal-50/60"
@@ -171,6 +206,15 @@ export function NotificationBell() {
           )}
         </div>
         {hasNextPage && <button className="w-full border-t p-3 text-sm font-semibold text-teal-700" disabled={isFetchingNextPage} onClick={() => void fetchNextPage()}>{t(isFetchingNextPage ? "notifications.loading" : "notifications.more")}</button>}
+        <button
+          className="w-full rounded-b-2xl border-t border-slate-100 p-3 text-sm font-bold text-teal-700 hover:bg-slate-50"
+          onClick={() => {
+            setOpen(false);
+            navigate("/notifications");
+          }}
+        >
+          Xem tất cả thông báo
+        </button>
       </div>
     </div>
   );

@@ -8,6 +8,7 @@ import { partnerApi, type PartnerCourtSurface, type PartnerSurfaceInput } from "
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
+import { AffectedBookingsModal } from "../../features/partner/components/AffectedBookingsModal";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { timeText } from "../../lib/format";
 
@@ -22,6 +23,13 @@ export function PartnerCourtSurfacesPage() {
   const [action, setAction] = useState<{ type: "delete" | "pause"; surface: PartnerCourtSurface } | null>(null);
   const court = useQuery({ queryKey: ["partner-court", id], queryFn: () => partnerApi.courtDetail(id), staleTime: 0, refetchOnMount: "always" });
   const surfaces = useQuery({ queryKey: ["partner-court-surfaces", id], queryFn: () => partnerApi.courtSurfaces(id), staleTime: 0, refetchOnMount: "always" });
+  // Who pausing this sub-court would touch, shown before the partner confirms.
+  const pausing = action?.type === "pause" ? action.surface : null;
+  const affected = useQuery({
+    queryKey: ["partner-surface-affected", id, pausing?.id],
+    queryFn: () => partnerApi.affectedBookings(id, { surfaceId: pausing!.id }),
+    enabled: Boolean(pausing)
+  });
   const refresh = () => Promise.all([
     ["partner-court", id], ["partner-court-surfaces", id], ["partner-courts"],
     ["partner-court-grid", id], ["court"], ["courts"], ["court-availability"], ["weekly-schedule"]
@@ -126,10 +134,22 @@ export function PartnerCourtSurfacesPage() {
           ))}
         </div>
       )}
-      <ConfirmModal open={!!action} title={t(action?.type === "delete" ? "surfaces.deleteTitle" : "surfaces.pauseTitle")}
-        message={t(action?.type === "delete" ? "surfaces.deleteHelp" : "surfaces.pauseHelp", { name: action?.surface.name })}
+      <ConfirmModal open={action?.type === "delete"} title={t("surfaces.deleteTitle")}
+        message={t("surfaces.deleteHelp", { name: action?.surface.name })}
         onCancel={() => { if (!pending) setAction(null); }}
-        onConfirm={() => { if (!action || pending) return; if (action.type === "delete") remove.mutate(action.surface.id); else toggle.mutate(action.surface); }} />
+        onConfirm={() => { if (action?.type === "delete" && !pending) remove.mutate(action.surface.id); }} />
+      <AffectedBookingsModal
+        open={Boolean(pausing)}
+        title={t("surfaces.pauseTitle")}
+        description={t("surfaces.pauseHelp", { name: pausing?.name })}
+        bookings={affected.data}
+        loading={affected.isLoading}
+        confirmLabel={t("surfaces.pause")}
+        danger
+        pending={pending}
+        onClose={() => { if (!pending) setAction(null); }}
+        onConfirm={() => { if (pausing && !pending) toggle.mutate(pausing); }}
+      />
     </div>
   );
 }

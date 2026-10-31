@@ -91,6 +91,11 @@ export function UserBlogsPage() {
                           Lý do từ chối: {blog.rejectionReason}
                         </p>
                       )}
+                      {blog.status === "HIDDEN" && blog.hiddenReason && (
+                        <p className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
+                          Lý do bị ẩn: {blog.hiddenReason}
+                        </p>
+                      )}
                       {blogStatusHint(blog) && <p className="mt-2 text-sm font-semibold text-slate-600">{blogStatusHint(blog)}</p>}
                       <h2 className="mt-3 break-words text-2xl font-black">{blog.title}</h2>
                       {blog.excerpt && <p className="mt-2 line-clamp-2 text-sm text-slate-600">{blog.excerpt}</p>}

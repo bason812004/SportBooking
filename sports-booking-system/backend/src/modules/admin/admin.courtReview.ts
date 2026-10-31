@@ -28,6 +28,23 @@ export const NEW_ACCOUNT_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const present = (value?: string | null) => Boolean(value?.trim());
+const info = (key: string, ok: boolean, okLabel: string, missingLabel: string): CourtReviewCheck =>
+  ({ key, status: ok ? "ok" : "missing", label: ok ? okLabel : missingLabel });
+const warn = (key: string, ok: boolean, okLabel: string, warningLabel: string): CourtReviewCheck =>
+  ({ key, status: ok ? "ok" : "warning", label: ok ? okLabel : warningLabel });
+
+export type PartnerProfileCheckInput = Pick<CourtReviewInput, "emailVerified" | "phone" | "taxCode" | "verificationDocumentUrl" | "bankAccountHolder">;
+
+/** What the partner has on file, shown when reviewing the partner itself and each of its courts. Hints only. */
+export function partnerProfileChecks(input: PartnerProfileCheckInput): CourtReviewCheck[] {
+  return [
+    info("email_verified", input.emailVerified, "Email đã xác minh", "Email chưa xác minh"),
+    info("phone", present(input.phone), "Có số điện thoại liên hệ", "Chưa có số điện thoại"),
+    info("tax_code", present(input.taxCode), "Có mã số thuế", "Chưa khai mã số thuế"),
+    info("verification_document", present(input.verificationDocumentUrl), "Có giấy tờ xác minh", "Chưa có giấy tờ xác minh"),
+    info("bank_account", present(input.bankAccountHolder), "Có chủ tài khoản ngân hàng", "Chưa khai tài khoản ngân hàng")
+  ];
+}
 
 export function courtReviewChecks(input: CourtReviewInput) {
   const blockers: string[] = [];
@@ -38,10 +55,6 @@ export function courtReviewChecks(input: CourtReviewInput) {
 
   const totalImages = input.publishedImages + input.pendingImages;
   const accountDays = Math.max(0, Math.floor(((input.now ?? new Date()).getTime() - input.accountCreatedAt.getTime()) / DAY_MS));
-  const info = (key: string, ok: boolean, okLabel: string, missingLabel: string): CourtReviewCheck =>
-    ({ key, status: ok ? "ok" : "missing", label: ok ? okLabel : missingLabel });
-  const warn = (key: string, ok: boolean, okLabel: string, warningLabel: string): CourtReviewCheck =>
-    ({ key, status: ok ? "ok" : "warning", label: ok ? okLabel : warningLabel });
 
   const checks: CourtReviewCheck[] = [
     info(
@@ -72,11 +85,7 @@ export function courtReviewChecks(input: CourtReviewInput) {
       `Tài khoản đã tạo ${accountDays} ngày`,
       accountDays === 0 ? "Tài khoản mới tạo hôm nay" : `Tài khoản mới tạo ${accountDays} ngày`
     ),
-    info("email_verified", input.emailVerified, "Email đã xác minh", "Email chưa xác minh"),
-    info("phone", present(input.phone), "Có số điện thoại liên hệ", "Chưa có số điện thoại"),
-    info("tax_code", present(input.taxCode), "Có mã số thuế", "Chưa khai mã số thuế"),
-    info("verification_document", present(input.verificationDocumentUrl), "Có giấy tờ xác minh", "Chưa có giấy tờ xác minh"),
-    info("bank_account", present(input.bankAccountHolder), "Có chủ tài khoản ngân hàng", "Chưa khai tài khoản ngân hàng")
+    ...partnerProfileChecks(input)
   ];
 
   return { canApprove: blockers.length === 0, blockers, checks };

@@ -2,6 +2,7 @@ import type { Server as HttpServer } from "node:http";
 import { Server } from "socket.io";
 import { env } from "../../config/env.js";
 import { prisma } from "../../config/db.js";
+import { sessionRefusal } from "../auth/accountStatus.js";
 import { verifyAccessToken } from "../auth/auth.security.js";
 import { invalidateWeeklyScheduleCache } from "../weekly-schedule/weeklySchedule.service.js";
 import { canWatchBooking, type SocketUser } from "./realtime.access.js";
@@ -15,12 +16,15 @@ export function initRealtime(httpServer: HttpServer) {
     }
   });
 
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token || socket.handshake.auth?.accessToken;
     if (!token || typeof token !== "string") return next(new Error("UNAUTHORIZED"));
 
     try {
       const payload = verifyAccessToken(token);
+      // Same rule as the HTTP auth middleware: a locked account's still-valid token does not connect.
+      // Locked accounts and sessions ended by a password change cannot (re)connect either.
+      if (await sessionRefusal(payload.sub, (payload as { iat?: number }).iat)) return next(new Error("UNAUTHORIZED"));
       socket.data.user = { id: payload.sub, role: payload.role };
       return next();
     } catch {

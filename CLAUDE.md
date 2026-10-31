@@ -175,8 +175,10 @@ npm start
 - Frontend defaults to `http://localhost:8080/api` if `VITE_API_BASE_URL` is missing.
 - CORS allows `FRONTEND_URL`, `http://localhost:5173`, and `http://127.0.0.1:5173`.
 - Public courts require approved/active court status and active category.
-- A visible court may still be unbookable if `court_prices` rows are missing.
+- A visible court may still be unbookable if `court_prices` rows are missing: an hour no price row covers cannot be sold. Prices come from `shared/utils/courtPricing.ts` (narrowest row wins, `HOLIDAY` rows on `system_holidays` dates); never price a booking elsewhere.
 - Booking conflict logic is overlap-based: `newStart < existingEnd && newEnd > existingStart`.
+- A booking is finished by hand (partner or staff "Hoàn thành", staff Check-out) only when its bill is paid: `checkout/checkout.balance.ts` `assertNothingOwed` (409 `BOOKING_BALANCE_DUE`); otherwise the cashier takes the money and completes it. Check-in has one rule for the cashier and the staff screen: `recipient/recipient.counter.ts` `checkInBooking`. Never write booking data from a GET path.
+- Every `services` row belongs to one court (`court_id`, own price and stock). Never seed or delete services from a request path; demo catalogs come only from `backend/src/scripts/seed_all_services.ts --court=<id,...>`.
 - Fresh database order: `database/00_schema_tables.sql`, then optional `database/02_seed_data.sql`.
 - Existing database starts with `database/01_existing_db_migrations.sql`; apply later migrations only when missing those changes.
 - Realtime requires authenticated Socket.IO connection; connect frontend realtime only after login.

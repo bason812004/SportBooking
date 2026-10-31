@@ -3,6 +3,7 @@ import { prisma } from "../../config/db.js";
 import { settlementService } from "../settlements/settlement.service.js";
 import { latePaymentRefundAdminEvent } from "../bookings/booking.calculations.js";
 import { enqueueAdminEvent } from "../notifications/notificationOutbox.repository.js";
+import { voucherRepository } from "../vouchers/voucher.repository.js";
 
 const webhookBookingInclude = {
   booking: {
@@ -148,6 +149,7 @@ export const paymentRepository = {
           paymentStatus: paid ? "PAID" : "FAILED"
         }
       });
+      if (!paid) await voucherRepository.releaseVoucherUses(bookingsToSettle.map((b) => b.id), tx);
 
       const settlements = [];
       const allocationBase = bookingsToSettle.reduce((sum, b) => sum + Math.max(0, Number(b.basePrice ?? b.totalPrice) + Number(b.dynamicAdjustmentAmount ?? 0) - Number(b.voucherDiscountAmount ?? 0)), 0);
@@ -195,6 +197,7 @@ export const paymentRepository = {
         where: { id: { in: bookingIds } },
         data: { bookingStatus: "CANCELLED", paymentStatus: "CANCELLED" }
       });
+      await voucherRepository.releaseVoucherUses(bookingIds, tx);
       return tx.payment.update({ where: { id: paymentId }, data: { status: "CANCELLED" } });
     });
   },
@@ -213,6 +216,7 @@ export const paymentRepository = {
         where: { id: { in: bookingIds } },
         data: { bookingStatus: "CANCELLED", paymentStatus: "EXPIRED" }
       });
+      await voucherRepository.releaseVoucherUses(bookingIds, tx);
       return tx.payment.update({ where: { id: paymentId }, data: { status: "EXPIRED" } });
     });
   }

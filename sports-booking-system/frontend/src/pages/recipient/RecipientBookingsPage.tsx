@@ -20,14 +20,19 @@ import { DayPickerCalendar } from "../../components/ui/DayPickerCalendar";
 import { Select } from "../../components/ui/Select";
 import { useClickOutside } from "../../hooks/useClickOutside";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
+import { ReasonModal } from "../../components/common/ReasonModal";
 import { SortableTh } from "../../components/common/SortableTh";
 import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { Overlay } from "../../components/common/Overlay";
 import { PageHero } from "../../components/common/PageHero";
+import { canCorrectAutoNoShow, OverdueBookingsPanel } from "../../features/bookings/components/OverdueBookingsPanel";
 import { useUrlSort } from "../../hooks/useUrlSort";
+import { BookingBillSummary } from "../../components/booking/BookingBillSummary";
 import { BookingCalendarGrid } from "../../components/booking/BookingCalendarGrid";
+import { formatCurrency } from "../../lib/format";
 import { WalkInBookingForm } from "../../features/recipient/components/WalkInBookingForm";
-import { RentEquipmentModal } from "../../features/recipient/components/RentEquipmentModal";
+import { canRentEquipment, RentEquipmentModal } from "../../features/recipient/components/RentEquipmentModal";
+import { useBalanceDueRedirect } from "../../features/cashier/hooks/useBalanceDueRedirect";
 import type { Booking } from "../../types/api";
 
 type Action = "confirm" | "reject" | "complete" | "no-show";
@@ -50,13 +55,6 @@ function addOneHour(time: string) {
   const [hours, minutes] = time.split(":").map(Number);
   const total = hours * 60 + minutes + 60;
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
-}
-
-function hasCustomerArrived(bookingDate: string, startTime: string) {
-  const datePart = bookingDate.slice(0, 10);
-  const timePart = startTime.slice(11, 16) || startTime.slice(0, 5);
-  const startsAt = new Date(`${datePart}T${timePart}:00`);
-  return new Date() >= startsAt;
 }
 
 function shiftDate(date: string, days: number) {
@@ -229,7 +227,10 @@ export function RecipientBookingsPage() {
     enabled: viewMode === "calendar"
   });
 
+  const overdue = useQuery({ queryKey: ["recipient-overdue-bookings"], queryFn: recipientApi.overdueBookings, refetchInterval: 5 * 60_000 });
+
   const invalidateAll = () => {
+    queryClient.invalidateQueries({ queryKey: ["recipient-overdue-bookings"] });
     queryClient.invalidateQueries({ queryKey: ["recipient-bookings"] });
     queryClient.invalidateQueries({ queryKey: ["recipient-calendar"] });
     queryClient.invalidateQueries({ queryKey: ["recipient-dashboard"] });
@@ -238,20 +239,28 @@ export function RecipientBookingsPage() {
 
   const [rentEquipmentBooking, setRentEquipmentBooking] = useState<Booking | null>(null);
 
+  // A booking still owing money is finished at the cashier, which takes the money first.
+  const openCashierIfOwed = useBalanceDueRedirect("/recipient/cashier");
   const statusMutation = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: Action }) => {
+    mutationFn: ({ id, action, reason }: { id: string; action: Action; reason?: string }) => {
       if (action === "confirm") return recipientApi.confirmBooking(id);
-      if (action === "reject") return recipientApi.rejectBooking(id);
+      if (action === "reject") return recipientApi.rejectBooking(id, reason ?? "");
       if (action === "complete") return recipientApi.completeBooking(id);
       return recipientApi.noShowBooking(id);
     },
-    onSuccess: () => {
-      toast.success("Đã cập nhật đơn đặt sân");
+    onSuccess: (_data, variables) => {
+      toast.success(variables.action === "reject" ? "Đã huỷ đơn và báo lý do cho khách" : "Đã cập nhật đơn đặt sân");
       setConfirm(null);
       setCalendarDetail(null);
       invalidateAll();
     },
-    onError: (error: any) => toast.error(error.message || "Có lỗi xảy ra")
+    onError: (error: any, variables) => {
+      setConfirm(null);
+      if (openCashierIfOwed(error, variables.id)) return;
+      toast.error(error.message || "Có lỗi xảy ra");
+      // Changed meanwhile (the partner, another tab, the overdue job): show it as it is now.
+      invalidateAll();
+    }
   });
 
   const actionLabel: Record<Action, string> = {
@@ -261,8 +270,18 @@ export function RecipientBookingsPage() {
     "no-show": "Khách không đến"
   };
 
-  const actionsForStatus = (status: string): Action[] =>
-    status === "PENDING" ? ["confirm", "reject"] : status === "CONFIRMED" ? ["complete", "no-show", "reject"] : [];
+  // A guest already checked in can only be finished; a no-show the system recorded can be turned into completed
+  // for 7 days, if the customer did play. Finishing needs the bill paid (otherwise the cashier opens).
+  const actionsForStatus = (status: string, autoFinishedAt?: string | null): Action[] =>
+    status === "PENDING"
+      ? ["confirm", "reject"]
+      : status === "CONFIRMED" || status === "DEPOSIT_PAID"
+        ? ["complete", "no-show", "reject"]
+        : status === "IN_PROGRESS" || status === "CHECKOUT_PENDING"
+          ? ["complete"]
+          : canCorrectAutoNoShow({ bookingStatus: status, autoFinishedAt })
+            ? ["complete"]
+            : [];
 
   const run = (id: string, action: Action) => {
     if (action === "reject" || action === "no-show") {
@@ -278,7 +297,7 @@ export function RecipientBookingsPage() {
 
     const rowKey = group.orderId ?? primary.id;
     const isGroup = group.bookings.length > 1;
-    const totalPrice = group.bookings.reduce((sum, booking) => sum + Number(booking.totalPrice), 0);
+    const billTotal = group.bookings.reduce((sum, booking) => sum + booking.bill.totalAmount, 0);
     const allSamePayment = group.bookings.every((booking) => booking.paymentStatus === primary.paymentStatus);
     const allSameStatus = group.bookings.every((booking) => booking.bookingStatus === primary.bookingStatus);
     const distinctSurfaceIds = new Set(group.bookings.map((booking) => booking.courtSurface?.id ?? "none"));
@@ -320,30 +339,33 @@ export function RecipientBookingsPage() {
         </Td>
         <Td>
           {allSameStatus ? (
-            <span
-              className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
-                bookingStatusMeta[primary.bookingStatus]?.className ?? "bg-slate-100 text-slate-600"
-              }`}
-            >
-              {bookingStatusMeta[primary.bookingStatus]?.label ?? primary.bookingStatus}
-            </span>
+            <>
+              <span
+                className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                  bookingStatusMeta[primary.bookingStatus]?.className ?? "bg-slate-100 text-slate-600"
+                }`}
+              >
+                {bookingStatusMeta[primary.bookingStatus]?.label ?? primary.bookingStatus}
+              </span>
+              {primary.autoFinishedAt && <span className="mt-1 block text-[11px] font-semibold text-slate-500">Hệ thống tự kết thúc</span>}
+            </>
           ) : (
             <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-bold text-slate-600">Nhiều trạng thái</span>
           )}
         </Td>
-        <Td className="text-right font-semibold text-slate-800">{totalPrice.toLocaleString("vi-VN")} đ</Td>
+        <Td className="whitespace-nowrap text-right font-semibold text-slate-800">{formatCurrency(billTotal)}</Td>
         <Td>
           <div className="flex flex-wrap items-center gap-2">
             {["CONFIRMED", "IN_PROGRESS", "DEPOSIT_PAID", "CHECKOUT_PENDING"].includes(primary.bookingStatus) && (
               <Button
                 size="sm"
                 className="bg-[#02712a] text-white hover:bg-[#1fa955] font-bold text-xs shadow-sm"
-                onClick={() => navigate(`/recipient/pos/${primary.id}`)}
+                onClick={() => navigate(`/recipient/cashier?bookingId=${primary.id}`)}
               >
                 <ShoppingBag className="mr-1 h-3.5 w-3.5" /> Dịch vụ (POS)
               </Button>
             )}
-            {["CONFIRMED", "DEPOSIT_PAID"].includes(primary.bookingStatus) && !hasCustomerArrived(primary.bookingDate, primary.startTime) && (
+            {canRentEquipment(primary) && (
               <Button
                 size="sm"
                 variant="secondary"
@@ -354,7 +376,7 @@ export function RecipientBookingsPage() {
               </Button>
             )}
             {!isGroup &&
-              actionsForStatus(primary.bookingStatus).map((action) => (
+              actionsForStatus(primary.bookingStatus, primary.autoFinishedAt).map((action) => (
                 <Button
                   key={action}
                   variant={action === "reject" || action === "no-show" ? "danger" : "secondary"}
@@ -400,6 +422,8 @@ export function RecipientBookingsPage() {
           </div>
         }
       />
+
+      <OverdueBookingsPanel bookings={overdue.data} showCourt={false} />
 
       {viewMode === "table" ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -562,7 +586,7 @@ export function RecipientBookingsPage() {
                   <Th>Khung giờ</Th>
                   <SortableTh label="Thanh toán" field="paymentStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
                   <SortableTh label="Trạng thái" field="bookingStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-                  <SortableTh className="text-right" label="Tổng cộng" field="totalPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <SortableTh className="whitespace-nowrap text-right" label="Tổng hoá đơn" field="totalPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
                   <Th></Th>
                 </tr>
               </THead>
@@ -601,15 +625,24 @@ export function RecipientBookingsPage() {
       )}
 
       <ConfirmModal
-        open={Boolean(confirm)}
-        title={confirm?.action === "no-show" ? "Xác nhận khách không đến" : "Xác nhận hủy đơn"}
-        message={
-          confirm?.action === "no-show"
-            ? "Thao tác này xác nhận khách hàng không đến nhận sân và sẽ xử lý cọc nếu có."
-            : "Đơn đặt sân sẽ bị hủy bỏ và không thể hoàn tác."
-        }
+        open={confirm?.action === "no-show"}
+        title="Xác nhận khách không đến"
+        message="Thao tác này xác nhận khách hàng không đến nhận sân và sẽ xử lý cọc nếu có."
         onCancel={() => setConfirm(null)}
         onConfirm={() => confirm && statusMutation.mutate(confirm)}
+      />
+      <ReasonModal
+        key={confirm?.action === "reject" ? `reject-${confirm.id}` : "none"}
+        open={confirm?.action === "reject"}
+        required
+        title="Huỷ đơn đặt sân?"
+        description="Đơn bị huỷ và áp dụng chính sách hoàn tiền. Khách nhận thông báo kèm lý do bạn nhập."
+        label="Lý do huỷ (gửi cho khách)"
+        placeholder="Ví dụ: sân bảo trì đột xuất, xin lỗi vì sự bất tiện"
+        confirmLabel="Huỷ đơn"
+        pending={statusMutation.isPending}
+        onClose={() => setConfirm(null)}
+        onConfirm={(reason) => confirm && statusMutation.mutate({ ...confirm, reason })}
       />
 
       {calendarDetail ? (
@@ -691,9 +724,13 @@ export function RecipientBookingsPage() {
               <p className="text-lg font-black text-slate-800">{orderDetail.bookings.length}</p>
             </div>
             <div className="flex-1 rounded-xl bg-slate-50 px-3 py-2.5">
-              <p className="text-xs font-semibold text-slate-500">Tổng tiền</p>
-              <p className="text-lg font-black text-emerald-700">
-                {orderDetail.bookings.reduce((sum, booking) => sum + Number(booking.totalPrice), 0).toLocaleString("vi-VN")}đ
+              <p className="text-xs font-semibold text-slate-500">Tổng hoá đơn</p>
+              <p className="text-lg font-black text-slate-800">{formatCurrency(orderDetail.bookings.reduce((sum, booking) => sum + booking.bill.totalAmount, 0))}</p>
+            </div>
+            <div className="flex-1 rounded-xl bg-slate-50 px-3 py-2.5">
+              <p className="text-xs font-semibold text-slate-500">Còn phải thu</p>
+              <p className={`text-lg font-black ${orderDetail.bookings.some((booking) => !booking.bill.isFullyPaid) ? "text-amber-700" : "text-emerald-700"}`}>
+                {formatCurrency(orderDetail.bookings.reduce((sum, booking) => sum + booking.bill.remainingAmount, 0))}
               </p>
             </div>
           </div>
@@ -721,31 +758,13 @@ export function RecipientBookingsPage() {
                       {booking.startTime.slice(11, 16)} - {booking.endTime.slice(11, 16)}
                     </span>
                     <span className={`rounded-full px-2 py-0.5 font-bold ${paymentMeta.className}`}>{paymentMeta.label}</span>
-                    <span className="ml-auto flex items-center gap-1 font-bold text-slate-700">
-                      <Wallet className="h-3.5 w-3.5 shrink-0" />
-                      {Number(booking.totalPrice).toLocaleString("vi-VN")}đ
-                    </span>
                   </div>
-                  {booking.bookingServices?.length ? (
-                    <div className="mt-1.5 border-t border-slate-100 pt-1.5">
-                      <p className="mb-1 text-xs font-semibold text-slate-500">Dịch vụ</p>
-                      <div className="max-h-28 overflow-y-auto rounded border border-slate-100">
-                        <table className="w-full text-xs">
-                          <tbody>
-                            {booking.bookingServices.map((item) => (
-                              <tr key={item.id} className="border-t border-slate-100 first:border-t-0">
-                                <td className="p-1.5 text-slate-700">{item.service.name}</td>
-                                <td className="p-1.5 text-right text-slate-500">x{item.quantity}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  ) : null}
-                  {actionsForStatus(booking.bookingStatus).length > 0 ? (
+                  <div className="mt-2">
+                    <BookingBillSummary bill={booking.bill} />
+                  </div>
+                  {actionsForStatus(booking.bookingStatus, booking.autoFinishedAt).length > 0 ? (
                     <div className="mt-2 flex flex-wrap gap-2 border-t border-slate-100 pt-2">
-                      {actionsForStatus(booking.bookingStatus).map((action) => (
+                      {actionsForStatus(booking.bookingStatus, booking.autoFinishedAt).map((action) => (
                         <Button
                           key={action}
                           variant={action === "reject" || action === "no-show" ? "danger" : "secondary"}
@@ -825,10 +844,7 @@ export function RecipientBookingsPage() {
         bookingId={rentEquipmentBooking?.id ?? ""}
         courtId={rentEquipmentBooking?.court.id ?? ""}
         courtName={rentEquipmentBooking?.court.name}
-        onRented={() => {
-          toast.success("Đã thuê dụng cụ cho khách");
-          invalidateAll();
-        }}
+        onRented={invalidateAll}
       />
     </div>
   );

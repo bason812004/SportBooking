@@ -83,12 +83,62 @@ describe("withdrawal.service create", () => {
     assert.equal(created, false);
   });
 
-  it("rejects when no bank info is available from either input or partner profile", async () => {
+  it("rejects when the partner profile has no bank account, whatever the request carries", async () => {
     resetSpies();
     currentProfile = { id: "partner1", bankName: null, bankAccountNumber: null, bankAccountHolder: null };
     fakePrisma.setModels({});
 
-    await assert.rejects(() => withdrawalService.create("u1", { amount: 100000 } as any));
+    await assert.rejects(
+      () => withdrawalService.create("u1", { amount: 100000, bankName: "ACB", bankAccountNumber: "999", bankAccountName: "X" } as any),
+      /Cài đặt/
+    );
+  });
+
+  it("waits 24 hours after the payout account was set or changed, then lets the money go", async () => {
+    resetSpies();
+    let created = false;
+    fakePrisma.setModels({
+      partnerWallet: { upsert: async () => ({}), updateMany: async () => ({ count: 1 }) },
+      withdrawalRequest: {
+        create: async ({ data }: any) => {
+          created = true;
+          return { id: "wd1", status: "PENDING", partnerId: data.partnerId, amount: data.amount };
+        }
+      }
+    });
+    currentProfile = { ...currentProfile, bankAccountChangedAt: new Date(Date.now() - 2 * 60 * 60 * 1000) };
+    await assert.rejects(() => withdrawalService.create("u1", { amount: 100_000 } as any), /vừa được đổi/);
+    assert.equal(created, false);
+
+    currentProfile = { ...currentProfile, bankAccountChangedAt: new Date(Date.now() - 25 * 60 * 60 * 1000) };
+    await withdrawalService.create("u1", { amount: 100_000 } as any);
+    assert.equal(created, true);
+  });
+
+  it("refuses amounts under the minimum or with fractions of a dong", async () => {
+    resetSpies();
+    fakePrisma.setModels({});
+    await assert.rejects(() => withdrawalService.create("u1", { amount: 49_999 } as any), /tối thiểu 50\.000/);
+    await assert.rejects(() => withdrawalService.create("u1", { amount: 100_000.5 } as any), /số nguyên/);
+  });
+
+  it("sends the money to the profile's bank account, never one given in the request", async () => {
+    resetSpies();
+    let saved: any = null;
+    fakePrisma.setModels({
+      partnerWallet: { upsert: async () => ({}), updateMany: async () => ({ count: 1 }) },
+      withdrawalRequest: {
+        create: async ({ data }: any) => {
+          saved = data;
+          return { id: "wd1", status: "PENDING", partnerId: data.partnerId, amount: data.amount };
+        }
+      }
+    });
+
+    await withdrawalService.create("u1", { amount: 100_000, bankName: "ACB", bankAccountNumber: "999", bankAccountName: "Ke gian" } as any);
+    assert.equal(saved.bankName, "VCB");
+    assert.equal(saved.bankAccountNumber, "0011");
+    assert.equal(saved.bankAccountName, "Nguyen Van A");
   });
 
   it("rejects when available balance is insufficient, without creating the withdrawal request", async () => {
@@ -304,6 +354,49 @@ describe("withdrawal.service reject", () => {
     assert.deepEqual(releaseCall.data.availableBalance, { increment: 250000 });
     assert.equal(notificationCalls[0].type, "WITHDRAWAL_REJECTED");
     assert.match(notificationCalls[0].content, /bị từ chối: khong hop le/);
+  });
+});
+
+describe("withdrawal.service cancelMine", () => {
+  it("lets the partner take back a pending request, returning the held amount", async () => {
+    resetSpies();
+    let releaseCall: any = null;
+    let transition: any = null;
+    fakePrisma.setModels({
+      withdrawalRequest: {
+        findUnique: async () => ({ id: "wd1", status: "PENDING", partnerId: "partner1", amount: 150000 }),
+        updateMany: async (args: any) => {
+          transition = args;
+          return { count: 1 };
+        }
+      },
+      partnerWallet: { update: async (args: any) => { releaseCall = args; return {}; } }
+    }, { executeRaw: async (...args: any[]) => { offsetCalls.push(args); return 0; } });
+
+    await withdrawalService.cancelMine("u1", "wd1");
+    assert.deepEqual(transition.where.status, { in: ["PENDING"] });
+    assert.equal(transition.data.status, "CANCELLED");
+    assert.deepEqual(releaseCall.data.availableBalance, { increment: 150000 });
+    assert.equal(adminActionCalls[0][1], "WITHDRAWAL_CANCELLED_BY_PARTNER");
+  });
+
+  it("refuses another partner's request and one an admin already handled", async () => {
+    resetSpies();
+    fakePrisma.setModels({
+      withdrawalRequest: {
+        findUnique: async () => ({ id: "wd1", status: "APPROVED", partnerId: "partner2", amount: 150000 }),
+        updateMany: async () => ({ count: 0 })
+      }
+    });
+    await assert.rejects(() => withdrawalService.cancelMine("u1", "wd1"), (error: any) => error.statusCode === 404);
+
+    fakePrisma.setModels({
+      withdrawalRequest: {
+        findUnique: async () => ({ id: "wd1", status: "APPROVED", partnerId: "partner1", amount: 150000 }),
+        updateMany: async () => ({ count: 0 })
+      }
+    });
+    await assert.rejects(() => withdrawalService.cancelMine("u1", "wd1"), /đang chờ duyệt/);
   });
 });
 

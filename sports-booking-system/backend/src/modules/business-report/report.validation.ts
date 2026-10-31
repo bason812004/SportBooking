@@ -1,23 +1,23 @@
 import { z } from "zod";
 
-const dateField = (label: string) => z.string().regex(/^\d{4}-\d{2}-\d{2}$/, `${label} khong hop le`);
+const dateField = (label: string) => z.string().regex(/^\d{4}-\d{2}-\d{2}$/, `${label} không hợp lệ`);
 
 function withRangeCheck<T extends { from: string; to: string }>(schema: z.ZodType<T>) {
   return schema
-    .refine((value) => value.to >= value.from, { message: "Ngay ket thuc phai sau ngay bat dau", path: ["to"] })
+    .refine((value) => value.to >= value.from, { message: "Ngày kết thúc phải sau ngày bắt đầu", path: ["to"] })
     .refine((value) => (new Date(value.to).getTime() - new Date(value.from).getTime()) / 86_400_000 <= 366, {
-      message: "Khoang thoi gian toi da 366 ngay",
+      message: "Khoảng thời gian tối đa 366 ngày",
       path: ["to"]
     });
 }
 
 export const reportRangeQuerySchema = z.object({
-  query: withRangeCheck(z.object({ from: dateField("Ngay bat dau"), to: dateField("Ngay ket thuc") }))
+  query: withRangeCheck(z.object({ from: dateField("Ngày bắt đầu"), to: dateField("Ngày kết thúc") }))
 });
 
 export const reportExportQuerySchema = z.object({
   query: withRangeCheck(
-    z.object({ from: dateField("Ngay bat dau"), to: dateField("Ngay ket thuc"), format: z.enum(["excel", "pdf"]) })
+    z.object({ from: dateField("Ngày bắt đầu"), to: dateField("Ngày kết thúc"), format: z.enum(["excel", "pdf"]) })
   )
 });
 

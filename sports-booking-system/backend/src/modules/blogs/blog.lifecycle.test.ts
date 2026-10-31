@@ -92,21 +92,22 @@ describe("blog lifecycle", () => {
 });
 
 describe("blog comment moderation", () => {
-  it("the commenter, the post's author and admins may delete; others get 403", async () => {
+  it("the commenter and the post's author may delete; others, admins included, get 403 (admins use the moderation page)", async () => {
     commentPost = { id: "b1", authorId: "author", allowComments: true };
     comment = { id: "c1", postId: "b1", user: { id: "commenter" } };
     deleted.length = 0;
-    await blogCommentService.delete("slug", "c1", "author", "USER");
-    await blogCommentService.delete("slug", "c1", "commenter", "USER");
-    await blogCommentService.delete("slug", "c1", "admin", "ADMIN");
-    assert.deepEqual(deleted, ["c1", "c1", "c1"]);
-    await assert.rejects(blogCommentService.delete("slug", "c1", "stranger", "USER"), ForbiddenError);
-    // The post's author moderates comments; rewording someone else's comment stays the commenter's.
-    await assert.rejects(blogCommentService.update("slug", "c1", "author", "USER", "sửa"), ForbiddenError);
+    await blogCommentService.delete("slug", "c1", "author");
+    await blogCommentService.delete("slug", "c1", "commenter");
+    assert.deepEqual(deleted, ["c1", "c1"]);
+    await assert.rejects(blogCommentService.delete("slug", "c1", "stranger"), ForbiddenError);
+    await assert.rejects(blogCommentService.delete("slug", "c1", "admin"), ForbiddenError);
+    // Rewording a comment stays the commenter's: neither the post's author nor an admin may.
+    await assert.rejects(blogCommentService.update("slug", "c1", "author", "sửa"), ForbiddenError);
+    await assert.rejects(blogCommentService.update("slug", "c1", "admin", "sửa"), ForbiddenError);
   });
 
   it("a comment from another post is not reachable through this post", async () => {
     comment = { id: "c9", postId: "other-post", user: { id: "commenter" } };
-    await assert.rejects(blogCommentService.delete("slug", "c9", "author", "USER"), NotFoundError);
+    await assert.rejects(blogCommentService.delete("slug", "c9", "author"), NotFoundError);
   });
 });

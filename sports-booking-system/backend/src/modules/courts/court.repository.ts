@@ -1,5 +1,6 @@
 import { BookingStatus, Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+import { partnerAccountActive } from "../../shared/utils/publicCourt.js";
 import { toDbDate, timeToDate } from "../../shared/utils/time.js";
 import type { CourtListQuery } from "./court.types.js";
 
@@ -63,7 +64,8 @@ export const courtRepository = {
     const andConditions: Prisma.CourtWhereInput[] = [];
     const where: Prisma.CourtWhereInput = {
       approvalStatus: "APPROVED",
-      activeStatus: "ACTIVE"
+      activeStatus: "ACTIVE",
+      ...partnerAccountActive
     };
 
     const keyword = query.keyword ?? query.q;
@@ -157,7 +159,7 @@ export const courtRepository = {
 
   async findPublicById(id: string) {
     return prisma.court.findFirst({
-      where: { id, approvalStatus: "APPROVED", activeStatus: "ACTIVE" },
+      where: { id, approvalStatus: "APPROVED", activeStatus: "ACTIVE", ...partnerAccountActive },
       include: courtDetailInclude
     });
   },
@@ -178,7 +180,8 @@ export const courtRepository = {
         district: district ? { contains: district, mode: "insensitive" } : undefined,
         approvalStatus: "APPROVED",
         activeStatus: "ACTIVE",
-        category: { status: "ACTIVE" }
+        category: { status: "ACTIVE" },
+        ...partnerAccountActive
       },
       include: courtInclude,
       orderBy: { createdAt: "desc" },

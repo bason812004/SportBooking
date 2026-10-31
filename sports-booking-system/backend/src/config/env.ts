@@ -65,7 +65,12 @@ const envSchema = z.object({
   BOOKING_REMINDER_LOOKBACK_WEEKS: z.coerce.number().int().positive().default(8),
   BOOKING_REMINDER_MIN_OCCURRENCES: z.coerce.number().int().positive().default(3),
   BOOKING_REMINDER_LEAD_DAYS: z.coerce.number().int().min(1).default(2),
-  BOOKING_REMINDER_VOUCHER_ID: z.string().optional()
+  BOOKING_REMINDER_VOUCHER_ID: z.string().optional(),
+  // Bookings still open after their end time: staff are reminded after REMIND hours, the system finishes them after
+  // FINISH hours (see booking-overdue). 0 turns that step off.
+  BOOKING_OVERDUE_REMIND_HOURS: z.coerce.number().int().min(0).default(2),
+  BOOKING_AUTO_FINISH_HOURS: z.coerce.number().int().min(0).default(48),
+  BOOKING_OVERDUE_INTERVAL_MS: z.coerce.number().int().positive().default(900_000)
 });
 
 export const env = envSchema.parse(process.env);

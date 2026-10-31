@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../auth/hooks/useAuth";
 import { notificationApi } from "../api/notificationApi";
 
@@ -17,6 +17,18 @@ export function useMyNotifications() {
   });
 }
 
+/** One page of the inbox for the full notifications page; the bell keeps its own endless list. */
+export function useNotificationPage(page: number, limit: number, unread: boolean) {
+  const { isAuthenticated, user } = useAuth();
+  return useQuery({
+    queryKey: ["my-notifications", user?.id, "page", page, limit, unread],
+    queryFn: () => notificationApi.listMine(page, { limit, unread }),
+    enabled: isAuthenticated,
+    placeholderData: keepPreviousData
+  });
+}
+
+// Both the bell and the notifications page live under ["my-notifications"], so one read updates both.
 export function useMarkNotificationRead() {
   const queryClient = useQueryClient();
   return useMutation({

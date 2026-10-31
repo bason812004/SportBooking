@@ -4,39 +4,45 @@ import { buildExcelReport, buildPdfReport, type ReportExportSheet, type ReportEx
 import { getManagedCourtId } from "../recipient/recipient.service.js";
 import { partnerIdForUser } from "../analytics/analytics.service.js";
 import { reportRepository, type ReportScope } from "./report.repository.js";
+import { bucketFor, bucketKey, rangePeriods } from "./report.calculations.js";
 
 type Range = { from: string; to: string };
 
-function bucketFor(from: string, to: string) {
-  const days = Math.floor((new Date(to).getTime() - new Date(from).getTime()) / 86_400_000) + 1;
-  if (days <= 31) return "day" as const;
-  if (days <= 120) return "week" as const;
-  return "month" as const;
-}
+/** Booking statuses as the screens name them, for the exported files. */
+const BOOKING_STATUS_LABELS: Record<string, string> = {
+  PENDING: "Chờ xác nhận",
+  PENDING_PAYMENT: "Chờ thanh toán",
+  CONFIRMED: "Đã xác nhận",
+  DEPOSIT_PAID: "Đã đặt cọc",
+  IN_PROGRESS: "Đang chơi",
+  CHECKOUT_PENDING: "Chờ checkout",
+  COMPLETED: "Hoàn tất",
+  CANCELLED: "Đã hủy",
+  NO_SHOW: "Không đến",
+  REJECTED: "Bị từ chối",
+  EXPIRED: "Hết hạn"
+};
 
-function bucketKey(date: Date, bucket: "day" | "week" | "month") {
-  const iso = date.toISOString().slice(0, 10);
-  if (bucket === "day") return iso;
-  if (bucket === "month") return iso.slice(0, 7);
-  const day = new Date(`${iso}T00:00:00.000Z`);
-  const weekday = (day.getUTCDay() + 6) % 7; // Monday = 0
-  day.setUTCDate(day.getUTCDate() - weekday);
-  return day.toISOString().slice(0, 10);
-}
-
-async function revenue(scope: ReportScope, range: Range) {
+/**
+ * Settled revenue per day, week or month of the range, every period listed (0 when nothing settled). A court's staff
+ * get only the gross: commission and net stay with the partner and admins.
+ */
+async function revenue(scope: ReportScope, range: Range, includeCommission: boolean) {
   const bucket = bucketFor(range.from, range.to);
   const rows = await reportRepository.revenueRows(scope, toDbDate(range.from), toDbDate(range.to));
-  const buckets = new Map<string, { period: string; grossAmount: number; commissionAmount: number; netAmount: number }>();
+  const buckets = new Map(rangePeriods(range.from, range.to, bucket).map((period) => [period, { period, grossAmount: 0, commissionAmount: 0, netAmount: 0 }]));
   for (const row of rows) {
-    const key = bucketKey(row.bookingDate, bucket);
-    const entry = buckets.get(key) ?? { period: key, grossAmount: 0, commissionAmount: 0, netAmount: 0 };
+    const entry = buckets.get(bucketKey(row.bookingDate, bucket));
+    if (!entry) continue;
     entry.grossAmount += row.grossAmount;
     entry.commissionAmount += row.commissionAmount;
     entry.netAmount += row.netAmount;
-    buckets.set(key, entry);
   }
-  return { bucket, series: Array.from(buckets.values()).sort((a, b) => a.period.localeCompare(b.period)) };
+  const series = Array.from(buckets.values());
+  return {
+    bucket,
+    series: includeCommission ? series : series.map(({ period, grossAmount }) => ({ period, grossAmount }))
+  };
 }
 
 async function bookings(scope: ReportScope, range: Range) {
@@ -52,15 +58,23 @@ async function occupancy(scope: ReportScope, range: Range) {
   return reportRepository.occupancy(scope, toDbDate(range.from), toDbDate(range.to));
 }
 
+/**
+ * Every view reads the same settlement ledger: settled money is revenue, money of bookings not finished yet waits in
+ * "Chờ quyết toán". Service money outside that ledger (sold at the counter) is its own figure, so the two add up
+ * without overlap. Commission and net are for the partner and admins only.
+ */
 async function overview(scope: ReportScope, range: Range, includeCommission: boolean) {
-  const [revenueResult, bookingRows, serviceRows, occupancyResult] = await Promise.all([
-    revenue(scope, range),
+  const from = toDbDate(range.from);
+  const to = toDbDate(range.to);
+  const [revenueRows, bookingRows, serviceRevenue, occupancyResult, pending] = await Promise.all([
+    reportRepository.revenueRows(scope, from, to),
     bookings(scope, range),
-    services(scope, range),
-    occupancy(scope, range)
+    reportRepository.counterServiceRevenue(scope, from, to),
+    occupancy(scope, range),
+    reportRepository.pendingSettlements(scope, from, to)
   ]);
 
-  const totals = revenueResult.series.reduce(
+  const totals = revenueRows.reduce(
     (sum, item) => ({
       grossAmount: sum.grossAmount + item.grossAmount,
       commissionAmount: sum.commissionAmount + item.commissionAmount,
@@ -70,15 +84,16 @@ async function overview(scope: ReportScope, range: Range, includeCommission: boo
   );
   const totalBookings = bookingRows.reduce((sum, row) => sum + row.count, 0);
   const cancelledBookings = bookingRows.find((row) => row.status === "CANCELLED")?.count ?? 0;
-  const totalServiceRevenue = serviceRows.reduce((sum, row) => sum + row.revenue, 0);
 
   return {
     totalRevenue: totals.grossAmount,
     ...(includeCommission ? { totalCommission: totals.commissionAmount, netRevenue: totals.netAmount } : {}),
+    pendingRevenue: pending.grossAmount,
+    pendingCount: pending.count,
     totalBookings,
     cancelledBookings,
     cancellationRate: totalBookings ? cancelledBookings / totalBookings : 0,
-    totalServiceRevenue,
+    totalServiceRevenue: serviceRevenue,
     occupancyRate: occupancyResult.occupancyRate
   };
 }
@@ -94,63 +109,65 @@ function currency(value: number) {
 async function exportReport(scope: ReportScope, range: Range, format: "excel" | "pdf", includeCommission: boolean) {
   const [overviewResult, revenueResult, bookingRows, serviceRows] = await Promise.all([
     overview(scope, range, includeCommission),
-    revenue(scope, range),
+    revenue(scope, range, includeCommission),
     bookings(scope, range),
     services(scope, range)
   ]);
+  const statusRows = bookingRows.map((row) => ({ status: BOOKING_STATUS_LABELS[row.status] ?? row.status, count: row.count }));
 
-  const title = "Bao cao hoat dong";
-  const subtitle = `Tu ${range.from} den ${range.to}`;
+  const title = "Báo cáo hoạt động";
+  const subtitle = `Từ ${range.from} đến ${range.to} — doanh thu tính theo ngày chơi từ sổ quyết toán`;
 
   if (format === "excel") {
     const sheets: ReportExportSheet[] = [
       {
-        name: "Tong quan",
+        name: "Tổng quan",
         columns: [
-          { header: "Chi tieu", key: "label", width: 30 },
-          { header: "Gia tri", key: "value", width: 20 }
+          { header: "Chỉ tiêu", key: "label", width: 36 },
+          { header: "Giá trị", key: "value", width: 20 }
         ],
         rows: [
-          { label: "Tong doanh thu", value: overviewResult.totalRevenue },
+          { label: "Tổng doanh thu (đã quyết toán)", value: overviewResult.totalRevenue },
           ...(includeCommission
             ? [
-                { label: "Tong hoa hong", value: (overviewResult as any).totalCommission },
-                { label: "Doanh thu rong", value: (overviewResult as any).netRevenue }
+                { label: "Tổng hoa hồng", value: overviewResult.totalCommission ?? 0 },
+                { label: "Doanh thu ròng", value: overviewResult.netRevenue ?? 0 }
               ]
             : []),
-          { label: "Tong so booking", value: overviewResult.totalBookings },
-          { label: "Booking huy", value: overviewResult.cancelledBookings },
-          { label: "Ty le lap day san", value: `${(overviewResult.occupancyRate * 100).toFixed(1)}%` },
-          { label: "Doanh thu dich vu", value: overviewResult.totalServiceRevenue }
+          { label: "Chờ quyết toán (chưa tính vào doanh thu)", value: overviewResult.pendingRevenue },
+          { label: "Dịch vụ bán tại sân (ngoài sổ quyết toán)", value: overviewResult.totalServiceRevenue },
+          { label: "Tổng số booking", value: overviewResult.totalBookings },
+          { label: "Booking hủy", value: overviewResult.cancelledBookings },
+          { label: "Tỷ lệ lấp đầy sân", value: `${(overviewResult.occupancyRate * 100).toFixed(1)}%` }
         ]
       },
       {
-        name: "Doanh thu theo thoi gian",
+        name: "Doanh thu theo thời gian",
         columns: [
-          { header: "Ky", key: "period", width: 18 },
-          { header: "Doanh thu gop", key: "grossAmount", width: 18 },
+          { header: "Kỳ", key: "period", width: 18 },
+          { header: "Doanh thu gộp", key: "grossAmount", width: 18 },
           ...(includeCommission
             ? [
-                { header: "Hoa hong", key: "commissionAmount", width: 18 },
-                { header: "Doanh thu rong", key: "netAmount", width: 18 }
+                { header: "Hoa hồng", key: "commissionAmount", width: 18 },
+                { header: "Doanh thu ròng", key: "netAmount", width: 18 }
               ]
             : [])
         ],
         rows: revenueResult.series
       },
       {
-        name: "Booking theo trang thai",
+        name: "Booking theo trạng thái",
         columns: [
-          { header: "Trang thai", key: "status", width: 20 },
-          { header: "So luong", key: "count", width: 15 }
+          { header: "Trạng thái", key: "status", width: 20 },
+          { header: "Số lượng", key: "count", width: 15 }
         ],
-        rows: bookingRows
+        rows: statusRows
       },
       {
-        name: "Dich vu",
+        name: "Dịch vụ",
         columns: [
-          { header: "Ten dich vu", key: "name", width: 30 },
-          { header: "So luong", key: "quantity", width: 12 },
+          { header: "Tên dịch vụ (đơn đã hoàn tất)", key: "name", width: 34 },
+          { header: "Số lượng", key: "quantity", width: 12 },
           { header: "Doanh thu", key: "revenue", width: 18 }
         ],
         rows: serviceRows
@@ -161,39 +178,40 @@ async function exportReport(scope: ReportScope, range: Range, format: "excel" | 
 
   const sections: ReportExportSection[] = [
     {
-      heading: "Tong quan",
+      heading: "Tổng quan",
       kpis: [
-        { label: "Tong doanh thu", value: currency(overviewResult.totalRevenue) },
-        { label: "Tong booking", value: String(overviewResult.totalBookings) },
-        { label: "Ty le lap day", value: `${(overviewResult.occupancyRate * 100).toFixed(1)}%` },
-        { label: "Doanh thu dich vu", value: currency(overviewResult.totalServiceRevenue) }
+        { label: "Tổng doanh thu", value: currency(overviewResult.totalRevenue) },
+        { label: "Chờ quyết toán", value: currency(overviewResult.pendingRevenue) },
+        { label: "Dịch vụ bán tại sân", value: currency(overviewResult.totalServiceRevenue) },
+        { label: "Tổng booking", value: String(overviewResult.totalBookings) },
+        { label: "Tỷ lệ lấp đầy", value: `${(overviewResult.occupancyRate * 100).toFixed(1)}%` }
       ]
     },
     {
-      heading: "Doanh thu theo thoi gian",
+      heading: "Doanh thu theo thời gian",
       table: {
         columns: includeCommission
           ? [
-              { header: "Ky", key: "period" },
-              { header: "Doanh thu gop", key: "grossAmount" },
-              { header: "Hoa hong", key: "commissionAmount" },
-              { header: "Doanh thu rong", key: "netAmount" }
+              { header: "Kỳ", key: "period" },
+              { header: "Doanh thu gộp", key: "grossAmount" },
+              { header: "Hoa hồng", key: "commissionAmount" },
+              { header: "Doanh thu ròng", key: "netAmount" }
             ]
           : [
-              { header: "Ky", key: "period" },
-              { header: "Doanh thu gop", key: "grossAmount" }
+              { header: "Kỳ", key: "period" },
+              { header: "Doanh thu gộp", key: "grossAmount" }
             ],
         rows: revenueResult.series
       }
     },
     {
-      heading: "Booking theo trang thai",
-      table: { columns: [{ header: "Trang thai", key: "status" }, { header: "So luong", key: "count" }], rows: bookingRows }
+      heading: "Booking theo trạng thái",
+      table: { columns: [{ header: "Trạng thái", key: "status" }, { header: "Số lượng", key: "count" }], rows: statusRows }
     },
     {
-      heading: "Dich vu",
+      heading: "Dịch vụ bán ra (đơn đã hoàn tất)",
       table: {
-        columns: [{ header: "Ten dich vu", key: "name" }, { header: "So luong", key: "quantity" }, { header: "Doanh thu", key: "revenue" }],
+        columns: [{ header: "Tên dịch vụ", key: "name" }, { header: "Số lượng", key: "quantity" }, { header: "Doanh thu", key: "revenue" }],
         rows: serviceRows
       }
     }
@@ -361,7 +379,7 @@ async function exportBookingReport(bookingId: string, format: "excel" | "pdf") {
 
 export const adminReportService = {
   overview: (range: Range) => overview({}, range, true),
-  revenue: (range: Range) => revenue({}, range),
+  revenue: (range: Range) => revenue({}, range, true),
   bookings: (range: Range) => bookings({}, range),
   services: (range: Range) => services({}, range),
   export: (range: Range, format: "excel" | "pdf") => exportReport({}, range, format, true),
@@ -375,7 +393,7 @@ export const partnerReportService = {
     return overview({ partnerId: await partnerIdForUser(userId) }, range, true);
   },
   async revenue(userId: string, range: Range) {
-    return revenue({ partnerId: await partnerIdForUser(userId) }, range);
+    return revenue({ partnerId: await partnerIdForUser(userId) }, range, true);
   },
   async bookings(userId: string, range: Range) {
     return bookings({ partnerId: await partnerIdForUser(userId) }, range);
@@ -393,7 +411,7 @@ export const recipientReportService = {
     return overview({ courtId: await getManagedCourtId(userId) }, range, false);
   },
   async revenue(userId: string, range: Range) {
-    return revenue({ courtId: await getManagedCourtId(userId) }, range);
+    return revenue({ courtId: await getManagedCourtId(userId) }, range, false);
   },
   async bookings(userId: string, range: Range) {
     return bookings({ courtId: await getManagedCourtId(userId) }, range);

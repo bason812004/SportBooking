@@ -1,9 +1,12 @@
 import type { BookingStatus, PaymentMethod, PaymentType, PaymentStatus, Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
-import { ValidationError } from "../../shared/errors/AppError.js";
+import { ConflictError, ValidationError } from "../../shared/errors/AppError.js";
+import { partnerAccountActive } from "../../shared/utils/publicCourt.js";
 import { timeToDate, toDbDate } from "../../shared/utils/time.js";
 import { ensureServiceTables } from "../services/service.repository.js";
 import { settlementService } from "../settlements/settlement.service.js";
+import { translateReason } from "../vouchers/voucher.eligibility.js";
+import { voucherRepository } from "../vouchers/voucher.repository.js";
 
 function generateShortId(prefix: string): string {
   const rand = Math.random().toString(36).slice(2, 10);
@@ -56,6 +59,39 @@ async function voucherDiscountSplit(
     return { partnerShare, platformShare: Math.max(0, discountAmount - partnerShare) };
   }
   return { partnerShare: discountAmount, platformShare: 0 };
+}
+
+/** Each customer uses a voucher once; checked again here, inside the booking transaction, after the quote's check. */
+async function assertVoucherUnusedByCustomer(tx: Prisma.TransactionClient, userId: string, voucherId: string) {
+  if (await voucherRepository.userHasLiveUse(userId, voucherId, tx)) {
+    throw new ConflictError(translateReason("VOUCHER_ALREADY_USED"), "VOUCHER_ALREADY_USED");
+  }
+}
+
+/**
+ * Takes one use of the voucher for the booking being created, inside its transaction. The voucher row is locked
+ * first, so bookings using the same voucher take turns: the one-use-per-customer check sees a use a parallel
+ * booking just made, and the count only moves while the voucher is active with uses left.
+ */
+async function takeVoucherUse(tx: Prisma.TransactionClient, userId: string, voucherId: string) {
+  await tx.$queryRaw`select id from vouchers where id = ${voucherId} for update`;
+  await assertVoucherUnusedByCustomer(tx, userId, voucherId);
+  const taken = await tx.voucher.updateMany({
+    where: {
+      id: voucherId,
+      status: "ACTIVE",
+      OR: [{ usageLimit: null }, { usedCount: { lt: tx.voucher.fields.usageLimit } }]
+    },
+    data: { usedCount: { increment: 1 } }
+  });
+  if (taken.count !== 1) {
+    const voucher = await tx.voucher.findUnique({ where: { id: voucherId }, select: { status: true } });
+    throw new ValidationError(voucher?.status === "ACTIVE" ? "Voucher đã hết lượt sử dụng" : "Voucher không hợp lệ");
+  }
+  await tx.userVoucher.updateMany({
+    where: { userId, voucherId, status: "CLAIMED" },
+    data: { status: "USED", usedAt: new Date() }
+  });
 }
 
 export const bookingRepository = {
@@ -189,6 +225,7 @@ export const bookingRepository = {
         },
         include: { court: true }
       });
+      await voucherRepository.releaseVoucherUses([id], tx);
       const settlement = await settlementService.cancelForBooking(id, tx);
       const services = await tx.bookingService.findMany({
         where: { bookingId: id, status: "ACTIVE" }
@@ -223,7 +260,7 @@ export const bookingRepository = {
 
   courtWithPricing(id: string) {
     return prisma.court.findFirst({
-      where: { id, approvalStatus: "APPROVED", activeStatus: "ACTIVE" },
+      where: { id, approvalStatus: "APPROVED", activeStatus: "ACTIVE", ...partnerAccountActive },
       include: { prices: true, services: true, images: { orderBy: { sortOrder: "asc" } } }
     });
   },
@@ -348,20 +385,7 @@ export const bookingRepository = {
       });
 
       if (input.voucherId && input.voucherDiscountAmount > 0) {
-        const existingVoucher = await tx.voucher.findUnique({
-          where: { id: input.voucherId },
-          select: { id: true, usageLimit: true, usedCount: true, status: true }
-        });
-        if (!existingVoucher || existingVoucher.status !== "ACTIVE") {
-          throw new ValidationError("Voucher khong hop le");
-        }
-        if (existingVoucher.usageLimit !== null && existingVoucher.usedCount >= existingVoucher.usageLimit) {
-          throw new ValidationError("Voucher da het luot su dung");
-        }
-        await tx.voucher.update({
-          where: { id: input.voucherId },
-          data: { usedCount: { increment: 1 } }
-        });
+        await takeVoucherUse(tx, input.userId, input.voucherId);
         const split = await voucherDiscountSplit(tx, input.voucherId, input.voucherDiscountAmount);
         await tx.bookingVoucher.create({
           data: {
@@ -372,10 +396,6 @@ export const bookingRepository = {
             platformShare: split.platformShare,
             partnerShare: split.partnerShare
           }
-        });
-        await tx.userVoucher.updateMany({
-          where: { userId: input.userId, voucherId: input.voucherId, status: "CLAIMED" },
-          data: { status: "USED", usedAt: new Date() }
         });
       }
 
@@ -494,20 +514,7 @@ export const bookingRepository = {
         });
 
         if (input.voucherId && input.voucherDiscountAmount > 0) {
-          const existingVoucher = await tx.voucher.findUnique({
-            where: { id: input.voucherId },
-            select: { id: true, usageLimit: true, usedCount: true, status: true }
-          });
-          if (!existingVoucher || existingVoucher.status !== "ACTIVE") {
-            throw new ValidationError("Voucher khong hop le");
-          }
-          if (existingVoucher.usageLimit !== null && existingVoucher.usedCount >= existingVoucher.usageLimit) {
-            throw new ValidationError("Voucher da het luot su dung");
-          }
-          await tx.voucher.update({
-            where: { id: input.voucherId },
-            data: { usedCount: { increment: 1 } }
-          });
+          await takeVoucherUse(tx, input.userId, input.voucherId);
           const split = await voucherDiscountSplit(tx, input.voucherId, input.voucherDiscountAmount);
           await tx.bookingVoucher.create({
             data: {
@@ -518,10 +525,6 @@ export const bookingRepository = {
               platformShare: split.platformShare,
               partnerShare: split.partnerShare
             }
-          });
-          await tx.userVoucher.updateMany({
-            where: { userId: input.userId, voucherId: input.voucherId, status: "CLAIMED" },
-            data: { status: "USED", usedAt: new Date() }
           });
         }
 
@@ -619,20 +622,7 @@ export const bookingRepository = {
         });
 
         if (input.voucherId && input.voucherDiscountAmount > 0) {
-          const existingVoucher = await tx.voucher.findUnique({
-            where: { id: input.voucherId },
-            select: { id: true, usageLimit: true, usedCount: true, status: true }
-          });
-          if (!existingVoucher || existingVoucher.status !== "ACTIVE") {
-            throw new ValidationError("Voucher khong hop le");
-          }
-          if (existingVoucher.usageLimit !== null && existingVoucher.usedCount >= existingVoucher.usageLimit) {
-            throw new ValidationError("Voucher da het luot su dung");
-          }
-          await tx.voucher.update({
-            where: { id: input.voucherId },
-            data: { usedCount: { increment: 1 } }
-          });
+          await takeVoucherUse(tx, input.userId, input.voucherId);
           const split = await voucherDiscountSplit(tx, input.voucherId, input.voucherDiscountAmount);
           await tx.bookingVoucher.create({
             data: {
@@ -643,10 +633,6 @@ export const bookingRepository = {
               platformShare: split.platformShare,
               partnerShare: split.partnerShare
             }
-          });
-          await tx.userVoucher.updateMany({
-            where: { userId: input.userId, voucherId: input.voucherId, status: "CLAIMED" },
-            data: { status: "USED", usedAt: new Date() }
           });
         }
 
@@ -706,21 +692,7 @@ export const bookingRepository = {
         });
 
         if (input.voucherId && input.voucherDiscountAmount > 0) {
-          const voucherUpdate = await tx.voucher.updateMany({
-            where: {
-              id: input.voucherId,
-              status: "ACTIVE",
-              OR: [{ usageLimit: null }, { usedCount: { lt: tx.voucher.fields.usageLimit } }]
-            },
-            data: { usedCount: { increment: 1 } }
-          });
-          if (voucherUpdate.count !== 1) {
-            throw new ValidationError("Voucher da het luot su dung");
-          }
-          await tx.userVoucher.updateMany({
-            where: { userId: input.userId, voucherId: input.voucherId, status: "CLAIMED" },
-            data: { status: "USED", usedAt: new Date() }
-          });
+          await takeVoucherUse(tx, input.userId, input.voucherId);
         }
 
         const bookings = [];
@@ -859,21 +831,7 @@ export const bookingRepository = {
         });
 
         if (input.voucherId && voucherDiscountAmount > 0) {
-          const voucherUpdate = await tx.voucher.updateMany({
-            where: {
-              id: input.voucherId,
-              status: "ACTIVE",
-              OR: [{ usageLimit: null }, { usedCount: { lt: tx.voucher.fields.usageLimit } }]
-            },
-            data: { usedCount: { increment: 1 } }
-          });
-          if (voucherUpdate.count !== 1) {
-            throw new ValidationError("Voucher da het luot su dung");
-          }
-          await tx.userVoucher.updateMany({
-            where: { userId: input.userId, voucherId: input.voucherId, status: "CLAIMED" },
-            data: { status: "USED", usedAt: new Date() }
-          });
+          await takeVoucherUse(tx, input.userId, input.voucherId);
         }
 
         const bookings = [];

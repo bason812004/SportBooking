@@ -1,6 +1,7 @@
 import { Prisma, type ApprovalStatus, type BookingStatus } from "@prisma/client";
 import { prisma } from "../../config/db.js";
-import { normalizeBookingServices } from "../../shared/utils/bookingServices.js";
+import { bookingBillInclude, bookingBillSelect, normalizeBookingServices } from "../../shared/utils/bookingServices.js";
+import { withBookingBill } from "../checkout/checkout.calculations.js";
 import { ConflictError, NotFoundError } from "../../shared/errors/AppError.js";
 import { surfaceCode, surfaceName, normalizedSurfaceCode } from "../../shared/utils/courtSurface.js";
 
@@ -146,6 +147,19 @@ async function createCourtTx(
   return { ...court, surfaces: [...rows].sort((a, b) => a.sortOrder - b.sortOrder), depositPercent };
 }
 
+export type UpcomingBooking = {
+  id: string;
+  bookingCode: string;
+  bookingDate: Date;
+  startTime: string;
+  endTime: string;
+  bookingStatus: string;
+  userId: string;
+  customerName: string;
+  customerPhone: string | null;
+  surfaceName: string | null;
+};
+
 export const partnerRepository = {
   profileByUser(userId: string) {
     return prisma.partnerProfile.findUnique({
@@ -200,6 +214,14 @@ export const partnerRepository = {
     ]);
   },
 
+  latestModeration(partnerId: string) {
+    return prisma.moderationHistory.findFirst({
+      where: { entityType: "PARTNER", entityId: partnerId },
+      orderBy: { createdAt: "desc" },
+      select: { action: true, reason: true, createdAt: true }
+    });
+  },
+
   updateProfile(id: string, data: Prisma.PartnerProfileUpdateInput) {
     return prisma.partnerProfile.update({
       where: { id },
@@ -208,12 +230,14 @@ export const partnerRepository = {
     });
   },
 
+  /** The partner's courts with what an admin said about each (rejection, update request, lock) and their figures. */
   async listCourts(partnerId: string) {
     const courts = await prisma.court.findMany({
       where: { partnerId },
       select: {
         id: true,
         name: true,
+        ward: true,
         district: true,
         city: true,
         openingTime: true,
@@ -221,13 +245,84 @@ export const partnerRepository = {
         approvalStatus: true,
         activeStatus: true,
         verified: true,
+        rejectionReason: true,
+        updateRequestNote: true,
+        updateRequestedAt: true,
+        adminLockedAt: true,
+        adminLockReason: true,
         category: { select: { name: true } },
         images: { select: { imageUrl: true }, take: 1, orderBy: { sortOrder: "asc" } },
+        prices: { select: { price: true } },
         _count: { select: { surfaces: true } }
       },
       orderBy: { createdAt: "desc" }
     });
-    return attachCourtDeposits(courts);
+    // Like the court pages: hidden reviews do not count.
+    const ratings = courts.length
+      ? await prisma.review.groupBy({
+          by: ["courtId"],
+          where: { courtId: { in: courts.map((court) => court.id) }, displayStatus: "VISIBLE" },
+          _avg: { rating: true },
+          _count: { _all: true }
+        })
+      : [];
+    const ratingByCourt = new Map(ratings.map((row) => [row.courtId, row]));
+    const withFigures = courts.map(({ prices, ...court }) => ({
+      ...court,
+      minPrice: prices.length ? Math.min(...prices.map((row) => Number(row.price))) : null,
+      averageRating: ratingByCourt.get(court.id)?._avg.rating ?? null,
+      reviewCount: ratingByCourt.get(court.id)?._count._all ?? 0
+    }));
+    return attachCourtDeposits(withFigures);
+  },
+
+  /**
+   * Bookings at a court (or one sub-court) still to be played, optionally only those reaching outside new opening
+   * hours: the customers to warn before a court pauses or changes its hours.
+   */
+  upcomingBookings(courtId: string, filter: { surfaceId?: string | null; outside?: { open: string; close: string } } = {}) {
+    const surfaceId = filter.surfaceId ?? null;
+    const open = filter.outside?.open ?? null;
+    const close = filter.outside?.close ?? null;
+    return prisma.$queryRaw<UpcomingBooking[]>`
+      select b.id, b.booking_code as "bookingCode", b.booking_date as "bookingDate",
+        to_char(b.start_time, 'HH24:MI') as "startTime", to_char(b.end_time, 'HH24:MI') as "endTime",
+        b.booking_status::text as "bookingStatus", b.user_id as "userId",
+        u.full_name as "customerName", u.phone as "customerPhone", s.name as "surfaceName"
+      from bookings b
+      join users u on u.id = b.user_id
+      left join court_surfaces s on s.id = b.court_surface_id
+      where b.court_id = ${courtId}
+        and b.booking_status::text in ('PENDING', 'PENDING_PAYMENT', 'CONFIRMED', 'DEPOSIT_PAID', 'IN_PROGRESS', 'CHECKOUT_PENDING')
+        and (b.booking_date + b.end_time) > (now() at time zone 'Asia/Ho_Chi_Minh')
+        and (
+          ${surfaceId}::text is null
+          or b.court_surface_id = ${surfaceId}
+          or exists (select 1 from booking_slots bs where bs.booking_id = b.id and bs.court_surface_id = ${surfaceId})
+        )
+        and (${open}::time is null or b.start_time < ${open}::time or b.end_time > ${close}::time)
+      order by b.booking_date, b.start_time
+    `;
+  },
+
+  /** Bookings a block over these days and hours would cover (a court-wide block covers every sub-court). */
+  blockConflicts(courtId: string, surfaceId: string | null, dates: string[], startTime: string, endTime: string) {
+    return prisma.$queryRaw<Array<{ bookingCode: string; bookingDate: Date; startTime: string; endTime: string }>>`
+      select distinct b.booking_code as "bookingCode", b.booking_date as "bookingDate",
+        to_char(b.start_time, 'HH24:MI') as "startTime", to_char(b.end_time, 'HH24:MI') as "endTime"
+      from bookings b
+      left join booking_slots bs on bs.booking_id = b.id
+      where b.court_id = ${courtId}
+        and b.booking_status::text in ('PENDING', 'PENDING_PAYMENT', 'CONFIRMED', 'DEPOSIT_PAID', 'IN_PROGRESS', 'CHECKOUT_PENDING')
+        and (
+          (b.booking_date = any(${dates}::date[]) and b.start_time < ${endTime}::time and b.end_time > ${startTime}::time
+            and (${surfaceId}::text is null or b.court_surface_id is null or b.court_surface_id = ${surfaceId}))
+          or (bs.id is not null and bs.booking_date = any(${dates}::date[]) and bs.start_time < ${endTime}::time and bs.end_time > ${startTime}::time
+            and (${surfaceId}::text is null or bs.court_surface_id is null or bs.court_surface_id = ${surfaceId}))
+        )
+      order by "bookingDate", "startTime"
+      limit 10
+    `;
   },
 
   async courtByPartner(courtId: string, partnerId: string) {
@@ -332,6 +427,11 @@ export const partnerRepository = {
     return prisma.courtPrice.create({ data });
   },
 
+  /** Every price row of a court, oldest first (a newer row wins a tie, see priceBands). */
+  courtPrices(courtId: string) {
+    return prisma.courtPrice.findMany({ where: { courtId }, orderBy: { createdAt: "asc" } });
+  },
+
   priceByPartner(priceId: string, partnerId: string) {
     return prisma.courtPrice.findFirst({ where: { id: priceId, court: { partnerId } } });
   },
@@ -362,8 +462,28 @@ export const partnerRepository = {
 
   bookingWhere(
     partnerId: string,
-    filters: { courtId?: string; status?: BookingStatus; search?: string; fromDate?: Date; toDate?: Date }
+    filters: {
+      courtId?: string;
+      status?: BookingStatus;
+      statuses?: BookingStatus[];
+      /** Only bookings whose start (date + time) is at or before this Vietnam wall-clock moment. */
+      startedBy?: { date: Date; time: Date };
+      search?: string;
+      fromDate?: Date;
+      toDate?: Date;
+    }
   ): Prisma.BookingWhereInput {
+    const and: Prisma.BookingWhereInput[] = [];
+    if (filters.statuses) and.push({ bookingStatus: { in: filters.statuses } });
+    if (filters.startedBy) {
+      and.push({
+        OR: [
+          { bookingDate: { lt: filters.startedBy.date } },
+          { bookingDate: filters.startedBy.date, startTime: { lte: filters.startedBy.time } }
+        ]
+      });
+    }
+
     return {
       court: { partnerId },
       courtId: filters.courtId,
@@ -378,7 +498,8 @@ export const partnerRepository = {
             { user: { fullName: { contains: filters.search, mode: "insensitive" } } },
             { user: { phone: { contains: filters.search, mode: "insensitive" } } }
           ]
-        : undefined
+        : undefined,
+      AND: and.length ? and : undefined
     };
   },
 
@@ -390,6 +511,14 @@ export const partnerRepository = {
     });
   },
 
+  /** Bill columns of every booking in the given list groups (whole orders, like bookingsByOrderIds). */
+  bookingBillRows(partnerId: string, orderIds: string[], ids: string[]) {
+    return prisma.booking.findMany({
+      where: { court: { partnerId }, OR: [{ bookingOrderId: { in: orderIds } }, { id: { in: ids } }] },
+      select: bookingBillSelect
+    });
+  },
+
   async bookingsByOrderIds(partnerId: string, orderIds: string[]) {
     const bookings = await prisma.booking.findMany({
       where: { court: { partnerId }, bookingOrderId: { in: orderIds } },
@@ -397,11 +526,11 @@ export const partnerRepository = {
         user: { select: { id: true, fullName: true, email: true, phone: true } },
         court: true,
         courtSurface: { select: { id: true, name: true, code: true } },
-        bookingServices: { include: { service: true, courtService: true } }
+        ...bookingBillInclude
       },
       orderBy: [{ bookingDate: "asc" }, { startTime: "asc" }]
     });
-    return bookings.map(normalizeBookingServices);
+    return bookings.map((booking) => normalizeBookingServices(withBookingBill(booking)));
   },
 
   async bookingsByIds(partnerId: string, ids: string[]) {
@@ -411,10 +540,10 @@ export const partnerRepository = {
         user: { select: { id: true, fullName: true, email: true, phone: true } },
         court: true,
         courtSurface: { select: { id: true, name: true, code: true } },
-        bookingServices: { include: { service: true, courtService: true } }
+        ...bookingBillInclude
       }
     });
-    return bookings.map(normalizeBookingServices);
+    return bookings.map((booking) => normalizeBookingServices(withBookingBill(booking)));
   },
 
   bookingByPartner(bookingId: string, partnerId: string) {
@@ -453,8 +582,9 @@ export const partnerRepository = {
     });
   },
 
-  updateCourtSurfaceStatus(surfaceId: string, status: "ACTIVE" | "INACTIVE") {
-    return prisma.courtSurface.update({ where: { id: surfaceId }, data: { status } });
+  /** Records who paused it: staff may reopen only a sub-court staff paused. */
+  updateCourtSurfaceStatus(surfaceId: string, status: "ACTIVE" | "INACTIVE", by: "PARTNER" | "RECIPIENT") {
+    return prisma.courtSurface.update({ where: { id: surfaceId }, data: { status, pausedByRole: status === "INACTIVE" ? by : null } });
   },
 
   async saveCourtSurface(courtId: string, surfaceId: string | null, data: Pick<Prisma.CourtSurfaceUncheckedCreateInput, "code" | "name" | "capacity" | "surface" | "size" | "openingTime" | "closingTime">) {
@@ -496,9 +626,10 @@ export const partnerRepository = {
     });
   },
 
-  courtBlocks(courtId: string) {
+  /** Blocks still to come (from today, Vietnam time); past ones stay in the database but leave the list. */
+  courtBlocks(courtId: string, fromDate: Date) {
     return prisma.courtAvailabilityBlock.findMany({
-      where: { courtId, status: "ACTIVE" },
+      where: { courtId, status: "ACTIVE", blockDate: { gte: fromDate } },
       include: { courtSurface: { select: { id: true, name: true, code: true } } },
       orderBy: [{ blockDate: "asc" }, { startTime: "asc" }]
     });
@@ -640,13 +771,14 @@ export const partnerRepository = {
     `.then((rows: any) => rows[0]);
   },
 
-  updateRecipient(id: string, partnerId: string, data: { fullName?: string; passwordHash?: string; phone?: string; managedCourtId?: string }) {
+  /** `phone: null` clears the phone; a new password ends every session the account had (authRepository.revokeAllSessions). */
+  updateRecipient(id: string, partnerId: string, data: { fullName?: string; passwordHash?: string; phone?: string | null; managedCourtId?: string }) {
     return prisma.$queryRaw`
       update users
       set
         full_name = coalesce(${data.fullName ?? null}, full_name),
         password_hash = coalesce(${data.passwordHash ?? null}, password_hash),
-        phone = coalesce(${data.phone ?? null}, phone),
+        phone = case when ${data.phone !== undefined} then ${data.phone ?? null}::varchar else phone end,
         managed_court_id = coalesce(${data.managedCourtId ?? null}, managed_court_id),
         updated_at = now()
       where id = ${id}
@@ -660,6 +792,37 @@ export const partnerRepository = {
         status,
         managed_court_id as "managedCourtId"
     `.then((rows: any) => rows[0] ?? null);
+  },
+
+  setRecipientStatus(id: string, partnerId: string, status: "ACTIVE" | "LOCKED") {
+    return prisma.$queryRaw`
+      update users
+      set status = ${status}::account_status, updated_at = now()
+      where id = ${id}
+        and partner_id = ${partnerId}
+        and role = 'RECIPIENT'::user_role
+      returning
+        id,
+        full_name as "fullName",
+        email,
+        phone,
+        status,
+        managed_court_id as "managedCourtId"
+    `.then((rows: any) => rows[0] ?? null);
+  },
+
+  /** Whether the staff account left a trace someone may need later: bookings it handled, stock orders, audit rows. */
+  recipientUsed(id: string) {
+    return prisma.$queryRaw<Array<{ used: boolean }>>`
+      select (
+        exists (select 1 from booking_services where added_by = ${id})
+        or exists (select 1 from booking_series where created_by_user_id = ${id})
+        or exists (select 1 from bookings where invoice_locked_by = ${id} or user_id = ${id})
+        or exists (select 1 from booking_admin_actions where actor_id = ${id})
+        or exists (select 1 from audit_logs where actor_id = ${id})
+        or exists (select 1 from purchase_orders where ${id} in (created_by, ordered_by, received_by, cancelled_by))
+      ) as used
+    `.then((rows) => Boolean(rows[0]?.used));
   },
 
   deleteRecipient(id: string, partnerId: string) {

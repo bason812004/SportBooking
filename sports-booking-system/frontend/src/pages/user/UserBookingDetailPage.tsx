@@ -116,7 +116,7 @@ export function UserBookingDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["booking-bill", id] });
     },
     onError: (err: any) => {
-      toast.error(err.response?.data?.message || "Lỗi cập nhật số lượng");
+      toast.error(err.message || "Lỗi cập nhật số lượng");
     }
   });
 
@@ -128,7 +128,7 @@ export function UserBookingDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["booking-bill", id] });
     },
     onError: (err: any) => {
-      toast.error(err.response?.data?.message || "Lỗi xóa dịch vụ");
+      toast.error(err.message || "Lỗi xóa dịch vụ");
     }
   });
 

@@ -85,6 +85,7 @@
       "submitting": "Sending...",
       "success": "Report sent. Thank you for your feedback!",
       "failed": "Could not send the report.",
+      "alreadyReported": "You already reported this court; an admin is reviewing it.",
       "loginRequired": "Please log in to report a court."
     }
   }

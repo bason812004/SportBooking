@@ -237,7 +237,8 @@ export function BlogDetailPage() {
                   ) : (
                     <p className="mt-3 leading-7 text-slate-700 whitespace-pre-wrap">{entry.content}</p>
                   )}
-                  {isAuthenticated && (user?.id === entry.user.id || user?.role === "ADMIN" || item.author?.id === user?.id) && editingId !== entry.id && (
+                  {/* The commenter and the post's author; admins remove comments from the moderation page, with a reason. */}
+                  {isAuthenticated && (user?.id === entry.user.id || item.author?.id === user?.id) && editingId !== entry.id && (
                     <div className="mt-2 flex gap-3 text-xs font-bold text-slate-500 justify-end">
                       {user?.id === entry.user.id && (
                         <button className="hover:text-emerald-700 transition" onClick={() => { setEditingId(entry.id); setEditText(entry.content); }}>Sửa</button>

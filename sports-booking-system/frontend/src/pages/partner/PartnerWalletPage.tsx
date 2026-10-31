@@ -1,14 +1,19 @@
 import { useState, type ReactNode } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Banknote, Clock3, Receipt, TrendingUp, WalletCards } from "lucide-react";
+import { Banknote, Clock3, Landmark, Receipt, TrendingUp, WalletCards } from "lucide-react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
+import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { ErrorState, LoadingState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { partnerApi } from "../../features/partner/api/partnerApi";
 import { SettlementStatusBadge, WithdrawalStatusBadge } from "../admin/StatusBadges";
-import type { PartnerWallet } from "../../types/api";
+import type { PartnerWallet, WithdrawalRequest } from "../../types/api";
+
+/** The smallest withdrawal; the server checks the same. */
+const MIN_WITHDRAWAL = 50_000;
 
 const money = (value: number | string | null | undefined) => `${Number(value ?? 0).toLocaleString("vi-VN")} đ`;
 
@@ -174,7 +179,7 @@ export function PartnerWalletPage() {
           {withdrawals.isLoading ? (
             <LoadingState />
           ) : withdrawals.isError ? (
-            <ErrorState message={withdrawals.error.message} />
+            <ErrorState message={withdrawals.error.message} onRetry={() => withdrawals.refetch()} />
           ) : (
             <>
               <div className="overflow-auto">
@@ -187,6 +192,7 @@ export function PartnerWalletPage() {
                       <Th>Số tài khoản</Th>
                       <Th>Trạng thái</Th>
                       <Th>Ghi chú</Th>
+                      <Th></Th>
                     </tr>
                   </THead>
                   <TBody>
@@ -198,11 +204,12 @@ export function PartnerWalletPage() {
                         <Td>{item.bankAccountNumber ?? "—"}</Td>
                         <Td><WithdrawalStatusBadge status={item.status} /></Td>
                         <Td className="max-w-[240px] truncate" title={item.note ?? undefined}>{item.note ?? "—"}</Td>
+                        <Td className="text-right">{item.status === "PENDING" && <CancelWithdrawalButton withdrawal={item} />}</Td>
                       </Tr>
                     ))}
                     {(withdrawals.data?.items ?? []).length === 0 && (
                       <tr>
-                        <Td className="p-8 text-center text-slate-500" colSpan={6}>Chưa có yêu cầu rút tiền nào.</Td>
+                        <Td className="p-8 text-center text-slate-500" colSpan={7}>Chưa có yêu cầu rút tiền nào.</Td>
                       </tr>
                     )}
                   </TBody>
@@ -221,21 +228,45 @@ export function PartnerWalletPage() {
   );
 }
 
+/** A pending request the partner takes back before an admin handles it. */
+function CancelWithdrawalButton({ withdrawal }: { withdrawal: WithdrawalRequest }) {
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const cancel = useMutation({
+    mutationFn: () => partnerApi.cancelWithdrawal(withdrawal.id),
+    onSuccess: async () => {
+      toast.success("Đã huỷ yêu cầu, số tiền đã về lại số dư khả dụng");
+      setConfirming(false);
+      await queryClient.invalidateQueries({ queryKey: ["partner-wallet"] });
+      await queryClient.invalidateQueries({ queryKey: ["partner-withdrawals"] });
+    },
+    onError: (error) => toast.error(error.message)
+  });
+  return (
+    <>
+      <Button variant="secondary" disabled={cancel.isPending} onClick={() => setConfirming(true)}>Huỷ yêu cầu</Button>
+      <ConfirmModal
+        open={confirming}
+        title="Huỷ yêu cầu rút tiền?"
+        message={`${money(withdrawal.amount)} sẽ về lại số dư khả dụng. Yêu cầu đã được admin xử lý thì không huỷ được nữa.`}
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => !cancel.isPending && cancel.mutate()}
+      />
+    </>
+  );
+}
+
 function WithdrawModal({ open, wallet, onClose }: { open: boolean; wallet: PartnerWallet; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [amount, setAmount] = useState("");
-  const [bankName, setBankName] = useState(wallet.bankName ?? "");
-  const [bankAccountNumber, setBankAccountNumber] = useState(wallet.bankAccountNumber ?? "");
-  const [bankAccountName, setBankAccountName] = useState(wallet.bankAccountHolder ?? "");
+  // Withdrawals only go to the account saved in Cài đặt (changing it needs the password).
+  const hasBankAccount = Boolean(wallet.bankName?.trim() && wallet.bankAccountNumber?.trim() && wallet.bankAccountHolder?.trim());
+  // A newly set or changed account waits 24 hours (the server checks the same).
+  const opensAt = wallet.bankAccountChangedAt ? new Date(new Date(wallet.bankAccountChangedAt).getTime() + 24 * 60 * 60 * 1000) : null;
+  const coolingDown = Boolean(opensAt && opensAt.getTime() > Date.now());
 
   const create = useMutation({
-    mutationFn: () =>
-      partnerApi.createWithdrawal({
-        amount: Number(amount),
-        bankName: bankName.trim() || undefined,
-        bankAccountNumber: bankAccountNumber.trim() || undefined,
-        bankAccountName: bankAccountName.trim() || undefined
-      }),
+    mutationFn: () => partnerApi.createWithdrawal({ amount: Number(amount) }),
     onSuccess: async (result) => {
       if (result.status === "PENDING") {
         toast.success("Đã gửi yêu cầu rút tiền, chờ Admin duyệt");
@@ -260,13 +291,16 @@ function WithdrawModal({ open, wallet, onClose }: { open: boolean; wallet: Partn
 
   if (!open) return null;
   const parsedAmount = Number(amount);
-  const invalid =
-    !Number.isFinite(parsedAmount) ||
-    parsedAmount <= 0 ||
-    parsedAmount > wallet.availableBalance ||
-    !bankName.trim() ||
-    !bankAccountNumber.trim() ||
-    !bankAccountName.trim();
+  const amountProblem = !amount
+    ? null
+    : !Number.isInteger(parsedAmount)
+    ? "Số tiền phải là số nguyên (đồng)"
+    : parsedAmount < MIN_WITHDRAWAL
+    ? `Tối thiểu ${money(MIN_WITHDRAWAL)}`
+    : parsedAmount > wallet.availableBalance
+    ? "Vượt quá số dư khả dụng"
+    : null;
+  const invalid = !hasBankAccount || coolingDown || !amount || Boolean(amountProblem);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
@@ -276,10 +310,39 @@ function WithdrawModal({ open, wallet, onClose }: { open: boolean; wallet: Partn
           Số dư khả dụng: <b className="text-emerald-700">{money(wallet.availableBalance)}</b>. Tiền sẽ được tạm giữ cho đến khi admin xử lý.
         </p>
         <div className="mt-4 grid gap-3">
-          <Input label="Số tiền muốn rút (đ)" type="number" min={1} value={amount} onChange={(event) => setAmount(event.target.value)} />
-          <Input label="Ngân hàng" value={bankName} onChange={(event) => setBankName(event.target.value)} />
-          <Input label="Số tài khoản" value={bankAccountNumber} onChange={(event) => setBankAccountNumber(event.target.value)} />
-          <Input label="Chủ tài khoản" value={bankAccountName} onChange={(event) => setBankAccountName(event.target.value)} />
+          <Input
+            label={`Số tiền muốn rút (đ, tối thiểu ${money(MIN_WITHDRAWAL)})`}
+            type="number"
+            min={MIN_WITHDRAWAL}
+            step={1000}
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+            error={amountProblem ?? undefined}
+          />
+          {hasBankAccount && coolingDown && (
+            <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+              Tài khoản nhận tiền vừa được đổi. Để an toàn, bạn rút được tiền từ <b>{opensAt!.toLocaleString("vi-VN")}</b>.
+            </p>
+          )}
+          {hasBankAccount ? (
+            <div className="flex gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+              <Landmark className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+              <div>
+                <p className="font-semibold text-slate-800">
+                  {wallet.bankName} · {wallet.bankAccountNumber}
+                </p>
+                <p className="text-slate-600">{wallet.bankAccountHolder}</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Tiền chỉ chuyển về tài khoản này. Muốn đổi, vào <Link className="font-semibold text-emerald-700 underline" to="/partner/settings">Cài đặt</Link> (cần nhập mật khẩu).
+                </p>
+              </div>
+            </div>
+          ) : (
+            <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">
+              Bạn chưa lưu tài khoản ngân hàng nhận tiền. Hãy vào{" "}
+              <Link className="font-semibold underline" to="/partner/settings">Cài đặt</Link> để thêm trước khi rút tiền.
+            </p>
+          )}
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>Hủy</Button>

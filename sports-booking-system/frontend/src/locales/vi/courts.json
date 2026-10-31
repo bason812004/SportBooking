@@ -85,6 +85,7 @@
       "submitting": "Đang gửi...",
       "success": "Đã gửi báo cáo. Cảm ơn bạn đã phản hồi!",
       "failed": "Không thể gửi báo cáo.",
+      "alreadyReported": "Bạn đã báo cáo sân này, quản trị viên đang xem xét.",
       "loginRequired": "Vui lòng đăng nhập để báo cáo sân."
     }
   }

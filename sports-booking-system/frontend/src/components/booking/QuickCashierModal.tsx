@@ -66,7 +66,7 @@ export function QuickCashierModal({ isOpen, onClose, bookingId, onServicesChange
       setDetail(res.totals);
       onServicesChanged?.();
     } catch (err: any) {
-      alert(err.response?.data?.message || "Lỗi thêm dịch vụ");
+      alert(err.message || "Lỗi thêm dịch vụ");
     }
   };
 
@@ -84,7 +84,7 @@ export function QuickCashierModal({ isOpen, onClose, bookingId, onServicesChange
         onServicesChanged?.();
       }
     } catch (err: any) {
-      alert(err.response?.data?.message || "Lỗi cập nhật số lượng");
+      alert(err.message || "Lỗi cập nhật số lượng");
     }
   };
 

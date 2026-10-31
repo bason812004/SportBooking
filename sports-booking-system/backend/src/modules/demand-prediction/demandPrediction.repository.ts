@@ -1,10 +1,11 @@
 
 import { prisma } from "../../config/db.js";
+import { partnerAccountActive } from "../../shared/utils/publicCourt.js";
 import { timeToDate, toDbDate } from "../../shared/utils/time.js";
 
 export const demandPredictionRepository = {
   court(courtId: string) {
-    return prisma.court.findFirst({ where: { id: courtId, approvalStatus: "APPROVED", activeStatus: "ACTIVE" }, include: { category: true } });
+    return prisma.court.findFirst({ where: { id: courtId, approvalStatus: "APPROVED", activeStatus: "ACTIVE", ...partnerAccountActive }, include: { category: true } });
   },
 
   partnerProfile(userId: string) {
@@ -108,34 +109,6 @@ export const demandPredictionRepository = {
         group by start_time, end_time
       ) grouped_slots
     `;
-  },
-
-  savePrediction(data: {
-    courtId: string;
-    predictionDate: string;
-    startTime: string;
-    endTime: string;
-    predictedDemandScore: number | null;
-    predictedOccupancyRate: number | null;
-    confidenceScore: number;
-    predictionLevel: "LOW" | "MEDIUM" | "HIGH" | "VERY_HIGH" | null;
-    status: "GENERATED" | "INSUFFICIENT_DATA" | "FAILED";
-    modelVersion: string;
-  }) {
-    return prisma.demandPrediction.create({
-      data: {
-        courtId: data.courtId,
-        predictionDate: toDbDate(data.predictionDate),
-        startTime: timeToDate(data.startTime),
-        endTime: timeToDate(data.endTime),
-        predictedDemandScore: data.predictedDemandScore,
-        predictedOccupancyRate: data.predictedOccupancyRate,
-        confidenceScore: data.confidenceScore,
-        predictionLevel: data.predictionLevel,
-        status: data.status,
-        modelVersion: data.modelVersion
-      }
-    });
   },
 
   partnerPeakHours(partnerId: string) {

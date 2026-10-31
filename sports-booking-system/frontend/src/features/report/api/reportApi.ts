@@ -23,9 +23,13 @@ export interface ReportOverview {
   totalRevenue: number;
   totalCommission?: number;
   netRevenue?: number;
+  /** Money of bookings not finished yet (settlement ledger), not counted as revenue. */
+  pendingRevenue: number;
+  pendingCount: number;
   totalBookings: number;
   cancelledBookings: number;
   cancellationRate: number;
+  /** Service money of finished bookings that is not in the ledger (sold at the counter): adds to totalRevenue. */
   totalServiceRevenue: number;
   occupancyRate: number;
 }

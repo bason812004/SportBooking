@@ -1,13 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { AlertTriangle, CalendarDays, ClipboardList, TrendingUp, UserRoundCheck, WalletCards } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { partnerApi } from "../../features/partner/api/partnerApi";
 import { inventoryApi } from "../../features/inventory/api/inventoryApi";
+import { BarChart } from "../../components/charts/BarChart";
 import { EmptyState, LoadingState, ErrorState } from "../../components/common/States";
 import { PageHero } from "../../components/common/PageHero";
 import { StatCard } from "../../components/common/StatCard";
 import { StatusBadge } from "../../components/common/StatusBadge";
+import { formatDate } from "../../lib/format";
 import { bookingStatusTones } from "../../lib/statusTones";
 import { Button } from "../../components/ui/Button";
 import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
@@ -67,15 +68,16 @@ export function PartnerDashboardPage() {
         <section className="rounded-2xl border bg-white p-6">
           <h2 className="text-xl font-bold">Booking 7 ngày gần nhất</h2>
           <div className="mt-5 h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={data.trend}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" tickFormatter={(v) => v.slice(5)} />
-                <YAxis allowDecimals={false} />
-                <Tooltip />
-                <Bar dataKey="bookings" fill="#16a34a" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <BarChart
+              title="Booking 7 ngày gần nhất"
+              categoryLabel="Ngày"
+              seriesLabel="Lượt đặt"
+              labels={data.trend.map((point) => formatDate(point.date))}
+              values={data.trend.map((point) => point.bookings)}
+              color="#16a34a"
+              integer
+              tickLabel={(label) => label.slice(0, 5)}
+            />
           </div>
         </section>
 

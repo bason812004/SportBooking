@@ -131,10 +131,11 @@ function setup(initial: { orders?: Order[]; items?: Item[]; stock?: Record<strin
   return store;
 }
 
-const order = (id: string, status: string, courtId = "c1"): Order => ({
+const order = (id: string, status: string, courtId = "c1", createdById = "u-staff"): Order => ({
   id,
   partnerId: "p1",
   courtId,
+  createdById,
   orderCode: `CODE-${id}`,
   status,
   supplierId: null,
@@ -307,6 +308,14 @@ it("a receptionist may withdraw their own draft proposal", async () => {
   const withdrawn = await inventoryService.cancelPurchaseOrder(STAFF, "po-draft");
   assert.equal(withdrawn?.status, "CANCELLED");
   await assert.rejects(inventoryService.cancelPurchaseOrder(STAFF, "po-draft-c2"), NotFoundError);
+});
+
+it("a receptionist cannot edit or withdraw a draft the partner wrote; the partner can", async () => {
+  setup({ orders: [order("po-owner", "DRAFT", "c1", "u-owner")], items: [item("i1", "po-owner", "sv-water", 5)] });
+  await assert.rejects(inventoryService.updatePurchaseOrder(STAFF, "po-owner", { items: [line("sv-towel", 2, 1000)] }), ForbiddenError);
+  await assert.rejects(inventoryService.cancelPurchaseOrder(STAFF, "po-owner"), ForbiddenError);
+  const withdrawn = await inventoryService.cancelPurchaseOrder(PARTNER, "po-owner");
+  assert.equal(withdrawn?.status, "CANCELLED");
 });
 
 it("a receptionist only lists their own court's orders", async () => {

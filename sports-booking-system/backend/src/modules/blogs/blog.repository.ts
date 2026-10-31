@@ -17,6 +17,7 @@ export type BlogPostRow = {
   viewCount: number;
   allowComments: boolean;
   rejectionReason: string | null;
+  hiddenReason: string | null;
   category: { id: string; name: string; slug: string } | null;
   author: { id: string; fullName: string; avatarUrl: string | null };
 };
@@ -57,6 +58,8 @@ const blogRowSelect = (
     ${viewCountSelect} as "viewCount",
     ${allowCommentsSelect} as "allowComments",
     reject_reason.reason as "rejectionReason",
+    -- Why an admin took a published post down, while it is still hidden.
+    case when b.status = 'HIDDEN'::blog_post_status then hide_reason.reason end as "hiddenReason",
     case
       when bc.id is null then null
       else json_build_object('id', bc.id, 'name', bc.name, 'slug', bc.slug)
@@ -71,6 +74,12 @@ const blogRowSelect = (
     order by mh.created_at desc
     limit 1
   ) reject_reason on true
+  left join lateral (
+    select mh.reason from moderation_history mh
+    where mh.entity_type = 'BLOG' and mh.entity_id = b.id and mh.action = 'HIDDEN'
+    order by mh.created_at desc
+    limit 1
+  ) hide_reason on true
 `;
 
 const vietnameseAccentedChars =

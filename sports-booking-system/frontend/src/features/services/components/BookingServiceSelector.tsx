@@ -218,8 +218,9 @@ export function BookingServiceSelector({
               const currentItem = selectedServices.get(service.id);
               const qty = currentItem?.quantity ?? 0;
 
-              const stock = service.inventory?.quantity ?? 50;
-              const isOutOfStock = stock <= 0;
+              // How many can still be ordered; gear the court does not count (no stock row) has no limit.
+              const stock = service.inventory ? service.inventory.quantity : null;
+              const isOutOfStock = stock !== null && stock <= 0;
               const catSlug = service.category?.slug;
               const catName = service.category?.name || "Dịch vụ";
 
@@ -244,12 +245,12 @@ export function BookingServiceSelector({
                         className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
                           isOutOfStock
                             ? "bg-rose-100 text-rose-700"
-                            : stock <= 5
+                            : stock !== null && stock <= 5
                             ? "bg-amber-100 text-amber-800"
                             : "bg-slate-100 text-slate-600"
                         }`}
                       >
-                        {isOutOfStock ? "HẾT HÀNG" : `Còn ${stock} ${service.unit}`}
+                        {isOutOfStock ? "HẾT HÀNG" : stock === null ? "Còn hàng" : `Còn ${stock} ${service.unit}`}
                       </span>
                     </div>
 
@@ -279,7 +280,7 @@ export function BookingServiceSelector({
 
                       <button
                         type="button"
-                        disabled={isOutOfStock || qty >= stock}
+                        disabled={isOutOfStock || (stock !== null && qty >= stock)}
                         onClick={() => onUpdateQuantity(service, qty + 1)}
                         className="h-6 w-6 rounded-md bg-[#02712a] text-white shadow-sm flex items-center justify-center font-black disabled:opacity-30 hover:bg-[#025c22] transition"
                       >

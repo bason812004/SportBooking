@@ -86,6 +86,19 @@ export const walletRepository = {
       where partner_id = ${partnerId}`;
   },
 
+  /** Money the platform owes the partner (its share of a voucher discount), paid straight into the available balance. */
+  async creditAvailable(partnerId: string, amount: number, db: DbClient) {
+    if (amount <= 0) return;
+    await db.partnerWallet.upsert({
+      where: { partnerId },
+      create: { partnerId, availableBalance: amount, totalEarned: amount },
+      update: {
+        availableBalance: { increment: amount },
+        totalEarned: { increment: amount }
+      }
+    });
+  },
+
   /** Pays debt from the available balance; called whenever money becomes available. */
   offsetDebt(partnerId: string, db: DbClient) {
     return db.$executeRaw`

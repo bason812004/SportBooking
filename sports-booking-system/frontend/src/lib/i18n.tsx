@@ -71,6 +71,7 @@ const dictionary = {
   "Duyệt sân": "Court approvals",
   "Danh mục": "Categories",
   "Báo cáo": "Reports",
+  "Báo cáo vi phạm": "Violation reports",
   "Nhật ký kiểm toán": "Audit logs",
   "Nhật ký blockchain": "Blockchain logs",
   "Cổng quản trị": "Admin portal",

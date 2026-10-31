@@ -21,7 +21,8 @@ mock.module("../../config/db.js", { namedExports: { prisma: {
       matches.forEach((row) => Object.assign(row, data));
       return { count: matches.length };
     },
-    findUnique: async ({ where }: any) => persisted.find((row) => row.id === where.id)
+    findUnique: async ({ where }: any) => persisted.find((row) => row.id === where.id),
+    count: async ({ where }: any) => persisted.filter((row) => row.userId === where.userId && row.id === where.id).length
   }
 } } });
 mock.module("../realtime/realtime.service.js", { namedExports: { realtimeService: {
@@ -50,6 +51,16 @@ test("failed persistence does not emit a notification that cannot be loaded", as
 test("administrator can mark their notification read", async () => {
   const row = await notificationService.create({ userId: "admin1", ...notice });
   assert.equal((await notificationService.markRead("admin1", row.id))?.isRead, true);
+});
+
+test("the read time is the first read: reading again keeps it", async () => {
+  const row = await notificationService.create({ userId: "admin1", ...notice });
+  await notificationService.markRead("admin1", row.id);
+  const firstRead = row.readAt;
+  assert.ok(firstRead instanceof Date);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await notificationService.markRead("admin1", row.id);
+  assert.equal(row.readAt, firstRead);
 });
 
 test("mark read cannot change another recipient's notification", async () => {

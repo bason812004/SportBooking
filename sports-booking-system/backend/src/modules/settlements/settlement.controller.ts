@@ -9,5 +9,5 @@ export const settlementController = {
   adminList: asyncHandler(async (req, res) => sendSuccess(res, await settlementService.adminList(req.query))),
   adminSummary: asyncHandler(async (req, res) => sendSuccess(res, await settlementService.adminSummary(req.query))),
   adminSettle: asyncHandler(async (req, res) => sendSuccess(res, await settlementService.adminSettle(req.user!.id, req.params.id))),
-  adminCancel: asyncHandler(async (req, res) => sendSuccess(res, await settlementService.adminCancel(req.user!.id, req.params.id)))
+  adminCancel: asyncHandler(async (req, res) => sendSuccess(res, await settlementService.adminCancel(req.user!.id, req.params.id, req.body.reason)))
 };

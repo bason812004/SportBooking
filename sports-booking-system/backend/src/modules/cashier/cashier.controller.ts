@@ -1,34 +1,13 @@
 import type { Request, Response } from "express";
 import { BookingStatus } from "@prisma/client";
-import { prisma } from "../../config/db.js";
 import { ForbiddenError } from "../../shared/errors/AppError.js";
 import { sendSuccess } from "../../shared/utils/response.js";
 import { cashierService } from "./cashier.service.js";
 
-async function getPartnerScope(userId: string, role: string): Promise<{ partnerId: string | null; courtId?: string | null }> {
-  if (role === "PARTNER") {
-    const partner = await prisma.partnerProfile.findUnique({ where: { userId }, select: { id: true } });
-    return { partnerId: partner?.id ?? null };
-  }
-  if (role === "RECIPIENT") {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { partnerId: true, managedCourtId: true, managedCourt: { select: { partnerId: true } } }
-    });
-    const partnerId = user?.partnerId || user?.managedCourt?.partnerId || null;
-    return { partnerId, courtId: user?.managedCourtId ?? null };
-  }
-  if (role === "ADMIN") {
-    const firstPartner = await prisma.partnerProfile.findFirst({ select: { id: true } });
-    return { partnerId: firstPartner?.id ?? null };
-  }
-  return { partnerId: null };
-}
-
 export const cashierController = {
   async getActiveBookings(req: Request, res: Response) {
-    const scope = await getPartnerScope(req.user!.id, req.user!.role);
-    if (!scope.partnerId) throw new ForbiddenError("Không có quyền truy cập dữ liệu thu ngân");
+    const scope = await cashierService.scopeFor(req.user!.id, req.user!.role);
+    if (!scope.partnerId && !scope.all) throw new ForbiddenError("Không có quyền truy cập dữ liệu thu ngân");
     const queryCourtId = req.query.courtId as string | undefined;
     const courtId = scope.courtId || queryCourtId;
     const search = req.query.search as string | undefined;
@@ -74,7 +53,15 @@ export const cashierController = {
 
   async returnRentalItem(req: Request, res: Response) {
     const { rentalItemId, status, notes } = req.body;
-    const data = await cashierService.returnRentalItem({ rentalItemId, status, notes });
+    const data = await cashierService.returnRentalItem({ rentalItemId, status, notes }, req.user!);
     return sendSuccess(res, data, 200, "Xử lý trả thiết bị cho thuê thành công");
+  },
+
+  async lockInvoice(req: Request, res: Response) {
+    return sendSuccess(res, await cashierService.setInvoiceLock(req.params.bookingId, req.user!, true), 200, "Đã khoá hoá đơn");
+  },
+
+  async unlockInvoice(req: Request, res: Response) {
+    return sendSuccess(res, await cashierService.setInvoiceLock(req.params.bookingId, req.user!, false), 200, "Đã mở khoá hoá đơn");
   }
 };

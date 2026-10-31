@@ -1,4 +1,4 @@
-import type { PaymentStatus } from "@prisma/client";
+import type { BookingStatus, PaymentStatus } from "@prisma/client";
 import { isFullHour, timeToMinutes, vietnamWallClock } from "../../shared/utils/time.js";
 
 export type SlotInput = {
@@ -92,11 +92,31 @@ export function verifyPaymentWebhookIdempotency(existingTransactionId?: string |
  * refunds `refundByAdmin`, then marks it REFUNDED (the late-payment flow works the same way). Money taken
  * at the counter is handed back by the court on the spot, so the booking is REFUNDED immediately.
  */
-export function courtCancellationPayment(paymentStatus: PaymentStatus, totalPrice: number, onlineCollected: number) {
+export function courtCancellationPayment(paymentStatus: PaymentStatus, collectedAtCounter: number, onlineCollected: number) {
   if (paymentStatus !== "PAID") return { paymentStatus, refundAmount: 0, refundByAdmin: 0 };
   if (onlineCollected > 0) return { paymentStatus, refundAmount: 0, refundByAdmin: onlineCollected };
-  return { paymentStatus: "REFUNDED" as PaymentStatus, refundAmount: totalPrice, refundByAdmin: 0 };
+  return { paymentStatus: "REFUNDED" as PaymentStatus, refundAmount: collectedAtCounter, refundByAdmin: 0 };
 }
+
+/**
+ * What the counter took for a booking it marked paid when creating it: the deposit or the court charge
+ * (depositAmount), never the services, which are paid later at checkout. Older rows without it took the total.
+ */
+export function counterCollectedAmount(booking: { depositAmount: unknown; totalPrice: unknown }) {
+  return Number(booking.depositAmount) > 0 ? Number(booking.depositAmount) : Number(booking.totalPrice);
+}
+
+/**
+ * Where the court (partner or staff) may move a booking. Finishing it (COMPLETED) also needs the bill paid in
+ * full, which the callers check; a booking already checked in can only be finished.
+ */
+export const COURT_BOOKING_TRANSITIONS: Partial<Record<BookingStatus, BookingStatus[]>> = {
+  PENDING: ["CONFIRMED", "CANCELLED"],
+  CONFIRMED: ["COMPLETED", "NO_SHOW", "CANCELLED"],
+  DEPOSIT_PAID: ["COMPLETED", "NO_SHOW", "CANCELLED"],
+  IN_PROGRESS: ["COMPLETED"],
+  CHECKOUT_PENDING: ["COMPLETED"]
+};
 
 /** Admin notice for money that arrived after its payment expired: the bookings stay cancelled and it is refunded. */
 export function latePaymentRefundAdminEvent(paymentId: string, bookings: Array<{ id: string; bookingCode: string }>, amount: number) {

@@ -79,6 +79,8 @@ export const walletService = {
       bankName: profile.bankName,
       bankAccountNumber: profile.bankAccountNumber,
       bankAccountHolder: profile.bankAccountHolder,
+      // Withdrawals open 24 hours after this (see BANK_CHANGE_COOLDOWN_MS).
+      bankAccountChangedAt: profile.bankAccountChangedAt,
       commissionRate,
       debtTransfer: dto.commissionDebt > 0 ? debtTransferInfo(profile.id, dto.commissionDebt) : null,
       debtPayments: debtPayments.map(toDebtPaymentDto)
@@ -129,10 +131,11 @@ export const walletService = {
     const payment = await prisma.$transaction(async (tx) => {
       const paid = await walletRepository.payDebt(partnerId, amount, tx);
       if (!paid) throw new ConflictError("Số tiền vượt quá công nợ hiện tại của đối tác");
-      return walletRepository.recordDebtPayment({ partnerId, amount, note: input.note?.trim(), recordedBy: actorId }, tx);
+      const recorded = await walletRepository.recordDebtPayment({ partnerId, amount, note: input.note?.trim(), recordedBy: actorId }, tx);
+      await recordAdminAction(actorId, "COMMISSION_DEBT_PAID", "PARTNER", partnerId, { amount, paymentId: recorded.id }, tx);
+      return recorded;
     });
 
-    await recordAdminAction(actorId, "COMMISSION_DEBT_PAID", "PARTNER", partnerId, { amount, paymentId: payment.id });
     const userId = wallet.partner.user?.id;
     if (userId) {
       try {

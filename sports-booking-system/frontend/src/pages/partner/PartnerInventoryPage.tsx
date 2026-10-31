@@ -29,6 +29,22 @@ const SORT_FIELDS: SortField[] = ["serviceName", "courtName", "categoryName", "q
 
 type StockQueryData = { summary: InventorySummary; items: InventoryItem[]; pagination: InventoryPagination };
 
+const TX_TYPE_LABELS: Record<string, string> = {
+  IMPORT: "Nhập kho",
+  SALE: "Bán",
+  RENTAL_OUT: "Cho thuê",
+  RENTAL_IN: "Trả đồ thuê",
+  ADJUSTMENT: "Điều chỉnh",
+  DAMAGED: "Hỏng",
+  LOST: "Mất"
+};
+
+/** Signed change a history row made: ADJUSTMENT rows already hold +/-; the others are in or out by type. */
+function txChange(tx: { type: string; quantity: number }) {
+  if (tx.type === "ADJUSTMENT") return tx.quantity;
+  return ["IMPORT", "RENTAL_IN"].includes(tx.type) ? tx.quantity : -tx.quantity;
+}
+
 export function PartnerInventoryPage() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -161,7 +177,7 @@ export function PartnerInventoryPage() {
           : `Đã tạo đơn đặt hàng ${po.orderCode}. Xác nhận nhận hàng ở mục Nhập hàng & NCC.`
       );
     } catch (err: any) {
-      toast.error(err.response?.data?.message || "Lỗi tạo đơn nhập hàng");
+      toast.error(err.message || "Lỗi tạo đơn nhập hàng");
     }
   };
 
@@ -211,7 +227,7 @@ export function PartnerInventoryPage() {
       queryClient.invalidateQueries({ queryKey: ["partner-inventory"] });
       toast.success("Đã cập nhật tồn kho.");
     } catch (err: any) {
-      toast.error(err.response?.data?.message || "Lỗi điều chỉnh tồn kho");
+      toast.error(err.message || "Lỗi điều chỉnh tồn kho");
     }
   };
 
@@ -423,9 +439,10 @@ export function PartnerInventoryPage() {
           </div>
 
           {/* Table */}
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          {/* Column names stay on one line; a narrow screen scrolls the table sideways instead of cutting columns off. */}
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
             <table className="w-full text-left text-sm text-slate-700">
-              <thead className="bg-slate-50 text-xs uppercase font-extrabold text-slate-600 border-b border-slate-200">
+              <thead className="whitespace-nowrap bg-slate-50 text-xs uppercase font-extrabold text-slate-600 border-b border-slate-200">
                 <tr>
                   <SortableTh label="Sản phẩm" field="serviceName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
                   <SortableTh label="Sân" field="courtName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
@@ -536,28 +553,32 @@ export function PartnerInventoryPage() {
                   </td>
                 </tr>
               ) : (
-                transactions.map((tx) => (
+                transactions.map((tx) => {
+                  const change = txChange(tx);
+                  return (
                   <tr key={tx.id} className="hover:bg-slate-50/80 transition">
                     <td className="p-4 text-xs text-slate-500">{new Date(tx.createdAt).toLocaleString("vi-VN")}</td>
                     <td className="p-4 font-bold text-slate-900">{tx.service?.name}</td>
                     <td className="p-4">
-                      {["IMPORT", "RENTAL_IN"].includes(tx.type) ? (
+                      {change >= 0 ? (
                         <span className="inline-flex items-center gap-1 font-bold text-emerald-600">
-                          <ArrowDownLeft className="h-4 w-4" /> Nhập kho ({tx.type})
+                          <ArrowDownLeft className="h-4 w-4" /> Nhập kho ({TX_TYPE_LABELS[tx.type] ?? tx.type})
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 font-bold text-rose-600">
-                          <ArrowUpRight className="h-4 w-4" /> Xuất kho ({tx.type})
+                          <ArrowUpRight className="h-4 w-4" /> Xuất kho ({TX_TYPE_LABELS[tx.type] ?? tx.type})
                         </span>
                       )}
                     </td>
-                    <td className="p-4 font-extrabold text-base">
-                      {tx.quantity} {tx.service?.unit}
+                    <td className={`p-4 font-extrabold text-base ${change >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                      {change > 0 ? "+" : change < 0 ? "-" : ""}
+                      {Math.abs(change)} {tx.service?.unit}
                     </td>
                     <td className="p-4">{formatMoney(tx.unitCost)}</td>
                     <td className="p-4 text-xs text-slate-500">{tx.note || "---"}</td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -683,13 +704,22 @@ export function PartnerInventoryPage() {
             </div>
           )}
 
+          {selectedItem && (
+            <p className="text-xs font-semibold text-slate-600">
+              Đang có: <b className="text-slate-900">{selectedItem.quantity} {selectedItem.unit}</b>
+              {!reorderMode && adjustForm.type === "ADJUSTMENT" && " — nhập số đếm được thực tế, hệ thống ghi phần chênh lệch."}
+            </p>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-bold uppercase text-slate-700 mb-1">{reorderMode ? "Số lượng nhập (*)" : "Số lượng (*)"}</label>
+              <label className="block text-xs font-bold uppercase text-slate-700 mb-1">
+                {reorderMode ? "Số lượng nhập (*)" : adjustForm.type === "ADJUSTMENT" ? "Số lượng thực tế (*)" : "Số lượng (*)"}
+              </label>
               <Input
                 type="number"
                 required
-                min={reorderMode ? 1 : 0}
+                min={reorderMode || adjustForm.type !== "ADJUSTMENT" ? 1 : 0}
                 step={1}
                 value={adjustForm.quantity}
                 onChange={(e) => setAdjustForm({ ...adjustForm, quantity: Number(e.target.value) })}

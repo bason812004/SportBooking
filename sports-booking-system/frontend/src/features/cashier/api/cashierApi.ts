@@ -47,6 +47,8 @@ export interface CashierBooking {
   depositPaid: number;
   remainingAmount: number;
   checkedInAt?: string | null;
+  /** Locked at the counter: services cannot change until it is unlocked (on every device). */
+  invoiceLockedAt?: string | null;
   user: {
     id: string;
     fullName: string;
@@ -114,6 +116,12 @@ export const cashierApi = {
     return res.data.data;
   },
 
+  async setInvoiceLock(bookingId: string, locked: boolean) {
+    const res = locked
+      ? await api.post<ApiResponse<{ invoiceLockedAt: string | null }>>(`/cashier/bookings/${bookingId}/invoice-lock`)
+      : await api.delete<ApiResponse<{ invoiceLockedAt: string | null }>>(`/cashier/bookings/${bookingId}/invoice-lock`);
+    return res.data.data;
+  },
   async returnRentalItem(rentalItemId: string, status: "RETURNED" | "DAMAGED" | "LOST", notes?: string) {
     const res = await api.post<ApiResponse<any>>("/cashier/rentals/return", { rentalItemId, status, notes });
     return res.data.data;

@@ -322,3 +322,17 @@ describe("voucher eligibility - translations", () => {
     assert.match(text, /ngày/);
   });
 });
+describe("voucher eligibility - scope", { concurrency: false }, () => {
+  const codeOf = (result: ReturnType<typeof evaluateVoucherEligibility>) => (result.eligible ? null : result.code);
+
+  it("a partner voucher only applies to that partner's courts", () => {
+    const voucher = buildBaseVoucher({ partnerId: "pp1", courtId: null });
+    assert.equal(codeOf(evaluateVoucherEligibility(voucher, { ...baseContext, courtPartnerId: "pp1" })), null);
+    assert.equal(codeOf(evaluateVoucherEligibility(voucher, { ...baseContext, courtPartnerId: "pp2" })), "VOUCHER_WRONG_COURT");
+  });
+
+  it("a court voucher only applies to that court, and a platform voucher anywhere", () => {
+    assert.equal(codeOf(evaluateVoucherEligibility(buildBaseVoucher({ courtId: "court-9" }), { ...baseContext, courtPartnerId: "pp1" })), "VOUCHER_WRONG_COURT");
+    assert.equal(codeOf(evaluateVoucherEligibility(buildBaseVoucher({ partnerId: null, courtId: null }), { ...baseContext, courtPartnerId: "pp2" })), null);
+  });
+});
