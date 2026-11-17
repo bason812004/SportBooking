@@ -60,6 +60,6 @@ export const recipientReportController = {
   export: asyncHandler(async (req, res) => {
     const format = req.query.format as "excel" | "pdf";
     const buffer = await recipientReportService.export(req.user!.id, range(req.query), format);
-    sendFile(res, buffer, format, "bao-cao-recipient");
+    sendFile(res, buffer, format, "bao-cao-san");
   })
 };

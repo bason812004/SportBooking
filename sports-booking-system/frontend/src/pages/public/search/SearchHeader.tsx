@@ -31,7 +31,7 @@ export function SearchHeader({
             <input
               value={district}
               onChange={(event) => onDistrictChange(event.target.value)}
-              placeholder="Quận/Huyện, thành phố"
+              placeholder="Phường/Xã, thành phố"
               className="w-full bg-transparent font-semibold outline-none"
             />
           </label>

@@ -1,4 +1,5 @@
-import { ceilToFullHour, dayTypeFor, floorToFullHour, timeToMinutes } from "./time.js";
+import { coverWithPrices, piecesTotal, priceBands, type HolidayDay } from "./courtPricing.js";
+import { ceilToFullHour, floorToFullHour, timeToMinutes } from "./time.js";
 
 export type SlotStatus = "AVAILABLE" | "PENDING_PAYMENT" | "BOOKED" | "BLOCKED";
 
@@ -28,9 +29,10 @@ export type SlotGridBlock = {
   reason?: string | null;
 };
 
-export type SlotGridPrice = { dayType: string; startTime: Date; endTime: Date; price: unknown };
+export type SlotGridPrice = { dayType: string; startTime: Date; endTime: Date; price: unknown; createdAt?: Date | null };
 
-export type SlotGridSlot = { startTime: string; endTime: string; status: SlotStatus; price: number; bookingId: string | null; blockId: string | null };
+/** `price` is null for an hour without a price: it cannot be booked. */
+export type SlotGridSlot = { startTime: string; endTime: string; status: SlotStatus; price: number | null; bookingId: string | null; blockId: string | null };
 
 function timeText(value: Date) {
   return value.toISOString().slice(11, 16);
@@ -46,16 +48,10 @@ function overlaps(slot: { startTime: string; endTime: string }, item: { startTim
   return timeToMinutes(slot.startTime) < timeToMinutes(timeText(item.endTime)) && timeToMinutes(slot.endTime) > timeToMinutes(timeText(item.startTime));
 }
 
-function slotPrice(slot: { startTime: string; endTime: string }, date: string, prices: SlotGridPrice[]) {
-  const dayType = dayTypeFor(date);
-  const matched = prices.find(
-    (price) =>
-      price.dayType === dayType &&
-      timeToMinutes(slot.startTime) >= timeToMinutes(timeText(price.startTime)) &&
-      timeToMinutes(slot.endTime) <= timeToMinutes(timeText(price.endTime))
-  );
-  if (matched) return Number(matched.price);
-  return prices.length ? Math.min(...prices.map((price) => Number(price.price))) : 0;
+/** The hour's table price, by the rule bookings are charged with (see coverWithPrices); null without one. */
+function slotPrice(slot: { startTime: string; endTime: string }, date: string, bands: ReturnType<typeof priceBands>, holidays: HolidayDay[]) {
+  const { pieces, missing } = coverWithPrices(bands, date, timeToMinutes(slot.startTime), timeToMinutes(slot.endTime), holidays);
+  return missing.length ? null : piecesTotal(pieces);
 }
 
 function isExpiredPaymentHold(item: { payments?: Array<{ expiresAt: Date; status: string }> }) {
@@ -86,8 +82,10 @@ export function buildSlotGrid(input: {
   bookingSlots: SlotGridBookingSlot[];
   blocks: SlotGridBlock[];
   prices: SlotGridPrice[];
+  holidays?: HolidayDay[];
   courtSurfaceId?: string;
 }): SlotGridSlot[] {
+  const bands = priceBands(input.prices);
   const bookings = input.courtSurfaceId === undefined ? input.bookings : input.bookings.filter((booking) => booking.courtSurfaceId === input.courtSurfaceId);
   const bookingSlots =
     input.courtSurfaceId === undefined ? input.bookingSlots : input.bookingSlots.filter((bookingSlot) => bookingSlot.courtSurfaceId === input.courtSurfaceId);
@@ -105,7 +103,7 @@ export function buildSlotGrid(input: {
     const matchedBookingSlots = bookingSlots.filter((bookingSlot) => overlaps(slot, bookingSlot));
     const matchedBookings = bookings.filter((booking) => overlaps(slot, booking));
     const matchedBlock = blocks.find((block) => overlaps(slot, block));
-    const price = slotPrice(slot, input.date, input.prices);
+    const price = slotPrice(slot, input.date, bands, input.holidays ?? []);
 
     let status: SlotStatus = "AVAILABLE";
     if (matchedBlock) {

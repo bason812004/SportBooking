@@ -19,10 +19,14 @@ import { EmptyState, ErrorState, LoadingState } from "../../components/common/St
 import { PageHero } from "../../components/common/PageHero";
 import { Button } from "../../components/ui/Button";
 import { Modal } from "../../components/ui/Modal";
+import { ConfirmModal } from "../../components/common/ConfirmModal";
+import { AffectedBookingsModal } from "../../features/partner/components/AffectedBookingsModal";
+import { useBalanceDueRedirect } from "../../features/cashier/hooks/useBalanceDueRedirect";
 import { useWalkInBooking, WalkInDetailsFields } from "../../features/recipient/components/WalkInBookingForm";
 import { StaffScheduleGrid, type ServiceTarget } from "../../features/recipient/components/StaffScheduleGrid";
 import { LiveBookingBillSummary, LiveBookingServicePanel } from "../../features/cashier/components/LiveBookingServicePanel";
 import { useLiveBookingServices } from "../../features/cashier/hooks/useLiveBookingServices";
+import { formatYmd } from "../../features/bookings/components/BookingCalendar/utils";
 import { formatMoney } from "../../utils/formatters";
 
 const statusMeta: Record<RecipientOperationItem["status"], { label: string; className: string; dotClassName: string }> = {
@@ -35,7 +39,8 @@ const statusMeta: Record<RecipientOperationItem["status"], { label: string; clas
 };
 
 const extendOptions = [15, 30, 60];
-const todayValue = () => new Date().toISOString().slice(0, 10);
+// Local date, not toISOString() (UTC): before 07:00 in Vietnam that would still be yesterday.
+const todayValue = () => formatYmd(new Date());
 
 function SummaryStat({
   label,
@@ -171,7 +176,35 @@ export function RecipientCourtSurfacesPage() {
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["recipient-operations"] });
     queryClient.invalidateQueries({ queryKey: ["recipient-surface-availability"] });
+    queryClient.invalidateQueries({ queryKey: ["recipient-time-charge-quote"] });
   };
+
+  // Prices on this surface's "+N phút" and "Check-in sớm" buttons, computed by the backend under the
+  // partner's policy exactly as it will charge them. Early check-in depends on the clock, hence the refetch.
+  const quoteBookingId =
+    selected?.status === "OVERDUE" ? selected.latestEndedBooking?.id : (selected?.currentBooking?.id ?? selected?.nextBooking?.id);
+  const timeChargeQuote = useQuery({
+    queryKey: ["recipient-time-charge-quote", quoteBookingId],
+    queryFn: () => recipientApi.timeChargeQuote(quoteBookingId!, extendOptions),
+    enabled: Boolean(quoteBookingId),
+    refetchInterval: 30_000
+  });
+  const extensionLabel = (minutes: number) => {
+    const amount = timeChargeQuote.data?.extensions.find((item) => item.minutes === minutes)?.amount;
+    return amount == null ? `+${minutes} phút` : `+${minutes} phút · ${formatMoney(amount)}`;
+  };
+  // Past the sub-court's closing time an extension is refused, so its button is off.
+  const extensionBlocked = (minutes: number) => timeChargeQuote.data?.extensions.find((item) => item.minutes === minutes)?.allowed === false;
+  const earlyQuote = timeChargeQuote.data?.earlyCheckIn ?? null;
+  const earlyCheckInHint = !earlyQuote
+    ? null
+    : !earlyQuote.allowed
+      ? earlyQuote.maxMinutes === 0
+        ? "Sân không cho check-in sớm, khách đợi đến giờ đặt."
+        : `Chỉ được vào sớm tối đa ${earlyQuote.maxMinutes} phút — khách đang sớm ${earlyQuote.earlyMinutes} phút.`
+      : earlyQuote.chargedMinutes === 0
+        ? `Sớm ${earlyQuote.earlyMinutes} phút — miễn phí.`
+        : `Sớm ${earlyQuote.earlyMinutes} phút: miễn phí ${earlyQuote.freeMinutes} phút, tính ${earlyQuote.chargedMinutes} phút · ${formatMoney(earlyQuote.amount)}`;
 
   const [walkInDate, setWalkInDate] = useState(todayValue());
   useEffect(() => {
@@ -210,14 +243,32 @@ export function RecipientCourtSurfacesPage() {
     if (walkIn.showServices) workAreaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [walkIn.showServices]);
 
+  // Pausing lists the upcoming bookings first; their customers are told, as when the partner pauses it.
+  const [pausing, setPausing] = useState<{ id: string; name: string } | null>(null);
+  const affected = useQuery({
+    queryKey: ["recipient-surface-affected", pausing?.id],
+    queryFn: () => recipientApi.surfaceAffectedBookings(pausing!.id),
+    enabled: Boolean(pausing)
+  });
   const toggleStatus = useMutation({
     mutationFn: ({ id, status }: { id: string; status: "ACTIVE" | "INACTIVE" }) => recipientApi.updateCourtSurfaceStatus(id, status),
-    onSuccess: () => {
-      toast.success("Đã cập nhật trạng thái sân con");
+    onSuccess: (result) => {
+      setPausing(null);
+      toast.success(
+        result.status === "INACTIVE"
+          ? result.notifiedBookings
+            ? `Đã tạm ngưng sân con và báo cho ${result.notifiedBookings} khách có lịch sắp tới`
+            : "Đã tạm ngưng sân con"
+          : "Đã mở lại sân con"
+      );
       refresh();
     },
     onError: (error: any) => toast.error(error.message || "Có lỗi xảy ra")
   });
+
+  // Finishing a booking that still owes money opens the cashier on it instead.
+  const openCashierIfOwed = useBalanceDueRedirect("/recipient/cashier");
+  const [checkingOut, setCheckingOut] = useState<{ id: string; customerName: string } | null>(null);
 
   const [extendConflict, setExtendConflict] = useState<{
     bookingId: string;
@@ -269,10 +320,15 @@ export function RecipientCourtSurfacesPage() {
   const earlyCheckOut = useMutation({
     mutationFn: (bookingId: string) => recipientApi.earlyCheckOutBooking(bookingId),
     onSuccess: () => {
-      toast.success("Đã check-out cho khách");
+      setCheckingOut(null);
+      toast.success("Đã check-out, đơn hoàn thành và phần giờ còn lại được trả lại");
       refresh();
     },
-    onError: (error: any) => toast.error(error.message || "Không thể check-out")
+    onError: (error: any, bookingId) => {
+      setCheckingOut(null);
+      if (openCashierIfOwed(error, bookingId)) return;
+      toast.error(error.message || "Không thể check-out");
+    }
   });
 
   const completeOverdue = useMutation({
@@ -281,7 +337,10 @@ export function RecipientCourtSurfacesPage() {
       toast.success("Đã xác nhận khách trả sân");
       refresh();
     },
-    onError: (error: any) => toast.error(error.message || "Không thể xác nhận trả sân")
+    onError: (error: any, bookingId) => {
+      if (openCashierIfOwed(error, bookingId)) return;
+      toast.error(error.message || "Không thể xác nhận trả sân");
+    }
   });
 
   if (operations.isLoading) return <LoadingState />;
@@ -424,10 +483,12 @@ export function RecipientCourtSurfacesPage() {
                                   <Button
                                     key={minutes}
                                     variant="secondary"
-                                    disabled={extendBooking.isPending}
+                                    disabled={extendBooking.isPending || extensionBlocked(minutes)}
+                                    title={extensionBlocked(minutes) ? "Vượt giờ đóng cửa" : undefined}
                                     onClick={() => extendBooking.mutate({ id: selected.latestEndedBooking!.id, minutes })}
                                   >
-                                    <TimerReset className="h-4 w-4" />+{minutes} phút
+                                    <TimerReset className="h-4 w-4" />
+                                    {extensionLabel(minutes)}
                                   </Button>
                                 ))}
                               </div>
@@ -437,6 +498,10 @@ export function RecipientCourtSurfacesPage() {
                               {completeOverdue.isPending ? "Đang xác nhận..." : "Xác nhận trả sân"}
                             </Button>
                           </>
+                        ) : selected.currentBooking?.bookingStatus === "COMPLETED" ? (
+                          <p className="rounded-xl bg-emerald-50 p-2.5 text-sm font-semibold text-emerald-800">
+                            Đơn đã thanh toán xong ở Thu ngân; khách vẫn trong giờ đã đặt.
+                          </p>
                         ) : selected.currentBooking ? (
                           <>
                             {canBookAdvance ? (
@@ -463,10 +528,12 @@ export function RecipientCourtSurfacesPage() {
                                   <Button
                                     key={minutes}
                                     variant="secondary"
-                                    disabled={extendBooking.isPending}
+                                    disabled={extendBooking.isPending || extensionBlocked(minutes)}
+                                    title={extensionBlocked(minutes) ? "Vượt giờ đóng cửa" : undefined}
                                     onClick={() => extendBooking.mutate({ id: selected.currentBooking!.id, minutes })}
                                   >
-                                    <TimerReset className="h-4 w-4" />+{minutes} phút
+                                    <TimerReset className="h-4 w-4" />
+                                    {extensionLabel(minutes)}
                                   </Button>
                                 ))}
                               </div>
@@ -476,16 +543,31 @@ export function RecipientCourtSurfacesPage() {
                                 </p>
                               )}
                             </div>
-                            <Button className="w-full" variant="secondary" disabled={earlyCheckOut.isPending} onClick={() => earlyCheckOut.mutate(selected.currentBooking!.id)}>
+                            <Button
+                              className="w-full"
+                              variant="secondary"
+                              disabled={earlyCheckOut.isPending}
+                              onClick={() => setCheckingOut({ id: selected.currentBooking!.id, customerName: selected.currentBooking!.customerName })}
+                            >
                               <LogOut className="h-4 w-4" />
                               {earlyCheckOut.isPending ? "Đang check-out..." : "Check-out"}
                             </Button>
                           </>
                         ) : selected.nextBooking ? (
-                          <Button className="w-full" variant="secondary" disabled={earlyCheckIn.isPending} onClick={() => earlyCheckIn.mutate(selected.nextBooking!.id)}>
-                            <LogIn className="h-4 w-4" />
-                            {earlyCheckIn.isPending ? "Đang check-in..." : "Check-in sớm"}
-                          </Button>
+                          <div className="space-y-1.5">
+                            <Button
+                              className="w-full"
+                              variant="secondary"
+                              disabled={earlyCheckIn.isPending || earlyQuote?.allowed === false}
+                              onClick={() => earlyCheckIn.mutate(selected.nextBooking!.id)}
+                            >
+                              <LogIn className="h-4 w-4" />
+                              {earlyCheckIn.isPending ? "Đang check-in..." : "Check-in sớm"}
+                            </Button>
+                            {earlyCheckInHint ? (
+                              <p className={`text-xs font-semibold ${earlyQuote?.allowed === false ? "text-amber-700" : "text-slate-600"}`}>{earlyCheckInHint}</p>
+                            ) : null}
+                          </div>
                         ) : null}
 
                         {canBookAdvance ? (
@@ -495,19 +577,29 @@ export function RecipientCourtSurfacesPage() {
                           </div>
                         ) : null}
 
-                        <Button
-                          className="w-full"
-                          variant={selected.surface.status === "ACTIVE" ? "danger" : "secondary"}
-                          disabled={toggleStatus.isPending}
-                          onClick={() =>
-                            toggleStatus.mutate({
-                              id: selected.surface.id,
-                              status: selected.surface.status === "ACTIVE" ? "INACTIVE" : "ACTIVE"
-                            })
-                          }
-                        >
-                          {selected.surface.status === "ACTIVE" ? "Tạm ngưng sân" : "Kích hoạt lại"}
-                        </Button>
+                        {selected.surface.status === "ACTIVE" ? (
+                          <Button
+                            className="w-full"
+                            variant="danger"
+                            disabled={toggleStatus.isPending}
+                            onClick={() => setPausing({ id: selected.surface.id, name: selected.surface.name })}
+                          >
+                            Tạm ngưng sân
+                          </Button>
+                        ) : selected.surface.pausedByRole === "RECIPIENT" ? (
+                          <Button
+                            className="w-full"
+                            variant="secondary"
+                            disabled={toggleStatus.isPending}
+                            onClick={() => toggleStatus.mutate({ id: selected.surface.id, status: "ACTIVE" })}
+                          >
+                            Kích hoạt lại
+                          </Button>
+                        ) : (
+                          <p className="rounded-xl bg-slate-100 p-2.5 text-xs font-semibold text-slate-600">
+                            Đối tác đã tạm ngưng sân con này; chỉ đối tác mở lại được.
+                          </p>
+                        )}
                       </div>
                     </>
                   )}
@@ -524,7 +616,8 @@ export function RecipientCourtSurfacesPage() {
         {extendConflict ? (
           <div className="space-y-3">
             <p className="text-sm text-slate-600">
-              Khung giờ tiếp theo trên sân này đã có khách đặt. Chọn một sân trống để chuyển khách sang và gia hạn thêm {extendConflict.minutes} phút.
+              Ngay sau giờ của khách, sân này đã có khách đặt hoặc đang khoá. Chọn một sân trống để chuyển khách sang (khách chơi ở sân mới từ
+              bây giờ) và gia hạn thêm {extendConflict.minutes} phút.
             </p>
             <div className="flex flex-col gap-2">
               {extendConflict.surfaces.map((surface) => (
@@ -547,6 +640,26 @@ export function RecipientCourtSurfacesPage() {
           </div>
         ) : null}
       </Modal>
+
+      <ConfirmModal
+        open={Boolean(checkingOut)}
+        title="Check-out cho khách?"
+        message={`${checkingOut?.customerName ?? "Khách"} rời sân sớm: đơn kết thúc ngay và phần giờ còn lại được trả lại. Đơn còn nợ tiền sẽ chuyển sang Thu ngân để thu trước.`}
+        onCancel={() => setCheckingOut(null)}
+        onConfirm={() => checkingOut && earlyCheckOut.mutate(checkingOut.id)}
+      />
+      <AffectedBookingsModal
+        open={Boolean(pausing)}
+        title="Tạm ngưng sân con"
+        description={`Tạm ngưng ${pausing?.name ?? "sân con"} để dừng nhận đặt mới? Các đơn đã đặt vẫn được giữ và khách được báo; đơn nào không phục vụ được hãy huỷ ở trang Đơn đặt sân.`}
+        bookings={affected.data}
+        loading={affected.isLoading}
+        confirmLabel="Tạm ngưng"
+        danger
+        pending={toggleStatus.isPending}
+        onClose={() => setPausing(null)}
+        onConfirm={() => pausing && toggleStatus.mutate({ id: pausing.id, status: "INACTIVE" })}
+      />
     </div>
   );
 }

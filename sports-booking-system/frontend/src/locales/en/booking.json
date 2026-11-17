@@ -64,7 +64,7 @@
     "platformCollected": "Platform",
     "partnerCollected": "Partner at counter",
     "settlementDescription": "Track revenue and commission by online or counter collection.",
-    "counterCancellation": "Cancel the counter collection record; wallet balances stay unchanged.",
+    "counterCancellation": "Cancel the counter collection record and waive its commission: the partner's commission debt is reduced first and the rest is returned to their wallet.",
     "counterInstructions": "Please pay at the counter. Staff will confirm the collection and this invoice will update automatically."
   }
 }

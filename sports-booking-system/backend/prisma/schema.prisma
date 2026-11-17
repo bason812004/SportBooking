@@ -322,7 +322,8 @@ model User {
   updatedAt                                                           DateTime                 @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   partnerId                                                           String?                  @map("partner_id") @db.VarChar(20)
   managedCourtId                                                      String?                  @map("managed_court_id") @db.VarChar(20)
-  analyticsEvents                                                     AnalyticsEvent[]
+  sessionsRevokedAt                                                   DateTime?                @map("sessions_revoked_at") @db.Timestamptz(6)
+  analyticsEvents                                                    AnalyticsEvent[]
   auditLogs                                                           AuditLog[]
   blog_comments                                                       blog_comments[]
   blog_likes                                                          blog_likes[]
@@ -341,7 +342,8 @@ model User {
   notifications                                                       Notification[]
   partnerProfile                                                      PartnerProfile?
   refreshTokens                                                       RefreshToken[]
-  reports                                                             Report[]
+  reports                                                             Report[]                 @relation("ReportAuthor")
+  resolvedReports                                                     Report[]                 @relation("ReportResolver")
   reviews                                                             Review[]
   team_post_members                                                   team_post_members[]
   team_post_messages                                                  team_post_messages[]
@@ -418,6 +420,7 @@ model PartnerProfile {
   bankAccountNumber       String?                 @map("bank_account_number") @db.VarChar(60)
   bankAccountHolder       String?                 @map("bank_account_holder") @db.VarChar(160)
   taxCode                 String?                 @map("tax_code") @db.VarChar(60)
+  bankAccountChangedAt    DateTime?               @map("bank_account_changed_at") @db.Timestamptz(6)
   commissionRate          Decimal?                @map("commission_rate") @db.Decimal(5, 2)
   analyticsEvents         AnalyticsEvent[]
   commissionTransactions  CommissionTransaction[]
@@ -463,7 +466,7 @@ model Court {
   description            String?
   address                String
   city                   String                   @db.VarChar(80)
-  district               String                   @db.VarChar(80)
+  district               String?                  @db.VarChar(80)
   ward                   String?                  @db.VarChar(80)
   latitude               Decimal?                 @db.Decimal(10, 7)
   longitude              Decimal?                 @db.Decimal(10, 7)
@@ -483,6 +486,8 @@ model Court {
   surfaceInfo            String?                  @map("surface_info")
   approvalStatus         ApprovalStatus           @default(PENDING) @map("approval_status")
   activeStatus           CourtActiveStatus        @default(ACTIVE) @map("active_status")
+  adminLockedAt          DateTime?                @map("admin_locked_at") @db.Timestamptz(6)
+  adminLockReason        String?                  @map("admin_lock_reason")
   rejectionReason        String?                  @map("rejection_reason")
   createdAt              DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt              DateTime                 @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -492,6 +497,10 @@ model Court {
   updateRequestedAt      DateTime?                @map("update_requested_at") @db.Timestamptz(6)
   deposit_percent        Decimal?                 @db.Decimal(5, 2)
   require_deposit        Boolean                  @default(false) @map("require_deposit")
+  earlyFreeMinutes       Int                      @default(0) @map("early_check_in_free_minutes")
+  earlyMaxMinutes        Int?                     @map("early_check_in_max_minutes")
+  earlyPricePercent      Decimal                  @default(100) @map("early_check_in_price_percent") @db.Decimal(5, 2)
+  extensionPricePercent  Decimal                  @default(100) @map("extension_price_percent") @db.Decimal(5, 2)
   bookingSlots           BookingSlot[]
   bookings               Booking[]
   bookingSeries          BookingSeries[]
@@ -564,6 +573,8 @@ model CourtSurface {
   size               String?                  @db.VarChar(120)
   imageUrl           String?                  @map("image_url")
   status             CourtActiveStatus        @default(ACTIVE)
+  /// Who paused it ('PARTNER' or 'RECIPIENT'); staff may reopen only what staff paused.
+  pausedByRole       String?                  @map("paused_by_role") @db.VarChar(20)
   sortOrder          Int                      @default(0) @map("sort_order")
   openingTime        DateTime?                @map("opening_time") @db.Time(6)
   closingTime        DateTime?                @map("closing_time") @db.Time(6)
@@ -715,6 +726,12 @@ model Booking {
   cancelReason             String?                 @map("cancel_reason")
   note                     String?
   checkedInAt              DateTime?               @map("checked_in_at") @db.Timestamptz(6)
+  /// The court's staff were reminded that the booking is over but still open (see database/28_booking_auto_finish.sql).
+  overdueRemindedAt        DateTime?               @map("overdue_reminded_at") @db.Timestamptz(6)
+  /// The system finished it after it stayed open too long; an automatic no-show can be corrected for 7 days.
+  autoFinishedAt           DateTime?               @map("auto_finished_at") @db.Timestamptz(6)
+  invoiceLockedAt          DateTime?               @map("invoice_locked_at") @db.Timestamptz(6)
+  invoiceLockedBy          String?                 @map("invoice_locked_by") @db.VarChar(20)
   createdAt                DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   depositAmount            Decimal                 @default(0) @map("deposit_amount") @db.Decimal(12, 2)
@@ -982,6 +999,7 @@ model PartnerWallet {
   pendingBalance   Decimal        @default(0) @map("pending_balance") @db.Decimal(12, 2)
   totalEarned      Decimal        @default(0) @map("total_earned") @db.Decimal(12, 2)
   totalWithdrawn   Decimal        @default(0) @map("total_withdrawn") @db.Decimal(12, 2)
+  commissionDebt   Decimal        @default(0) @map("commission_debt") @db.Decimal(12, 2)
   currency         String         @default("VND") @db.VarChar(3)
   createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -989,6 +1007,19 @@ model PartnerWallet {
 
   @@index([partnerId], map: "idx_partner_wallets_partner_id")
   @@map("partner_wallets")
+}
+
+/// A commission debt payment an admin confirmed after the partner transferred money to the platform account.
+model PartnerCommissionDebtPayment {
+  id         String   @id @default(dbgenerated("(gen_random_uuid())::text")) @db.VarChar(36)
+  partnerId  String   @map("partner_id") @db.VarChar(20)
+  amount     Decimal  @db.Decimal(12, 2)
+  note       String?
+  recordedBy String   @map("recorded_by") @db.VarChar(20)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([partnerId, createdAt(sort: Desc)], map: "idx_commission_debt_payments_partner_created_at")
+  @@map("partner_commission_debt_payments")
 }
 
 model Settlement {
@@ -1149,10 +1180,13 @@ model BookingVoucher {
   platformShare  Decimal  @default(0) @map("platform_share") @db.Decimal(12, 2)
   partnerShare   Decimal  @default(0) @map("partner_share") @db.Decimal(12, 2)
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// Set once this use was given back to the voucher (see database/24_voucher_usage_release.sql).
+  releasedAt     DateTime? @map("released_at") @db.Timestamptz(6)
   booking        Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   voucher        Voucher  @relation(fields: [voucherId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([bookingId], map: "idx_booking_vouchers_booking_id")
+  @@index([voucherId, releasedAt], map: "idx_booking_vouchers_voucher_released")
   @@map("booking_vouchers")
 }
 
@@ -1235,6 +1269,7 @@ model Review {
   createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   is_edited     Boolean             @default(false)
+  reply         ReviewReply?
   booking       Booking?            @relation(fields: [bookingId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   court         Court               @relation(fields: [courtId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   user          User                @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1242,6 +1277,19 @@ model Review {
   @@index([courtId], map: "idx_reviews_court_id")
   @@index([userId, courtId, updatedAt(sort: Desc)], map: "idx_reviews_user_court_updated_at")
   @@map("reviews")
+}
+
+/// The court owner's public reply to a review, one per review (see database/26_review_partner_reply.sql).
+model ReviewReply {
+  reviewId  String   @id @map("review_id") @db.VarChar(20)
+  /// The partner account that wrote it.
+  authorId  String?  @map("author_id") @db.VarChar(20)
+  content   String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  review    Review   @relation(fields: [reviewId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@map("review_replies")
 }
 
 model Report {
@@ -1253,8 +1301,11 @@ model Report {
   status      ReportStatus @default(PENDING)
   createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   resolvedAt  DateTime?    @map("resolved_at") @db.Timestamptz(6)
+  adminNote   String?      @map("admin_note")
+  resolvedBy  String?      @map("resolved_by") @db.VarChar(20)
   court       Court        @relation(fields: [courtId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  user        User         @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  user        User         @relation("ReportAuthor", fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  resolver    User?        @relation("ReportResolver", fields: [resolvedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([status], map: "idx_reports_status")
   @@map("reports")
@@ -1283,6 +1334,8 @@ model Notification {
   type       String                @db.VarChar(80)
   metadata   Json?                 @map("metadata_json")
   isRead     Boolean               @default(false) @map("is_read")
+  /// When it was read (see database/27_notification_read_at_and_recall.sql); null for older reads.
+  readAt     DateTime?             @map("read_at") @db.Timestamptz(6)
   createdAt  DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   campaignId String?               @map("campaign_id") @db.VarChar(20)
   campaign   NotificationCampaign? @relation(fields: [campaignId], references: [id], onUpdate: NoAction)
@@ -1326,6 +1379,10 @@ model NotificationCampaign {
   recipientCount                                     Int             @default(0) @map("recipient_count")
   metadataJson                                       Json?           @map("metadata_json")
   createdAt                                          DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// Recalled: its notifications were removed from every inbox (see database/27_notification_read_at_and_recall.sql).
+  recalledAt                                         DateTime?       @map("recalled_at") @db.Timestamptz(6)
+  recalledBy                                         String?         @map("recalled_by") @db.VarChar(20)
+  recallReason                                       String?         @map("recall_reason")
   users_notification_campaigns_sent_byTousers        User?           @relation("notification_campaigns_sent_byTousers", fields: [sentBy], references: [id], onUpdate: NoAction)
   partner_profiles                                   PartnerProfile? @relation(fields: [targetPartnerId], references: [id], onUpdate: NoAction)
   users_notification_campaigns_target_user_idTousers User?           @relation("notification_campaigns_target_user_idTousers", fields: [targetUserId], references: [id], onUpdate: NoAction)
@@ -1378,7 +1435,7 @@ model PendingBooking {
 
 model AuditLog {
   id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  actorId         String          @map("actor_id") @db.VarChar(20)
+  actorId         String?         @map("actor_id") @db.VarChar(20)
   action          String          @db.VarChar(100)
   entityType      String          @map("entity_type") @db.VarChar(80)
   entityId        String          @map("entity_id") @db.VarChar(100)
@@ -1386,12 +1443,21 @@ model AuditLog {
   previousHash    String?         @map("previous_hash") @db.VarChar(64)
   currentHash     String          @map("current_hash") @db.VarChar(64)
   createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
-  actor           User            @relation(fields: [actorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  actor           User?           @relation(fields: [actorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   blockchain_logs BlockchainLog[]
 
   @@index([createdAt(sort: Desc)], map: "idx_audit_logs_created_at")
   @@index([actorId], map: "idx_audit_logs_actor_id")
   @@map("audit_logs")
+}
+
+/// The newest audit entry's hash; recordAdminAction locks this row to chain entries one at a time.
+model AuditChainHead {
+  id          Int      @id @default(1) @db.SmallInt
+  currentHash String?  @map("current_hash") @db.VarChar(64)
+  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("audit_chain_head")
 }
 
 model BlockchainLog {

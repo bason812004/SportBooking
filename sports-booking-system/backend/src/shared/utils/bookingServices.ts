@@ -1,3 +1,27 @@
+import type { Prisma } from "@prisma/client";
+
+export const activeBookingServiceWhere = { OR: [{ status: "ACTIVE" }, { status: null }] } satisfies Prisma.BookingServiceWhereInput;
+
+/** Include for booking rows passed to withBookingBill: active services (both relations) and PAID checkout payments. */
+export const bookingBillInclude = {
+  bookingServices: { where: activeBookingServiceWhere, include: { service: true, courtService: true } },
+  checkout: { select: { payments: { where: { status: "PAID" }, select: { amount: true } } } }
+} satisfies Prisma.BookingInclude;
+
+/** Only the columns sortGroupKeysByBillTotal needs, so sorting a whole list by bill total stays light. */
+export const bookingBillSelect = {
+  id: true,
+  bookingOrderId: true,
+  basePrice: true,
+  dynamicAdjustmentAmount: true,
+  totalPrice: true,
+  voucherDiscountAmount: true,
+  depositAmount: true,
+  paymentStatus: true,
+  bookingStatus: true,
+  bookingServices: { where: activeBookingServiceWhere, select: { quantity: true, price: true, unitPrice: true, totalPrice: true } }
+} satisfies Prisma.BookingSelect;
+
 type ServiceRef = { id: string; name: string; price: unknown } | null | undefined;
 
 type RawBookingService = {

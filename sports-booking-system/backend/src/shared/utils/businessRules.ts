@@ -15,23 +15,42 @@ export type DynamicPriceAdjustment = {
   amount: number;
 };
 
-export function calculateDynamicPrice(input: { basePrice: number; rules: DynamicPriceRuleInput[] }) {
-  const adjustments: DynamicPriceAdjustment[] = [];
-  let finalPrice = input.basePrice;
+/** The line a capped result adds so the adjustments still add up to the final price. */
+export const PRICE_LIMIT_ADJUSTMENT = "Giới hạn giá";
 
-  for (const rule of input.rules) {
-    const amount = rule.type === "PERCENTAGE" ? Math.round((input.basePrice * rule.value) / 100) : rule.value;
-    finalPrice += amount;
-    if (rule.minPrice != null) finalPrice = Math.max(finalPrice, rule.minPrice);
-    if (rule.maxPrice != null) finalPrice = Math.min(finalPrice, rule.maxPrice);
-    adjustments.push({ ruleName: rule.ruleName, type: rule.type, value: rule.value, amount });
+/**
+ * Every rule that applies adds its own amount, a percentage always taken of the base price (two +20% rules make
+ * +40%; a negative value is a discount). The limits are applied once, to that total: the price stays at or above the
+ * highest minimum and at or below the lowest maximum of the rules that apply. A limit only stops the move the rules
+ * make; it never pushes the price the other way (a +20% rule capped at 300k leaves a 350k hour at 350k).
+ */
+export function calculateDynamicPrice(input: { basePrice: number; rules: DynamicPriceRuleInput[] }) {
+  const adjustments: DynamicPriceAdjustment[] = input.rules.map((rule) => ({
+    ruleName: rule.ruleName,
+    type: rule.type,
+    value: rule.value,
+    amount: rule.type === "PERCENTAGE" ? Math.round((input.basePrice * rule.value) / 100) : rule.value
+  }));
+  const raw = input.basePrice + adjustments.reduce((sum, item) => sum + item.amount, 0);
+
+  const floors = input.rules.map((rule) => rule.minPrice).filter((value): value is number => value != null);
+  const ceilings = input.rules.map((rule) => rule.maxPrice).filter((value): value is number => value != null);
+  let limited = raw;
+  if (floors.length) limited = Math.max(limited, Math.max(...floors));
+  if (ceilings.length) limited = Math.min(limited, Math.min(...ceilings));
+  limited = raw >= input.basePrice ? Math.max(limited, input.basePrice) : Math.min(limited, input.basePrice);
+
+  const finalPrice = Math.max(0, Math.round(limited));
+  if (finalPrice !== Math.round(raw) && adjustments.length) {
+    const amount = finalPrice - Math.round(raw);
+    adjustments.push({ ruleName: PRICE_LIMIT_ADJUSTMENT, type: "FIXED_AMOUNT", value: amount, amount });
   }
 
   return {
     basePrice: input.basePrice,
     adjustments,
-    dynamicAdjustmentAmount: adjustments.reduce((sum, item) => sum + item.amount, 0),
-    finalPrice: Math.max(0, Math.round(finalPrice))
+    dynamicAdjustmentAmount: finalPrice - input.basePrice,
+    finalPrice
   };
 }
 

@@ -73,10 +73,5 @@ export const checkoutApi = {
       data
     );
     return res.data.data;
-  },
-
-  async getPartnerCheckouts() {
-    const res = await api.get<ApiResponse<Array<CheckoutData["checkout"] & { booking: any }>>>("/checkouts/partner/list");
-    return res.data.data;
   }
 };

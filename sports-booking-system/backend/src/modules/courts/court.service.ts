@@ -6,6 +6,7 @@ import { calculateDistanceKm } from "../bookings/booking.calculations.js";
 import { reviewRepository } from "../reviews/review.repository.js";
 import { courtRepository } from "./court.repository.js";
 import type { CourtListQuery } from "./court.types.js";
+import { holidayRepository } from "../holidays/holiday.repository.js";
 
 type CourtWithReviews<T> = T & { reviews: { rating: number }[] };
 
@@ -108,7 +109,7 @@ export const courtService = {
     if (!court) throw new NotFoundError("Khong tim thay san hoac san chua duoc duyet");
     const [courtWithReviews, nearby] = await Promise.all([
       attachReviews(court),
-      courtRepository.nearby(court.id, court.city, court.district).then(attachReviewsList)
+      courtRepository.nearby(court.id, court.city, court.district ?? undefined).then(attachReviewsList)
     ]);
     return {
       ...summarizeCourt(courtWithReviews),
@@ -120,10 +121,11 @@ export const courtService = {
   async availability(id: string, date: string) {
     const court = await courtRepository.findPublicById(id);
     if (!court) throw new NotFoundError("Khong tim thay san");
-    const [bookings, bookingSlots, blocks] = await Promise.all([
+    const [bookings, bookingSlots, blocks, holidays] = await Promise.all([
       courtRepository.availability(id, date),
       courtRepository.bookingSlots(id, date),
-      courtRepository.availabilityBlocks(id, date)
+      courtRepository.availabilityBlocks(id, date),
+      holidayRepository.all()
     ]);
     const slots = buildSlotGrid({
       date,
@@ -132,7 +134,8 @@ export const courtService = {
       bookings,
       bookingSlots,
       blocks,
-      prices: court.prices
+      prices: court.prices,
+      holidays
     });
 
     return {

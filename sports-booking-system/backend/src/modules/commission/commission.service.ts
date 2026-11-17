@@ -1,5 +1,6 @@
 import type { Booking, PartnerProfile } from "@prisma/client";
 import { NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
+import { vietnamNow } from "../../shared/utils/time.js";
 import { commissionRepository } from "./commission.repository.js";
 import {
   BOOKING_DEPOSIT_KEY,
@@ -7,6 +8,8 @@ import {
   type CommissionSummary,
   type DbClient
 } from "./commission.types.js";
+
+const VIETNAM_OFFSET_MS = 7 * 60 * 60 * 1000;
 
 function roundCommission(gross: number, rate: number) { return Math.round(gross * rate) / 100; }
 
@@ -21,16 +24,17 @@ function validateRate(rate: number) {
   return Math.round(rate * 100) / 100;
 }
 
+/** A calendar month in Vietnam time: it starts at 00:00 on the 1st in Vietnam (17:00 the day before in UTC). */
 export function monthRange(month?: string) {
-  const value = month ?? new Date().toISOString().slice(0, 7);
+  const value = month ?? vietnamNow().date.slice(0, 7);
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) {
     throw new ValidationError("Thang phai co dinh dang YYYY-MM");
   }
   const [year, monthNumber] = value.split("-").map(Number);
   return {
     month: value,
-    from: new Date(Date.UTC(year, monthNumber - 1, 1)),
-    to: new Date(Date.UTC(year, monthNumber, 1))
+    from: new Date(Date.UTC(year, monthNumber - 1, 1) - VIETNAM_OFFSET_MS),
+    to: new Date(Date.UTC(year, monthNumber, 1) - VIETNAM_OFFSET_MS)
   };
 }
 
@@ -53,17 +57,27 @@ function summarize(
 }
 
 export const commissionService = {
+  /** The default rate with who it applies to: the partners without a rate of their own. */
   async defaultRate() {
-    const setting = await commissionRepository.setting(DEFAULT_COMMISSION_KEY);
-    return { rate: asNumber(setting?.numericValue ?? 10) };
+    const [setting, coverage] = await Promise.all([commissionRepository.setting(DEFAULT_COMMISSION_KEY), commissionRepository.rateCoverage()]);
+    return {
+      rate: asNumber(setting?.numericValue ?? 10),
+      partnersUsingDefault: coverage.usingDefault,
+      overrides: coverage.overrides.map((partner) => ({ partnerId: partner.id, businessName: partner.businessName, rate: asNumber(partner.commissionRate) }))
+    };
   },
 
-  async updateDefaultRate(rate: number) {
+  rateHistory() {
+    return commissionRepository.rateHistory();
+  },
+
+  async updateDefaultRate(rate: number, db?: DbClient) {
     const normalized = validateRate(rate);
     const setting = await commissionRepository.upsertSetting(
       DEFAULT_COMMISSION_KEY,
       normalized,
-      "Default platform commission percentage"
+      "Default platform commission percentage",
+      db
     );
     return { rate: asNumber(setting.numericValue) };
   },
@@ -73,10 +87,10 @@ export const commissionService = {
     return validateRate(asNumber(setting?.numericValue ?? 50));
   },
 
-  async partnerRate(partnerId: string) {
+  async partnerRate(partnerId: string, db?: DbClient) {
     const [partner, defaultSetting] = await Promise.all([
-      commissionRepository.partner(partnerId),
-      commissionRepository.setting(DEFAULT_COMMISSION_KEY)
+      commissionRepository.partner(partnerId, db),
+      commissionRepository.setting(DEFAULT_COMMISSION_KEY, db)
     ]);
     if (!partner) throw new NotFoundError("Khong tim thay doi tac");
     const defaultRate = asNumber(defaultSetting?.numericValue ?? 10);
@@ -89,15 +103,17 @@ export const commissionService = {
     };
   },
 
-  async updatePartnerRate(partnerId: string, rate: number | null) {
-    if (!(await commissionRepository.partner(partnerId))) {
+  /** Within the caller's transaction when given, read back through it so the new rate shows before it commits. */
+  async updatePartnerRate(partnerId: string, rate: number | null, db?: DbClient) {
+    if (!(await commissionRepository.partner(partnerId, db))) {
       throw new NotFoundError("Khong tim thay doi tac");
     }
     const partner = await commissionRepository.setPartnerRate(
       partnerId,
-      rate === null ? null : validateRate(rate)
+      rate === null ? null : validateRate(rate),
+      db
     );
-    return this.partnerRate(partner.id);
+    return this.partnerRate(partner.id, db);
   },
 
   async effectiveRate(
@@ -119,8 +135,27 @@ export const commissionService = {
   ) {
     const existing = await commissionRepository.earningByBooking(booking.id, db);
     if (existing) {
-      if (invoiceTotal !== undefined && invoiceTotal > asNumber(existing.grossAmount)) {
-        return commissionRepository.updateEarning(existing.id, invoiceTotal, roundCommission(invoiceTotal, asNumber(existing.commissionRate)), db);
+      // The invoice grew since the earning was written (an extension, a platform-funded voucher, a corrected
+      // no-show): record the difference as an adjustment at the earning's rate.
+      if (invoiceTotal !== undefined) {
+        const extra = Math.round((invoiceTotal - (await commissionRepository.recordedEarningGross(booking.id, db))) * 100) / 100;
+        if (extra > 0) {
+          const rate = asNumber(existing.commissionRate);
+          const commissionAmount = roundCommission(extra, rate);
+          return commissionRepository.createAdjustment(
+            {
+              bookingId: booking.id,
+              partnerId: existing.partnerId,
+              eventType,
+              grossAmount: extra,
+              commissionRate: rate,
+              commissionAmount,
+              netAmount: Math.round((extra - commissionAmount) * 100) / 100,
+              originalTransactionId: existing.id
+            },
+            db
+          );
+        }
       }
       return existing;
     }
@@ -170,33 +205,6 @@ export const commissionService = {
           transactionCount: row._count
         }))
         .sort((a, b) => b.commissionAmount - a.commissionAmount)
-    };
-  },
-
-  async partnerReport(partnerId: string, month?: string) {
-    const range = monthRange(month);
-    const transactions = await commissionRepository.partnerReport(
-      partnerId,
-      range.from,
-      range.to
-    );
-    return {
-      month: range.month,
-      summary: summarize(transactions),
-      items: transactions.map((item) => ({
-        id: item.id,
-        bookingId: item.bookingId,
-        bookingCode: item.booking.bookingCode,
-        bookingDate: item.booking.bookingDate,
-        court: item.booking.court,
-        eventType: item.eventType,
-        transactionType: item.transactionType,
-        grossAmount: asNumber(item.grossAmount),
-        commissionRate: asNumber(item.commissionRate),
-        commissionAmount: asNumber(item.commissionAmount),
-        netAmount: asNumber(item.netAmount),
-        createdAt: item.createdAt
-      }))
     };
   }
 };

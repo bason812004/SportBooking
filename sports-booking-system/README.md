@@ -4,7 +4,7 @@ Website quan ly va dat san the thao truc tuyen, tach rieng frontend React/Vite v
 
 ## Cong nghe
 
-- Frontend: ReactJS, Vite, TypeScript, Tailwind CSS, React Router DOM, Axios, React Hook Form, Zod, TanStack Query, Sonner, Recharts.
+- Frontend: ReactJS, Vite, TypeScript, Tailwind CSS, React Router DOM, Axios, React Hook Form, Zod, TanStack Query, Sonner, Chart.js (react-chartjs-2).
 - Backend: Node.js, Express.js, TypeScript, Prisma ORM, PostgreSQL, JWT, bcryptjs, Zod, Multer, Supabase Storage SDK, Swagger/OpenAPI.
 - Database: Supabase PostgreSQL.
 - Deploy goi y: Vercel cho frontend, Render/Railway cho backend, Supabase cho database/storage.

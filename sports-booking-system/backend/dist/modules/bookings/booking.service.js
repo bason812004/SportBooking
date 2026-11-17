@@ -279,7 +279,6 @@ export const bookingService = {
         if ("conflict" in result && result.conflict) {
             throw new ConflictError(`Khung giờ ngày ${result.conflictDate} đã có người đặt.`, "BOOKING_CONFLICT");
         }
-        notifyCourtAvailabilityUpdated(input.courtId);
         return {
             orderId: result.orderId,
             bookingId: result.bookings[0].id,

@@ -1,5 +1,6 @@
 import { useEffect, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { BadgeCheck, Eye, Lock, Megaphone, Star, Unlock } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
@@ -14,6 +15,8 @@ import { SortableTh } from "../../components/common/SortableTh";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { Table as SharedTable, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { useUrlSort } from "../../hooks/useUrlSort";
+import { ReasonModal } from "../../components/common/ReasonModal";
+import { courtAddress, courtArea } from "../../lib/format";
 
 const approvalLabels: Record<string, string> = {
   PENDING: "Chờ duyệt",
@@ -55,7 +58,9 @@ export function AdminCourtsPage() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState<Filters>(emptyFilters);
-  const [selected, setSelected] = useState<string | null>(null);
+  // ?courtId= opens that court straight away (links from a violation report).
+  const [searchParams] = useSearchParams();
+  const [selected, setSelected] = useState<string | null>(() => searchParams.get("courtId"));
 
   const { sortField, sortOrder, handleSort: sortBy } = useUrlSort<SortField>({ fields: SORT_FIELDS, default: null });
   const handleSort = (field: SortField) => {
@@ -98,7 +103,7 @@ export function AdminCourtsPage() {
       <div className="grid gap-3 rounded-lg border bg-white p-4 md:grid-cols-2 xl:grid-cols-4">
         <Input label="Tìm kiếm" value={filters.search} onChange={(event) => updateFilter(setPage, setFilters, "search", event.target.value)} placeholder="Tên sân, địa chỉ, đối tác" />
         <Input label="Thành phố" value={filters.city} onChange={(event) => updateFilter(setPage, setFilters, "city", event.target.value)} />
-        <Input label="Quận/Huyện" value={filters.district} onChange={(event) => updateFilter(setPage, setFilters, "district", event.target.value)} />
+        <Input label="Phường/Xã (hoặc quận cũ)" value={filters.district} onChange={(event) => updateFilter(setPage, setFilters, "district", event.target.value)} />
         <Input label="ID đối tác" value={filters.partnerId} onChange={(event) => updateFilter(setPage, setFilters, "partnerId", event.target.value)} placeholder="pp0001" />
         <Select label="Duyệt sân" value={filters.approvalStatus} onChange={(event) => updateFilter(setPage, setFilters, "approvalStatus", event.target.value)} options={withAll(["PENDING", "APPROVED", "REJECTED"], approvalLabels)} />
         <Select label="Hoạt động" value={filters.activeStatus} onChange={(event) => updateFilter(setPage, setFilters, "activeStatus", event.target.value)} options={withAll(["ACTIVE", "INACTIVE"], activeLabels)} />
@@ -134,7 +139,7 @@ export function AdminCourtsPage() {
                 </div>
               </Td>
               <Td>{court.partner.businessName}<br /><span className="text-xs text-slate-500">{court.partner.user.email}</span></Td>
-              <Td>{court.district}, {court.city}<br /><span className="text-xs text-slate-500">{court.address}</span></Td>
+              <Td>{courtArea(court)}<br /><span className="text-xs text-slate-500">{court.address}</span></Td>
               <Td>{formatMoney(court.minPrice ?? 0)}</Td>
               <Td><StatusBadge value={court.approvalStatus} tones={approvalToneClasses} labels={approvalLabels} /></Td>
               <Td><StatusBadge value={court.activeStatus} tones={activeToneClasses} labels={activeLabels} /></Td>
@@ -187,6 +192,7 @@ function CourtDetailModal({ open, onClose, children }: { open: boolean; onClose:
 function CourtDetail({ court, onUpdated }: { court: AdminCourt; onUpdated: () => Promise<void> }) {
   const [adminNote, setAdminNote] = useState(court.adminNote ?? "");
   const [requestNote, setRequestNote] = useState("");
+  const [locking, setLocking] = useState(false);
 
   useEffect(() => {
     setAdminNote(court.adminNote ?? "");
@@ -194,10 +200,11 @@ function CourtDetail({ court, onUpdated }: { court: AdminCourt; onUpdated: () =>
   }, [court]);
 
   const update = useMutation({
-    mutationFn: (payload: { activeStatus?: string; verified?: boolean; featured?: boolean; adminNote?: string }) =>
+    mutationFn: (payload: { activeStatus?: string; lockReason?: string; verified?: boolean; featured?: boolean; adminNote?: string }) =>
       adminApi.updateCourtAdmin(court.id, payload),
     onSuccess: async () => {
       toast.success("Đã cập nhật sân");
+      setLocking(false);
       await onUpdated();
     },
     onError: (error) => toast.error(error.message)
@@ -218,7 +225,7 @@ function CourtDetail({ court, onUpdated }: { court: AdminCourt; onUpdated: () =>
       <section className="space-y-4">
         <div>
           <h2 className="text-2xl font-bold">{court.name}</h2>
-          <p className="text-sm text-slate-600">{court.address}, {court.district}, {court.city}</p>
+          <p className="text-sm text-slate-600">{courtAddress(court)}</p>
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">
@@ -281,13 +288,20 @@ function CourtDetail({ court, onUpdated }: { court: AdminCourt; onUpdated: () =>
           <div className="mt-3 grid gap-2">
             <StatusBadge value={court.approvalStatus} tones={approvalToneClasses} labels={approvalLabels} />
             <StatusBadge value={court.activeStatus} tones={activeToneClasses} labels={activeLabels} />
+            {court.adminLockedAt && (
+              <p className="text-xs text-red-700">Quản trị viên khoá{court.adminLockReason ? `: ${court.adminLockReason}` : ""}. Đối tác không tự mở lại được.</p>
+            )}
             {court.verified && <SmallBadge>Verified</SmallBadge>}
             {court.featured && <SmallBadge>Featured</SmallBadge>}
           </div>
         </div>
 
         <div className="grid gap-2">
-          <Button variant={court.activeStatus === "ACTIVE" ? "danger" : "secondary"} disabled={update.isPending} onClick={() => update.mutate({ activeStatus: court.activeStatus === "ACTIVE" ? "INACTIVE" : "ACTIVE" })}>
+          <Button
+            variant={court.activeStatus === "ACTIVE" ? "danger" : "secondary"}
+            disabled={update.isPending}
+            onClick={() => (court.activeStatus === "ACTIVE" ? setLocking(true) : update.mutate({ activeStatus: "ACTIVE" }))}
+          >
             {court.activeStatus === "ACTIVE" ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
             {court.activeStatus === "ACTIVE" ? "Khóa hoạt động" : "Mở hoạt động"}
           </Button>
@@ -300,6 +314,20 @@ function CourtDetail({ court, onUpdated }: { court: AdminCourt; onUpdated: () =>
             {court.featured ? "Gỡ featured" : "Gắn featured"}
           </Button>
         </div>
+
+        <ReasonModal
+          key={locking ? `lock-${court.id}` : "none"}
+          open={locking}
+          required
+          title={`Khoá sân ${court.name}?`}
+          description="Sân không nhận đặt cho đến khi quản trị viên mở lại; đối tác nhận thông báo kèm lý do và không tự mở lại được."
+          label="Lý do khoá"
+          placeholder="Ví dụ: nhiều báo cáo sân không hoạt động đúng giờ"
+          confirmLabel="Khoá sân"
+          pending={update.isPending}
+          onClose={() => setLocking(false)}
+          onConfirm={(reason) => update.mutate({ activeStatus: "INACTIVE", lockReason: reason })}
+        />
 
         <div className="rounded-lg border p-4">
           <h3 className="font-bold">Ghi chú admin</h3>

@@ -1,7 +1,9 @@
 import { prisma } from "../../config/db.js";
 import { NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
+import { partnerAccountActive } from "../../shared/utils/publicCourt.js";
 import { durationHours } from "../../shared/utils/time.js";
 import { dynamicPricingService } from "../dynamic-pricing/dynamicPricing.service.js";
+import { voucherService } from "../vouchers/voucher.service.js";
 
 export type PricingSlotInput = {
   courtId?: string;
@@ -23,6 +25,8 @@ export type CalculateBookingPriceInput = {
   services?: PricingServiceInput[];
   voucherId?: string;
   voucherCode?: string;
+  /** The customer, for the one-use-per-customer voucher rule. */
+  userId?: string;
 };
 
 export type PricedSlotItem = {
@@ -66,6 +70,8 @@ export type CalculatedBookingPrice = {
   items: PricedSlotItem[];
   services: PricedServiceLine[];
   voucherId: string | null;
+  /** Why a requested voucher gives no discount (expired, wrong court, already used...); null when it applies. */
+  voucherIssue: { code: string; message: string } | null;
   currency: "VND";
 };
 
@@ -80,7 +86,7 @@ export async function calculateBookingPrice(input: CalculateBookingPriceInput): 
   }
 
   const court = await prisma.court.findFirst({
-    where: { id: input.courtId, approvalStatus: "APPROVED", activeStatus: "ACTIVE" },
+    where: { id: input.courtId, approvalStatus: "APPROVED", activeStatus: "ACTIVE", ...partnerAccountActive },
     include: {
       images: { orderBy: { sortOrder: "asc" }, take: 1 },
       surfaces: { where: { status: "ACTIVE" }, orderBy: { sortOrder: "asc" } }
@@ -148,8 +154,9 @@ export async function calculateBookingPrice(input: CalculateBookingPriceInput): 
 
   if (input.services && input.services.length > 0) {
     const serviceIds = input.services.map((s) => s.serviceId);
-    const dbServices = await prisma.service.findMany({ where: { id: { in: serviceIds } } });
-    const courtServices = await prisma.courtService.findMany({ where: { id: { in: serviceIds }, status: "ACTIVE" } });
+    // Only this court's active catalog, as in bookingRepository.services: never another court's product.
+    const dbServices = await prisma.service.findMany({ where: { id: { in: serviceIds }, courtId: input.courtId, status: "ACTIVE" } });
+    const courtServices = await prisma.courtService.findMany({ where: { id: { in: serviceIds }, courtId: input.courtId, status: "ACTIVE" } });
 
     const svcMap = new Map<string, { id: string; name: string; price: number }>();
     dbServices.forEach((s) => svcMap.set(s.id, { id: s.id, name: s.name, price: Number(s.price) }));
@@ -175,27 +182,24 @@ export async function calculateBookingPrice(input: CalculateBookingPriceInput): 
   const subtotal = courtSubtotal + servicesSubtotal;
   let voucherDiscountAmount = 0;
   let appliedVoucherId: string | null = null;
+  let voucherIssue: CalculatedBookingPrice["voucherIssue"] = null;
 
   if (input.voucherId || input.voucherCode) {
-    const voucher = await prisma.voucher.findFirst({
-      where: input.voucherId
-        ? { id: input.voucherId }
-        : { code: input.voucherCode!.toUpperCase(), status: "ACTIVE" }
+    // The full voucher check (dates, usage, court/partner scope, conditions, one use per customer), so a booking
+    // never gets a discount the voucher pages would refuse.
+    const result = await voucherService.evaluateForQuote({
+      voucherId: input.voucherId,
+      code: input.voucherCode,
+      courtId: input.courtId,
+      userId: input.userId,
+      subtotal,
+      slots: pricedSlots.map((slot) => ({ date: slot.date, startTime: slot.startTime, endTime: slot.endTime }))
     });
-
-    if (voucher && voucher.status === "ACTIVE") {
-      appliedVoucherId = voucher.id;
-      const minAmount = Number(voucher.minBookingAmount ?? 0);
-
-      if (subtotal >= minAmount) {
-        const discountVal = Number(voucher.discountValue);
-        const rawDiscount =
-          voucher.discountType === "PERCENTAGE"
-            ? Math.round((subtotal * discountVal) / 100)
-            : discountVal;
-        const maxDiscount = voucher.maxDiscountAmount ? Number(voucher.maxDiscountAmount) : Number.POSITIVE_INFINITY;
-        voucherDiscountAmount = Math.min(rawDiscount, maxDiscount, subtotal);
-      }
+    if (result.eligible) {
+      appliedVoucherId = result.voucherId;
+      voucherDiscountAmount = Math.min(result.discountAmount, subtotal);
+    } else {
+      voucherIssue = { code: result.code, message: result.message };
     }
   }
 
@@ -224,6 +228,7 @@ export async function calculateBookingPrice(input: CalculateBookingPriceInput): 
     items: pricedSlots,
     services: serviceLines,
     voucherId: appliedVoucherId,
+    voucherIssue,
     currency: "VND"
   };
 }

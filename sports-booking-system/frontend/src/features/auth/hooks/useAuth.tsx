@@ -1,5 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type PropsWithChildren } from "react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
+import { SESSION_EXPIRED_EVENT } from "../../../lib/axios";
 import { REFRESH_TOKEN_KEY, TOKEN_KEY, USER_KEY } from "../../../lib/constants";
 import type { Role, User } from "../../../types/api";
 import { authApi } from "../api/authApi";
@@ -51,6 +53,23 @@ export function AuthProvider({ children }: PropsWithChildren) {
       active = false;
     };
   }, []);
+
+  // A request even a token refresh could not rescue ends the session here, e.g. right after an admin locks the account.
+  useEffect(() => {
+    const endSession = () => {
+      const loginPath = readUser()?.role === "PARTNER" ? "/partner/login" : "/login";
+      localStorage.removeItem(USER_KEY);
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(REFRESH_TOKEN_KEY);
+      setUser(null);
+      setToken(null);
+      setRefreshToken(null);
+      toast.error("Phiên đăng nhập đã kết thúc. Vui lòng đăng nhập lại.", { id: "session-expired" });
+      navigate(loginPath);
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, endSession);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, endSession);
+  }, [navigate]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

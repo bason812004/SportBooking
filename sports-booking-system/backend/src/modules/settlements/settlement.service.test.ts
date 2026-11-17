@@ -126,6 +126,7 @@ describe("settlement.service settleForBooking", () => {
 
   it("moves the net amount from pendingBalance to availableBalance on success", async () => {
     let settleCall: any = null;
+    const offsets: any[][] = [];
     fakePrisma.setModels({
       settlement: {
         findUnique: async () => ({ id: "st1", status: "PENDING", partnerId: "partner1", netAmount: 180000 }),
@@ -137,11 +138,13 @@ describe("settlement.service settleForBooking", () => {
           return { count: 1 };
         }
       }
-    });
+    }, { executeRaw: async (_sql: TemplateStringsArray, ...values: any[]) => { offsets.push(values); return 1; } });
 
     const result = await settlementService.settleForBooking("bk1", fakePrisma.client);
 
     assert.equal((result as any).status, "SETTLED");
+    // The newly available money first pays commission debt.
+    assert.deepEqual(offsets, [["partner1"]]);
     assert.deepEqual(settleCall.where.pendingBalance, { gte: 180000 });
     assert.deepEqual(settleCall.data.availableBalance, { increment: 180000 });
   });
@@ -204,6 +207,17 @@ describe("settlement.service adminSettle / adminCancel", () => {
     await assert.rejects(() => settlementService.adminSettle("admin1", "st1"));
   });
 
+  it("adminSettle refuses to release money of a booking not played yet, which a cancellation could no longer take back", async () => {
+    let walletTouched = false;
+    const settlement = (bookingStatus: string) => ({ id: "st1", status: "PENDING", partnerId: "partner1", netAmount: 1000, booking: { bookingCode: "BK1", bookingStatus } });
+    fakePrisma.setModels({
+      settlement: { findUnique: async () => settlement("CONFIRMED"), updateMany: async () => ({ count: 1 }) },
+      partnerWallet: { updateMany: async () => { walletTouched = true; return { count: 1 }; } }
+    });
+    await assert.rejects(() => settlementService.adminSettle("admin1", "st1"), /đã hoàn thành hoặc khách không đến/);
+    assert.equal(walletTouched, false);
+  });
+
   it("adminCancel debits availableBalance (not pendingBalance) when reversing an already-SETTLED settlement", async () => {
     resetSpies();
     let debitCall: any = null;
@@ -226,7 +240,7 @@ describe("settlement.service adminSettle / adminCancel", () => {
       }
     });
 
-    const result = await settlementService.adminCancel("admin1", "st1");
+    const result = await settlementService.adminCancel("admin1", "st1", "Đơn đã huỷ và hoàn tiền");
 
     assert.equal((result as any).status, "CANCELLED");
     assert.deepEqual(debitCall.where.availableBalance, { gte: 180000 });
@@ -236,49 +250,192 @@ describe("settlement.service adminSettle / adminCancel", () => {
 });
 
 
-describe("settlement.service counter collections", () => {
-  function setup(platformGross = 0) {
-    let counter: any = null;
+describe("settlement.service partner-collected commission", () => {
+  function setup(options: { platformGross?: number; booking?: Partial<any>; counter?: any } = {}) {
+    let counter: any = options.counter ?? null;
     let earning: any = null;
-    fakePrisma.setModels({
-      booking: { findUnique: async () => bookingFixture() },
-      settlement: {
-        findUnique: async ({ where }: any) => where.bookingId_collectedBy.collectedBy === "PARTNER" ? counter : platformGross ? { id: "online", status: "PENDING", grossAmount: platformGross } : null,
-        create: async ({ data }: any) => (counter = { id: "counter", ...data }),
-        updateMany: async ({ data }: any) => {
-          for (const key of ["grossAmount", "commissionAmount", "netAmount"]) counter[key] += data[key].increment;
-          return { count: 1 };
+    const adjustments: any[] = [];
+    const booking = bookingFixture({ basePrice: 300000, dynamicAdjustmentAmount: 0, totalPrice: 300000, ...options.booking });
+    const charges: number[] = [];
+    const credits: number[] = [];
+    fakePrisma.setModels(
+      {
+        booking: { findUnique: async () => booking },
+        settlement: {
+          findUnique: async ({ where }: any) =>
+            where.bookingId_collectedBy.collectedBy === "PARTNER"
+              ? counter
+              : options.platformGross ? { id: "online", status: "PENDING", grossAmount: options.platformGross } : null,
+          create: async ({ data }: any) => (counter = { id: "counter", ...data }),
+          updateMany: async ({ data }: any) => {
+            for (const key of ["grossAmount", "commissionAmount", "netAmount", "platformDiscount"]) {
+              if (data[key]) counter[key] += data[key].increment;
+            }
+            return { count: 1 };
+          }
+        },
+        // The ledger is immutable: an earning that grows gets ADJUSTMENT rows, never an update.
+        commissionTransaction: {
+          findFirst: async () => earning,
+          findMany: async () => (earning ? [earning, ...adjustments] : []),
+          create: async ({ data }: any) =>
+            data.transactionType === "ADJUSTMENT" ? (adjustments.push(data), data) : (earning = { id: "earning", ...data })
+        },
+        partnerWallet: {
+          upsert: async ({ update }: any) => {
+            if (update.availableBalance) credits.push(update.availableBalance.increment);
+            return {};
+          }
         }
       },
-      commissionTransaction: {
-        findFirst: async () => earning,
-        create: async ({ data }: any) => (earning = { id: "earning", ...data }),
-        update: async ({ data }: any) => Object.assign(earning, data)
-      }
-      // No partnerWallet stub: any wallet call fails the test.
-    });
-    return { counter: () => counter, earning: () => earning };
+      // chargeCommission's single UPDATE binds the commission first and the partner id last (offsetDebt binds only the id).
+      { executeRaw: async (_sql: TemplateStringsArray, ...values: any[]) => { if (typeof values[0] === "number") charges.push(values[0]); return 1; } }
+    );
+    // What the commission ledger records for the booking: the earning plus its adjustments.
+    const ledger = () => [earning, ...adjustments].filter(Boolean).reduce(
+      (sum, row) => ({ grossAmount: sum.grossAmount + row.grossAmount, commissionAmount: sum.commissionAmount + row.commissionAmount }),
+      { grossAmount: 0, commissionAmount: 0 }
+    );
+    return { booking, charges, credits, counter: () => counter, earning: () => earning, adjustments, ledger };
   }
 
-  it("records cash once as SETTLED without touching the wallet", async () => {
+  it("charges commission on the court money once, as a SETTLED partner-collected row", async () => {
     const state = setup();
-    await settlementService.createFromCounterCollection("bk0001", 300000, fakePrisma.client);
-    await settlementService.createFromCounterCollection("bk0001", 300000, fakePrisma.client);
+    await settlementService.chargePartnerCollected("bk0001", fakePrisma.client);
+    await settlementService.chargePartnerCollected("bk0001", fakePrisma.client);
     assert.equal(state.counter().collectedBy, "PARTNER");
     assert.equal(state.counter().status, "SETTLED");
     assert.equal(state.counter().grossAmount, 300000);
     assert.equal(state.counter().commissionAmount, 30000);
+    assert.equal(state.counter().netAmount, 270000);
+    assert.deepEqual(state.charges, [30000]);
     assert.equal(state.earning().grossAmount, 300000);
   });
 
-  it("keeps online deposits separate and adds only newly collected services after reopening", async () => {
-    const state = setup(100000);
-    await settlementService.createFromCounterCollection("bk0001", 300000, fakePrisma.client);
+  it("leaves the online deposit to the platform settlement and charges only an extension's increase", async () => {
+    const state = setup({ platformGross: 100000 });
+    await settlementService.chargePartnerCollected("bk0001", fakePrisma.client);
     assert.equal(state.counter().grossAmount, 200000);
-    await settlementService.createFromCounterCollection("bk0001", 310000, fakePrisma.client);
-    assert.equal(state.counter().grossAmount, 210000);
-    assert.equal(state.counter().commissionAmount, 21000);
-    assert.equal(state.earning().grossAmount, 310000);
-    assert.equal(state.earning().commissionAmount, 31000);
+    state.booking.basePrice = 350000; // extension: court time grows by 50.000
+    await settlementService.chargePartnerCollected("bk0001", fakePrisma.client);
+    assert.equal(state.counter().grossAmount, 250000);
+    assert.equal(state.counter().commissionAmount, 25000);
+    assert.deepEqual(state.charges, [20000, 5000]);
+    // The first earning stays as written; the extension is a 50.000 adjustment pointing at it.
+    assert.equal(state.earning().grossAmount, 300000);
+    assert.deepEqual(state.adjustments.map((row) => [row.grossAmount, row.originalTransactionId]), [[50000, "earning"]]);
+    assert.deepEqual(state.ledger(), { grossAmount: 350000, commissionAmount: 35000 });
+  });
+
+  it("raises an earning written before the platform's voucher share with an adjustment, not an update", async () => {
+    const state = setup({ booking: { totalPrice: 250000, voucherDiscountAmount: 50000, bookingVoucher: { platformShare: 50000, releasedAt: null } } });
+    // The partner and staff flows write the earning from the booking total (after the voucher) first.
+    state.adjustments.length = 0;
+    await settlementService.finishBooking({ ...state.booking, court: { partner: { id: "partner1", commissionRate: 10 } } }, "COMPLETED", fakePrisma.client);
+    assert.equal(state.earning().grossAmount, 250000);
+    assert.deepEqual(state.ledger(), { grossAmount: 300000, commissionAmount: 30000 });
+  });
+
+  it("charges after the voucher and ignores services sold at the counter", async () => {
+    const state = setup({ booking: { voucherDiscountAmount: 50000, bookingServices: [{ quantity: 2, price: 100000 }] } });
+    await settlementService.chargePartnerCollected("bk0001", fakePrisma.client);
+    assert.equal(state.counter().grossAmount, 250000);
+    assert.deepEqual(state.charges, [25000]);
+  });
+
+  it("creates no debt when the court was fully paid online", async () => {
+    const state = setup({ platformGross: 300000 });
+    const result = await settlementService.chargePartnerCollected("bk0001", fakePrisma.client);
+    assert.equal(result, null);
+    assert.deepEqual(state.charges, []);
+    assert.equal(state.earning().grossAmount, 300000);
+  });
+
+  it("pays back a platform-funded voucher once and charges commission as if no voucher was used", async () => {
+    const platformVoucher = { voucherDiscountAmount: 50000, bookingVoucher: { platformShare: 50000, releasedAt: null } };
+    const state = setup({ booking: platformVoucher });
+    await settlementService.chargePartnerCollected("bk0001", fakePrisma.client);
+    await settlementService.chargePartnerCollected("bk0001", fakePrisma.client);
+    assert.equal(state.counter().grossAmount, 300000);
+    assert.equal(state.counter().platformDiscount, 50000);
+    assert.equal(state.counter().netAmount, 270000);
+    assert.deepEqual(state.credits, [50000]);
+    assert.deepEqual(state.charges, [30000]);
+    assert.equal(state.earning().grossAmount, 300000);
+  });
+
+  it("pays back a platform-funded voucher on top of a court fully paid online at the discounted price", async () => {
+    const state = setup({ platformGross: 250000, booking: { voucherDiscountAmount: 50000, bookingVoucher: { platformShare: 50000, releasedAt: null } } });
+    await settlementService.chargePartnerCollected("bk0001", fakePrisma.client);
+    assert.equal(state.counter().grossAmount, 50000);
+    assert.deepEqual(state.credits, [50000]);
+    assert.deepEqual(state.charges, [5000]);
+  });
+
+  it("keeps a partner-funded voucher on the partner: nothing is paid back", async () => {
+    const state = setup({ booking: { voucherDiscountAmount: 50000, bookingVoucher: { platformShare: 0, releasedAt: null } } });
+    await settlementService.chargePartnerCollected("bk0001", fakePrisma.client);
+    assert.equal(state.counter().grossAmount, 250000);
+    assert.deepEqual(state.credits, []);
+    assert.deepEqual(state.charges, [25000]);
+  });
+
+  it("never charges again once an admin cancelled (waived) the partner-collected row", async () => {
+    const state = setup({ counter: { id: "counter", status: "CANCELLED", grossAmount: 300000, commissionRate: 10 } });
+    await settlementService.chargePartnerCollected("bk0001", fakePrisma.client);
+    assert.deepEqual(state.charges, []);
+    assert.equal(state.earning(), null);
+  });
+
+  it("adminCancel of a partner-collected row refunds the commission instead of touching the balances", async () => {
+    resetSpies();
+    const refunds: any[][] = [];
+    let callCount = 0;
+    fakePrisma.setModels(
+      {
+        settlement: {
+          findUnique: async () => {
+            callCount += 1;
+            return { id: "st2", status: callCount === 1 ? "SETTLED" : "CANCELLED", collectedBy: "PARTNER", partnerId: "partner1", netAmount: 270000, commissionAmount: 30000, bookingId: "bk1" };
+          },
+          updateMany: async () => ({ count: 1 })
+        }
+        // No partnerWallet stub: the balances may only change through refundCommission.
+      },
+      { executeRaw: async (_sql: TemplateStringsArray, ...values: any[]) => { refunds.push(values); return 1; } }
+    );
+
+    await settlementService.adminCancel("admin1", "st2", "Miễn hoa hồng");
+
+    assert.equal(refunds.length, 1);
+    assert.equal(refunds[0][0], 30000);
+    assert.equal(refunds[0].at(-1), "partner1");
+  });
+
+  it("adminCancel of a partner-collected row also takes back what the platform paid toward a voucher", async () => {
+    resetSpies();
+    const raw: any[][] = [];
+    let callCount = 0;
+    fakePrisma.setModels(
+      {
+        settlement: {
+          findUnique: async () => {
+            callCount += 1;
+            return {
+              id: "st3", status: callCount === 1 ? "SETTLED" : "CANCELLED", collectedBy: "PARTNER", partnerId: "partner1",
+              netAmount: 270000, commissionAmount: 30000, platformDiscount: 50000, bookingId: "bk1"
+            };
+          },
+          updateMany: async () => ({ count: 1 })
+        },
+        partnerWallet: { upsert: async () => ({}) }
+      },
+      { executeRaw: async (_sql: TemplateStringsArray, ...values: any[]) => { raw.push(values); return 1; } }
+    );
+
+    await settlementService.adminCancel("admin1", "st3", "Thu hồi");
+
+    // refundCommission(30000), then the 50000 is taken back like a charge (balance first, debt for the rest).
+    assert.deepEqual(raw.map((values) => values[0]), [30000, 50000]);
   });
 });

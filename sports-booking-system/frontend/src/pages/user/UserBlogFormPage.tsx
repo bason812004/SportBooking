@@ -91,7 +91,7 @@ export function UserBlogFormPage() {
       update("coverImageUrl", data.data.url);
       toast.success("Tải ảnh thành công");
     } catch (error: any) {
-      toast.error(error.response?.data?.message || "Không thể tải ảnh lên");
+      toast.error(error.message || "Không thể tải ảnh lên");
       setCoverImagePreview(form.coverImageUrl || "");
     } finally {
       setIsUploading(false);
@@ -127,13 +127,10 @@ export function UserBlogFormPage() {
         content: form.content.trim(),
         allowComments: form.allowComments
       };
-      if (editing && id) {
-        await contentApi.updateBlog(id, payload);
-        toast.success("Đã gửi bài cập nhật để admin duyệt.");
-      } else {
-        await contentApi.createBlog(payload);
-        toast.success("Đã gửi bài blog để admin duyệt.");
-      }
+      const saved = editing && id ? await contentApi.updateBlog(id, payload) : await contentApi.createBlog(payload);
+      // Private posts are only shown to their author, so the backend saves them without review.
+      if (saved?.status === "PUBLISHED") toast.success("Đã lưu bài riêng tư.");
+      else toast.success(editing ? "Đã gửi bài cập nhật để admin duyệt." : "Đã gửi bài blog để admin duyệt.");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["my-blogs"] }),
         queryClient.invalidateQueries({ queryKey: ["public-blogs"] })
@@ -157,6 +154,7 @@ export function UserBlogFormPage() {
           <h1 className="mt-2 text-4xl font-black">{editing ? "Chỉnh sửa bài blog" : "Viết bài blog"}</h1>
           <p className="mt-3 max-w-2xl text-sm font-semibold text-slate-600">
             Bài viết công khai chỉ xuất hiện sau khi admin duyệt. Nếu chỉnh sửa nội dung bài đã đăng, bài sẽ quay lại trạng thái chờ duyệt.
+            Bài riêng tư chỉ mình bạn xem nên được lưu ngay, không cần duyệt.
           </p>
 
           <form onSubmit={handleSubmit} className="mt-8 grid gap-5">

@@ -1,6 +1,9 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 import { settlementService } from "../settlements/settlement.service.js";
+import { latePaymentRefundAdminEvent } from "../bookings/booking.calculations.js";
+import { enqueueAdminEvent } from "../notifications/notificationOutbox.repository.js";
+import { voucherRepository } from "../vouchers/voucher.repository.js";
 
 const webhookBookingInclude = {
   booking: {
@@ -26,74 +29,18 @@ const webhookBookingInclude = {
 export const LATE_PAYMENT_CANCEL_REASON = "Thanh toán đến sau khi hết hạn giữ chỗ, đang chờ hoàn tiền";
 
 export const paymentRepository = {
-  async findForUser(paymentId: string, userId: string) {
-    const payment = await prisma.payment.findFirst({
+  findForUser(paymentId: string, userId: string) {
+    return prisma.payment.findFirst({
       where: { id: paymentId, userId },
       include: {
         booking: {
           include: {
             court: { include: { images: { orderBy: { sortOrder: "asc" } }, category: true } },
-            bookingSlots: { include: { court_surfaces: true }, orderBy: { startTime: "asc" } },
-            bookingServices: { include: { service: true } },
-            bookingOrder: {
-              include: {
-                bookings: {
-                  include: {
-                    court: { include: { images: { orderBy: { sortOrder: "asc" } }, category: true } },
-                    bookingSlots: { include: { court_surfaces: true }, orderBy: { startTime: "asc" } },
-                    bookingServices: { include: { service: true } }
-                  },
-                  orderBy: { bookingDate: "asc" }
-                }
-              }
-            }
-          }
-        },
-        bookingOrder: {
-          include: {
-            bookings: {
-              include: {
-                court: { include: { images: { orderBy: { sortOrder: "asc" } }, category: true } },
-                bookingSlots: { include: { court_surfaces: true }, orderBy: { startTime: "asc" } },
-                bookingServices: { include: { service: true } }
-              },
-              orderBy: { bookingDate: "asc" }
-            }
+            bookingSlots: { orderBy: { startTime: "asc" } }
           }
         }
       }
     });
-
-    if (!payment) return null;
-
-    const order = payment.bookingOrder || payment.booking?.bookingOrder;
-    const orderBookings = order?.bookings && order.bookings.length > 1 ? order.bookings : null;
-
-    if (orderBookings && payment.booking) {
-      const allSlots = orderBookings.flatMap((b) =>
-        b.bookingSlots.map((s) => ({
-          ...s,
-          bookingDate: b.bookingDate,
-          courtName: b.court?.name
-        }))
-      );
-      const allServices = orderBookings.flatMap((b) => b.bookingServices);
-
-      return {
-        ...payment,
-        orderBookings,
-        booking: {
-          ...payment.booking,
-          bookingSlots: allSlots,
-          bookingServices: allServices
-        }
-      };
-    }
-
-    return {
-      ...payment,
-      orderBookings: null
-    };
   },
 
   findByExternalOrderId(externalOrderId: string, tx: Prisma.TransactionClient = prisma) {
@@ -174,6 +121,8 @@ export const paymentRepository = {
           where: { id: { in: lateBookings.map((b) => b.id) } },
           data: { bookingStatus: "CANCELLED", paymentStatus: "PAID", cancelReason: LATE_PAYMENT_CANCEL_REASON }
         });
+        // Queued in this transaction, so the admin notice exists exactly when the money is recorded.
+        await enqueueAdminEvent(tx, latePaymentRefundAdminEvent(latePayment.id, lateBookings, input.amount));
         console.log(`[applyWebhook] Late payment ${payment.id} (${payment.status}) received ${input.amount}; bookings kept cancelled, refund needed.`);
         return { payment: latePayment, idempotent: false, bookings: lateBookings, lateRefund: { amount: input.amount } };
       }
@@ -200,13 +149,7 @@ export const paymentRepository = {
           paymentStatus: paid ? "PAID" : "FAILED"
         }
       });
-
-      if (updatedPayment.bookingOrderId) {
-        await tx.bookingOrder.update({
-          where: { id: updatedPayment.bookingOrderId },
-          data: { status: paid ? "CONFIRMED" : "CANCELLED" }
-        });
-      }
+      if (!paid) await voucherRepository.releaseVoucherUses(bookingsToSettle.map((b) => b.id), tx);
 
       const settlements = [];
       const allocationBase = bookingsToSettle.reduce((sum, b) => sum + Math.max(0, Number(b.basePrice ?? b.totalPrice) + Number(b.dynamicAdjustmentAmount ?? 0) - Number(b.voucherDiscountAmount ?? 0)), 0);
@@ -254,6 +197,7 @@ export const paymentRepository = {
         where: { id: { in: bookingIds } },
         data: { bookingStatus: "CANCELLED", paymentStatus: "CANCELLED" }
       });
+      await voucherRepository.releaseVoucherUses(bookingIds, tx);
       return tx.payment.update({ where: { id: paymentId }, data: { status: "CANCELLED" } });
     });
   },
@@ -272,6 +216,7 @@ export const paymentRepository = {
         where: { id: { in: bookingIds } },
         data: { bookingStatus: "CANCELLED", paymentStatus: "EXPIRED" }
       });
+      await voucherRepository.releaseVoucherUses(bookingIds, tx);
       return tx.payment.update({ where: { id: paymentId }, data: { status: "EXPIRED" } });
     });
   }

@@ -20,7 +20,8 @@ const withdrawalLabels: Record<string, string> = {
   PROCESSING: "Đang chuyển khoản",
   REJECTED: "Từ chối",
   FAILED: "Chuyển khoản thất bại",
-  PAID: "Đã chuyển khoản"
+  PAID: "Đã chuyển khoản",
+  CANCELLED: "Đối tác đã huỷ"
 };
 
 const withdrawalTones: Record<string, string> = {
@@ -29,7 +30,8 @@ const withdrawalTones: Record<string, string> = {
   PROCESSING: "bg-violet-100 text-violet-700",
   REJECTED: "bg-red-100 text-red-700",
   FAILED: "bg-red-100 text-red-700",
-  PAID: "bg-emerald-100 text-emerald-700"
+  PAID: "bg-emerald-100 text-emerald-700",
+  CANCELLED: "bg-slate-100 text-slate-600"
 };
 
 function Badge({ label, tone }: { label: string; tone: string }) {

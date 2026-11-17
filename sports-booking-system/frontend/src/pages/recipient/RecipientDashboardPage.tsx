@@ -27,7 +27,14 @@ export function RecipientDashboardPage() {
       <div className="grid gap-4 lg:grid-cols-4">
         <StatCard label="Sân đang quản lý" value={data.courtName} icon={Activity} iconBg="bg-slate-100 text-slate-700" />
         <StatCard label="Booking hôm nay" value={data.bookingsToday} icon={CalendarDays} iconBg="bg-blue-100 text-blue-700" />
-        <StatCard label="Doanh thu hoàn thành" value={`${data.revenue.toLocaleString("vi-VN")} đ`} icon={WalletCards} iconBg="bg-emerald-100 text-emerald-700" />
+        <StatCard
+          label="Doanh thu tháng này"
+          value={`${data.revenue.toLocaleString("vi-VN")} đ`}
+          icon={WalletCards}
+          iconBg="bg-emerald-100 text-emerald-700"
+          to="/recipient/report"
+          footnote="Đã quyết toán, cùng số với trang Báo cáo"
+        />
         <StatCard label="Đơn chờ xác nhận" value={data.pendingBookings} icon={ClipboardList} iconBg="bg-amber-100 text-amber-700" to="/recipient/bookings?status=PENDING" />
       </div>
 

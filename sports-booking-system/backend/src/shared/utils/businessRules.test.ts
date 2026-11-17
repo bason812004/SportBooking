@@ -23,6 +23,58 @@ describe("business rules", () => {
     assert.equal(result.dynamicAdjustmentAmount, 40000);
   });
 
+  it("adds every rule on the base price and caps the total once (the c0001 Saturday 18:00 case)", () => {
+    const result = calculateDynamicPrice({
+      basePrice: 220000,
+      rules: [
+        { ruleName: "Giờ vàng cuối tuần", type: "PERCENTAGE", value: 20, maxPrice: 300000 },
+        { ruleName: "Tăng 20% 17h-19h", type: "PERCENTAGE", value: 20 }
+      ]
+    });
+    assert.equal(result.finalPrice, 300000, "308k before: the second rule ran past the first rule's cap");
+    assert.equal(result.dynamicAdjustmentAmount, 80000);
+    assert.equal(result.adjustments.reduce((sum, item) => sum + item.amount, 0), 80000, "the limit line keeps the sum right");
+    assert.equal(result.adjustments.at(-1)?.ruleName, "Giới hạn giá");
+  });
+
+  it("applies the lowest maximum and the highest minimum among the rules that apply", () => {
+    const result = calculateDynamicPrice({
+      basePrice: 200000,
+      rules: [
+        { ruleName: "A", type: "PERCENTAGE", value: 50, maxPrice: 280000 },
+        { ruleName: "B", type: "FIXED_AMOUNT", value: 10000, maxPrice: 250000 }
+      ]
+    });
+    assert.equal(result.finalPrice, 250000);
+  });
+
+  it("lowers the price for a discount rule and keeps it at or above its minimum", () => {
+    assert.equal(calculateDynamicPrice({ basePrice: 200000, rules: [{ ruleName: "Thấp điểm", type: "PERCENTAGE", value: -20 }] }).finalPrice, 160000);
+    const floored = calculateDynamicPrice({
+      basePrice: 200000,
+      rules: [{ ruleName: "Thấp điểm", type: "PERCENTAGE", value: -50, minPrice: 150000 }]
+    });
+    assert.equal(floored.finalPrice, 150000);
+    assert.equal(floored.dynamicAdjustmentAmount, -50000);
+  });
+
+  it("never lets a limit push the price the other way", () => {
+    // A surcharge capped below an hour that already costs more leaves the hour as it is ...
+    assert.equal(
+      calculateDynamicPrice({ basePrice: 350000, rules: [{ ruleName: "+20%", type: "PERCENTAGE", value: 20, maxPrice: 300000 }] }).finalPrice,
+      350000
+    );
+    // ... and a discount with a minimum above a cheaper hour does not raise it.
+    assert.equal(
+      calculateDynamicPrice({ basePrice: 80000, rules: [{ ruleName: "-10%", type: "PERCENTAGE", value: -10, minPrice: 100000 }] }).finalPrice,
+      80000
+    );
+  });
+
+  it("never goes below zero", () => {
+    assert.equal(calculateDynamicPrice({ basePrice: 50000, rules: [{ ruleName: "-", type: "FIXED_AMOUNT", value: -80000 }] }).finalPrice, 0);
+  });
+
   it("caps voucher discount by max discount amount", () => {
     const result = calculateVoucherDiscount({
       subtotal: 300000,

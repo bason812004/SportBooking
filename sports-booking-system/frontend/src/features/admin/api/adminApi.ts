@@ -2,26 +2,43 @@ import { api } from "../../../lib/axios";
 import type {
   ApiResponse,
   AdminBooking,
+  AdminBookingFilterOptions,
+  AdminCategory,
   AdminCourt,
+  AdminUser,
+  AdminCourtReview,
   AdminDashboard,
   AdminFinanceReport,
   AdminFinanceTransaction,
+  AdminBlog,
+  AdminBlogComment,
+  AdminCampaignRecipient,
+  ModerationHistoryEntry,
+  OverdueBooking,
   AdminNotificationCampaign,
   AdminRefund,
   AdminPartner,
+  AdminPartnerListItem,
+  AdminPendingCourt,
   AdminVoucher,
+  AdminVoucherDetail,
   AdminVoucherInput,
+  AdminReport,
   AuditLog,
   BlockchainLog,
   Category,
+  CommissionDefault,
+  CommissionRateChange,
   CommissionRateConfig,
   CommissionReport,
   Court,
+  ModeratedReview,
   Paginated,
   PartnerWallet,
   Settlement,
   SettlementSummary,
   User,
+  VoucherRunningInput,
   WalletAdminSummary,
   WithdrawalRequest,
   WithdrawalSummary
@@ -33,11 +50,20 @@ export const adminApi = {
     return data.data;
   },
   async users(params: Record<string, string | number | undefined> = {}) {
-    const { data } = await api.get<ApiResponse<Paginated<User>>>("/admin/users", { params: clean(params) });
+    const { data } = await api.get<ApiResponse<Paginated<AdminUser>>>("/admin/users", { params: clean(params) });
     return data.data;
   },
   async bookings(params: Record<string, string | number | undefined> = {}) {
     const { data } = await api.get<ApiResponse<Paginated<AdminBooking>>>("/admin/bookings", { params: clean(params) });
+    return data.data;
+  },
+  async bookingFilterOptions() {
+    const { data } = await api.get<ApiResponse<AdminBookingFilterOptions>>("/admin/bookings/filter-options");
+    return data.data;
+  },
+  /** Bookings of every court that are over but still open, with when the system finishes each. */
+  async overdueBookings() {
+    const { data } = await api.get<ApiResponse<OverdueBooking[]>>("/admin/bookings/overdue");
     return data.data;
   },
   async bookingDetail(id: string) {
@@ -59,8 +85,8 @@ export const adminApi = {
     const { data } = await api.patch<ApiResponse<AdminBooking>>(`/admin/bookings/${id}/admin`, payload);
     return data.data;
   },
-  async lockUser(id: string) {
-    const { data } = await api.put<ApiResponse<User>>(`/admin/users/${id}/lock`);
+  async lockUser(id: string, reason?: string) {
+    const { data } = await api.put<ApiResponse<User>>(`/admin/users/${id}/lock`, { reason });
     return data.data;
   },
   async unlockUser(id: string) {
@@ -68,7 +94,7 @@ export const adminApi = {
     return data.data;
   },
   async partners(params: Record<string, string | number | undefined> = {}) {
-    const { data } = await api.get<ApiResponse<Paginated<AdminPartner>>>("/admin/partners", { params: clean(params) });
+    const { data } = await api.get<ApiResponse<Paginated<AdminPartnerListItem>>>("/admin/partners", { params: clean(params) });
     return data.data;
   },
   async partnerDetail(id: string) {
@@ -84,7 +110,11 @@ export const adminApi = {
     return data.data;
   },
   async commissionDefault() {
-    const { data } = await api.get<ApiResponse<{ rate: number }>>("/admin/commission/default");
+    const { data } = await api.get<ApiResponse<CommissionDefault>>("/admin/commission/default");
+    return data.data;
+  },
+  async commissionHistory() {
+    const { data } = await api.get<ApiResponse<CommissionRateChange[]>>("/admin/commission/history");
     return data.data;
   },
   async updateCommissionDefault(rate: number) {
@@ -120,10 +150,6 @@ export const adminApi = {
     const { data } = await api.get<ApiResponse<AdminFinanceReport>>("/admin/finance/reconciliation", { params: { month } });
     return data.data;
   },
-  async updatePayout(partnerId: string, month: string, payload: { status: string; note?: string }) {
-    const { data } = await api.patch<ApiResponse<unknown>>(`/admin/finance/payouts/${partnerId}`, payload, { params: { month } });
-    return data.data;
-  },
   async exportFinanceReport(month: string) {
     const { data } = await api.get<Blob>("/admin/finance/export", { params: { month }, responseType: "blob" });
     return data;
@@ -148,6 +174,22 @@ export const adminApi = {
     const { data } = await api.post<ApiResponse<AdminNotificationCampaign>>("/admin/notifications/campaigns", payload);
     return data.data;
   },
+  /** How many active accounts a campaign to this audience would reach (the sender excluded from groups). */
+  async notificationAudience(params: { targetType: string; targetRole?: string; targetUserId?: string; targetPartnerId?: string }) {
+    const { data } = await api.get<ApiResponse<{ count: number }>>("/admin/notifications/audience", { params: clean(params) });
+    return data.data;
+  },
+  async notificationCampaignRecipients(id: string, params: Record<string, string | number | undefined> = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<AdminCampaignRecipient>>>(`/admin/notifications/campaigns/${id}/recipients`, {
+      params: clean(params)
+    });
+    return data.data;
+  },
+  /** Removes the campaign's notifications from every inbox; the reason is kept in the history. */
+  async recallNotificationCampaign(id: string, reason: string) {
+    const { data } = await api.post<ApiResponse<{ id: string; removed: number }>>(`/admin/notifications/campaigns/${id}/recall`, { reason });
+    return data.data;
+  },
   async courts(params: Record<string, string | number | undefined> = {}) {
     const { data } = await api.get<ApiResponse<Paginated<AdminCourt>>>("/admin/courts", { params: clean(params) });
     return data.data;
@@ -156,7 +198,8 @@ export const adminApi = {
     const { data } = await api.get<ApiResponse<AdminCourt>>(`/admin/courts/${id}`);
     return data.data;
   },
-  async updateCourtAdmin(id: string, payload: { activeStatus?: string; verified?: boolean; featured?: boolean; adminNote?: string }) {
+  /** Locking (activeStatus INACTIVE) needs lockReason, sent to the partner. */
+  async updateCourtAdmin(id: string, payload: { activeStatus?: string; lockReason?: string; verified?: boolean; featured?: boolean; adminNote?: string }) {
     const { data } = await api.patch<ApiResponse<AdminCourt>>(`/admin/courts/${id}/admin`, payload);
     return data.data;
   },
@@ -165,7 +208,11 @@ export const adminApi = {
     return data.data;
   },
   async pendingCourts(params: Record<string, string | number | undefined> = {}) {
-    const { data } = await api.get<ApiResponse<Paginated<Court>>>("/admin/courts/pending", { params: clean(params) });
+    const { data } = await api.get<ApiResponse<Paginated<AdminPendingCourt>>>("/admin/courts/pending", { params: clean(params) });
+    return data.data;
+  },
+  async courtReview(id: string) {
+    const { data } = await api.get<ApiResponse<AdminCourtReview>>(`/admin/courts/${id}/review`);
     return data.data;
   },
   async approveCourt(id: string) {
@@ -177,7 +224,7 @@ export const adminApi = {
     return data.data;
   },
   async categories() {
-    const { data } = await api.get<ApiResponse<Category[]>>("/admin/categories");
+    const { data } = await api.get<ApiResponse<AdminCategory[]>>("/admin/categories");
     return data.data;
   },
   async createCategory(payload: Partial<Category>) {
@@ -193,23 +240,33 @@ export const adminApi = {
     return data.data;
   },
   async reviews(params: Record<string, string | number | undefined> = {}) {
-    const { data } = await api.get<ApiResponse<Paginated<any>>>("/admin/reviews", { params: clean(params) });
+    const { data } = await api.get<ApiResponse<Paginated<ModeratedReview>>>("/admin/reviews", { params: clean(params) });
     return data.data;
   },
-  async setReviewStatus(id: string, action: "hide" | "show") {
-    const { data } = await api.put<ApiResponse<unknown>>(`/admin/reviews/${id}/${action}`);
+  /** Hiding needs a reason (the author is told); showing again takes an optional note. */
+  async setReviewStatus(id: string, action: "hide" | "show", reason?: string) {
+    const { data } = await api.put<ApiResponse<unknown>>(`/admin/reviews/${id}/${action}`, { reason });
     return data.data;
   },
-  async deleteReview(id: string) {
-    const { data } = await api.delete<ApiResponse<unknown>>(`/admin/reviews/${id}`);
+  async deleteReview(id: string, reason: string) {
+    const { data } = await api.delete<ApiResponse<unknown>>(`/admin/reviews/${id}`, { data: { reason } });
     return data.data;
   },
+  /** Takes down the court owner's reply (the review stays); the partner is told the reason. */
+  async removeReviewReply(id: string, reason: string) {
+    const { data } = await api.delete<ApiResponse<unknown>>(`/admin/reviews/${id}/reply`, { data: { reason } });
+    return data.data;
+  },
+  /** Violation reports with how many each status has (under the same search). */
   async reports(params: Record<string, string | number | undefined> = {}) {
-    const { data } = await api.get<ApiResponse<Paginated<any>>>("/admin/reports", { params: clean(params) });
+    const { data } = await api.get<ApiResponse<Paginated<AdminReport> & { counts: Record<string, number> }>>("/admin/reports", {
+      params: clean(params)
+    });
     return data.data;
   },
-  async setReportStatus(id: string, action: "resolve" | "reject") {
-    const { data } = await api.put<ApiResponse<unknown>>(`/admin/reports/${id}/${action}`);
+  /** Rejecting needs a reason; resolving takes an optional note. Both are sent to the reporter. */
+  async setReportStatus(id: string, action: "resolve" | "reject", note?: string) {
+    const { data } = await api.put<ApiResponse<unknown>>(`/admin/reports/${id}/${action}`, { note });
     return data.data;
   },
   async statistics() {
@@ -221,31 +278,48 @@ export const adminApi = {
     return data.data;
   },
   async voucherDetail(id: string) {
-    const { data } = await api.get<ApiResponse<AdminVoucherInput & { id: string }>>(`/admin/vouchers/${id}`);
+    const { data } = await api.get<ApiResponse<AdminVoucherDetail>>(`/admin/vouchers/${id}`);
     return data.data;
   },
   async createVoucher(payload: AdminVoucherInput) {
-    const { data } = await api.post<ApiResponse<AdminVoucher>>("/admin/vouchers", payload);
+    const { data } = await api.post<ApiResponse<AdminVoucherDetail>>("/admin/vouchers", payload);
     return data.data;
   },
-  async updateVoucher(id: string, payload: AdminVoucherInput) {
-    const { data } = await api.put<ApiResponse<AdminVoucher>>(`/admin/vouchers/${id}`, payload);
+  /** A draft takes every term again; an activated voucher only VoucherRunningInput. */
+  async updateVoucher(id: string, payload: AdminVoucherInput | VoucherRunningInput) {
+    const { data } = await api.put<ApiResponse<AdminVoucherDetail>>(`/admin/vouchers/${id}`, payload);
     return data.data;
   },
   async setVoucherStatus(id: string, action: "activate" | "disable", reason?: string) {
     const { data } = await api.put<ApiResponse<unknown>>(`/admin/vouchers/${id}/${action}`, { reason });
     return data.data;
   },
+  /** The moderation queue (public posts only) with how many posts each status has. */
   async pendingBlogs(params: Record<string, string | number | undefined> = {}) {
-    const { data } = await api.get<ApiResponse<Paginated<any>>>("/admin/blogs/pending", { params: clean(params) });
+    const { data } = await api.get<ApiResponse<Paginated<AdminBlog> & { counts: Record<string, number> }>>("/admin/blogs/pending", {
+      params: clean(params)
+    });
     return data.data;
   },
+  /** Rejecting needs a reason (the author is told); approving takes an optional note. */
   async moderateBlog(id: string, action: "approve" | "reject", reason?: string) {
     const { data } = await api.put<ApiResponse<unknown>>(`/admin/blogs/${id}/${action}`, { reason });
     return data.data;
   },
-  async hideBlog(id: string, reason?: string) {
+  async hideBlog(id: string, reason: string) {
     const { data } = await api.put<ApiResponse<unknown>>(`/admin/blogs/${id}/hide`, { reason });
+    return data.data;
+  },
+  async blogHistory(id: string) {
+    const { data } = await api.get<ApiResponse<ModerationHistoryEntry[]>>(`/admin/blogs/${id}/history`);
+    return data.data;
+  },
+  async blogComments(id: string) {
+    const { data } = await api.get<ApiResponse<AdminBlogComment[]>>(`/admin/blogs/${id}/comments`);
+    return data.data;
+  },
+  async removeBlogComment(id: string, commentId: string, reason: string) {
+    const { data } = await api.delete<ApiResponse<unknown>>(`/admin/blogs/${id}/comments/${commentId}`, { data: { reason } });
     return data.data;
   },
   async pendingTournaments(params: Record<string, string | number | undefined> = {}) {
@@ -260,16 +334,16 @@ export const adminApi = {
     const { data } = await api.get<ApiResponse<Paginated<AuditLog>>>("/admin/audit-logs", { params: clean(params) });
     return data.data;
   },
+  async auditLogFilterOptions() {
+    const { data } = await api.get<ApiResponse<{ actions: string[]; entityTypes: string[] }>>("/admin/audit-logs/filter-options");
+    return data.data;
+  },
   async verifyAuditLogs() {
-    const { data } = await api.get<ApiResponse<{ valid: boolean; checked: number; brokenAt?: string | null }>>("/admin/audit-logs/verify");
+    const { data } = await api.get<ApiResponse<{ valid: boolean; checked: number; brokenAt?: string | null; headMismatch?: boolean }>>("/admin/audit-logs/verify");
     return data.data;
   },
   async blockchainLogs(params: Record<string, string | number | undefined> = {}) {
     const { data } = await api.get<ApiResponse<Paginated<BlockchainLog>>>("/admin/blockchain-logs", { params: clean(params) });
-    return data.data;
-  },
-  async retryBlockchainLog(id: string) {
-    const { data } = await api.put<ApiResponse<BlockchainLog>>(`/admin/blockchain-logs/${id}/retry`);
     return data.data;
   },
   async partnerWallets(params: Record<string, string | number | undefined> = {}) {
@@ -284,6 +358,11 @@ export const adminApi = {
     const { data } = await api.get<ApiResponse<PartnerWallet>>(`/admin/wallets/partner-wallets/${partnerId}`);
     return data.data;
   },
+  /** The partner transferred commission debt to the platform account. */
+  async recordCommissionDebtPayment(partnerId: string, payload: { amount: number; note?: string }) {
+    const { data } = await api.post<ApiResponse<PartnerWallet>>(`/admin/wallets/partner-wallets/${partnerId}/debt-payments`, payload);
+    return data.data;
+  },
   async settlements(params: Record<string, string | number | undefined> = {}) {
     const { data } = await api.get<ApiResponse<Paginated<Settlement>>>("/admin/settlements", { params: clean(params) });
     return data.data;
@@ -296,8 +375,9 @@ export const adminApi = {
     const { data } = await api.put<ApiResponse<Settlement>>(`/admin/settlements/${id}/settle`);
     return data.data;
   },
-  async cancelSettlement(id: string) {
-    const { data } = await api.put<ApiResponse<Settlement>>(`/admin/settlements/${id}/cancel`);
+  /** The partner is told the reason; a settled one takes its net back out of the wallet. */
+  async cancelSettlement(id: string, reason: string) {
+    const { data } = await api.put<ApiResponse<Settlement>>(`/admin/settlements/${id}/cancel`, { reason });
     return data.data;
   },
   async withdrawals(params: Record<string, string | number | undefined> = {}) {
@@ -312,11 +392,12 @@ export const adminApi = {
     const { data } = await api.put<ApiResponse<WithdrawalRequest>>(`/admin/withdrawals/${id}/approve`);
     return data.data;
   },
-  async rejectWithdrawal(id: string, note?: string) {
+  async rejectWithdrawal(id: string, note: string) {
     const { data } = await api.put<ApiResponse<WithdrawalRequest>>(`/admin/withdrawals/${id}/reject`, { note });
     return data.data;
   },
-  async payWithdrawal(id: string, note?: string) {
+  /** The note is the bank transfer's reference, kept with the request and in the audit log. */
+  async payWithdrawal(id: string, note: string) {
     const { data } = await api.put<ApiResponse<WithdrawalRequest>>(`/admin/withdrawals/${id}/paid`, { note });
     return data.data;
   }

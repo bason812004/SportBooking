@@ -27,7 +27,7 @@ const searchCourtsTool: ToolDefinition = {
     properties: {
       keyword: { type: "string", description: "Tu khoa tim kiem (ten san, mon the thao)" },
       city: { type: "string", description: "Thanh pho/tinh" },
-      district: { type: "string", description: "Quan/huyen" },
+      district: { type: "string", description: "Khu vuc: phuong/xa (hoac quan/huyen cu), tim ca trong dia chi" },
       sportType: { type: "string", description: "Loai mon the thao, vi du: cau long, bong da, tennis" }
     }
   },

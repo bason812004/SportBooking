@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { vietnamNow } from "../../shared/utils/time.js";
 
 const ALLOWED_MESSAGE_TYPES = ["TEXT", "IMAGE", "VIDEO", "SYSTEM"] as const;
 export type MessageType = (typeof ALLOWED_MESSAGE_TYPES)[number];
@@ -35,6 +36,11 @@ export const teamPostSchema = z
       .refine((data) => data.endTime > data.startTime, {
         message: "Gio ket thuc phai sau gio bat dau",
         path: ["endTime"]
+      })
+      // Vietnam date, not the server's: a game today stays postable until midnight in Vietnam.
+      .refine((data) => !data.playingDate || data.playingDate >= vietnamNow().date, {
+        message: "Ngay choi khong duoc o qua khu",
+        path: ["playingDate"]
       })
   });
 

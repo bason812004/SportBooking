@@ -2,43 +2,42 @@ import { useEffect, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Filter } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { adminApi } from "../../features/admin/api/adminApi";
 import type { AdminBooking } from "../../types/api";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
+import { BookingBillSummary } from "../../components/booking/BookingBillSummary";
 import { ErrorState, LoadingState } from "../../components/common/States";
 import { PageHero } from "../../components/common/PageHero";
 import { PeriodRangeFilter } from "../../components/common/PeriodRangeFilter";
 import { SortableTh } from "../../components/common/SortableTh";
+import { StatusBadge } from "../../components/common/StatusBadge";
 import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
+import { TablePagination } from "../../components/common/TablePagination";
+import { useDebounce } from "../../hooks/useDebounce";
 import { useUrlSort } from "../../hooks/useUrlSort";
 import { usePeriodRange } from "../../hooks/usePeriodRange";
+import { bookingStatusLabel, courtArea, formatCurrency, paymentStatusLabel } from "../../lib/format";
+import { bookingStatusTones, paymentStatusTones } from "../../lib/statusTones";
 
-const bookingStatuses = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"];
-const paymentStatuses = ["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"];
+// Every status the database can hold, so any booking can be filtered and labelled.
+const bookingStatuses = ["PENDING", "PENDING_PAYMENT", "CONFIRMED", "DEPOSIT_PAID", "IN_PROGRESS", "CHECKOUT_PENDING", "COMPLETED", "CANCELLED", "REJECTED", "EXPIRED", "NO_SHOW"];
+const paymentStatuses = ["UNPAID", "PENDING", "PROCESSING", "PAID", "FAILED", "EXPIRED", "CANCELLED", "PARTIALLY_REFUNDED", "REFUNDED"];
 
-const bookingStatusLabels: Record<string, string> = {
-  PENDING: "Chờ xác nhận",
-  CONFIRMED: "Đã xác nhận",
-  COMPLETED: "Hoàn thành",
-  CANCELLED: "Đã hủy",
-  NO_SHOW: "Không đến"
-};
+// Mirrors backend admin.bookingUpdate.ts, which enforces these; the form only offers the allowed moves.
+const adminBookingStatusTargets = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"];
+const finalBookingStatuses = ["COMPLETED", "CANCELLED", "NO_SHOW", "REJECTED", "EXPIRED"];
+const adminPaymentStatusTargets = ["UNPAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"];
 
-const paymentStatusLabels: Record<string, string> = {
-  UNPAID: "Chưa thanh toán",
-  PAID: "Đã thanh toán",
-  PARTIALLY_REFUNDED: "Hoàn tiền một phần",
-  REFUNDED: "Đã hoàn tiền"
-};
+const bookingStatusLabels = Object.fromEntries(bookingStatuses.map((value) => [value, bookingStatusLabel(value)]));
+const paymentStatusLabels = Object.fromEntries(paymentStatuses.map((value) => [value, paymentStatusLabel(value)]));
 
 type Filters = {
   search: string;
   courtId: string;
   partnerId: string;
-  userId: string;
   paymentStatus: string;
   bookingStatus: string;
 };
@@ -57,7 +56,6 @@ const defaultFilters: Filters = {
   search: "",
   courtId: "",
   partnerId: "",
-  userId: "",
   paymentStatus: "",
   bookingStatus: ""
 };
@@ -69,8 +67,25 @@ const SORT_FIELDS: SortField[] = ["bookingCode", "customerName", "bookingDate", 
 export function AdminBookingsPage() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [limit, setLimit] = useState(20);
+  // ?bookingId= (from a refund notification) opens that booking whatever the list filters are.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [selected, setSelected] = useState<string | null>(() => searchParams.get("bookingId"));
+  useEffect(() => {
+    const bookingId = searchParams.get("bookingId");
+    if (bookingId) setSelected(bookingId);
+  }, [searchParams]);
+  const closeDetail = () => {
+    setSelected(null);
+    if (!searchParams.has("bookingId")) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("bookingId");
+    setSearchParams(next, { replace: true });
+  };
   const [filters, setFilters] = useState<Filters>(defaultFilters);
+  // The search box only queries once the admin pauses typing.
+  const search = useDebounce(filters.search, 300);
+  const queryFilters = { ...filters, search };
   const period = usePeriodRange({ defaultMode: "day", onChange: () => setPage(1) });
 
   const { sortField, sortOrder, handleSort: sortBy } = useUrlSort<SortField>({
@@ -83,12 +98,12 @@ export function AdminBookingsPage() {
   };
 
   const list = useQuery({
-    queryKey: ["admin-bookings", page, filters, period.range, sortField, sortOrder],
+    queryKey: ["admin-bookings", page, limit, queryFilters, period.range, sortField, sortOrder],
     queryFn: () =>
       adminApi.bookings({
         page,
-        limit: 10,
-        ...filters,
+        limit,
+        ...queryFilters,
         fromDate: period.range.fromDate,
         toDate: period.range.toDate,
         sortBy: sortField ?? undefined,
@@ -96,14 +111,36 @@ export function AdminBookingsPage() {
       }),
     placeholderData: keepPreviousData
   });
+  const filterOptions = useQuery({
+    queryKey: ["admin-booking-filter-options"],
+    queryFn: adminApi.bookingFilterOptions,
+    staleTime: 5 * 60_000
+  });
   const detail = useQuery({
     queryKey: ["admin-booking", selected],
     queryFn: () => adminApi.bookingDetail(selected!),
     enabled: Boolean(selected)
   });
 
+  // A save (e.g. a status the current filter excludes) can shrink the list under the current page.
+  const totalPages = list.data?.meta.totalPages;
+  useEffect(() => {
+    if (totalPages && page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
   if (list.isLoading) return <LoadingState />;
   if (list.isError) return <ErrorState message={list.error.message} />;
+
+  const partnerOptions = [
+    { value: "", label: "Tất cả đối tác" },
+    ...(filterOptions.data?.partners ?? []).map((partner) => ({ value: partner.id, label: partner.businessName }))
+  ];
+  const courtOptions = [
+    { value: "", label: "Tất cả sân" },
+    ...(filterOptions.data?.courts ?? [])
+      .filter((court) => !filters.partnerId || court.partnerId === filters.partnerId)
+      .map((court) => ({ value: court.id, label: court.name }))
+  ];
 
   return (
     <div className="space-y-5">
@@ -122,15 +159,19 @@ export function AdminBookingsPage() {
       />
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
-        <p className="mb-3 flex items-center gap-1.5 text-xs font-black uppercase tracking-wide text-slate-500">
-          <Filter className="h-3.5 w-3.5" />
-          Bộ lọc
-        </p>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          <Input label="Tìm kiếm" value={filters.search} onChange={(event) => updateFilter(setPage, setFilters, "search", event.target.value)} placeholder="Mã đơn, khách, sân, đối tác" />
-          <Input label="ID sân" value={filters.courtId} onChange={(event) => updateFilter(setPage, setFilters, "courtId", event.target.value)} placeholder="c0001" />
-          <Input label="ID đối tác" value={filters.partnerId} onChange={(event) => updateFilter(setPage, setFilters, "partnerId", event.target.value)} placeholder="pp0001" />
-          <Input label="ID người dùng" value={filters.userId} onChange={(event) => updateFilter(setPage, setFilters, "userId", event.target.value)} placeholder="u0001" />
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))]">
+          <Input label="Tìm kiếm" value={filters.search} onChange={(event) => updateFilter(setPage, setFilters, "search", event.target.value)} placeholder="Mã đơn, khách (tên, email, SĐT), sân, đối tác" />
+          <Select
+            label="Đối tác"
+            value={filters.partnerId}
+            onChange={(event) => {
+              setPage(1);
+              // A court of another partner would make the list empty, so the court filter starts over.
+              setFilters((current) => ({ ...current, partnerId: event.target.value, courtId: "" }));
+            }}
+            options={partnerOptions}
+          />
+          <Select label="Sân" value={filters.courtId} onChange={(event) => updateFilter(setPage, setFilters, "courtId", event.target.value)} options={courtOptions} />
           <Select label="Thanh toán" value={filters.paymentStatus} onChange={(event) => updateFilter(setPage, setFilters, "paymentStatus", event.target.value)} options={withAll(paymentStatuses, paymentStatusLabels)} />
           <Select label="Trạng thái đơn" value={filters.bookingStatus} onChange={(event) => updateFilter(setPage, setFilters, "bookingStatus", event.target.value)} options={withAll(bookingStatuses, bookingStatusLabels)} />
         </div>
@@ -143,26 +184,26 @@ export function AdminBookingsPage() {
       <Table minWidth="980px">
         <THead>
           <tr>
-            <SortableTh label="Mã đơn" field="bookingCode" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-            <SortableTh label="Khách hàng" field="customerName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh className="whitespace-nowrap" label="Mã đơn" field="bookingCode" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh className="whitespace-nowrap" label="Khách hàng" field="customerName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
             <Th>Sân / đối tác</Th>
-            <SortableTh label="Lịch đặt" field="bookingDate" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-            <SortableTh label="Tổng tiền" field="totalPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-            <SortableTh label="Đơn" field="bookingStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-            <SortableTh label="Thanh toán" field="paymentStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh className="whitespace-nowrap" label="Lịch đặt" field="bookingDate" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh className="whitespace-nowrap text-right" label="Tổng hoá đơn" field="totalPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh className="whitespace-nowrap" label="Đơn" field="bookingStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+            <SortableTh className="whitespace-nowrap" label="Thanh toán" field="paymentStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
             <Th></Th>
           </tr>
         </THead>
         <TBody>
           {list.data?.items.map((booking) => (
             <Tr key={booking.id} className="align-top">
-              <Td className="font-bold">{booking.bookingCode}</Td>
-              <Td>{booking.user?.fullName}<br /><span className="text-xs text-slate-500">{booking.user?.email}</span></Td>
+              <Td className="whitespace-nowrap font-bold">{booking.bookingCode}</Td>
+              <Td className="whitespace-nowrap">{booking.user?.fullName}<br /><span className="text-xs text-slate-500">{booking.user?.email}</span></Td>
               <Td>{booking.court.name}<br /><span className="text-xs text-slate-500">{booking.court.partner?.businessName}</span></Td>
-              <Td>{formatDate(booking.bookingDate)}<br /><span className="text-xs text-slate-500">{formatTime(booking.startTime)} - {formatTime(booking.endTime)}</span></Td>
-              <Td>{formatMoney(booking.totalPrice)}</Td>
-              <Td><StatusBadge value={booking.bookingStatus} labels={bookingStatusLabels} /></Td>
-              <Td><StatusBadge value={booking.paymentStatus} labels={paymentStatusLabels} /></Td>
+              <Td className="whitespace-nowrap">{formatDate(booking.bookingDate)}<br /><span className="text-xs text-slate-500">{formatTime(booking.startTime)} - {formatTime(booking.endTime)}</span></Td>
+              <Td className="whitespace-nowrap text-right">{formatCurrency(booking.billTotal ?? 0)}</Td>
+              <Td className="whitespace-nowrap"><StatusBadge value={booking.bookingStatus} tones={bookingStatusTones} labels={bookingStatusLabels} /></Td>
+              <Td className="whitespace-nowrap"><StatusBadge value={booking.paymentStatus} tones={paymentStatusTones} labels={paymentStatusLabels} /></Td>
               <Td className="text-right">
                 <Button variant="secondary" onClick={() => setSelected(booking.id)}>
                   Chi tiết
@@ -174,9 +215,20 @@ export function AdminBookingsPage() {
       </Table>
       {!list.data?.items.length && <p className="p-6 text-center text-slate-500">Không có đơn đặt sân phù hợp</p>}
 
-      <Pager page={page} total={list.data?.meta.totalPages ?? 1} setPage={setPage} />
+      <TablePagination
+        page={page}
+        totalPages={list.data?.meta.totalPages ?? 1}
+        total={list.data?.meta.total ?? 0}
+        limit={limit}
+        itemLabel="đơn"
+        onPageChange={setPage}
+        onLimitChange={(value) => {
+          setPage(1);
+          setLimit(value);
+        }}
+      />
 
-      <BookingDetailModal open={Boolean(selected)} onClose={() => setSelected(null)}>
+      <BookingDetailModal open={Boolean(selected)} onClose={closeDetail}>
         {detail.isLoading && <LoadingState />}
         {detail.isError && <ErrorState message={detail.error.message} />}
         {detail.data && (
@@ -210,8 +262,8 @@ function BookingDetailModal({ open, onClose, children }: { open: boolean; onClos
   );
 }
 
-function BookingDetail({ booking, onUpdated }: { booking: AdminBooking; onUpdated: () => Promise<void> }) {
-  const [form, setForm] = useState<BookingAdminForm>({
+function formFor(booking: AdminBooking): BookingAdminForm {
+  return {
     bookingStatus: booking.bookingStatus,
     paymentStatus: booking.paymentStatus,
     adminNote: booking.adminNote ?? "",
@@ -219,30 +271,39 @@ function BookingDetail({ booking, onUpdated }: { booking: AdminBooking; onUpdate
     refundAmount: numberText(booking.refundAmount),
     platformRetainedAmount: numberText(booking.platformRetainedAmount),
     actionNote: ""
-  });
+  };
+}
+
+/** Only what the admin actually changed, so the current statuses are never resent as a change. */
+function changedFields(booking: AdminBooking, form: BookingAdminForm) {
+  const initial = formFor(booking);
+  const changed = (key: keyof BookingAdminForm) => form[key] !== initial[key];
+  return {
+    bookingStatus: changed("bookingStatus") ? form.bookingStatus : undefined,
+    paymentStatus: changed("paymentStatus") ? form.paymentStatus : undefined,
+    adminNote: changed("adminNote") ? form.adminNote : undefined,
+    cancelReason: changed("cancelReason") ? form.cancelReason : undefined,
+    refundAmount: changed("refundAmount") && form.refundAmount !== "" ? Number(form.refundAmount) : undefined,
+    platformRetainedAmount: changed("platformRetainedAmount") && form.platformRetainedAmount !== "" ? Number(form.platformRetainedAmount) : undefined
+  };
+}
+
+function BookingDetail({ booking, onUpdated }: { booking: AdminBooking; onUpdated: () => Promise<void> }) {
+  const [form, setForm] = useState<BookingAdminForm>(() => formFor(booking));
 
   useEffect(() => {
-    setForm({
-      bookingStatus: booking.bookingStatus,
-      paymentStatus: booking.paymentStatus,
-      adminNote: booking.adminNote ?? "",
-      cancelReason: booking.cancelReason ?? "",
-      refundAmount: numberText(booking.refundAmount),
-      platformRetainedAmount: numberText(booking.platformRetainedAmount),
-      actionNote: ""
-    });
+    setForm(formFor(booking));
   }, [booking]);
 
+  const changes = changedFields(booking, form);
+  const hasChanges = Object.values(changes).some((value) => value !== undefined);
+  const statusLocked = finalBookingStatuses.includes(booking.bookingStatus);
+  // The current status is always listed, even one an admin can't set, so the select shows the real value.
+  const bookingStatusOptions = toOptions([booking.bookingStatus, ...adminBookingStatusTargets.filter((value) => value !== booking.bookingStatus)], bookingStatusLabels);
+  const paymentStatusOptions = toOptions([booking.paymentStatus, ...adminPaymentStatusTargets.filter((value) => value !== booking.paymentStatus)], paymentStatusLabels);
+
   const action = useMutation({
-    mutationFn: () => adminApi.updateBookingAdmin(booking.id, {
-      bookingStatus: form.bookingStatus,
-      paymentStatus: form.paymentStatus,
-      adminNote: form.adminNote || undefined,
-      cancelReason: form.cancelReason || undefined,
-      refundAmount: form.refundAmount === "" ? undefined : Number(form.refundAmount),
-      platformRetainedAmount: form.platformRetainedAmount === "" ? undefined : Number(form.platformRetainedAmount),
-      actionNote: form.actionNote || undefined
-    }),
+    mutationFn: () => adminApi.updateBookingAdmin(booking.id, { ...changes, actionNote: form.actionNote || undefined }),
     onSuccess: async () => {
       toast.success("Đã cập nhật đơn đặt sân");
       await onUpdated();
@@ -261,46 +322,37 @@ function BookingDetail({ booking, onUpdated }: { booking: AdminBooking; onUpdate
         <div className="grid gap-3 md:grid-cols-2">
           <Info title="Khách hàng" lines={[booking.user?.fullName, booking.user?.email, booking.user?.phone]} />
           <Info title="Đối tác" lines={[booking.court.partner?.businessName, booking.court.partner?.user?.email, booking.court.partner?.user?.phone]} />
-          <Info title="Địa điểm" lines={[booking.court.address, [booking.court.district, booking.court.city].filter(Boolean).join(", ")]} />
+          <Info title="Địa điểm" lines={[booking.court.address, courtArea(booking.court)]} />
           <Info title="Ghi chú vận hành" lines={[booking.adminNote || "Chưa có ghi chú nội bộ", booking.cancelReason ? `Lý do hủy: ${booking.cancelReason}` : undefined]} />
         </div>
 
-        <div className="grid gap-3 text-sm md:grid-cols-4">
-          <Metric label="Tổng tiền" value={formatMoney(booking.totalPrice)} strong />
-          <Metric label="Đã đặt cọc" value={formatMoney(booking.depositAmount ?? 0)} />
-          <Metric label="Hoàn tiền" value={formatMoney(booking.refundAmount ?? 0)} />
-          <Metric label="Nền tảng giữ lại" value={formatMoney(booking.platformRetainedAmount ?? 0)} />
-        </div>
-
-        <div className="overflow-auto rounded-lg border">
-          <table className="w-full text-sm">
-            <thead><tr className="bg-slate-50 text-left"><th className="p-3">Dịch vụ</th><th>Số lượng</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
-            <tbody>
-              {booking.bookingServices?.length ? booking.bookingServices.map((item) => (
-                <tr key={item.id} className="border-t">
-                  <td className="p-3">{item.service.name}</td>
-                  <td>{item.quantity}</td>
-                  <td>{formatMoney(item.price)}</td>
-                  <td>{formatMoney(Number(item.price) * item.quantity)}</td>
-                </tr>
-              )) : <tr className="border-t"><td className="p-3 text-slate-500" colSpan={4}>Không có dịch vụ kèm theo</td></tr>}
-            </tbody>
-          </table>
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+          <div>
+            <p className="mb-2 font-bold">Hoá đơn</p>
+            {booking.bill ? <BookingBillSummary bill={booking.bill} /> : null}
+          </div>
+          <div className="grid content-start gap-3 text-sm">
+            <Metric label="Đã hoàn tiền" value={formatCurrency(booking.refundAmount ?? 0)} />
+            <Metric label="Nền tảng giữ lại" value={formatCurrency(booking.platformRetainedAmount ?? 0)} />
+          </div>
         </div>
       </section>
 
-      <section className="space-y-4 xl:sticky xl:top-0 xl:self-start">
+      <section className="space-y-4 xl:sticky xl:top-16 xl:self-start">
         <div className="rounded-lg border bg-slate-50 p-4">
           <h3 className="font-bold">Xử lý đơn</h3>
           <div className="mt-4 grid gap-2.5">
-            <Select label="Trạng thái đơn" value={form.bookingStatus} onChange={(event) => setForm({ ...form, bookingStatus: event.target.value })} options={toOptions(bookingStatuses, bookingStatusLabels)} />
-            <Select label="Trạng thái thanh toán" value={form.paymentStatus} onChange={(event) => setForm({ ...form, paymentStatus: event.target.value })} options={toOptions(paymentStatuses, paymentStatusLabels)} />
+            <Select label="Trạng thái đơn" value={form.bookingStatus} disabled={statusLocked} onChange={(event) => setForm({ ...form, bookingStatus: event.target.value })} options={bookingStatusOptions} />
+            {statusLocked && (
+              <p className="text-xs text-slate-500">Đơn đã kết thúc nên không đổi được trạng thái. Khi hoàn tiền, hãy cập nhật trạng thái thanh toán và số tiền hoàn.</p>
+            )}
+            <Select label="Trạng thái thanh toán" value={form.paymentStatus} onChange={(event) => setForm({ ...form, paymentStatus: event.target.value })} options={paymentStatusOptions} />
             <Input label="Số tiền hoàn" type="number" min="0" value={form.refundAmount} onChange={(event) => setForm({ ...form, refundAmount: event.target.value })} />
             <Input label="Nền tảng giữ lại" type="number" min="0" value={form.platformRetainedAmount} onChange={(event) => setForm({ ...form, platformRetainedAmount: event.target.value })} />
             <Input label="Lý do hủy / xử lý" value={form.cancelReason} onChange={(event) => setForm({ ...form, cancelReason: event.target.value })} />
             <Input label="Ghi chú nội bộ" value={form.adminNote} onChange={(event) => setForm({ ...form, adminNote: event.target.value })} />
             <Input label="Ghi chú cho lần thao tác này" value={form.actionNote} onChange={(event) => setForm({ ...form, actionNote: event.target.value })} />
-            <Button disabled={action.isPending} onClick={() => action.mutate()}>Lưu xử lý</Button>
+            <Button disabled={action.isPending || !hasChanges} onClick={() => action.mutate()}>Lưu xử lý</Button>
           </div>
         </div>
 
@@ -326,25 +378,6 @@ function updateFilter(setPage: (page: number) => void, setFilters: Dispatch<SetS
   setFilters((current) => ({ ...current, [key]: value }));
 }
 
-function Pager({ page, total, setPage }: { page: number; total: number; setPage: (value: number) => void }) {
-  return (
-    <div className="flex justify-end gap-3">
-      <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Trước</Button>
-      <span className="py-2">{page}/{Math.max(total, 1)}</span>
-      <Button variant="secondary" disabled={page >= total} onClick={() => setPage(page + 1)}>Sau</Button>
-    </div>
-  );
-}
-
-function StatusBadge({ value, labels }: { value: string; labels?: Record<string, string> }) {
-  const tone = value.includes("CANCEL") || value.includes("REFUND") || value === "NO_SHOW"
-    ? "bg-red-50 text-red-700"
-    : value.includes("PAID") || value === "CONFIRMED" || value === "COMPLETED"
-      ? "bg-emerald-50 text-emerald-700"
-      : "bg-amber-50 text-amber-700";
-  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${tone}`}>{labels?.[value] ?? value}</span>;
-}
-
 function Info({ title, lines }: { title: string; lines: Array<string | null | undefined> }) {
   const values = lines.filter(Boolean);
   return (
@@ -355,11 +388,11 @@ function Info({ title, lines }: { title: string; lines: Array<string | null | un
   );
 }
 
-function Metric({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border bg-white p-3">
       <p className="text-slate-500">{label}</p>
-      <p className={`mt-1 text-lg ${strong ? "font-bold" : "font-semibold"}`}>{value}</p>
+      <p className="mt-1 text-lg font-semibold">{value}</p>
     </div>
   );
 }
@@ -370,10 +403,6 @@ function withAll(values: string[], labels: Record<string, string>) {
 
 function toOptions(values: string[], labels: Record<string, string>) {
   return values.map((value) => ({ value, label: labels[value] ?? value }));
-}
-
-function formatMoney(value?: number | string | null) {
-  return `${Number(value ?? 0).toLocaleString("vi-VN")} đ`;
 }
 
 function formatDate(value?: string | Date | null) {

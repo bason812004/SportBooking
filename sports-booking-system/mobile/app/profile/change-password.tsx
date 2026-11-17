@@ -4,6 +4,7 @@ import { Controller, useForm } from "react-hook-form";
 import { Alert, KeyboardAvoidingView, Platform } from "react-native";
 import { z } from "zod";
 import { authApi } from "../../src/api/auth";
+import { useAuthStore } from "../../src/store/auth";
 import { Button } from "../../src/components/Buttons";
 import { PasswordInput } from "../../src/components/Forms";
 import { Card, Screen } from "../../src/components/Screen";
@@ -28,8 +29,10 @@ export default function ChangePasswordScreen() {
 
   const onSubmit = handleSubmit(async ({ currentPassword, newPassword }) => {
     try {
-      await authApi.changePassword({ currentPassword, newPassword });
-      Alert.alert("Da doi mat khau", "Lan dang nhap tiep theo hay dung mat khau moi.");
+      const session = await authApi.changePassword({ currentPassword, newPassword });
+      // The old session ended with every other device's; keep the one the server just issued.
+      await useAuthStore.getState().setSession(session);
+      Alert.alert("Đã đổi mật khẩu", "Các thiết bị khác đã được đăng xuất. Lần đăng nhập sau hãy dùng mật khẩu mới.");
       router.back();
     } catch (error) {
       Alert.alert("Khong doi duoc", error instanceof Error ? error.message : "Vui long thu lai");

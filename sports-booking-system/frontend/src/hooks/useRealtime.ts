@@ -8,27 +8,20 @@ export function useRealtime() {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    const socket = getSocket(isAuthenticated ? token : null);
+    if (!isAuthenticated || !token) {
+      disconnectSocket();
+      return undefined;
+    }
 
+    const socket = getSocket(token);
     const invalidateBookings = () => {
       void queryClient.invalidateQueries({ queryKey: ["my-bookings"] });
       void queryClient.invalidateQueries({ queryKey: ["booking"] });
     };
-
-    const invalidateAvailability = (payload?: { courtId?: string }) => {
-      if (payload?.courtId) {
-        void queryClient.invalidateQueries({ queryKey: ["weekly-schedule", payload.courtId] });
-        void queryClient.invalidateQueries({ queryKey: ["court-availability", payload.courtId] });
-        void queryClient.invalidateQueries({ queryKey: ["court", payload.courtId] });
-      } else {
-        void queryClient.invalidateQueries({ queryKey: ["weekly-schedule"] });
-        void queryClient.invalidateQueries({ queryKey: ["court-availability"] });
-        void queryClient.invalidateQueries({ queryKey: ["court"] });
-      }
+    const invalidateAvailability = () => {
+      void queryClient.invalidateQueries({ queryKey: ["court-availability"] });
       void queryClient.invalidateQueries({ queryKey: ["courts"] });
-      void queryClient.invalidateQueries({ queryKey: ["nearby-courts"] });
     };
-
     const invalidateNotifications = () => {
       void queryClient.invalidateQueries({ queryKey: ["my-notifications"] });
     };
@@ -52,12 +45,7 @@ export function useRealtime() {
     socket.on("booking:created", invalidateBookings);
     socket.on("booking:status-updated", invalidateBookings);
     socket.on("booking:cancelled", invalidateBookings);
-    socket.on("booking:confirmed", invalidateBookings);
     socket.on("court:availability-updated", invalidateAvailability);
-    socket.on("court:availability:updated", invalidateAvailability);
-    socket.on("court:booking-updated", invalidateAvailability);
-    socket.on("court:updated", invalidateAvailability);
-    socket.on("court:created", invalidateAvailability);
     socket.on("notification:new", invalidateNotifications);
     socket.on("blog:updated", invalidateBlogs);
     socket.on("connect", invalidateBlogs);
@@ -73,12 +61,7 @@ export function useRealtime() {
       socket.off("booking:created", invalidateBookings);
       socket.off("booking:status-updated", invalidateBookings);
       socket.off("booking:cancelled", invalidateBookings);
-      socket.off("booking:confirmed", invalidateBookings);
       socket.off("court:availability-updated", invalidateAvailability);
-      socket.off("court:availability:updated", invalidateAvailability);
-      socket.off("court:booking-updated", invalidateAvailability);
-      socket.off("court:updated", invalidateAvailability);
-      socket.off("court:created", invalidateAvailability);
       socket.off("notification:new", invalidateNotifications);
       socket.off("blog:updated", invalidateBlogs);
       socket.off("connect", invalidateBlogs);
@@ -90,4 +73,3 @@ export function useRealtime() {
     };
   }, [isAuthenticated, queryClient, token]);
 }
-

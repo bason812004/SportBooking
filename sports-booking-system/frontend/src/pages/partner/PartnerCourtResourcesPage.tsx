@@ -13,6 +13,7 @@ import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
+import { AffectedBookingsModal } from "../../features/partner/components/AffectedBookingsModal";
 import { ScheduleLegend } from "../../components/common/ScheduleLegend";
 import { DateNavigator } from "../../components/common/DateNavigator";
 import { CourtScheduleGrid, type PartnerBlockSelection, type ScheduleRow } from "../../components/booking/CourtScheduleGrid";
@@ -22,6 +23,7 @@ import { BlockHistoryList } from "../../components/partner/BlockHistoryList";
 import { PriceScheduleGrid, type PriceRule, type PriceScheduleRow } from "../../components/partner/PriceScheduleGrid";
 import { PricePopover } from "../../components/partner/PricePopover";
 import { partnerApi, type PartnerSurfaceSlot } from "../../features/partner/api/partnerApi";
+import { CourtTimeChargePolicyCard } from "../../features/partner/components/CourtTimeChargePolicyCard";
 import { timeText } from "../../lib/format";
 
 type PriceForm = { dayType: string; startTime: string; endTime: string; price: number; note?: string };
@@ -150,9 +152,17 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
     },
     onError: (error: any) => toast.error(error.message || "Không thể tạo lịch nghỉ hàng loạt")
   });
+  // Pausing a sub-court from the grid first shows the upcoming bookings it touches.
+  const [pausingSurfaceId, setPausingSurfaceId] = useState<string | null>(null);
+  const pauseAffected = useQuery({
+    queryKey: ["partner-surface-affected", id, pausingSurfaceId],
+    queryFn: () => partnerApi.affectedBookings(id, { surfaceId: pausingSurfaceId! }),
+    enabled: Boolean(pausingSurfaceId)
+  });
   const toggleSurfaceStatus = useMutation({
     mutationFn: ({ surfaceId, status }: { surfaceId: string; status: "ACTIVE" | "INACTIVE" }) => partnerApi.updateCourtSurfaceStatus(id, surfaceId, status),
     onSuccess: async () => {
+      setPausingSurfaceId(null);
       toast.success("Đã cập nhật trạng thái sân con");
       await refresh();
     },
@@ -438,6 +448,11 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
             </button>
             {manualPriceOpen && (
               <form className="grid gap-3 border-t border-line p-5 md:grid-cols-5" onSubmit={priceForm.handleSubmit((v) => savePrice.mutate(v))}>
+                <p className="text-xs text-slate-500 md:col-span-5">
+                  Mỗi giờ lấy giá của khung hẹp nhất chứa nó (ví dụ khung 06:00-08:00 đặt riêng bên trong khung 06:00-17:00). Hai khung chồng một
+                  phần lên nhau thì không lưu được. Giờ chưa có giá thì khách không đặt được. Giá ngày lễ áp dụng cho các ngày lễ của hệ thống; giờ
+                  nào chưa đặt giá lễ thì dùng giá ngày thường hoặc cuối tuần.
+                </p>
                 <Select label="Loại ngày" options={[{ value: "WEEKDAY", label: "Ngày thường" }, { value: "WEEKEND", label: "Cuối tuần" }, { value: "HOLIDAY", label: "Ngày lễ" }]} {...priceForm.register("dayType")} />
                 <Input label="Từ giờ" type="time" {...priceForm.register("startTime", { required: true })} />
                 <Input label="Đến giờ" type="time" {...priceForm.register("endTime", { required: true })} />
@@ -497,6 +512,8 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
                 ))}
             </div>
           )}
+
+          <CourtTimeChargePolicyCard courtId={id} />
         </>
       )}
 
@@ -730,7 +747,9 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
               selection={selection}
               onToggleSelect={toggleSlot}
               onBlockedCellClick={handleBlockedCellClick}
-              onToggleSurfaceStatus={(surfaceId, status) => toggleSurfaceStatus.mutate({ surfaceId, status })}
+              onToggleSurfaceStatus={(surfaceId, status) =>
+                status === "INACTIVE" ? setPausingSurfaceId(surfaceId) : toggleSurfaceStatus.mutate({ surfaceId, status })
+              }
               toggleSurfaceStatusPending={toggleSurfaceStatus.isPending}
             />
           )}
@@ -773,6 +792,18 @@ export function PartnerCourtResourcesPage({ mode }: { mode: "prices" | "services
         </>
       )}
 
+      <AffectedBookingsModal
+        open={Boolean(pausingSurfaceId)}
+        title="Tạm ngưng sân con?"
+        description="Sân con không nhận đặt mới cho đến khi bạn mở lại."
+        bookings={pauseAffected.data}
+        loading={pauseAffected.isLoading}
+        confirmLabel="Tạm ngưng"
+        danger
+        pending={toggleSurfaceStatus.isPending}
+        onClose={() => setPausingSurfaceId(null)}
+        onConfirm={() => pausingSurfaceId && toggleSurfaceStatus.mutate({ surfaceId: pausingSurfaceId, status: "INACTIVE" })}
+      />
       <ConfirmModal
         open={Boolean(removeTarget)}
         title={removeTarget ? removeConfirmCopy[removeTarget.type].title : ""}

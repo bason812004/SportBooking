@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Star } from "lucide-react";
 import { toast } from "sonner";
@@ -7,6 +7,8 @@ import { useTranslation } from "react-i18next";
 import type { Court } from "../../../types/api";
 import { useAuth } from "../../../features/auth/hooks/useAuth";
 import { reviewApi } from "../../../features/reviews/api/reviewApi";
+import { formatDate } from "../../../lib/format";
+import { ReviewReplyBlock } from "../../../components/review/ReviewReplyBlock";
 import { DetailSection } from "./detailUtils";
 
 type ReviewItem = NonNullable<Court["reviews"]>[number];
@@ -24,6 +26,13 @@ export function ReviewSection({ courtId, reviews = [] }: { courtId: string; revi
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editRating, setEditRating] = useState(5);
   const [editComment, setEditComment] = useState("");
+  // Only customers who completed a booking here review the court, once per booking (the backend decides).
+  const isCustomer = user?.role === "USER";
+  const eligibility = useQuery({
+    queryKey: ["review-eligibility", courtId, user?.id],
+    queryFn: () => reviewApi.eligibility(courtId),
+    enabled: isAuthenticated && isCustomer
+  });
 
   useEffect(() => {
     setLocalReviews(reviews);
@@ -38,10 +47,10 @@ export function ReviewSection({ courtId, reviews = [] }: { courtId: string; revi
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!isAuthenticated || submitting) return;
+    if (!isAuthenticated || submitting || !eligibility.data?.canReview) return;
     setSubmitting(true);
     try {
-      const created = await reviewApi.create({ courtId, rating, comment: comment.trim() || null });
+      const created = await reviewApi.create({ courtId, bookingId: eligibility.data.booking?.id ?? null, rating, comment: comment.trim() || null });
       setLocalReviews((current) => [created, ...current.filter((item) => item.id !== created.id)]);
       setSort("newest");
       toast.success("Đã gửi đánh giá sân.");
@@ -52,6 +61,8 @@ export function ReviewSection({ courtId, reviews = [] }: { courtId: string; revi
       toast.error(error instanceof Error ? error.message : "Không thể gửi đánh giá.");
     } finally {
       setSubmitting(false);
+      // The booking just reviewed is used up; the next one (if any) is offered next.
+      void eligibility.refetch();
     }
   }
 
@@ -82,12 +93,32 @@ export function ReviewSection({ courtId, reviews = [] }: { courtId: string; revi
   }
 
   return (
-    <DetailSection title={t("detail.reviews")} description="Người dùng chỉ cần đăng nhập là có thể đánh giá và bình luận về sân này.">
+    <DetailSection title={t("detail.reviews")} description="Đánh giá đến từ khách đã hoàn thành lượt đặt sân tại đây, mỗi lượt chơi một đánh giá.">
       <form onSubmit={handleSubmit} className="mb-5 rounded-[1.5rem] border border-slate-200 bg-slate-50 p-4">
-        {isAuthenticated ? (
+        {isAuthenticated && !isCustomer ? (
+          <p className="font-semibold text-slate-600">Chỉ khách hàng đã chơi tại sân mới đánh giá được.</p>
+        ) : isAuthenticated && eligibility.isLoading ? (
+          <p className="font-semibold text-slate-500">Đang kiểm tra lượt chơi của bạn...</p>
+        ) : isAuthenticated && !eligibility.data?.canReview ? (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="font-semibold text-slate-600">
+              {eligibility.isError ? "Không kiểm tra được lượt chơi của bạn, vui lòng tải lại trang." : `${eligibility.data?.reason ?? ""}.`}
+            </p>
+            <Link to="/user/bookings" className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-black text-slate-700 hover:bg-slate-100">
+              Xem lịch sử đặt sân
+            </Link>
+          </div>
+        ) : isAuthenticated ? (
           <>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="font-black">Đánh giá của bạn</p>
+              <div>
+                <p className="font-black">Đánh giá của bạn</p>
+                {eligibility.data?.booking && (
+                  <p className="text-xs font-semibold text-slate-500">
+                    Cho lượt chơi ngày {formatDate(eligibility.data.booking.bookingDate)} (đơn {eligibility.data.booking.bookingCode})
+                  </p>
+                )}
+              </div>
               <div className="flex gap-1">
                 {[1, 2, 3, 4, 5].map((value) => (
                   <button key={value} type="button" onClick={() => setRating(value)} className="rounded-lg p-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500" aria-label={`${value} sao`}>
@@ -111,7 +142,7 @@ export function ReviewSection({ courtId, reviews = [] }: { courtId: string; revi
           </>
         ) : (
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="font-semibold text-slate-600">Đăng nhập để đánh giá và bình luận về sân.</p>
+            <p className="font-semibold text-slate-600">Đăng nhập để đánh giá sân sau khi bạn đã chơi tại đây.</p>
             <Link to="/login" className="rounded-xl bg-[#0f766e] px-5 py-2.5 text-sm font-black text-white hover:bg-[#115e59]">
               Đăng nhập
             </Link>
@@ -155,7 +186,7 @@ export function ReviewSection({ courtId, reviews = [] }: { courtId: string; revi
                   <p className="font-bold text-slate-800">{review.user.fullName}</p>
                   <p className="text-xs text-slate-500 mt-0.5">
                     {new Date(review.updatedAt ?? review.createdAt).toLocaleDateString(locale)}
-                    {(review as any).isEdited && <span className="ml-2 text-slate-400 font-normal italic">(đã chỉnh sửa)</span>}
+                    {review.isEdited && <span className="ml-2 text-slate-400 font-normal italic">(đã chỉnh sửa)</span>}
                   </p>
                 </div>
                 <span className="ml-auto inline-flex items-center gap-1 font-black text-amber-600">
@@ -201,11 +232,13 @@ export function ReviewSection({ courtId, reviews = [] }: { courtId: string; revi
               ) : (
                 <>
                   <p className="mt-4 leading-7 text-slate-600 whitespace-pre-wrap">{review.comment || t("detail.noComment")}</p>
-                  {isAuthenticated && (user?.id === review.user.id || user?.role === "ADMIN") && (
+                  {review.reply && (
+                    <ReviewReplyBlock content={review.reply.content} repliedAt={review.reply.repliedAt} businessName={review.reply.businessName} />
+                  )}
+                  {/* Only the author changes a review; admins moderate from the admin reviews page. */}
+                  {isAuthenticated && user?.id === review.user.id && (
                     <div className="mt-3 flex gap-3 text-xs font-bold text-slate-500 justify-end">
-                      {user?.id === review.user.id && (
-                        <button className="hover:text-teal-700 transition" onClick={() => { setEditingId(review.id); setEditRating(review.rating); setEditComment(review.comment || ""); }}>Sửa</button>
-                      )}
+                      <button className="hover:text-teal-700 transition" onClick={() => { setEditingId(review.id); setEditRating(review.rating); setEditComment(review.comment || ""); }}>Sửa</button>
                       <button className="hover:text-red-700 transition" onClick={() => handleDelete(review.id)}>Xóa</button>
                     </div>
                   )}

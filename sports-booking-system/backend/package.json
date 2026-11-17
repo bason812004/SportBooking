@@ -9,7 +9,6 @@
     "test": "tsx --experimental-test-module-mocks --test src/**/*.test.ts",
     "check:integrations": "tsx src/scripts/check_integrations.ts",
     "start": "node dist/server.js",
-    "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:pull": "prisma db pull",
     "prisma:seed": "tsx prisma/seed.ts",

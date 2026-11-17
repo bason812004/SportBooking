@@ -24,6 +24,7 @@ import { PartnerSection } from "./detail/PartnerSection";
 import { PolicySection } from "./detail/PolicySection";
 import { ReviewSection } from "./detail/ReviewSection";
 import { ReviewAnalytics } from "./detail/ReviewAnalytics";
+import { ReportCourtButton } from "./detail/ReportCourtButton";
 import { NearbyCourts } from "./detail/SimilarCourts";
 import { InteractiveMap } from "./detail/InteractiveMap";
 import { CourtSectionNav } from "./detail/CourtSectionNav";
@@ -127,22 +128,17 @@ export function CourtDetailPage() {
 
   // ── Realtime invalidation ──────────────────────────────────────────────────
   useEffect(() => {
-    if (!id) return;
+    if (!id || !token) return;
     const socket = getSocket(token);
     socket.emit("court:subscribe", id);
-    const refresh = () => {
+    const refresh = () =>
       queryClient.invalidateQueries({ queryKey: ["weekly-schedule", id] });
-      queryClient.invalidateQueries({ queryKey: ["court", id] });
-      queryClient.invalidateQueries({ queryKey: ["court-availability", id] });
-    };
-    socket.on("court:availability-updated", refresh);
     socket.on("court:availability:updated", refresh);
     socket.on("booking:created", refresh);
     socket.on("booking:cancelled", refresh);
     socket.on("booking:confirmed", refresh);
     return () => {
       socket.emit("court:unsubscribe", id);
-      socket.off("court:availability-updated", refresh);
       socket.off("court:availability:updated", refresh);
       socket.off("booking:created", refresh);
       socket.off("booking:cancelled", refresh);
@@ -213,6 +209,7 @@ export function CourtDetailPage() {
           reviewCount={view.reviewCount}
           bookingCount={view.bookingCount}
           distance={distanceText}
+          actions={<ReportCourtButton courtId={view.id} />}
         />
 
         {court.data?.surfaces && court.data.surfaces.length > 0 && (
@@ -248,7 +245,10 @@ export function CourtDetailPage() {
                         Mã: {sf.code}
                       </span>
                       <h4 className="mt-1 font-black text-slate-900 text-sm">{sf.name}</h4>
-                      <p className="text-xs text-slate-500 font-semibold mt-1">{sf.surface || "Mặt sân tiêu chuẩn"} • {sf.capacity || "7 người"}</p>
+                      {/* Only what the partner actually entered; no made-up defaults. */}
+                      {[sf.surface, sf.size, sf.capacity].some(Boolean) && (
+                        <p className="text-xs text-slate-500 font-semibold mt-1">{[sf.surface, sf.size, sf.capacity].filter(Boolean).join(" • ")}</p>
+                      )}
                     </div>
                     <span className={`h-5 w-5 rounded-full border-2 flex items-center justify-center transition ${isSelected ? "border-[#02712a] bg-[#02712a]" : "border-slate-300"}`}>
                       {isSelected && <div className="h-2 w-2 rounded-full bg-white" />}

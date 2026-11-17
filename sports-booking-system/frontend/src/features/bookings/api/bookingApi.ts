@@ -199,6 +199,8 @@ export type AvailableService = {
   trackInventory?: boolean;
   stock?: number;
   inventoryQuantity?: number;
+  /** How many can still be ordered; null when the court does not count this item. */
+  inventory?: { quantity: number } | null;
 };
 
 export const voucherApi = {

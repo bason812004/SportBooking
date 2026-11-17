@@ -74,7 +74,7 @@ export function BookingCheckoutPage() {
       });
       fetchCheckout();
     } catch (err: any) {
-      alert(err.response?.data?.message || "Lỗi xử lý thanh toán");
+      alert(err.message || "Lỗi xử lý thanh toán");
     } finally {
       setProcessing(false);
     }

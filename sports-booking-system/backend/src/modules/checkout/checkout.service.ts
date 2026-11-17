@@ -53,9 +53,5 @@ export const checkoutService = {
     }
 
     return data;
-  },
-
-  async listCheckouts(partnerId: string) {
-    return checkoutRepository.listCheckouts(partnerId);
   }
 };

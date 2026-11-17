@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   Banknote,
   BarChart3,
@@ -27,7 +27,6 @@ import {
   Boxes,
   Truck,
   Receipt,
-  CreditCard,
   type LucideIcon
 } from "lucide-react";
 import { useAuth } from "../../features/auth/hooks/useAuth";
@@ -52,11 +51,11 @@ const menus = {
     { to: "/partner/services", label: "Dịch vụ & Món", icon: ShoppingBag, group: "Tồn kho & Dịch vụ" },
     { to: "/partner/inventory", label: "Tồn kho hàng hóa", icon: Boxes, group: "Tồn kho & Dịch vụ" },
     { to: "/partner/purchases", label: "Nhập hàng & NCC", icon: Truck, group: "Tồn kho & Dịch vụ" },
-    { to: "/partner/checkouts", label: "Lịch sử Checkout", icon: CreditCard, group: "Tài chính" },
     { to: "/partner/staff", label: "Nhân viên", icon: Users, group: "Vận hành" },
     { to: "/partner/dynamic-pricing", label: "Định giá động", icon: Percent, group: "Vận hành" },
     { to: "/partner/demand-prediction", label: "Dự đoán nhu cầu", icon: TrendingUp, group: "Vận hành" },
     { to: "/partner/vouchers", label: "Voucher", icon: Gift, group: "Nội dung" },
+    { to: "/partner/reviews", label: "Đánh giá", icon: Star, group: "Nội dung" },
     { to: "/partner/blogs", label: "Bài viết", icon: FileText, group: "Nội dung" },
     { to: "/partner/tournaments", label: "Giải đấu", icon: Trophy, group: "Nội dung" },
     { to: "/partner/statistics", label: "Doanh thu", icon: WalletCards, group: "Tài chính" },
@@ -83,7 +82,7 @@ const menus = {
     { to: "/admin/commission", label: "Hoa hồng", icon: WalletCards, group: "Tài chính" },
     { to: "/admin/settlements", label: "Quyết toán", icon: Landmark, group: "Tài chính" },
     { to: "/admin/withdrawals", label: "Rút tiền", icon: Banknote, group: "Tài chính" },
-    { to: "/admin/reports", label: "Báo cáo", icon: BarChart3, group: "Bảo mật" },
+    { to: "/admin/reports", label: "Báo cáo vi phạm", icon: BarChart3, group: "Bảo mật" },
     { to: "/admin/audit-logs", label: "Nhật ký kiểm toán", icon: CalendarDays, group: "Bảo mật" },
     { to: "/admin/blockchain-logs", label: "Nhật ký blockchain", icon: Link2, group: "Bảo mật" }
   ],
@@ -95,7 +94,6 @@ const menus = {
     { to: "/recipient/services", label: "Dịch vụ & Món", icon: ShoppingBag, group: "Tồn kho & Dịch vụ" },
     { to: "/recipient/inventory", label: "Tồn kho hàng hóa", icon: Boxes, group: "Tồn kho & Dịch vụ" },
     { to: "/recipient/purchases", label: "Nhập hàng & NCC", icon: Truck, group: "Tồn kho & Dịch vụ" },
-    { to: "/recipient/checkouts", label: "Lịch sử Checkout", icon: CreditCard, group: "Tài chính" },
     { to: "/recipient/report", label: "Báo cáo", icon: BarChart3, group: "Tài chính" }
   ]
 } satisfies Record<"PARTNER" | "ADMIN" | "RECIPIENT", MenuItem[]>;
@@ -114,6 +112,11 @@ export function DashboardLayout() {
   const portalSubtitle = isAdmin ? t("Cổng quản trị") : isRecipient ? t("Quản lý đặt sân") : t("Quản lý cơ sở");
   const profileName = isAdmin ? "Super Admin" : user?.fullName ?? (isRecipient ? t("Nhân viên") : t("Đối tác"));
   const profileRole = isAdmin ? t("Quản lý hệ thống") : isRecipient ? t("Nhân viên nhận sân") : t("Quản lý cơ sở");
+  // The menu entry the page belongs to (the longest matching path), named in the top bar.
+  const { pathname } = useLocation();
+  const current = items
+    .filter((item) => pathname === item.to || pathname.startsWith(`${item.to}/`))
+    .sort((a, b) => b.to.length - a.to.length)[0];
 
   return (
     <div className="min-h-screen bg-[#f7f8f8] text-[#111811]">
@@ -169,10 +172,15 @@ export function DashboardLayout() {
         </div>
       </aside>
       <main className="md:pl-20">
-        <div className="flex items-center justify-end px-5 py-3 md:px-16">
+        {/* One bar on every page, so the bell keeps its place whatever the page's header looks like. */}
+        <header className="sticky top-0 z-20 flex h-14 items-center justify-between gap-3 border-b border-[#e3ebe0] bg-[#f7f8f8]/90 px-4 backdrop-blur md:px-6">
+          <p className="min-w-0 truncate text-sm font-semibold text-slate-500">
+            {current?.group && <span>{t(current.group)} / </span>}
+            {current && <span className="text-ink">{t(current.label)}</span>}
+          </p>
           <NotificationBell />
-        </div>
-        <div className="px-5 pb-12 md:px-16">
+        </header>
+        <div className="px-4 pb-12 pt-5 md:px-6">
           <Outlet />
         </div>
       </main>

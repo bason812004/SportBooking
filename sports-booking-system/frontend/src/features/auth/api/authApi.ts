@@ -55,8 +55,12 @@ export const authApi = {
     void api.post<ApiResponse<{ message: string }>>("/auth/logout", { refreshToken });
     return { message: "Đăng xuất thành công" };
   },
+  /**
+   * Every other device is signed out; this one gets a fresh session in the answer, which the caller must keep
+   * (useAuth().setSession), or its next refresh fails.
+   */
   async changePassword(payload: { currentPassword: string; newPassword: string }) {
-    const { data } = await api.put<ApiResponse<{ message: string }>>("/auth/change-password", payload);
+    const { data } = await api.put<ApiResponse<{ message: string; user: User; accessToken: string; refreshToken: string }>>("/auth/change-password", payload);
     return data.data;
   }
 };

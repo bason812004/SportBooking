@@ -10,13 +10,17 @@ for (const [path, name] of [
   ["../commission/commission.service.js", "commissionService"],
   ["../realtime/realtime.service.js", "realtimeService"],
   ["../settlements/settlement.service.js", "settlementService"],
+  ["../booking-overdue/bookingOverdue.service.js", "bookingOverdueService"],
   ["../vouchers/voucher.service.js", "voucherService"],
   ["../users/user.repository.js", "userRepository"],
   ["../cashier/cashier.repository.js", "cashierRepository"]
 ]) {
   mock.module(path, { namedExports: { [name]: {} } });
 }
-mock.module("../auth/auth.security.js", { namedExports: { hashPassword: async () => "unused" } });
+mock.module("../auth/auth.security.js", { namedExports: { hashPassword: async () => "unused", comparePassword: async () => false } });
+mock.module("../auth/auth.repository.js", { namedExports: { authRepository: {} } });
+mock.module("../auth/auth.service.js", { namedExports: { authService: {} } });
+mock.module("../email/email.service.js", { namedExports: { emailService: {} } });
 mock.module("../../shared/services/cloudinary.service.js", {
   namedExports: { cloudinaryService: { deleteImage: async (id: string) => { calls.push(`cloud:${id}`); } } }
 });

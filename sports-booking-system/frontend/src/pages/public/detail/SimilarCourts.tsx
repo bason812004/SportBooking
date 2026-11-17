@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { ArrowRight, CalendarCheck, Clock3, MapPin, Star } from "lucide-react";
 import type { Court } from "../../../types/api";
-import { formatCurrency, timeText } from "../../../lib/format";
+import { courtArea, formatCurrency, timeText } from "../../../lib/format";
 import { DetailSection } from "./detailUtils";
 
 const FALLBACK_IMAGES = [
@@ -53,7 +53,7 @@ export function NearbyCourts({
 function CourtMini({ court, fallbackImage }: { court: Court; fallbackImage: string }) {
   const image = court.images?.[0]?.imageUrl || fallbackImage;
   const price = Number(court.minPrice ?? 0);
-  const address = [court.district, court.city].filter(Boolean).join(", ") || court.address || "Đang cập nhật địa chỉ";
+  const address = courtArea(court) || court.address || "Đang cập nhật địa chỉ";
   const opening = `${timeText(court.openingTime)} - ${timeText(court.closingTime)}`;
 
   return (

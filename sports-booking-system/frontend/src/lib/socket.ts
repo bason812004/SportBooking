@@ -3,21 +3,14 @@ import { io, type Socket } from "socket.io-client";
 let socket: Socket | null = null;
 let socketToken: string | null = null;
 
-export function getSocket(accessToken?: string | null) {
-  const token = accessToken ?? null;
-  if (socket && socketToken === token && socket.connected) return socket;
-  if (socket && socketToken === token) return socket;
-
+export function getSocket(accessToken: string) {
+  if (socket && socketToken === accessToken) return socket;
   socket?.disconnect();
-  socketToken = token;
+  socketToken = accessToken;
   socket = io((import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080/api").replace(/\/api\/?$/, ""), {
-    auth: token ? { token } : {},
+    auth: { token: accessToken },
     autoConnect: true,
-    transports: ["websocket", "polling"],
-    reconnection: true,
-    reconnectionDelay: 1000,
-    reconnectionDelayMax: 5000,
-    reconnectionAttempts: Infinity
+    transports: ["websocket"]
   });
   return socket;
 }
@@ -27,4 +20,3 @@ export function disconnectSocket() {
   socket = null;
   socketToken = null;
 }
-

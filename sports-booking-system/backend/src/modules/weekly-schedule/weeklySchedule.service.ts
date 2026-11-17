@@ -1,7 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { NotFoundError } from "../../shared/errors/AppError.js";
-import { calculateDynamicPrice } from "../../shared/utils/businessRules.js";
-import { dayTypeFor, timeToMinutes, vietnamNow } from "../../shared/utils/time.js";
+import { calculateDynamicPrice, PRICE_LIMIT_ADJUSTMENT } from "../../shared/utils/businessRules.js";
+import { coverWithPrices, priceBands, priceDayTypes } from "../../shared/utils/courtPricing.js";
+import { timeToMinutes, vietnamNow } from "../../shared/utils/time.js";
 import { prisma } from "../../config/db.js";
 import {
   WEEKLY_DEFAULT_CLOSE,
@@ -69,38 +70,16 @@ async function fetchPendingPayments(bookingIds: string[]): Promise<Map<string, {
   if (bookingIds.length === 0) return new Map();
   const rows = await prisma.payment.findMany({
     where: {
-      OR: [
-        { bookingId: { in: bookingIds } },
-        { bookingOrder: { bookings: { some: { id: { in: bookingIds } } } } }
-      ],
+      bookingId: { in: bookingIds },
       status: { in: ["PENDING", "UNPAID"] }
     },
-    select: {
-      bookingId: true,
-      expiresAt: true,
-      status: true,
-      bookingOrder: {
-        select: {
-          bookings: { select: { id: true } }
-        }
-      }
-    }
+    select: { bookingId: true, expiresAt: true, status: true }
   });
   const map = new Map<string, { expiresAt: Date | null; status: string }[]>();
   for (const row of rows) {
-    const paymentInfo = { expiresAt: row.expiresAt, status: row.status };
-    if (row.bookingId) {
-      const list = map.get(row.bookingId) ?? [];
-      list.push(paymentInfo);
-      map.set(row.bookingId, list);
-    }
-    if (row.bookingOrder?.bookings) {
-      for (const b of row.bookingOrder.bookings) {
-        const list = map.get(b.id) ?? [];
-        list.push(paymentInfo);
-        map.set(b.id, list);
-      }
-    }
+    const list = map.get(row.bookingId) ?? [];
+    list.push({ expiresAt: row.expiresAt, status: row.status });
+    map.set(row.bookingId, list);
   }
   return map;
 }
@@ -172,71 +151,65 @@ function overlaps(start: string, end: string, otherStart: string, otherEnd: stri
   return start < otherEnd && end > otherStart;
 }
 
+/**
+ * The hour's price by the same rule bookings are charged with (see coverWithPrices): the narrowest band covering
+ * each piece, holiday bands first on a holiday, then the dynamic rules. Null when part of the hour has no price:
+ * such an hour cannot be booked.
+ */
 function dynamicPriceForHour(
   bundle: WeekPricingBundle,
   date: string,
   startTime: string,
   endTime: string
 ) {
-  const dayType = dayTypeFor(date);
-  const basePrices = bundle?.basePrices ?? [];
-  const legacyPrices = bundle?.legacyPrices ?? [];
-  const rules = bundle?.rules ?? [];
+  const bands = priceBands([
+    ...(bundle?.basePrices ?? []).map((row) => ({ ...row, price: row.basePrice })),
+    ...(bundle?.legacyPrices ?? [])
+  ]);
+  const holidays = bundle?.holidays ?? [];
+  const { pieces, missing } = coverWithPrices(bands, date, timeToMinutes(startTime), timeToMinutes(endTime), holidays);
+  if (missing.length || !pieces.length) return null;
+  const dayTypes = priceDayTypes(date, holidays);
 
-  const basePriceRow =
-    basePrices.find(
-      (row) =>
-        row.dayType === dayType &&
-        timeToMinutes(row.startTime) <= timeToMinutes(startTime) &&
-        timeToMinutes(row.endTime) >= timeToMinutes(endTime)
-    ) ??
-    legacyPrices.find(
-      (row) =>
-        row.dayType === dayType &&
-        timeToMinutes(row.startTime) <= timeToMinutes(startTime) &&
-        timeToMinutes(row.endTime) >= timeToMinutes(endTime)
-    );
-
-  const basePrice = basePriceRow
-    ? "basePrice" in basePriceRow
-      ? basePriceRow.basePrice
-      : basePriceRow.price
-    : (bundle?.fallbackBasePrice ?? 0);
-  if (basePrice <= 0) {
-    return {
-      basePrice: 0,
-      finalPrice: 0,
-      adjustmentsAmount: 0,
-      adjustments: [] as Array<{ ruleName: string; type: "PERCENTAGE" | "FIXED_AMOUNT"; value: number; amount: number }>,
-      ruleNames: [] as string[]
-    };
+  let basePrice = 0;
+  let finalPrice = 0;
+  const adjustments: Array<{ ruleName: string; type: "PERCENTAGE" | "FIXED_AMOUNT"; value: number; amount: number }> = [];
+  for (const piece of pieces) {
+    const share = (piece.end - piece.start) / (timeToMinutes(endTime) - timeToMinutes(startTime));
+    const result = calculateDynamicPrice({
+      basePrice: piece.price,
+      rules: (bundle?.rules ?? [])
+        .filter((rule) => {
+          if (rule.dayType && !dayTypes.includes(rule.dayType)) return false;
+          if (rule.startTime && rule.endTime) {
+            return timeToMinutes(rule.startTime) <= piece.start && timeToMinutes(rule.endTime) >= piece.end;
+          }
+          return true;
+        })
+        .map((rule) => ({
+          ruleName: rule.name,
+          type: rule.priceAdjustmentType,
+          value: rule.priceAdjustmentValue,
+          minPrice: rule.minPrice,
+          maxPrice: rule.maxPrice
+        }))
+    });
+    basePrice += piece.price * share;
+    finalPrice += result.finalPrice * share;
+    for (const adjustment of result.adjustments) {
+      const same = adjustments.find((item) => item.ruleName === adjustment.ruleName);
+      if (same) same.amount += adjustment.amount * share;
+      else adjustments.push({ ...adjustment, amount: adjustment.amount * share });
+    }
   }
 
-  const applicableRules = rules.filter((rule) => {
-    if (rule.dayType && rule.dayType !== dayType) return false;
-    if (rule.startTime && rule.endTime) {
-      return timeToMinutes(rule.startTime) <= timeToMinutes(startTime) && timeToMinutes(rule.endTime) >= timeToMinutes(endTime);
-    }
-    return true;
-  });
-
-  const result = calculateDynamicPrice({
-    basePrice,
-    rules: applicableRules.map((rule) => ({
-      ruleName: rule.name,
-      type: rule.priceAdjustmentType,
-      value: rule.priceAdjustmentValue,
-      minPrice: rule.minPrice,
-      maxPrice: rule.maxPrice
-    }))
-  });
-
   return {
-    basePrice: result.basePrice,
-    finalPrice: result.finalPrice,
-    adjustmentsAmount: result.dynamicAdjustmentAmount,
-    adjustments: result.adjustments,
-    ruleNames: result.adjustments.map((a) => a.ruleName).filter(Boolean)
+    basePrice,
+    finalPrice,
+    adjustmentsAmount: finalPrice - basePrice,
+    adjustments,
+    // The limit line keeps the amounts adding up; it is not a rule the customer should see listed.
+    ruleNames: adjustments.map((a) => a.ruleName).filter((name) => name && name !== PRICE_LIMIT_ADJUSTMENT)
   };
 }
 
@@ -314,7 +287,8 @@ async function loadPricingBundle(
     fallbackBasePrice: Number(court.minPrice ?? 0),
     rules: [],
     basePrices: [],
-    legacyPrices: []
+    legacyPrices: [],
+    holidays: []
   } as WeekPricingBundle;
 }
 
@@ -378,7 +352,6 @@ export const weeklyScheduleService = {
 
     const court = await weeklyScheduleRepository.court(courtId);
     if (!court) throw new NotFoundError("Sân không tồn tại hoặc chưa được duyệt");
-    const canonicalCourtId = court.id;
     const sunday = addDays(monday, 6);
     const slotShape = weeklyScheduleRepository.buildSlots(court, monday, sunday);
 
@@ -391,11 +364,11 @@ export const weeklyScheduleService = {
     }
 
     const [blocks, bookings, bookingSlots, pricingBundle, demandBundle] = await Promise.all([
-      weeklyScheduleRepository.availabilityBlocks(canonicalCourtId, monday, sunday, surfaceId),
-      weeklyScheduleRepository.bookings(canonicalCourtId, monday, sunday, surfaceId),
-      weeklyScheduleRepository.bookingSlots(canonicalCourtId, monday, sunday, surfaceId),
-      loadPricingBundle(canonicalCourtId, court, monday, sunday, slotShape.openMins, slotShape.closeMins),
-      loadDemandBundle(canonicalCourtId, monday, sunday, slotShape.slots)
+      weeklyScheduleRepository.availabilityBlocks(courtId, monday, sunday, surfaceId),
+      weeklyScheduleRepository.bookings(courtId, monday, sunday, surfaceId),
+      weeklyScheduleRepository.bookingSlots(courtId, monday, sunday, surfaceId),
+      loadPricingBundle(courtId, court, monday, sunday, slotShape.openMins, slotShape.closeMins),
+      loadDemandBundle(courtId, monday, sunday, slotShape.slots)
     ]);
 
     // Batch-fetch payments for all pending bookings in ONE query.
@@ -485,9 +458,15 @@ export const weeklyScheduleService = {
     for (const slot of slotShape.slots) {
       if (slot.status !== "AVAILABLE") continue;
       const price = dynamicPriceForHour(pricingBundle, slot.date, slot.startTime, slot.endTime);
+      if (!price) {
+        // No price for this hour: it is not for sale (the booking quote would refuse it too).
+        slot.status = "BLOCKED";
+        slot.blockReason = "Chưa có bảng giá";
+        continue;
+      }
       const demand = predictHour(demandBundle, slot.date, slot.startTime, slot.endTime);
-      slot.basePrice = price.basePrice || slotShape.fallbackBasePrice;
-      slot.finalPrice = price.finalPrice || slotShape.fallbackBasePrice;
+      slot.basePrice = price.basePrice;
+      slot.finalPrice = price.finalPrice;
       slot.dynamicAdjustmentAmount = price.adjustmentsAmount;
       slot.adjustments = price.adjustments;
       slot.ruleNames = price.ruleNames;
@@ -538,9 +517,9 @@ export const weeklyScheduleService = {
       }))
       .sort((a, b) => (a.date === b.date ? a.startTime.localeCompare(b.startTime) : a.date.localeCompare(b.date)));
 
-    // Build flat dynamicPricing list (only slots that have adjustments > 0).
+    // Build flat dynamicPricing list (only slots a rule moves, up or down).
     const dynamicPricing: WeeklyDynamicPriceEntry[] = slotShape.slots
-      .filter((s) => s.dynamicAdjustmentAmount > 0)
+      .filter((s) => s.dynamicAdjustmentAmount !== 0)
       .map((s) => ({
         date: s.date,
         startTime: s.startTime,
@@ -575,8 +554,9 @@ export const weeklyScheduleService = {
       const rows = await voucherRepository.listActive();
       const candidateDays = days;
       for (const row of rows) {
-        // Court-restricted voucher not for this court -> skip.
-        if (row.courtId && row.courtId !== canonicalCourtId) continue;
+        // Court-restricted voucher not for this court -> skip; a partner's voucher only shows on that partner's courts.
+        if (row.courtId && row.courtId !== courtId) continue;
+        if (row.partner && row.partner.id !== court.partnerId) continue;
 
         let applicableSomewhere = false;
         let bestSlot: WeeklySlotRow | null = null;
@@ -587,7 +567,7 @@ export const weeklyScheduleService = {
               bookingDate: slot.date,
               startTime: slot.startTime,
               endTime: slot.endTime,
-              courtId: canonicalCourtId,
+              courtId,
               subtotal: slot.finalPrice
             });
             if (result.eligible) {
@@ -633,9 +613,6 @@ export const weeklyScheduleService = {
     };
 
     writeCache(key, response);
-    if (courtId !== canonicalCourtId) {
-      writeCache(cacheKey(canonicalCourtId, monday, surfaceId), response);
-    }
     return response;
   }
 };

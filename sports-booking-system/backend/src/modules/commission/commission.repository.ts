@@ -6,8 +6,8 @@ export const commissionRepository = {
     return db.systemSetting.findUnique({ where: { key } });
   },
 
-  upsertSetting(key: string, numericValue: number, description: string) {
-    return prisma.systemSetting.upsert({
+  upsertSetting(key: string, numericValue: number, description: string, db: DbClient | typeof prisma = prisma) {
+    return db.systemSetting.upsert({
       where: { key },
       create: { key, numericValue, description },
       update: { numericValue }
@@ -21,8 +21,35 @@ export const commissionRepository = {
     });
   },
 
-  setPartnerRate(id: string, commissionRate: number | null) {
-    return prisma.partnerProfile.update({
+  /** Who the default rate applies to, and the partners with a rate of their own. */
+  async rateCoverage() {
+    const [usingDefault, overrides] = await Promise.all([
+      prisma.partnerProfile.count({ where: { commissionRate: null } }),
+      prisma.partnerProfile.findMany({
+        where: { commissionRate: { not: null } },
+        select: { id: true, businessName: true, commissionRate: true },
+        orderBy: { businessName: "asc" }
+      })
+    ]);
+    return { usingDefault, overrides };
+  },
+
+  /** The latest changes to the default and partner rates, from the audit log. */
+  rateHistory(limit = 20) {
+    return prisma.$queryRaw<Array<{ id: string; action: string; entityId: string; metadata: any; createdAt: Date; actorName: string | null; businessName: string | null }>>`
+      select a.id, a.action, a.entity_id as "entityId", a.metadata, a.created_at as "createdAt",
+        u.full_name as "actorName", p.business_name as "businessName"
+      from audit_logs a
+      left join users u on u.id = a.actor_id
+      left join partner_profiles p on p.id = a.entity_id and a.action = 'PARTNER_COMMISSION_UPDATED'
+      where a.action in ('COMMISSION_DEFAULT_UPDATED', 'PARTNER_COMMISSION_UPDATED')
+      order by a.created_at desc
+      limit ${limit}
+    `;
+  },
+
+  setPartnerRate(id: string, commissionRate: number | null, db: DbClient | typeof prisma = prisma) {
+    return db.partnerProfile.update({
       where: { id },
       data: { commissionRate },
       include: { user: { select: { id: true, fullName: true, email: true } } }
@@ -52,8 +79,33 @@ export const commissionRepository = {
     });
   },
 
-  updateEarning(id: string, grossAmount: number, commissionAmount: number, db: DbClient) {
-    return db.commissionTransaction.update({ where: { id }, data: { grossAmount, commissionAmount, netAmount: grossAmount - commissionAmount } });
+  /** What the booking's earning adds up to so far: the earning itself plus every adjustment raising it. */
+  async recordedEarningGross(bookingId: string, db: DbClient) {
+    const rows = await db.commissionTransaction.findMany({
+      where: { bookingId, transactionType: { in: ["EARNING", "ADJUSTMENT"] } },
+      select: { grossAmount: true }
+    });
+    return rows.reduce((sum, row) => sum + Number(row.grossAmount), 0);
+  },
+
+  /**
+   * The ledger is immutable (database trigger), so an earning that grows is raised by a new ADJUSTMENT row pointing
+   * at it (database/28_booking_auto_finish.sql), never by updating it.
+   */
+  createAdjustment(
+    data: {
+      bookingId: string;
+      partnerId: string;
+      eventType: "COMPLETED" | "NO_SHOW";
+      grossAmount: number;
+      commissionRate: number;
+      commissionAmount: number;
+      netAmount: number;
+      originalTransactionId: string;
+    },
+    db: DbClient
+  ) {
+    return db.commissionTransaction.create({ data: { ...data, transactionType: "ADJUSTMENT" } });
   },
 
   async reportAggregate(from: Date, to: Date) {
@@ -80,22 +132,5 @@ export const commissionRepository = {
     const partnerNames = new Map(partners.map((partner) => [partner.id, partner.businessName]));
 
     return { totals, perPartner, partnerNames };
-  },
-
-  partnerReport(partnerId: string, from: Date, to: Date) {
-    return prisma.commissionTransaction.findMany({
-      where: { partnerId, createdAt: { gte: from, lt: to } },
-      include: {
-        booking: {
-          select: {
-            id: true,
-            bookingCode: true,
-            bookingDate: true,
-            court: { select: { id: true, name: true } }
-          }
-        }
-      },
-      orderBy: { createdAt: "desc" }
-    });
   }
 };

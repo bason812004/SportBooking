@@ -1,5 +1,4 @@
-import { useState, type ReactNode } from "react";
-import { ImageOff } from "lucide-react";
+import type { ReactNode } from "react";
 
 type ServiceImageProps = {
   src?: string | null;
@@ -19,28 +18,14 @@ type ServiceImageProps = {
  * is a one-line change rather than seven.
  */
 export function ServiceImage({ src, alt, className = "", fallback = null }: ServiceImageProps) {
-  const [hasError, setHasError] = useState(false);
-
-  if (!src || hasError) {
-    if (fallback) return <>{fallback}</>;
-    return (
-      <div className={`border border-slate-200 bg-slate-50 flex items-center justify-center ${className}`}>
-        <div className="flex flex-col items-center gap-1 text-slate-300">
-          <ImageOff className="h-8 w-8" />
-          <span className="text-[10px] font-semibold text-slate-400 text-center line-clamp-1 px-2">{alt}</span>
-        </div>
-      </div>
-    );
-  }
+  if (!src) return <>{fallback}</>;
 
   return (
     <img
       src={src}
       alt={alt}
       loading="lazy"
-      onError={() => setHasError(true)}
       className={`border border-slate-200 bg-slate-50 object-contain p-1 ${className}`}
     />
   );
 }
-

@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { CalendarDays, MapPin } from "lucide-react";
 import { useTournaments } from "../../../features/content/hooks/useContent";
 import { Reveal, SectionShell } from "./homeUtils";
+import { courtArea } from "../../../lib/format";
 
 const dateFormat = new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
 
@@ -50,7 +51,7 @@ export function TournamentSection() {
                   <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-black text-blue-800">{item.sportType}</span>
                   <h3 className="mt-4 text-2xl font-black">{item.title}</h3>
                   <p className="mt-4 flex items-center gap-2 text-sm text-slate-500"><CalendarDays className="h-4 w-4" /> {dateFormat.format(new Date(item.startDate))}</p>
-                  <p className="mt-2 flex items-center gap-2 text-sm text-slate-500"><MapPin className="h-4 w-4" /> {item.court.district}, {item.court.city}</p>
+                  <p className="mt-2 flex items-center gap-2 text-sm text-slate-500"><MapPin className="h-4 w-4" /> {courtArea(item.court)}</p>
                   <div className="mt-6 flex gap-3">
                     <Link className="rounded-xl bg-[#0f766e] px-4 py-3 text-sm font-black text-white" to={`/tournaments/${item.slug}`}>Đăng ký</Link>
                     <Link className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-black" to={`/tournaments/${item.slug}`}>Xem chi tiết</Link>

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { motion } from "framer-motion";
 import { useCourts } from "../../../features/courts/hooks/useCourts";
 import { Reveal, SectionShell } from "./homeUtils";
+import { courtArea } from "../../../lib/format";
 
 export function LiveBookingFeedSection() {
   const courts = useCourts({ limit: 5, sortBy: "createdAt", sortOrder: "desc" });
@@ -9,7 +10,7 @@ export function LiveBookingFeedSection() {
     return (courts.data?.items ?? []).map((court) => {
       const actions = [
         `Sân "${court.name}" vừa có lượt đặt mới`,
-        `${court.name} — ${court.district}, ${court.city} đang được xem`,
+        `${court.name} — ${courtArea(court)} đang được xem`,
         `Đặt sân ${court.name} vừa được xác nhận`,
         `${court.name} vừa cập nhật lịch trống mới`,
         `${court.partner?.businessName ?? "Một chủ sân"} vừa nhận booking`

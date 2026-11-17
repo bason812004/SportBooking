@@ -1,9 +1,9 @@
-import { BookingStatus, CourtActiveStatus, PaymentMethod } from "@prisma/client";
+import { BookingStatus, CourtActiveStatus, PaymentMethod, Prisma, type Booking } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 import { env } from "../../config/env.js";
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
-import { normalizeBookingServices } from "../../shared/utils/bookingServices.js";
+import { bookingBillInclude, bookingBillSelect, normalizeBookingServices } from "../../shared/utils/bookingServices.js";
 import {
   bookingStartsAt,
   ceilToFullHour,
@@ -14,32 +14,50 @@ import {
   parsePage,
   timeToDate,
   timeToMinutes,
-  toDbDate
+  toDbDate,
+  vietnamNow
 } from "../../shared/utils/time.js";
 import { bookingRepository } from "../bookings/booking.repository.js";
-import { calculateMinimumDeposit } from "../bookings/booking.calculations.js";
-import { commissionService } from "../commission/commission.service.js";
+import {
+  COURT_BOOKING_TRANSITIONS,
+  calculateMinimumDeposit,
+  counterCollectedAmount,
+  courtCancellationPayment,
+  refundRequiredAdminEvent
+} from "../bookings/booking.calculations.js";
+import { assertNothingOwed } from "../checkout/checkout.balance.js";
+import { sortGroupKeysByBillTotal, withBookingBill } from "../checkout/checkout.calculations.js";
+import { enqueueAdminEvent } from "../notifications/notificationOutbox.repository.js";
 import { dynamicPricingService } from "../dynamic-pricing/dynamicPricing.service.js";
+import { partnerRepository } from "../partner/partner.repository.js";
+import { reportRepository } from "../business-report/report.repository.js";
+import { syncPaymentWithProvider } from "../payments/payment.poller.js";
+import { paymentRepository } from "../payments/payment.repository.js";
+import { paymentService } from "../payments/payment.service.js";
 import { paymentProvider } from "../payments/providers/index.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { settlementService } from "../settlements/settlement.service.js";
 import { cashierRepository } from "../cashier/cashier.repository.js";
-import { invalidateWeeklyScheduleCache } from "../weekly-schedule/weeklySchedule.service.js";
-
-function dbTime(value: Date) {
-  return value.toISOString().slice(11, 16);
-}
-
-function addMinutes(value: Date, minutes: number) {
-  return timeToDate(minutesToTime(timeToMinutes(dbTime(value)) + minutes));
-}
-
-function minutesToTime(total: number) {
-  const hours = Math.floor(total / 60);
-  const minutes = total % 60;
-  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
-}
+import { voucherRepository } from "../vouchers/voucher.repository.js";
+import { bookingOverdueService } from "../booking-overdue/bookingOverdue.service.js";
+import { canCorrectAutoNoShow } from "../booking-overdue/bookingOverdue.calculations.js";
+import { earlyCheckInWindow } from "./recipient.calculations.js";
+import {
+  activeOperationStatuses,
+  appendNote,
+  checkInBooking,
+  courtTimeChargePolicy,
+  dbTime,
+  extraTimeCharge,
+  minutesToTime,
+  noteAmount,
+  slotTakenBy,
+  surfaceHours,
+  walkInCourtPrice
+} from "./recipient.counter.js";
+import { coverWithPrices, piecesTotal, priceBands } from "../../shared/utils/courtPricing.js";
+import { notifyBookingDecision, notifyCourtChange } from "../bookings/bookingNotices.js";
 
 function addWeeks(date: string, weeks: number) {
   const base = new Date(`${date}T00:00:00.000Z`);
@@ -51,10 +69,6 @@ function bookingCode() {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
   return `WI${stamp}${Math.floor(Math.random() * 900 + 100)}`;
 }
-
-// One-time legacy data fixup (assigns any orphan bookings to a default court/surface) — only
-// needs to run once per server process, not on every single call to `bookings()`.
-let orphanBookingsAssigned = false;
 
 function paymentReference() {
   const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
@@ -84,48 +98,340 @@ async function nextPrefixedId(prefix: string, sequenceName: string) {
   return rows[0].id;
 }
 
-function overlapWhere(startTime: Date, endTime: Date) {
-  return {
-    startTime: { lt: endTime },
-    endTime: { gt: startTime }
-  };
-}
-
 function overlapsSlot(slot: { startTime: string; endTime: string }, item: { startTime: Date; endTime: Date }) {
   return timeToMinutes(slot.startTime) < timeToMinutes(dbTime(item.endTime)) && timeToMinutes(slot.endTime) > timeToMinutes(dbTime(item.startTime));
 }
 
+/** The hour's table price when dynamic pricing is unavailable (see coverWithPrices); null without one. */
 function slotPrice(slot: { startTime: string; endTime: string }, date: string, prices: Array<{ dayType: string; startTime: Date; endTime: Date; price: unknown }>) {
-  const dayType = dayTypeFor(date);
-  const matched = prices.find(
-    (price) =>
-      price.dayType === dayType &&
-      timeToMinutes(slot.startTime) >= timeToMinutes(dbTime(price.startTime)) &&
-      timeToMinutes(slot.endTime) <= timeToMinutes(dbTime(price.endTime))
-  );
-  if (matched) return Number(matched.price);
-  return prices.length ? Math.min(...prices.map((price) => Number(price.price))) : 0;
+  const { pieces, missing } = coverWithPrices(priceBands(prices), date, timeToMinutes(slot.startTime), timeToMinutes(slot.endTime));
+  return missing.length ? null : piecesTotal(pieces);
 }
 
-const activeOperationStatuses: BookingStatus[] = [BookingStatus.PENDING, BookingStatus.PENDING_PAYMENT, BookingStatus.CONFIRMED, BookingStatus.DEPOSIT_PAID, BookingStatus.IN_PROGRESS, BookingStatus.CHECKOUT_PENDING, BookingStatus.COMPLETED];
+/** Bookings the counter screen shows as on court or coming; a finished one still holds its time (activeOperationStatuses). */
+const openOperationStatuses: BookingStatus[] = activeOperationStatuses.filter((status) => status !== BookingStatus.COMPLETED);
 const extendableBookingStatuses: BookingStatus[] = [BookingStatus.PENDING, BookingStatus.PENDING_PAYMENT, BookingStatus.CONFIRMED, BookingStatus.DEPOSIT_PAID, BookingStatus.IN_PROGRESS, BookingStatus.CHECKOUT_PENDING];
 
-async function extensionConflictFor(
-  courtId: string,
-  booking: { id: string; endTime: Date; bookingDate: Date },
-  courtSurfaceId: string | null,
-  newEndTime: Date
-) {
-  return prisma.booking.findFirst({
-    where: {
-      id: { not: booking.id },
-      courtId,
-      OR: courtSurfaceId ? [{ courtSurfaceId }, { courtSurfaceId: null }] : undefined,
-      bookingDate: booking.bookingDate,
-      bookingStatus: { in: activeOperationStatuses },
-      ...overlapWhere(booking.endTime, newEndTime)
-    }
+/** Finishing by hand (Check-out) is only for a booking that is confirmed or already playing. */
+const checkOutBookingStatuses: BookingStatus[] = [BookingStatus.CONFIRMED, BookingStatus.DEPOSIT_PAID, BookingStatus.IN_PROGRESS, BookingStatus.CHECKOUT_PENDING];
+
+/**
+ * Where an extension has to be free. On the same sub-court only the added minutes; moving the guest to another one
+ * means they play there from now on (or from the start, if not begun), so it must be free from then to the new end.
+ */
+function extensionWindow(booking: { bookingDate: Date; startTime: Date; endTime: Date }, newEndTime: Date, moving: boolean) {
+  if (!moving) return { startTime: booking.endTime, endTime: newEndTime };
+  const now = vietnamNow();
+  const start = timeToMinutes(dbTime(booking.startTime));
+  const end = timeToMinutes(dbTime(booking.endTime));
+  const from = booking.bookingDate.toISOString().slice(0, 10) === now.date ? Math.min(Math.max(timeToMinutes(now.time), start), end) : start;
+  return { startTime: timeToDate(minutesToTime(from)), endTime: newEndTime };
+}
+
+/** The end an extension reaches, and whether it is still within the sub-court's opening hours. */
+async function extendedEnd(courtId: string, courtSurfaceId: string | null, booking: { endTime: Date }, minutes: number) {
+  const { closing } = await surfaceHours(courtId, courtSurfaceId);
+  const end = timeToMinutes(dbTime(booking.endTime)) + minutes;
+  return { end, closing, fits: end <= timeToMinutes(closing) };
+}
+
+type WalkInSlot = { courtSurfaceId: string; bookingDate: string; startTime: Date; endTime: Date };
+type WalkInSlotProblem = "BOOKED" | "BLOCKED" | "DUPLICATE";
+
+const walkInSkipReasons: Record<WalkInSlotProblem, string> = {
+  BOOKED: "Khung giờ này đã có khách khác",
+  BLOCKED: "Sân đang trong lịch nghỉ/bảo trì",
+  DUPLICATE: "Trùng với buổi khác trong cùng yêu cầu"
+};
+
+/**
+ * Index -> problem for walk-in slots that hit an active booking, an availability block, or an
+ * earlier slot of the same request. Two queries in total, however many slots are passed.
+ */
+async function walkInSlotProblems(client: Prisma.TransactionClient, courtId: string, slots: WalkInSlot[]) {
+  const problems = new Map<number, WalkInSlotProblem>();
+  if (!slots.length) return problems;
+  const bookingDates = [...new Set(slots.map((slot) => slot.bookingDate))].map((date) => toDbDate(date));
+  const surfaceFilter = [{ courtSurfaceId: { in: [...new Set(slots.map((slot) => slot.courtSurfaceId))] } }, { courtSurfaceId: null }];
+  const [bookings, blocks] = await Promise.all([
+    client.booking.findMany({
+      where: { courtId, bookingDate: { in: bookingDates }, bookingStatus: { in: activeOperationStatuses }, OR: surfaceFilter },
+      select: { courtSurfaceId: true, bookingDate: true, startTime: true, endTime: true }
+    }),
+    client.courtAvailabilityBlock.findMany({
+      where: { courtId, status: "ACTIVE", blockDate: { in: bookingDates }, OR: surfaceFilter },
+      select: { courtSurfaceId: true, blockDate: true, startTime: true, endTime: true }
+    })
+  ]);
+  const taken = [
+    ...bookings.map((item) => ({ ...item, bookingDate: item.bookingDate.toISOString().slice(0, 10), problem: "BOOKED" as const })),
+    ...blocks.map((item) => ({ ...item, bookingDate: item.blockDate.toISOString().slice(0, 10), problem: "BLOCKED" as const }))
+  ];
+  const overlaps = (slot: WalkInSlot, other: { courtSurfaceId: string | null; bookingDate: string; startTime: Date; endTime: Date }) =>
+    (other.courtSurfaceId === null || other.courtSurfaceId === slot.courtSurfaceId) &&
+    other.bookingDate === slot.bookingDate &&
+    slot.startTime < other.endTime &&
+    slot.endTime > other.startTime;
+
+  slots.forEach((slot, index) => {
+    const hit = taken.find((item) => overlaps(slot, item));
+    if (hit) problems.set(index, hit.problem);
+    else if (slots.slice(0, index).some((earlier, earlierIndex) => !problems.has(earlierIndex) && overlaps(slot, earlier))) problems.set(index, "DUPLICATE");
   });
+  return problems;
+}
+
+function assertNoWalkInSlotProblems(problems: Map<number, WalkInSlotProblem>, slots: WalkInSlot[]) {
+  for (const [index, problem] of problems) {
+    const date = slots[index].bookingDate;
+    if (problem === "BLOCKED") throw new ConflictError(`Sân đang trong lịch nghỉ/bảo trì ngày ${date}`, "WALK_IN_BOOKING_BLOCKED");
+    throw new ConflictError(
+      problem === "DUPLICATE" ? `Các khung giờ đã chọn ngày ${date} bị trùng nhau` : `Khung giờ ngày ${date} đã có khách khác`,
+      "WALK_IN_BOOKING_CONFLICT"
+    );
+  }
+}
+
+/** Postgres aborts one of two Serializable transactions that booked the same slot at once (P2034). */
+function walkInSerializationConflict(error: unknown): never {
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+    throw new ConflictError("Khung giờ vừa được đặt ở nơi khác, vui lòng tải lại lịch và thử lại", "WALK_IN_BOOKING_CONFLICT");
+  }
+  throw error;
+}
+
+/**
+ * Walk-in slots must fit their sub-court's opening hours (its own, or the court's: the hours the staff grid shows)
+ * and must not be over already.
+ */
+async function assertWalkInSlotsBookable(courtId: string, slots: Array<{ courtSurfaceId: string; bookingDate: string; startTime: string; minutes: number }>) {
+  const hoursBySurface = new Map<string, { opening: string; closing: string }>();
+  for (const surfaceId of new Set(slots.map((slot) => slot.courtSurfaceId))) hoursBySurface.set(surfaceId, await surfaceHours(courtId, surfaceId));
+  const now = vietnamNow();
+  for (const slot of slots) {
+    const { opening, closing } = hoursBySurface.get(slot.courtSurfaceId)!;
+    const start = timeToMinutes(slot.startTime);
+    const end = start + slot.minutes;
+    const label = `${slot.startTime}-${minutesToTime(end)}`;
+    if (start < timeToMinutes(opening) || end > timeToMinutes(closing)) {
+      throw new ValidationError(`Khung giờ ${label} nằm ngoài giờ mở cửa ${opening}-${closing}`);
+    }
+    if (slot.bookingDate < now.date || (slot.bookingDate === now.date && end <= timeToMinutes(now.time))) {
+      throw new ValidationError(`Khung giờ ${label} ngày ${slot.bookingDate} đã qua`);
+    }
+  }
+}
+
+/**
+ * Customer account for a walk-in booking, found by the (already normalized) phone. Only USER accounts
+ * count, so a staff, partner or admin sharing the number is never booked as the customer; otherwise a
+ * walk-in account is created. `matchedExisting` lets the counter say which account the booking went to.
+ */
+async function resolveWalkInCustomer(client: Prisma.TransactionClient, customerName: string, customerPhone: string) {
+  const existing = await client.user.findFirst({ where: { phone: customerPhone, role: "USER" }, orderBy: { createdAt: "asc" } });
+  const customer =
+    existing ??
+    (await client.user.create({
+      data: {
+        id: await nextPrefixedId("u", "seq_users"),
+        fullName: customerName,
+        email: `walkin-${customerPhone.replace(/\D/g, "") || Date.now()}-${Date.now()}@walkin.sportsbooking.local`,
+        phone: customerPhone,
+        emailVerified: false
+      }
+    }));
+  return { customer, summary: { id: customer.id, fullName: customer.fullName, phone: customer.phone, matchedExisting: Boolean(existing) } };
+}
+
+const SERIALIZABLE = { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 } as const;
+
+type WalkInSession = { courtSurfaceId: string; bookingDate: string; startTime: string; minutes: number };
+type WalkInPayment = {
+  paymentMethod: typeof PaymentMethod.CASH | typeof PaymentMethod.BANK_TRANSFER;
+  paymentType?: "FULL_PAYMENT" | "DEPOSIT" | "PAY_AT_COURT";
+  services?: Array<{ serviceId: string; quantity: number }>;
+};
+type WalkInRequest = WalkInPayment & {
+  customerName: string;
+  customerPhone: string;
+  note?: string;
+  /** Cash only: what staff confirmed taking from the customer; it must be what the booking records as paid. */
+  cashReceived?: number;
+};
+
+/**
+ * Prices a walk-in request without writing anything. Each session gets its court price (hour by hour, as online)
+ * and what is collected now: the court charge, the court deposit, or nothing when paying at the court; services are
+ * always paid later at checkout. A single booking or an order is booked whole or not at all; a weekly series
+ * (`occurrences`) skips the weeks already taken. The quote shown to staff and the creation both use it, so the cash
+ * staff confirm is exactly what the booking records as paid.
+ */
+async function planWalkIn(courtId: string, request: WalkInPayment & { slots: WalkInSession[]; occurrences?: number }) {
+  const surfaceIds = [...new Set(request.slots.map((slot) => slot.courtSurfaceId))];
+  const surfaces = await prisma.courtSurface.findMany({ where: { id: { in: surfaceIds }, courtId, status: CourtActiveStatus.ACTIVE } });
+  if (surfaces.length !== surfaceIds.length) throw new NotFoundError("Sân con không tồn tại hoặc đang tạm ngưng");
+  // Later weekly occurrences share the template's time of day, so checking the first date covers them.
+  await assertWalkInSlotsBookable(courtId, request.slots);
+
+  const payLater = request.paymentType === "PAY_AT_COURT";
+  const paymentMethod = payLater ? PaymentMethod.CASH : request.paymentMethod;
+  const wantsDeposit = request.paymentType === "DEPOSIT";
+  const depositPercent = wantsDeposit ? await bookingRepository.courtDepositPercent(courtId) : 0;
+  if (wantsDeposit && depositPercent <= 0) throw new ValidationError("Sân này không hỗ trợ đặt cọc");
+
+  const serviceIds = (request.services ?? []).map((line) => line.serviceId);
+  const availableServices = serviceIds.length ? await bookingRepository.services(serviceIds, courtId) : [];
+  if (availableServices.length !== serviceIds.length) throw new ValidationError("Dịch vụ không hợp lệ");
+  const serviceLines = (request.services ?? []).map((line) => {
+    const service = availableServices.find((item) => item.id === line.serviceId)!;
+    return { serviceId: line.serviceId, quantity: line.quantity, price: Number(service.price) };
+  });
+  const servicesSubtotal = serviceLines.reduce((sum, line) => sum + line.price * line.quantity, 0);
+
+  const weeks = request.occurrences ?? 1;
+  const candidates = request.slots.flatMap((slot, templateIndex) =>
+    Array.from({ length: weeks }, (_, week) => ({
+      templateIndex,
+      courtSurfaceId: slot.courtSurfaceId,
+      bookingDate: addWeeks(slot.bookingDate, week),
+      startText: slot.startTime,
+      minutes: slot.minutes,
+      startTime: timeToDate(slot.startTime),
+      endTime: timeToDate(minutesToTime(timeToMinutes(slot.startTime) + slot.minutes))
+    }))
+  );
+  // Every occurrence of every template is checked in 2 queries, including templates that land on each other.
+  const problems = await walkInSlotProblems(prisma, courtId, candidates);
+  if (!request.occurrences) assertNoWalkInSlotProblems(problems, candidates);
+
+  // Fetched once for every session: no court/rules query per slot.
+  const pricing = await dynamicPricingService.prefetch(courtId);
+  const skipped: Array<{ courtSurfaceId: string; date: string; reason: string }> = [];
+  const entries = candidates.flatMap((candidate, index) => {
+    const problem = problems.get(index);
+    if (problem) {
+      skipped.push({ courtSurfaceId: candidate.courtSurfaceId, date: candidate.bookingDate, reason: walkInSkipReasons[problem] });
+      return [];
+    }
+    const price = walkInCourtPrice(pricing, candidate.bookingDate, candidate.startText, candidate.minutes);
+    const chargeAmount = payLater ? 0 : wantsDeposit ? calculateMinimumDeposit(price.courtSubtotal, depositPercent) : price.courtSubtotal;
+    return [{ ...candidate, ...price, chargeAmount }];
+  });
+  return {
+    payLater,
+    paymentMethod,
+    wantsDeposit,
+    depositPercent,
+    isCash: !payLater && paymentMethod === PaymentMethod.CASH,
+    needsQr: !payLater && paymentMethod === PaymentMethod.BANK_TRANSFER,
+    serviceLines,
+    servicesSubtotal,
+    entries,
+    skipped,
+    courtTotal: entries.reduce((sum, entry) => sum + entry.courtSubtotal, 0),
+    collectNow: entries.reduce((sum, entry) => sum + entry.chargeAmount, 0)
+  };
+}
+
+type WalkInPlan = Awaited<ReturnType<typeof planWalkIn>>;
+
+/** Cash is recorded as paid when the booking is made, so staff must have confirmed taking exactly that amount. */
+function assertCashTaken(plan: WalkInPlan, cashReceived: number | undefined) {
+  if (!plan.isCash) return;
+  if (cashReceived === undefined) throw new ValidationError("Hãy xác nhận số tiền mặt đã nhận của khách trước khi tạo đơn");
+  if (cashReceived !== plan.collectNow) {
+    throw new ConflictError(
+      `Số tiền mặt cần thu là ${noteAmount(plan.collectNow)}, không phải ${noteAmount(cashReceived)}. Hãy xem lại rồi xác nhận lại.`,
+      "WALK_IN_CASH_MISMATCH"
+    );
+  }
+}
+
+/** One QR from the platform's provider for what is collected now. */
+async function createWalkInQr(amount: number, description: string) {
+  const expiresAt = new Date(Date.now() + env.BOOKING_HOLD_EXPIRES_MINUTES * 60 * 1000);
+  const reference = paymentReference();
+  const orderId =
+    env.PAYMENT_PROVIDER === "PAYOS"
+      ? String(Number(String(Date.now()).slice(-9) + String(Math.floor(Math.random() * 1000)).padStart(3, "0")))
+      : `${reference}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  const providerResult = await paymentProvider.createQrPayment({ amount, currency: "VND", orderId, paymentReference: reference, description, expiresAt });
+  return { reference, expiresAt, providerResult };
+}
+
+function walkInPaymentData(
+  qr: Awaited<ReturnType<typeof createWalkInQr>>,
+  input: { bookingId: string; bookingOrderId?: string; userId: string; amount: number; deposit: boolean }
+) {
+  return {
+    bookingId: input.bookingId,
+    bookingOrderId: input.bookingOrderId,
+    userId: input.userId,
+    provider: qr.providerResult.provider,
+    paymentMethod: PaymentMethod.QR_TRANSFER,
+    paymentType: input.deposit ? ("DEPOSIT" as const) : ("FULL_PAYMENT" as const),
+    amount: input.amount,
+    currency: "VND",
+    status: "PENDING" as const,
+    externalOrderId: qr.providerResult.externalOrderId,
+    qrCodeUrl: qr.providerResult.qrCodeUrl ?? undefined,
+    qrPayload: qr.providerResult.qrPayload ?? undefined,
+    paymentReference: qr.reference,
+    expiresAt: qr.expiresAt
+  };
+}
+
+/** Creates the bookings (and their slots) of a walk-in; the selected services go on the first one only. */
+async function createWalkInRows(
+  tx: Prisma.TransactionClient,
+  courtId: string,
+  plan: WalkInPlan,
+  entries: WalkInPlan["entries"],
+  options: { customerId: string; bookingIds: string[]; bookingOrderId?: string; seriesIds?: string[]; note?: string }
+) {
+  const rows: Booking[] = [];
+  for (const [index, entry] of entries.entries()) {
+    // Services stay on the open tab: they add to the first booking's total, never to what is collected now.
+    const subtotal = entry.courtSubtotal + (index === 0 ? plan.servicesSubtotal : 0);
+    const booking = await tx.booking.create({
+      data: {
+        id: options.bookingIds[index],
+        bookingCode: bookingCode(),
+        userId: options.customerId,
+        courtId,
+        courtSurfaceId: entry.courtSurfaceId,
+        bookingOrderId: options.bookingOrderId,
+        bookingSeriesId: options.seriesIds?.[entry.templateIndex],
+        bookingDate: toDbDate(entry.bookingDate),
+        startTime: entry.startTime,
+        endTime: entry.endTime,
+        basePrice: entry.basePrice,
+        dynamicAdjustmentAmount: entry.dynamicAdjustmentAmount,
+        subtotal,
+        totalPrice: subtotal,
+        depositAmount: entry.chargeAmount,
+        paymentMethod: plan.paymentMethod,
+        paymentStatus: plan.isCash ? "PAID" : "UNPAID",
+        bookingStatus: plan.isCash && plan.wantsDeposit ? BookingStatus.DEPOSIT_PAID : BookingStatus.CONFIRMED,
+        note: options.note
+      }
+    });
+    await tx.bookingSlot.create({
+      data: {
+        bookingId: booking.id,
+        courtId,
+        // Without it the slot reads as "whole court" and blocks every surface for online customers.
+        court_surface_id: entry.courtSurfaceId,
+        bookingDate: toDbDate(entry.bookingDate),
+        startTime: entry.startTime,
+        endTime: entry.endTime,
+        slotPrice: entry.courtSubtotal
+      }
+    });
+    rows.push(booking);
+  }
+  if (plan.serviceLines.length && rows.length) await bookingRepository.attachServicesToBooking(tx, rows[0].id, plan.serviceLines);
+  return rows;
 }
 
 export async function getManagedCourtId(userId: string) {
@@ -143,15 +449,17 @@ export async function getManagedCourtId(userId: string) {
 }
 
 export const recipientService = {
+  /**
+   * Today's bookings by the Vietnam date (whatever timezone the server runs in), and this month's revenue from the same
+   * settlement ledger as the report, so the two always agree.
+   */
   async dashboard(userId: string) {
     const courtId = await getManagedCourtId(userId);
+    const today = vietnamNow().date;
+    const [year, month] = today.split("-").map(Number);
+    const monthEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
 
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59, 999);
-
-    const [court, bookingsToday, pendingBookings, revenue, recentBookings] = await Promise.all([
+    const [court, bookingsToday, pendingBookings, monthRevenue, recentBookings] = await Promise.all([
       prisma.court.findUnique({
         where: { id: courtId },
         select: { name: true }
@@ -159,10 +467,7 @@ export const recipientService = {
       prisma.booking.count({
         where: {
           courtId,
-          bookingDate: {
-            gte: startOfDay,
-            lte: endOfDay
-          }
+          bookingDate: toDbDate(today)
         }
       }),
       prisma.booking.count({
@@ -171,16 +476,7 @@ export const recipientService = {
           bookingStatus: "PENDING"
         }
       }),
-      prisma.booking.aggregate({
-        where: {
-          courtId,
-          bookingStatus: "COMPLETED",
-          paymentStatus: "PAID"
-        },
-        _sum: {
-          totalPrice: true
-        }
-      }),
+      reportRepository.revenueRows({ courtId }, toDbDate(`${today.slice(0, 7)}-01`), toDbDate(monthEnd)),
       prisma.booking.findMany({
         where: { courtId },
         orderBy: { createdAt: "desc" },
@@ -206,9 +502,14 @@ export const recipientService = {
       courtName: court?.name || "Sân chưa đặt tên",
       bookingsToday,
       pendingBookings,
-      revenue: Number(revenue._sum.totalPrice ?? 0),
+      revenue: monthRevenue.reduce((sum, row) => sum + row.grossAmount, 0),
       recentBookings
     };
+  },
+
+  /** Bookings of the staff member's court that are over but still open, with when the system finishes each. */
+  async overdueBookings(userId: string) {
+    return bookingOverdueService.openOverdue({ courtId: await getManagedCourtId(userId) });
   },
 
   async bookings(
@@ -239,45 +540,6 @@ export const recipientService = {
       };
     }
 
-    // Auto assign unassigned bookings to Sân Sala 1 - Sân 01 (one-time legacy fixup — only
-    // run once per server process instead of on every call, which was adding 2-4 extra
-    // round-trips plus a full-table UPDATE scan to every single page load of this list).
-    if (!orphanBookingsAssigned) {
-      orphanBookingsAssigned = true;
-      try {
-        const salaCourt = (await prisma.court.findFirst({
-          where: { name: { contains: "Sala", mode: "insensitive" } },
-          include: { surfaces: true }
-        })) || (await prisma.court.findFirst({ include: { surfaces: true } }));
-
-        if (salaCourt) {
-          let surface01 = salaCourt.surfaces[0];
-          if (!surface01) {
-            surface01 = (await prisma.courtSurface.create({
-              data: {
-                courtId: salaCourt.id,
-                code: "S01",
-                name: `${salaCourt.name} - Sân 01`,
-                capacity: "7 người",
-                surface: "Cỏ nhân tạo",
-                size: "Tiêu chuẩn",
-                status: "ACTIVE",
-                sortOrder: 1
-              }
-            }).catch(() => null)) as any;
-          }
-
-          if (surface01) {
-            await prisma.$executeRawUnsafe(
-              `UPDATE bookings SET court_id = $1, court_surface_id = $2 WHERE court_surface_id IS NULL OR court_id IS NULL;`,
-              salaCourt.id,
-              surface01.id
-            ).catch(() => {});
-          }
-        }
-      } catch {}
-    }
-
     const bookingInclude = {
       user: {
         select: {
@@ -299,7 +561,7 @@ export const recipientService = {
           code: true
         }
       },
-      bookingServices: { include: { service: true, courtService: true } }
+      ...bookingBillInclude
     };
 
     // Bookings created together as one walk-in order (see createWalkInBookingOrder)
@@ -323,8 +585,25 @@ export const recipientService = {
       isOrderKey.set(key, Boolean(row.bookingOrderId));
     }
 
+    // The list shows each group's bill total (court + services - voucher), not bookings.total_price,
+    // so "totalPrice" sorts the groups by that. Ties keep the database order above.
+    let orderedKeys = groupKeys;
+    if (query.sortBy === "totalPrice" && groupKeys.length) {
+      const billRows = await prisma.booking.findMany({
+        where: {
+          courtId,
+          OR: [
+            { bookingOrderId: { in: groupKeys.filter((key) => isOrderKey.get(key)) } },
+            { id: { in: groupKeys.filter((key) => !isOrderKey.get(key)) } }
+          ]
+        },
+        select: bookingBillSelect
+      });
+      orderedKeys = sortGroupKeysByBillTotal(groupKeys, billRows, query.sortOrder);
+    }
+
     const total = groupKeys.length;
-    const pageKeys = groupKeys.slice((page - 1) * limit, (page - 1) * limit + limit);
+    const pageKeys = orderedKeys.slice((page - 1) * limit, (page - 1) * limit + limit);
     const orderIds = pageKeys.filter((key) => isOrderKey.get(key));
     const standaloneIds = pageKeys.filter((key) => !isOrderKey.get(key));
 
@@ -339,8 +618,8 @@ export const recipientService = {
         include: bookingInclude
       })
     ]);
-    const orderBookings = orderBookingsRaw.map(normalizeBookingServices);
-    const standaloneBookings = standaloneBookingsRaw.map(normalizeBookingServices);
+    const orderBookings = orderBookingsRaw.map((booking) => normalizeBookingServices(withBookingBill(booking)));
+    const standaloneBookings = standaloneBookingsRaw.map((booking) => normalizeBookingServices(withBookingBill(booking)));
 
     const bookingsByOrderId = new Map<string, typeof orderBookings>();
     for (const booking of orderBookings) {
@@ -362,9 +641,11 @@ export const recipientService = {
 
   async lookupCustomersByPhone(userId: string, phone: string) {
     const courtId = await getManagedCourtId(userId);
+    // Same rule as resolveWalkInCustomer: only USER accounts can be the customer of a walk-in booking.
     const users = await prisma.user.findMany({
-      where: { phone: { startsWith: phone } },
+      where: { phone: { startsWith: phone }, role: "USER" },
       select: { id: true, fullName: true, phone: true },
+      orderBy: { createdAt: "asc" },
       take: 8
     });
 
@@ -390,16 +671,16 @@ export const recipientService = {
           lastBookingDate: stat?._max.bookingDate ?? null
         };
       })
-      .filter((match) => match.bookingsCount > 0);
+      // Partial numbers only suggest this court's customers. The full number also reveals an account with no
+      // history here, because the booking will be attached to it: staff must see that name before submitting.
+      .filter((match) => match.bookingsCount > 0 || match.phone === phone);
 
     return { matches };
   },
 
+  /** History of a customer at this court only: someone who never booked here is not found, whatever id is asked for. */
   async customerBookingHistory(userId: string, customerId: string) {
     const courtId = await getManagedCourtId(userId);
-    const customer = await prisma.user.findUnique({ where: { id: customerId }, select: { id: true, fullName: true, phone: true } });
-    if (!customer) throw new NotFoundError("Không tìm thấy khách hàng");
-
     const bookings = await prisma.booking.findMany({
       where: { userId: customerId, courtId },
       orderBy: { bookingDate: "desc" },
@@ -408,25 +689,27 @@ export const recipientService = {
         courtSurface: { select: { name: true, code: true } }
       }
     });
+    if (!bookings.length) throw new NotFoundError("Không tìm thấy khách đã đặt sân tại đây");
+    const customer = await prisma.user.findUnique({ where: { id: customerId }, select: { id: true, fullName: true, phone: true } });
+    if (!customer) throw new NotFoundError("Không tìm thấy khách hàng");
 
     return { customer, bookings: bookings.map((booking) => ({ ...booking, totalPrice: Number(booking.totalPrice) })) };
   },
 
-  async updateBookingStatus(userId: string, bookingId: string, status: BookingStatus) {
+  /**
+   * Same rules as the partner's: cancelling needs the reason the customer is told, and finishing needs the bill paid
+   * (money still owed is taken at the cashier, which finishes the booking itself).
+   */
+  async updateBookingStatus(userId: string, bookingId: string, status: BookingStatus, reason?: string) {
     const courtId = await getManagedCourtId(userId);
     const booking = await prisma.booking.findFirst({
       where: { id: bookingId, courtId }
     });
     if (!booking) throw new NotFoundError("Không tìm thấy đơn đặt sân thuộc quyền quản lý của bạn");
 
-    const transitions: Partial<Record<BookingStatus, BookingStatus[]>> = {
-      PENDING: [BookingStatus.CONFIRMED, BookingStatus.CANCELLED],
-      CONFIRMED: [BookingStatus.COMPLETED, BookingStatus.NO_SHOW, BookingStatus.CANCELLED],
-      COMPLETED: [],
-      CANCELLED: [],
-      NO_SHOW: []
-    };
-    if (!(transitions[booking.bookingStatus] ?? []).includes(status)) {
+    // A no-show the system recorded (nobody checked the customer in) can be corrected if they did play.
+    const correctingAutoNoShow = status === BookingStatus.COMPLETED && canCorrectAutoNoShow(booking);
+    if (!correctingAutoNoShow && !(COURT_BOOKING_TRANSITIONS[booking.bookingStatus] ?? []).includes(status)) {
       throw new ValidationError("Không thể chuyển trạng thái đơn theo thao tác này");
     }
     if (
@@ -435,37 +718,51 @@ export const recipientService = {
     ) {
       throw new ValidationError("Chỉ có thể kết thúc đơn sau giờ đặt sân");
     }
+    const cancelReason = reason?.trim();
+    if (status === BookingStatus.CANCELLED && (!cancelReason || cancelReason.length < 3)) {
+      throw new ValidationError("Nhập lý do huỷ đơn (ít nhất 3 ký tự) để gửi cho khách");
+    }
 
     const { updated, settlement } = await prisma.$transaction(async (tx) => {
-      const updatedBooking = await tx.booking.update({
-        where: { id: booking.id },
-        data:
-          status === BookingStatus.CANCELLED
-            ? {
-                bookingStatus: status,
-                cancelReason: "Nhân viên sân từ chối",
-                cancelledAt: new Date(),
-                refundAmount: booking.paymentStatus === "PAID" ? booking.totalPrice : 0,
-                platformRetainedAmount: 0,
-                paymentStatus: booking.paymentStatus === "PAID" ? "REFUNDED" : booking.paymentStatus
-              }
-            : {
-                bookingStatus: status
-              },
-        include: { court: { include: { partner: true } } }
+      if (status === BookingStatus.COMPLETED) await assertNothingOwed(booking.id, tx);
+      const cancellation =
+        status === BookingStatus.CANCELLED
+          ? courtCancellationPayment(booking.paymentStatus, counterCollectedAmount(booking), await bookingRepository.onlineCollectedAmount(tx, booking))
+          : null;
+      // Moved only from the status it was read with: the partner, another tab or the overdue job acting meanwhile wins.
+      const { count } = await tx.booking.updateMany({
+        where: { id: booking.id, bookingStatus: booking.bookingStatus },
+        data: cancellation
+          ? {
+              bookingStatus: status,
+              cancelReason,
+              cancelledAt: new Date(),
+              refundAmount: cancellation.refundAmount,
+              platformRetainedAmount: 0,
+              paymentStatus: cancellation.paymentStatus
+            }
+          : {
+              bookingStatus: status
+            }
       });
+      if (!count) throw new ConflictError("Đơn vừa được cập nhật ở nơi khác, hãy tải lại trang");
+      const updatedBooking = await tx.booking.findUniqueOrThrow({
+        where: { id: booking.id },
+        include: { court: { include: { partner: true } }, user: { select: { fullName: true, phone: true } } }
+      });
+      if (cancellation?.refundByAdmin) {
+        await enqueueAdminEvent(tx, refundRequiredAdminEvent(updatedBooking, cancellation.refundByAdmin, "Nhân viên sân"));
+      }
 
       let updatedSettlement = null;
       if (status === BookingStatus.COMPLETED || status === BookingStatus.NO_SHOW) {
-        await commissionService.createEarning(updatedBooking, status, tx);
-        updatedSettlement = await settlementService.settleForBooking(booking.id, tx);
+        updatedSettlement = await settlementService.finishBooking(updatedBooking, status, tx);
       } else if (status === BookingStatus.CANCELLED) {
+        await voucherRepository.releaseVoucherUses([booking.id], tx);
         updatedSettlement = await settlementService.cancelForBooking(booking.id, tx);
       }
       return { updated: updatedBooking, settlement: updatedSettlement };
-    },
-    { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 }
-    );
+    }, SERIALIZABLE);
 
     if (status === BookingStatus.CANCELLED || status === BookingStatus.NO_SHOW) {
       await cashierRepository
@@ -479,8 +776,10 @@ export const recipientService = {
       realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
       realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
     }
-    invalidateWeeklyScheduleCache(booking.courtId);
-    realtimeService.toCourt(booking.courtId, realtimeEvents.courtAvailabilityUpdated, { courtId: booking.courtId });
+    await notifyBookingDecision(updated, updated.court.name, status as "CONFIRMED" | "CANCELLED" | "NO_SHOW" | "COMPLETED", {
+      reason: cancelReason,
+      refundAmount: Number(updated.refundAmount ?? 0)
+    });
     return updated;
   },
 
@@ -519,7 +818,7 @@ export const recipientService = {
         }
       })
     ]);
-    if (!court) throw new NotFoundError("Khong tim thay co so duoc giao quan ly");
+    if (!court) throw new NotFoundError("Không tìm thấy cơ sở được giao quản lý");
 
     return {
       court: { openingTime: dbTime(court.openingTime), closingTime: dbTime(court.closingTime) },
@@ -540,27 +839,47 @@ export const recipientService = {
     return surfaces.map((surface) => ({ ...surface, depositPercent }));
   },
 
+  /** Upcoming bookings on a sub-court, shown to staff before they pause it. */
+  async surfaceAffectedBookings(userId: string, courtSurfaceId: string) {
+    const courtId = await getManagedCourtId(userId);
+    const surface = await prisma.courtSurface.findFirst({ where: { id: courtSurfaceId, courtId } });
+    if (!surface) throw new NotFoundError("Không tìm thấy sân con thuộc quyền quản lý của bạn");
+    return partnerRepository.upcomingBookings(courtId, { surfaceId: courtSurfaceId });
+  },
+
+  /**
+   * Pausing works as for the partner: the customers of its upcoming bookings are told, the bookings stand. Staff can
+   * reopen only a sub-court staff paused; one the partner paused waits for the partner.
+   */
   async updateCourtSurfaceStatus(userId: string, courtSurfaceId: string, status: CourtActiveStatus) {
     const courtId = await getManagedCourtId(userId);
     const surface = await prisma.courtSurface.findFirst({ where: { id: courtSurfaceId, courtId } });
-    if (!surface) throw new NotFoundError("Khong tim thay san con thuoc quyen quan ly cua ban");
+    if (!surface) throw new NotFoundError("Không tìm thấy sân con thuộc quyền quản lý của bạn");
+    if (status === CourtActiveStatus.ACTIVE && surface.status === CourtActiveStatus.INACTIVE && surface.pausedByRole !== "RECIPIENT") {
+      throw new ForbiddenError("Sân con này do đối tác tạm ngưng, chỉ đối tác mới mở lại được");
+    }
 
-    return prisma.courtSurface.update({
-      where: { id: courtSurfaceId },
-      data: { status }
-    });
+    const pausing = status === CourtActiveStatus.INACTIVE && surface.status !== CourtActiveStatus.INACTIVE;
+    const upcoming = pausing ? await partnerRepository.upcomingBookings(courtId, { surfaceId: courtSurfaceId }) : [];
+    const result = await partnerRepository.updateCourtSurfaceStatus(courtSurfaceId, status, "RECIPIENT");
+    realtimeService.toCourt(courtId, realtimeEvents.courtAvailabilityUpdated, { courtId });
+    if (upcoming.length) {
+      const court = await prisma.court.findUnique({ where: { id: courtId }, select: { name: true } });
+      await notifyCourtChange(upcoming, { id: courtId, name: court?.name ?? "Sân" }, `tạm ngưng sân con ${surface.name}`);
+    }
+    return { ...result, notifiedBookings: upcoming.length };
   },
 
   async surfaceAvailability(userId: string, courtSurfaceId: string, date: string) {
     const courtId = await getManagedCourtId(userId);
     const surface = await prisma.courtSurface.findFirst({ where: { id: courtSurfaceId, courtId } });
-    if (!surface) throw new NotFoundError("Khong tim thay san con thuoc quyen quan ly cua ban");
+    if (!surface) throw new NotFoundError("Không tìm thấy sân con thuộc quyền quản lý của bạn");
 
     const court = await prisma.court.findUnique({
       where: { id: courtId },
       select: { openingTime: true, closingTime: true, prices: true }
     });
-    if (!court) throw new NotFoundError("Khong tim thay co so duoc giao quan ly");
+    if (!court) throw new NotFoundError("Không tìm thấy cơ sở được giao quản lý");
 
     const [bookings, blocks] = await Promise.all([
       prisma.booking.findMany({
@@ -593,12 +912,26 @@ export const recipientService = {
     const opening = ceilToFullHour(timeToMinutes(dbTime(court.openingTime)));
     const closing = floorToFullHour(timeToMinutes(dbTime(court.closingTime)));
 
+    // Same per-hour price (base + dynamic rules) the walk-in booking will charge, so "Tạm tính" matches the QR.
+    // Without an approved court or a price table booking fails with its own message; keep the plain table price.
+    const pricing = await dynamicPricingService.prefetch(courtId).catch(() => null);
+    const priceFor = (slot: { startTime: string; endTime: string }) => {
+      if (pricing) {
+        try {
+          return walkInCourtPrice(pricing, date, slot.startTime, 60).courtSubtotal;
+        } catch {
+          // fall through to the table price
+        }
+      }
+      return slotPrice(slot, date, court.prices);
+    };
+
     const slots = [];
     for (let cursor = opening; cursor < closing; cursor += 60) {
       const slot = { startTime: minutesToTime(cursor), endTime: minutesToTime(cursor + 60) };
       const booking = bookings.find((item) => overlapsSlot(slot, item));
       const block = !booking ? blocks.find((item) => overlapsSlot(slot, item)) : undefined;
-      const price = slotPrice(slot, date, court.prices);
+      const price = priceFor(slot);
       slots.push({
         ...slot,
         status: booking ? "BOOKED" : block ? "BLOCKED" : "AVAILABLE",
@@ -623,6 +956,7 @@ export const recipientService = {
     };
   },
 
+  /** Blocks free time on a sub-court, within its opening hours and not over already. */
   async lockSurfaceSlot(
     userId: string,
     courtSurfaceId: string,
@@ -630,46 +964,51 @@ export const recipientService = {
   ) {
     const courtId = await getManagedCourtId(userId);
     const surface = await prisma.courtSurface.findFirst({ where: { id: courtSurfaceId, courtId } });
-    if (!surface) throw new NotFoundError("Khong tim thay san con thuoc quyen quan ly cua ban");
+    if (!surface) throw new NotFoundError("Không tìm thấy sân con thuộc quyền quản lý của bạn");
 
-    const startTime = timeToDate(input.startTime);
-    const endTime = timeToDate(minutesToTime(timeToMinutes(input.startTime) + input.minutes));
+    const { opening, closing } = await surfaceHours(courtId, courtSurfaceId);
+    const start = timeToMinutes(input.startTime);
+    const end = start + input.minutes;
+    const label = `${input.startTime}-${minutesToTime(end)}`;
+    if (start < timeToMinutes(opening) || end > timeToMinutes(closing)) {
+      throw new ValidationError(`Khung giờ ${label} nằm ngoài giờ mở cửa ${opening}-${closing}`);
+    }
+    const now = vietnamNow();
+    if (input.bookingDate < now.date || (input.bookingDate === now.date && end <= timeToMinutes(now.time))) {
+      throw new ValidationError(`Khung giờ ${label} ngày ${input.bookingDate} đã qua`);
+    }
 
-    const conflict = await prisma.booking.findFirst({
-      where: {
-        courtId,
-        OR: [{ courtSurfaceId }, { courtSurfaceId: null }],
-        bookingDate: toDbDate(input.bookingDate),
-        bookingStatus: { in: activeOperationStatuses },
-        ...overlapWhere(startTime, endTime)
+    const slot = { courtId, courtSurfaceId, date: toDbDate(input.bookingDate), startTime: timeToDate(input.startTime), endTime: timeToDate(minutesToTime(end)) };
+    const block = await prisma.$transaction(async (tx) => {
+      const taken = await slotTakenBy(tx, slot);
+      if (taken) {
+        throw new ConflictError(
+          taken === "BOOKED" ? "Khung giờ này đã có khách đặt, không thể khoá" : "Khung giờ này đã nằm trong một lịch khoá khác",
+          "LOCK_SLOT_CONFLICT"
+        );
       }
-    });
-    if (conflict) throw new ConflictError("Khung gio nay da co khach dat, khong the khoa", "LOCK_SLOT_CONFLICT");
-
-    return prisma.courtAvailabilityBlock.create({
-      data: {
-        courtId,
-        courtSurfaceId,
-        blockDate: toDbDate(input.bookingDate),
-        startTime,
-        endTime,
-        reason: input.reason,
-        status: "ACTIVE"
-      }
-    });
+      return tx.courtAvailabilityBlock.create({
+        data: { courtId, courtSurfaceId, blockDate: slot.date, startTime: slot.startTime, endTime: slot.endTime, reason: input.reason, status: "ACTIVE" }
+      });
+    }, SERIALIZABLE);
+    realtimeService.toCourt(courtId, realtimeEvents.courtAvailabilityUpdated, { courtId });
+    return block;
   },
 
   async unlockSurfaceSlot(userId: string, blockId: string) {
     const courtId = await getManagedCourtId(userId);
     const block = await prisma.courtAvailabilityBlock.findFirst({ where: { id: blockId, courtId } });
-    if (!block) throw new NotFoundError("Khong tim thay lich khoa nay");
-    return prisma.courtAvailabilityBlock.update({ where: { id: blockId }, data: { status: "INACTIVE" } });
+    if (!block) throw new NotFoundError("Không tìm thấy lịch khoá này");
+    const result = await prisma.courtAvailabilityBlock.update({ where: { id: blockId }, data: { status: "INACTIVE" } });
+    realtimeService.toCourt(courtId, realtimeEvents.courtAvailabilityUpdated, { courtId });
+    return result;
   },
 
   async operations(userId: string, query: { date?: string; nowTime?: string }) {
     const courtId = await getManagedCourtId(userId);
-    const selectedDate = query.date ?? new Date().toISOString().slice(0, 10);
-    const nowTime = query.nowTime ?? new Date().toTimeString().slice(0, 5);
+    const vnNow = vietnamNow();
+    const selectedDate = query.date ?? vnNow.date;
+    const nowTime = query.nowTime ?? vnNow.time;
     const nowMinutes = timeToMinutes(nowTime);
 
     const court = await prisma.court.findUnique({
@@ -686,23 +1025,25 @@ export const recipientService = {
         }
       }
     });
-    if (!court) throw new NotFoundError("Khong tim thay co so duoc giao quan ly");
+    if (!court) throw new NotFoundError("Không tìm thấy cơ sở được giao quản lý");
 
     const items = court.surfaces.map((surface) => {
       const bookings = court.bookings
         .filter((booking) => booking.courtSurfaceId === surface.id || booking.courtSurfaceId == null)
         .map((booking) => ({ ...booking, start: dbTime(booking.startTime), end: dbTime(booking.endTime) }));
+      // A booking paid off at the cashier still fills its time, but it is never overdue nor waiting for anything.
+      const open = bookings.filter((booking) => openOperationStatuses.includes(booking.bookingStatus));
 
       const currentBooking = bookings.find((booking) => timeToMinutes(booking.start) <= nowMinutes && timeToMinutes(booking.end) > nowMinutes);
-      const latestEnded = [...bookings]
+      const latestEnded = [...open]
         .filter((booking) => timeToMinutes(booking.end) <= nowMinutes)
         .sort((left, right) => timeToMinutes(right.end) - timeToMinutes(left.end))[0];
-      const nextBooking = bookings.find((booking) => timeToMinutes(booking.start) >= nowMinutes);
+      const nextBooking = open.find((booking) => timeToMinutes(booking.start) >= nowMinutes);
       const isOverdue = Boolean(!currentBooking && latestEnded && nowMinutes - timeToMinutes(latestEnded.end) <= 30 && !nextBooking);
       const minutesLeft = currentBooking ? timeToMinutes(currentBooking.end) - nowMinutes : null;
 
       let canExtend = false;
-      if (currentBooking) {
+      if (currentBooking && currentBooking.bookingStatus !== BookingStatus.COMPLETED) {
         const minExtensionEnd = timeToMinutes(currentBooking.end) + 15;
         canExtend = !nextBooking || timeToMinutes(nextBooking.start) >= minExtensionEnd;
       }
@@ -741,6 +1082,7 @@ export const recipientService = {
           size: surface.size,
           imageUrl: surface.imageUrl,
           status: surface.status,
+          pausedByRole: surface.pausedByRole,
           depositPercent: Number(court.deposit_percent ?? 0)
         },
         status,
@@ -768,788 +1110,301 @@ export const recipientService = {
     };
   },
 
+  /** Other active sub-courts the guest could move to for an extension: open until the new end and free from now. */
   async getAvailableSurfacesForExtension(userId: string, bookingId: string, minutes: number) {
     const courtId = await getManagedCourtId(userId);
     const booking = await prisma.booking.findFirst({ where: { id: bookingId, courtId } });
-    if (!booking) throw new NotFoundError("Khong tim thay don dat san thuoc quyen quan ly cua ban");
+    if (!booking) throw new NotFoundError("Không tìm thấy đơn đặt sân thuộc quyền quản lý của bạn");
 
-    const newEndTime = addMinutes(booking.endTime, minutes);
     const surfaces = await prisma.courtSurface.findMany({
-      where: { courtId, id: { not: booking.courtSurfaceId ?? undefined } },
+      where: { courtId, status: CourtActiveStatus.ACTIVE, ...(booking.courtSurfaceId ? { id: { not: booking.courtSurfaceId } } : {}) },
       orderBy: [{ sortOrder: "asc" }, { code: "asc" }],
       select: { id: true, name: true }
     });
 
     const available = [];
     for (const surface of surfaces) {
-      const conflict = await extensionConflictFor(courtId, booking, surface.id, newEndTime);
-      if (!conflict) available.push(surface);
+      const { end, fits } = await extendedEnd(courtId, surface.id, booking, minutes);
+      if (!fits) continue;
+      const window = extensionWindow(booking, timeToDate(minutesToTime(end)), true);
+      const taken = await slotTakenBy(prisma, { courtId, courtSurfaceId: surface.id, date: booking.bookingDate, ...window, excludeBookingId: booking.id });
+      if (!taken) available.push(surface);
     }
     return available;
   },
 
-  async extendBooking(userId: string, bookingId: string, minutes: number, targetSurfaceId?: string) {
+  /**
+   * Prices shown on the counter's "+N phút" and "Check-in sớm" buttons, computed exactly as extendBooking
+   * and checkInBooking will charge them. The early check-in part is a snapshot of "now" (Vietnam time).
+   * An extension past the sub-court's closing time is not offered (no price).
+   */
+  async timeChargeQuote(userId: string, bookingId: string, extendMinutes: number[]) {
     const courtId = await getManagedCourtId(userId);
     const booking = await prisma.booking.findFirst({ where: { id: bookingId, courtId } });
-    if (!booking) throw new NotFoundError("Khong tim thay don dat san thuoc quyen quan ly cua ban");
-    if (!extendableBookingStatuses.includes(booking.bookingStatus)) {
-      throw new ValidationError("Chi co the gia han don dang cho xu ly hoac da xac nhan");
-    }
-
-    const newEndTime = addMinutes(booking.endTime, minutes);
-    let surfaceId = booking.courtSurfaceId;
-
-    if (targetSurfaceId && targetSurfaceId !== booking.courtSurfaceId) {
-      const surface = await prisma.courtSurface.findFirst({ where: { id: targetSurfaceId, courtId } });
-      if (!surface) throw new NotFoundError("Khong tim thay san con thuoc quyen quan ly cua ban");
-      const conflict = await extensionConflictFor(courtId, booking, targetSurfaceId, newEndTime);
-      if (conflict) throw new ConflictError("San duoc chon cung da co lich, vui long chon san khac", "BOOKING_EXTENSION_CONFLICT");
-      surfaceId = targetSurfaceId;
-    } else {
-      const conflict = await extensionConflictFor(courtId, booking, booking.courtSurfaceId, newEndTime);
-      if (conflict) throw new ConflictError("San nay da co lich sau do. Hay chuyen khach sang san trong.", "BOOKING_EXTENSION_CONFLICT");
-    }
-
+    if (!booking) throw new NotFoundError("Không tìm thấy đơn đặt sân thuộc quyền quản lý của bạn");
+    const [policy, pricing, hours] = await Promise.all([
+      courtTimeChargePolicy(courtId),
+      dynamicPricingService.prefetch(courtId),
+      surfaceHours(courtId, booking.courtSurfaceId)
+    ]);
     const date = booking.bookingDate.toISOString().slice(0, 10);
-    const startTime = dbTime(booking.endTime);
-    const endTime = dbTime(newEndTime);
-    const dynamicPrice = await dynamicPricingService.calculate(courtId, { date, startTime, endTime });
-    const hours = durationHours(startTime, endTime);
-    const subtotal = dynamicPrice.finalPrice * hours;
+    const endMinutes = timeToMinutes(dbTime(booking.endTime));
 
-    const { updated } = await prisma.$transaction(async (tx) => {
-      const updatedBooking = await tx.booking.update({
-        where: { id: booking.id },
-        data: {
-          endTime: newEndTime,
-          courtSurfaceId: surfaceId,
-          basePrice: { increment: dynamicPrice.basePrice * hours },
-          dynamicAdjustmentAmount: { increment: dynamicPrice.dynamicAdjustmentAmount * hours },
-          subtotal: { increment: subtotal },
-          totalPrice: { increment: subtotal }
-        }
-      });
-
-      await tx.bookingSlot.updateMany({
-        where: { bookingId: booking.id, endTime: booking.endTime },
-        data: {
-          endTime: newEndTime,
-          court_surface_id: surfaceId,
-          slotPrice: { increment: subtotal }
-        }
-      });
-
-      // Additional court time is collected at checkout.
-      return { updated: updatedBooking };
+    const extensions = extendMinutes.map((minutes) => {
+      const allowed = endMinutes + minutes <= timeToMinutes(hours.closing);
+      return {
+        minutes,
+        allowed,
+        amount: allowed ? extraTimeCharge(pricing, date, dbTime(booking.endTime), minutes, policy.extensionPricePercent).amount : null
+      };
     });
 
-    return updated;
-  },
-
-  async createWalkInBooking(
-    userId: string,
-    input: {
-      courtSurfaceId: string;
-      customerName: string;
-      customerPhone: string;
-      bookingDate: string;
-      startTime: string;
-      minutes: number;
-      paymentMethod: PaymentMethod;
-      paymentType?: "FULL_PAYMENT" | "DEPOSIT" | "PAY_AT_COURT";
-      note?: string;
-      services?: Array<{ serviceId: string; quantity: number }>;
-    }
-  ) {
-    const courtId = await getManagedCourtId(userId);
-    const surface = await prisma.courtSurface.findFirst({ where: { id: input.courtSurfaceId, courtId, status: CourtActiveStatus.ACTIVE } });
-    if (!surface) throw new NotFoundError("San con khong ton tai hoac dang tam ngung");
-
-    const payLater = input.paymentType === "PAY_AT_COURT";
-    const paymentMethod = payLater ? PaymentMethod.CASH : input.paymentMethod;
-    const wantsDeposit = input.paymentType === "DEPOSIT";
-    const depositPercent = wantsDeposit ? await bookingRepository.courtDepositPercent(courtId) : 0;
-    if (wantsDeposit && depositPercent <= 0) throw new ValidationError("San nay khong ho tro dat coc");
-
-    const startTime = timeToDate(input.startTime);
-    const endTime = timeToDate(minutesToTime(timeToMinutes(input.startTime) + input.minutes));
-    const conflict = await prisma.booking.findFirst({
-      where: {
-        courtId,
-        OR: [{ courtSurfaceId: input.courtSurfaceId }, { courtSurfaceId: null }],
-        bookingDate: toDbDate(input.bookingDate),
-        bookingStatus: { in: activeOperationStatuses },
-        ...overlapWhere(startTime, endTime)
-      }
-    });
-    if (conflict) throw new ConflictError("Khung gio nay da co khach khac", "WALK_IN_BOOKING_CONFLICT");
-
-    const activeBlock = await prisma.courtAvailabilityBlock.findFirst({
-      where: {
-        courtId,
-        status: "ACTIVE",
-        blockDate: toDbDate(input.bookingDate),
-        OR: [{ courtSurfaceId: null }, { courtSurfaceId: input.courtSurfaceId }],
-        ...overlapWhere(startTime, endTime)
-      }
-    });
-    if (activeBlock) throw new ConflictError("San dang trong lich nghi/bao tri, khong the dat", "WALK_IN_BOOKING_BLOCKED");
-
-    const dynamicPrice = await dynamicPricingService.calculate(courtId, {
-      date: input.bookingDate,
-      startTime: input.startTime,
-      endTime: dbTime(endTime)
-    });
-    const hours = durationHours(input.startTime, dbTime(endTime));
-    const courtSubtotal = dynamicPrice.finalPrice * hours;
-
-    const serviceIds = (input.services ?? []).map((s) => s.serviceId);
-    const availableServices = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
-    if (availableServices.length !== serviceIds.length) throw new ValidationError("Dich vu khong hop le");
-    const serviceLines = (input.services ?? []).map((line) => {
-      const service = availableServices.find((item) => item.id === line.serviceId)!;
-      return { serviceId: line.serviceId, quantity: line.quantity, price: Number(service.price) };
-    });
-    const servicesSubtotal = serviceLines.reduce((sum, line) => sum + line.price * line.quantity, 0);
-    const subtotal = courtSubtotal + servicesSubtotal;
-    const chargeAmount = payLater ? 0 : wantsDeposit ? calculateMinimumDeposit(courtSubtotal, depositPercent) : courtSubtotal;
-
-    const existingUser = await prisma.user.findFirst({ where: { phone: input.customerPhone } });
-    const customer =
-      existingUser ??
-      (await prisma.user.create({
-        data: {
-          id: await nextPrefixedId("u", "seq_users"),
-          fullName: input.customerName,
-          email: `walkin-${input.customerPhone.replace(/\D/g, "") || Date.now()}-${Date.now()}@walkin.sportsbooking.local`,
-          phone: input.customerPhone,
-          emailVerified: false
-        }
-      }));
-    const bookingId = await nextPrefixedId("b", "seq_bookings");
-
-    let paymentInput: { reference: string; expiresAt: Date; providerResult: Awaited<ReturnType<typeof paymentProvider.createQrPayment>> } | null = null;
-    if (!payLater && paymentMethod === PaymentMethod.BANK_TRANSFER) {
-      const expiresAt = new Date(Date.now() + env.BOOKING_HOLD_EXPIRES_MINUTES * 60 * 1000);
-      const reference = paymentReference();
-      const orderId =
-        env.PAYMENT_PROVIDER === "PAYOS"
-          ? String(Number(String(Date.now()).slice(-9) + String(Math.floor(Math.random() * 1000)).padStart(3, "0")))
-          : `${reference}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-      const providerResult = await paymentProvider.createQrPayment({
-        amount: chargeAmount,
-        currency: "VND",
-        orderId,
-        paymentReference: reference,
-        description: wantsDeposit ? "Dat coc san tai quay" : "Thanh toan dat san tai quay",
-        expiresAt
-      });
-      paymentInput = { reference, expiresAt, providerResult };
+    const now = vietnamNow();
+    const startMinutes = timeToMinutes(dbTime(booking.startTime));
+    let earlyCheckIn: (ReturnType<typeof earlyCheckInWindow> & { amount: number }) | null = null;
+    if (date === now.date && !booking.checkedInAt && timeToMinutes(now.time) < startMinutes) {
+      const early = earlyCheckInWindow(policy, timeToMinutes(now.time), startMinutes);
+      const amount = early.allowed ? extraTimeCharge(pricing, date, now.time, early.chargedMinutes, policy.earlyPricePercent).amount : 0;
+      earlyCheckIn = { ...early, amount };
     }
 
-    return prisma.$transaction(async (tx) => {
-      const booking = await tx.booking.create({
-        data: {
-          id: bookingId,
-          bookingCode: bookingCode(),
-          userId: customer.id,
-          courtId,
-          courtSurfaceId: input.courtSurfaceId,
-          bookingDate: toDbDate(input.bookingDate),
-          startTime,
-          endTime,
-          basePrice: dynamicPrice.basePrice * hours,
-          dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
-          subtotal,
-          totalPrice: subtotal,
-          depositAmount: chargeAmount,
-          paymentMethod,
-          paymentStatus: !payLater && paymentMethod === PaymentMethod.CASH ? "PAID" : "UNPAID",
-          bookingStatus: !payLater && paymentMethod === PaymentMethod.CASH && wantsDeposit ? BookingStatus.DEPOSIT_PAID : BookingStatus.CONFIRMED,
-          note: input.note
-        }
-      });
-
-      await tx.bookingSlot.create({
-        data: {
-          bookingId: booking.id,
-          courtId,
-          bookingDate: toDbDate(input.bookingDate),
-          startTime,
-          endTime,
-          slotPrice: courtSubtotal
-        }
-      });
-
-      if (serviceLines.length) {
-        await bookingRepository.attachServicesToBooking(tx, booking.id, serviceLines);
-      }
-
-      let payment = null;
-      if (paymentInput) {
-        payment = await tx.payment.create({
-          data: {
-            bookingId: booking.id,
-            userId: customer.id,
-            provider: paymentInput.providerResult.provider,
-            paymentMethod: "QR_TRANSFER",
-            paymentType: wantsDeposit ? "DEPOSIT" : "FULL_PAYMENT",
-            amount: chargeAmount,
-            currency: "VND",
-            status: "PENDING",
-            externalOrderId: paymentInput.providerResult.externalOrderId,
-            qrCodeUrl: paymentInput.providerResult.qrCodeUrl ?? undefined,
-            qrPayload: paymentInput.providerResult.qrPayload ?? undefined,
-            paymentReference: paymentInput.reference,
-            expiresAt: paymentInput.expiresAt
-          }
-        });
-      }
-
-      return { booking, payment };
-    });
+    return { policy, extensions, earlyCheckIn };
   },
 
   /**
-   * Same idea as `createWalkInBooking` but for several (possibly different-date)
-   * time ranges at once, grouped under a single `BookingOrder` so the staff UI
-   * and customer history show it as one booking instead of N separate ones.
-   * CASH marks every booking PAID immediately (money collected at the counter).
-   * BANK_TRANSFER generates a single QR for the combined total, tied to the
-   * BookingOrder — `payment.repository.ts:applyWebhook` already cascades PAID
-   * to every booking sharing that `bookingOrderId` once the QR is paid.
+   * Adds play time at the partner's extension % of the hour-by-hour price (collected at checkout), within the
+   * sub-court's opening hours and only into free time. When the next booking or a block is in the way the guest can
+   * move to another free sub-court, which then has to be free from now until the new end.
    */
-  async createWalkInBookingOrder(
-    userId: string,
-    input: {
-      customerName: string;
-      customerPhone: string;
-      slots: Array<{ courtSurfaceId: string; bookingDate: string; startTime: string; minutes: number }>;
-      paymentMethod: typeof PaymentMethod.CASH | typeof PaymentMethod.BANK_TRANSFER;
-      paymentType?: "FULL_PAYMENT" | "DEPOSIT" | "PAY_AT_COURT";
-      note?: string;
-      services?: Array<{ serviceId: string; quantity: number }>;
-    }
-  ) {
+  async extendBooking(userId: string, bookingId: string, minutes: number, targetSurfaceId?: string) {
     const courtId = await getManagedCourtId(userId);
-    const surfaceIds = [...new Set(input.slots.map((slot) => slot.courtSurfaceId))];
-    const surfaces = await prisma.courtSurface.findMany({
-      where: { id: { in: surfaceIds }, courtId, status: CourtActiveStatus.ACTIVE }
-    });
-    if (surfaces.length !== surfaceIds.length) throw new NotFoundError("Mot hoac nhieu san con khong ton tai hoac dang tam ngung");
-
-    const payLater = input.paymentType === "PAY_AT_COURT";
-    const paymentMethod = payLater ? PaymentMethod.CASH : input.paymentMethod;
-    const wantsDeposit = input.paymentType === "DEPOSIT";
-    const depositPercent = wantsDeposit ? await bookingRepository.courtDepositPercent(courtId) : 0;
-    if (wantsDeposit && depositPercent <= 0) throw new ValidationError("San nay khong ho tro dat coc");
-
-    // Dịch vụ chỉ được chọn một lần cho cả đơn (không lặp lại theo từng khung giờ),
-    // sẽ được gắn vào booking đầu tiên tạo ra bên dưới.
-    const serviceIds = (input.services ?? []).map((s) => s.serviceId);
-    const availableServices = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
-    if (availableServices.length !== serviceIds.length) throw new ValidationError("Dich vu khong hop le");
-    const serviceLines = (input.services ?? []).map((line) => {
-      const service = availableServices.find((item) => item.id === line.serviceId)!;
-      return { serviceId: line.serviceId, quantity: line.quantity, price: Number(service.price) };
-    });
-    const servicesSubtotal = serviceLines.reduce((sum, line) => sum + line.price * line.quantity, 0);
-
-    // Fetched once and reused for every slot below — avoids re-querying court/rules per slot,
-    // same pattern already used in createRecurringWalkInBooking.
-    const pricingPrefetch = await dynamicPricingService.prefetch(courtId);
-
-    const entries: Array<{
-      courtSurfaceId: string;
-      bookingDate: string;
-      startTime: Date;
-      endTime: Date;
-      basePrice: number;
-      dynamicAdjustmentAmount: number;
-      courtSubtotal: number;
-      subtotal: number;
-      chargeAmount: number;
-    }> = [];
-    for (const slot of input.slots) {
-      const startTime = timeToDate(slot.startTime);
-      const endTime = timeToDate(minutesToTime(timeToMinutes(slot.startTime) + slot.minutes));
-      const dynamicPrice = dynamicPricingService.resolveFromPrefetched(pricingPrefetch, {
-        date: slot.bookingDate,
-        startTime: slot.startTime,
-        endTime: dbTime(endTime)
-      });
-      const hours = durationHours(slot.startTime, dbTime(endTime));
-      const subtotal = dynamicPrice.finalPrice * hours;
-      entries.push({
-        courtSurfaceId: slot.courtSurfaceId,
-        bookingDate: slot.bookingDate,
-        startTime,
-        endTime,
-        basePrice: dynamicPrice.basePrice * hours,
-        dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
-        courtSubtotal: subtotal,
-        subtotal,
-        chargeAmount: payLater ? 0 : wantsDeposit ? calculateMinimumDeposit(subtotal, depositPercent) : subtotal
-      });
+    const booking = await prisma.booking.findFirst({ where: { id: bookingId, courtId } });
+    if (!booking) throw new NotFoundError("Không tìm thấy đơn đặt sân thuộc quyền quản lý của bạn");
+    if (!extendableBookingStatuses.includes(booking.bookingStatus)) {
+      throw new ValidationError("Chỉ có thể gia hạn đơn đang chờ xử lý hoặc đã xác nhận");
     }
 
-    if (servicesSubtotal > 0 && entries.length > 0) {
-      // Dịch vụ đã chọn được cộng vào booking đầu tiên của đơn thay vì lặp lại cho từng khung giờ.
-      entries[0].subtotal += servicesSubtotal;
-      // Services remain on the open tab; the court charge is unchanged.
+    const moving = Boolean(targetSurfaceId && targetSurfaceId !== booking.courtSurfaceId);
+    let surfaceId = booking.courtSurfaceId;
+    let movedTo: string | null = null;
+    if (moving) {
+      const surface = await prisma.courtSurface.findFirst({ where: { id: targetSurfaceId, courtId, status: CourtActiveStatus.ACTIVE } });
+      if (!surface) throw new NotFoundError("Không tìm thấy sân con đang hoạt động thuộc quyền quản lý của bạn");
+      surfaceId = surface.id;
+      movedTo = surface.name;
     }
+    const { end, closing, fits } = await extendedEnd(courtId, surfaceId, booking, minutes);
+    if (!fits) throw new ValidationError(`Không gia hạn được quá giờ đóng cửa ${closing}`);
+    const newEndTime = timeToDate(minutesToTime(end));
 
-    const existingUser = await prisma.user.findFirst({ where: { phone: input.customerPhone } });
-    const customer =
-      existingUser ??
-      (await prisma.user.create({
+    const date = booking.bookingDate.toISOString().slice(0, 10);
+    // The partner's extension % of the hour-by-hour court price, the same figure the quote showed staff.
+    const [policy, pricing] = await Promise.all([courtTimeChargePolicy(courtId), dynamicPricingService.prefetch(courtId)]);
+    const charge = extraTimeCharge(pricing, date, dbTime(booking.endTime), minutes, policy.extensionPricePercent);
+    const window = extensionWindow(booking, newEndTime, moving);
+    let note = appendNote(booking.note, `Gia hạn +${minutes} phút (${policy.extensionPricePercent}% giá giờ): ${noteAmount(charge.amount)}`);
+    if (movedTo) note = appendNote(note, `Chuyển sang ${movedTo} lúc ${vietnamNow().time}`);
+
+    return prisma.$transaction(async (tx) => {
+      const taken = await slotTakenBy(tx, { courtId, courtSurfaceId: surfaceId, date: booking.bookingDate, ...window, excludeBookingId: booking.id });
+      if (taken) {
+        throw new ConflictError(
+          moving
+            ? "Sân được chọn cũng đã có lịch hoặc đang khoá, vui lòng chọn sân khác"
+            : taken === "BLOCKED"
+              ? "Sân này có lịch khoá ngay sau đó. Hãy chuyển khách sang sân trống."
+              : "Sân này đã có lịch sau đó. Hãy chuyển khách sang sân trống.",
+          "BOOKING_EXTENSION_CONFLICT"
+        );
+      }
+      // Moved only from what was read: a second click or another counter extending meanwhile wins.
+      const { count } = await tx.booking.updateMany({
+        where: { id: booking.id, bookingStatus: booking.bookingStatus, endTime: booking.endTime },
         data: {
-          id: await nextPrefixedId("u", "seq_users"),
-          fullName: input.customerName,
-          email: `walkin-${input.customerPhone.replace(/\D/g, "") || Date.now()}-${Date.now()}@walkin.sportsbooking.local`,
-          phone: input.customerPhone,
-          emailVerified: false
+          endTime: newEndTime,
+          courtSurfaceId: surfaceId,
+          basePrice: { increment: charge.basePrice },
+          dynamicAdjustmentAmount: { increment: charge.dynamicAdjustmentAmount },
+          subtotal: { increment: charge.amount },
+          totalPrice: { increment: charge.amount },
+          note
         }
-      }));
-
-    const orderId = await nextPrefixedId("bo", "seq_booking_orders");
-    const bookingIds = await Promise.all(entries.map(() => nextPrefixedId("b", "seq_bookings")));
-    const totalAmount = entries.reduce((sum, entry) => sum + entry.subtotal, 0);
-    const totalChargeAmount = entries.reduce((sum, entry) => sum + entry.chargeAmount, 0);
-
-    let paymentInput: { reference: string; expiresAt: Date; providerResult: Awaited<ReturnType<typeof paymentProvider.createQrPayment>> } | null = null;
-    if (!payLater && paymentMethod === PaymentMethod.BANK_TRANSFER) {
-      const expiresAt = new Date(Date.now() + env.BOOKING_HOLD_EXPIRES_MINUTES * 60 * 1000);
-      const reference = paymentReference();
-      const providerOrderId =
-        env.PAYMENT_PROVIDER === "PAYOS"
-          ? String(Number(String(Date.now()).slice(-9) + String(Math.floor(Math.random() * 1000)).padStart(3, "0")))
-          : `${reference}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-      const providerResult = await paymentProvider.createQrPayment({
-        amount: totalChargeAmount,
-        currency: "VND",
-        orderId: providerOrderId,
-        paymentReference: reference,
-        description: wantsDeposit ? "Dat coc san tai quay" : "Thanh toan dat san tai quay",
-        expiresAt
       });
-      paymentInput = { reference, expiresAt, providerResult };
-    }
-
-    const { bookings, payment } = await prisma.$transaction(
-      async (tx) => {
-        for (const entry of entries) {
-          const conflict = await tx.booking.findFirst({
-            where: {
-              courtId,
-              OR: [{ courtSurfaceId: entry.courtSurfaceId }, { courtSurfaceId: null }],
-              bookingDate: toDbDate(entry.bookingDate),
-              bookingStatus: { in: activeOperationStatuses },
-              ...overlapWhere(entry.startTime, entry.endTime)
-            }
-          });
-          if (conflict) throw new ConflictError(`Khung gio ngay ${entry.bookingDate} da co khach khac`, "WALK_IN_BOOKING_CONFLICT");
-
-          const activeBlock = await tx.courtAvailabilityBlock.findFirst({
-            where: {
-              courtId,
-              status: "ACTIVE",
-              blockDate: toDbDate(entry.bookingDate),
-              OR: [{ courtSurfaceId: null }, { courtSurfaceId: entry.courtSurfaceId }],
-              ...overlapWhere(entry.startTime, entry.endTime)
-            }
-          });
-          if (activeBlock) throw new ConflictError(`San dang trong lich nghi/bao tri ngay ${entry.bookingDate}`, "WALK_IN_BOOKING_BLOCKED");
-        }
-
-        const isCash = !payLater && paymentMethod === PaymentMethod.CASH;
-
-        await tx.bookingOrder.create({
-          data: {
-            id: orderId,
-            userId: customer.id,
-            courtId,
-            subtotal: totalAmount,
-            totalAmount,
-            paymentType: payLater ? "PAY_AT_COURT" : paymentMethod,
-            status: payLater || isCash ? "CONFIRMED" : "PENDING",
-            note: input.note
-          }
-        });
-
-        const created = [];
-        for (let i = 0; i < entries.length; i++) {
-          const entry = entries[i];
-          const booking = await tx.booking.create({
-            data: {
-              id: bookingIds[i],
-              bookingCode: bookingCode(),
-              userId: customer.id,
-              courtId,
-              courtSurfaceId: entry.courtSurfaceId,
-              bookingOrderId: orderId,
-              bookingDate: toDbDate(entry.bookingDate),
-              startTime: entry.startTime,
-              endTime: entry.endTime,
-              basePrice: entry.basePrice,
-              dynamicAdjustmentAmount: entry.dynamicAdjustmentAmount,
-              subtotal: entry.subtotal,
-              totalPrice: entry.subtotal,
-              depositAmount: entry.chargeAmount,
-              paymentMethod,
-              paymentStatus: isCash ? "PAID" : "UNPAID",
-              bookingStatus: isCash && wantsDeposit ? BookingStatus.DEPOSIT_PAID : BookingStatus.CONFIRMED,
-              note: input.note
-            }
-          });
-
-          await tx.bookingSlot.create({
-            data: {
-              bookingId: booking.id,
-              courtId,
-              bookingDate: toDbDate(entry.bookingDate),
-              startTime: entry.startTime,
-              endTime: entry.endTime,
-              slotPrice: entry.courtSubtotal
-            }
-          });
-
-          created.push(booking);
-        }
-
-        if (serviceLines.length) {
-          await bookingRepository.attachServicesToBooking(tx, created[0].id, serviceLines);
-        }
-
-        let payment = null;
-        if (paymentInput) {
-          payment = await tx.payment.create({
-            data: {
-              bookingId: created[0].id,
-              bookingOrderId: orderId,
-              userId: customer.id,
-              provider: paymentInput.providerResult.provider,
-              paymentMethod: "QR_TRANSFER",
-              paymentType: wantsDeposit ? "DEPOSIT" : "FULL_PAYMENT",
-              amount: totalChargeAmount,
-              currency: "VND",
-              status: "PENDING",
-              externalOrderId: paymentInput.providerResult.externalOrderId,
-              qrCodeUrl: paymentInput.providerResult.qrCodeUrl ?? undefined,
-              qrPayload: paymentInput.providerResult.qrPayload ?? undefined,
-              paymentReference: paymentInput.reference,
-              expiresAt: paymentInput.expiresAt
-            }
-          });
-        }
-
-        return { bookings: created, payment };
-      },
-      { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 }
-    );
-
-    invalidateWeeklyScheduleCache(courtId);
-    realtimeService.toCourt(courtId, realtimeEvents.courtAvailabilityUpdated, { courtId });
-    return { orderId, bookings, payment };
+      if (!count) throw new ConflictError("Đơn vừa được cập nhật ở nơi khác, hãy tải lại trang");
+      await tx.bookingSlot.updateMany({
+        where: { bookingId: booking.id, endTime: booking.endTime },
+        data: { endTime: newEndTime, court_surface_id: surfaceId, slotPrice: { increment: charge.amount } }
+      });
+      // Additional court time is collected at checkout.
+      return tx.booking.findUniqueOrThrow({ where: { id: booking.id } });
+    }, SERIALIZABLE);
   },
 
-  async createRecurringWalkInBooking(
-    userId: string,
-    input: {
-      customerName: string;
-      customerPhone: string;
-      slots: Array<{ courtSurfaceId: string; bookingDate: string; startTime: string; minutes: number }>;
-      occurrences: number;
-      paymentMethod: typeof PaymentMethod.CASH | typeof PaymentMethod.BANK_TRANSFER;
-      paymentType?: "FULL_PAYMENT" | "DEPOSIT" | "PAY_AT_COURT";
-      note?: string;
-      services?: Array<{ serviceId: string; quantity: number }>;
-    }
-  ) {
+  /** What a walk-in costs and what is collected now, shown to staff before they take cash. Nothing is written. */
+  async quoteWalkIn(userId: string, input: WalkInPayment & { slots: WalkInSession[]; occurrences?: number }) {
     const courtId = await getManagedCourtId(userId);
-    const surfaceIds = [...new Set(input.slots.map((slot) => slot.courtSurfaceId))];
-    const surfaces = await prisma.courtSurface.findMany({
-      where: { id: { in: surfaceIds }, courtId, status: CourtActiveStatus.ACTIVE }
-    });
-    if (surfaces.length !== surfaceIds.length) throw new NotFoundError("Mot hoac nhieu san con khong ton tai hoac dang tam ngung");
+    const plan = await planWalkIn(courtId, input);
+    return {
+      sessions: plan.entries.length,
+      skipped: plan.skipped,
+      courtTotal: plan.courtTotal,
+      servicesTotal: plan.servicesSubtotal,
+      collectNow: plan.collectNow,
+      depositPercent: plan.wantsDeposit ? plan.depositPercent : null
+    };
+  },
 
-    const payLater = input.paymentType === "PAY_AT_COURT";
-    const paymentMethod = payLater ? PaymentMethod.CASH : input.paymentMethod;
-    const wantsDeposit = input.paymentType === "DEPOSIT";
-    const depositPercent = wantsDeposit ? await bookingRepository.courtDepositPercent(courtId) : 0;
-    if (wantsDeposit && depositPercent <= 0) throw new ValidationError("San nay khong ho tro dat coc");
+  async createWalkInBooking(userId: string, input: WalkInRequest & WalkInSession) {
+    const courtId = await getManagedCourtId(userId);
+    const plan = await planWalkIn(courtId, { ...input, slots: [input] });
+    assertCashTaken(plan, input.cashReceived);
+    const bookingId = await nextPrefixedId("b", "seq_bookings");
+    // The QR is made before the transaction (the provider is slow); the slot is checked again inside it.
+    const qr = plan.needsQr ? await createWalkInQr(plan.collectNow, plan.wantsDeposit ? "Dat coc san tai quay" : "Thanh toan dat san tai quay") : null;
 
-    // Dịch vụ chỉ gắn vào buổi đầu tiên thực sự được tạo (không lặp lại cho mọi occurrence trong tương lai).
-    const serviceIds = (input.services ?? []).map((s) => s.serviceId);
-    const availableServices = serviceIds.length ? await bookingRepository.services(serviceIds) : [];
-    if (availableServices.length !== serviceIds.length) throw new ValidationError("Dich vu khong hop le");
-    const serviceLines = (input.services ?? []).map((line) => {
-      const service = availableServices.find((item) => item.id === line.serviceId)!;
-      return { serviceId: line.serviceId, quantity: line.quantity, price: Number(service.price) };
-    });
-    const servicesSubtotal = serviceLines.reduce((sum, line) => sum + line.price * line.quantity, 0);
+    return prisma.$transaction(async (tx) => {
+      assertNoWalkInSlotProblems(await walkInSlotProblems(tx, courtId, plan.entries), plan.entries);
+      // Inside the transaction: a booking that fails leaves no empty walk-in account behind.
+      const { customer, summary } = await resolveWalkInCustomer(tx, input.customerName, input.customerPhone);
+      const [booking] = await createWalkInRows(tx, courtId, plan, plan.entries, { customerId: customer.id, bookingIds: [bookingId], note: input.note });
+      const payment = qr
+        ? await tx.payment.create({ data: walkInPaymentData(qr, { bookingId: booking.id, userId: customer.id, amount: plan.collectNow, deposit: plan.wantsDeposit }) })
+        : null;
+      return { booking, payment, customer: summary };
+    }, SERIALIZABLE).catch(walkInSerializationConflict);
+  },
 
-    const existingUser = await prisma.user.findFirst({ where: { phone: input.customerPhone } });
-    const customer =
-      existingUser ??
-      (await prisma.user.create({
-        data: {
-          id: await nextPrefixedId("u", "seq_users"),
-          fullName: input.customerName,
-          email: `walkin-${input.customerPhone.replace(/\D/g, "") || Date.now()}-${Date.now()}@walkin.sportsbooking.local`,
-          phone: input.customerPhone,
-          emailVerified: false
-        }
-      }));
+  /**
+   * Several (possibly different-date) time ranges at once, grouped under one BookingOrder so the staff UI and the
+   * customer's history show one booking. Cash marks every booking paid at once; a transfer gets one QR for the
+   * whole order, and payment.repository.applyWebhook pays every booking sharing the bookingOrderId.
+   */
+  async createWalkInBookingOrder(userId: string, input: WalkInRequest & { slots: WalkInSession[] }) {
+    const courtId = await getManagedCourtId(userId);
+    const plan = await planWalkIn(courtId, input);
+    assertCashTaken(plan, input.cashReceived);
+    const orderId = await nextPrefixedId("bo", "seq_booking_orders");
+    const bookingIds = await Promise.all(plan.entries.map(() => nextPrefixedId("b", "seq_bookings")));
+    const totalAmount = plan.courtTotal + plan.servicesSubtotal;
+    const qr = plan.needsQr ? await createWalkInQr(plan.collectNow, plan.wantsDeposit ? "Dat coc san tai quay" : "Thanh toan dat san tai quay") : null;
 
-    const isCash = !payLater && paymentMethod === PaymentMethod.CASH;
-
-    // For BANK_TRANSFER, bookings share one BookingOrder so a single QR can cover the whole
-    // batch (every occurrence of every slot template) — payment.repository.ts:applyWebhook
-    // already cascades PAID to every booking sharing a bookingOrderId. The order's totalAmount
-    // is a placeholder here (0) because some occurrences may get skipped below; it's corrected
-    // after the loop once the real total is known.
-    const orderId = (payLater || isCash) ? null : await nextPrefixedId("bo", "seq_booking_orders");
-    if (orderId) {
-      await prisma.bookingOrder.create({
+    const { bookings, payment, customer } = await prisma.$transaction(async (tx) => {
+      assertNoWalkInSlotProblems(await walkInSlotProblems(tx, courtId, plan.entries), plan.entries);
+      const { customer, summary } = await resolveWalkInCustomer(tx, input.customerName, input.customerPhone);
+      await tx.bookingOrder.create({
         data: {
           id: orderId,
           userId: customer.id,
           courtId,
-          subtotal: 0,
-          totalAmount: 0,
-          paymentType: payLater ? "PAY_AT_COURT" : paymentMethod,
-          status: "PENDING",
+          subtotal: totalAmount,
+          totalAmount,
+          paymentType: plan.payLater ? "PAY_AT_COURT" : plan.paymentMethod,
+          status: plan.payLater || plan.isCash ? "CONFIRMED" : "PENDING",
           note: input.note
         }
       });
-    }
+      const bookings = await createWalkInRows(tx, courtId, plan, plan.entries, { customerId: customer.id, bookingIds, bookingOrderId: orderId, note: input.note });
+      const payment = qr
+        ? await tx.payment.create({
+            data: walkInPaymentData(qr, { bookingId: bookings[0].id, bookingOrderId: orderId, userId: customer.id, amount: plan.collectNow, deposit: plan.wantsDeposit })
+          })
+        : null;
+      return { bookings, payment, customer: summary };
+    }, SERIALIZABLE).catch(walkInSerializationConflict);
 
-    // Fetched once and reused for every occurrence of every slot template below — avoids the
-    // N+1 pattern (`dynamicPricingService.calculate` re-querying court/rules on every call),
-    // the same anti-pattern `calculateForWeek` was already written to avoid elsewhere.
-    const pricingPrefetch = await dynamicPricingService.prefetch(courtId);
+    return { orderId, bookings, payment, customer };
+  },
 
-    const series: { id: string }[] = [];
-    const skipped: { courtSurfaceId: string; date: string; reason: string }[] = [];
-    const entries: Array<{
-      courtSurfaceId: string;
-      seriesId: string;
-      occurrenceDate: string;
-      startTime: Date;
-      endTime: Date;
-      basePrice: number;
-      dynamicAdjustmentAmount: number;
-      courtSubtotal: number;
-      subtotal: number;
-      chargeAmount: number;
-    }> = [];
+  /**
+   * Each selected slot repeats weekly for `occurrences` weeks; weeks already taken are skipped. A transfer gets one
+   * BookingOrder and one QR for the whole series, made once the bookings exist since the amount depends on them.
+   */
+  async createRecurringWalkInBooking(userId: string, input: WalkInRequest & { slots: WalkInSession[]; occurrences: number }) {
+    const courtId = await getManagedCourtId(userId);
+    const plan = await planWalkIn(courtId, input);
+    if (!plan.entries.length) throw new ConflictError("Mọi buổi đã chọn đều trùng lịch, chưa tạo được buổi nào", "WALK_IN_BOOKING_CONFLICT");
+    assertCashTaken(plan, input.cashReceived);
+    const bookingIds = await Promise.all(plan.entries.map(() => nextPrefixedId("b", "seq_bookings")));
+    const seriesIds = await Promise.all(input.slots.map(() => nextPrefixedId("bs", "seq_booking_series")));
+    const orderId = plan.needsQr ? await nextPrefixedId("bo", "seq_booking_orders") : null;
+    const skipped = [...plan.skipped];
 
-    // Each selected slot is its own weekly-repeating template (own weekday/time/surface) —
-    // all of them share `occurrences` and get bundled into the same order/payment above.
-    for (const slotTemplate of input.slots) {
-      const startTime = timeToDate(slotTemplate.startTime);
-      const endTime = timeToDate(minutesToTime(timeToMinutes(slotTemplate.startTime) + slotTemplate.minutes));
-      const endTimeStr = dbTime(endTime);
-      const hours = durationHours(slotTemplate.startTime, endTimeStr);
-
-      const seriesId = await nextPrefixedId("bs", "seq_booking_series");
-      await prisma.bookingSeries.create({
-        data: {
-          id: seriesId,
-          courtId,
-          courtSurfaceId: slotTemplate.courtSurfaceId,
-          createdByUserId: userId,
-          customerName: input.customerName,
-          customerPhone: input.customerPhone,
-          startTime,
-          durationMinutes: slotTemplate.minutes,
-          firstBookingDate: toDbDate(slotTemplate.bookingDate),
-          occurrencesRequested: input.occurrences,
-          note: input.note
-        }
-      });
-      series.push({ id: seriesId });
-
-      const occurrenceDates = Array.from({ length: input.occurrences }, (_, i) => addWeeks(slotTemplate.bookingDate, i));
-
-      // Batch conflict/block checks for every occurrence of this template in 2 queries total,
-      // instead of 2 queries PER occurrence.
-      const [conflicts, blocks] = await Promise.all([
-        prisma.booking.findMany({
-          where: {
-            courtId,
-            OR: [{ courtSurfaceId: slotTemplate.courtSurfaceId }, { courtSurfaceId: null }],
-            bookingDate: { in: occurrenceDates.map((d) => toDbDate(d)) },
-            bookingStatus: { in: activeOperationStatuses },
-            ...overlapWhere(startTime, endTime)
-          },
-          select: { bookingDate: true }
-        }),
-        prisma.courtAvailabilityBlock.findMany({
-          where: {
-            courtId,
-            status: "ACTIVE",
-            blockDate: { in: occurrenceDates.map((d) => toDbDate(d)) },
-            OR: [{ courtSurfaceId: null }, { courtSurfaceId: slotTemplate.courtSurfaceId }],
-            ...overlapWhere(startTime, endTime)
-          },
-          select: { blockDate: true }
-        })
-      ]);
-      const conflictedDates = new Set(conflicts.map((b) => b.bookingDate.toISOString().slice(0, 10)));
-      const blockedDates = new Set(blocks.map((b) => b.blockDate.toISOString().slice(0, 10)));
-
-      for (const occurrenceDate of occurrenceDates) {
-        if (conflictedDates.has(occurrenceDate)) {
-          skipped.push({ courtSurfaceId: slotTemplate.courtSurfaceId, date: occurrenceDate, reason: "Khung gio nay da co khach khac" });
-          continue;
-        }
-        if (blockedDates.has(occurrenceDate)) {
-          skipped.push({ courtSurfaceId: slotTemplate.courtSurfaceId, date: occurrenceDate, reason: "San dang trong lich nghi/bao tri" });
-          continue;
-        }
-
-        const dynamicPrice = dynamicPricingService.resolveFromPrefetched(pricingPrefetch, {
-          date: occurrenceDate,
-          startTime: slotTemplate.startTime,
-          endTime: endTimeStr
-        });
-
-        const subtotal = dynamicPrice.finalPrice * hours;
-        entries.push({
-          courtSurfaceId: slotTemplate.courtSurfaceId,
-          seriesId,
-          occurrenceDate,
-          startTime,
-          endTime,
-          basePrice: dynamicPrice.basePrice * hours,
-          dynamicAdjustmentAmount: dynamicPrice.dynamicAdjustmentAmount * hours,
-          courtSubtotal: subtotal,
-          subtotal,
-          chargeAmount: payLater ? 0 : wantsDeposit ? calculateMinimumDeposit(subtotal, depositPercent) : subtotal
-        });
+    const { created, customer, series } = await prisma.$transaction(async (tx) => {
+      // Checked again inside the transaction: an occurrence booked since is skipped too, unless its cash was counted.
+      const late = await walkInSlotProblems(tx, courtId, plan.entries);
+      if (late.size && plan.isCash) {
+        throw new ConflictError("Lịch vừa thay đổi nên số tiền mặt cần thu đã khác. Hãy tạo lại để xem số tiền mới.", "WALK_IN_CASH_MISMATCH");
       }
-    }
+      const kept = plan.entries.filter((entry, index) => {
+        const problem = late.get(index);
+        if (problem) skipped.push({ courtSurfaceId: entry.courtSurfaceId, date: entry.bookingDate, reason: walkInSkipReasons[problem] });
+        return !problem;
+      });
+      if (!kept.length) throw new ConflictError("Mọi buổi đã chọn đều trùng lịch, chưa tạo được buổi nào", "WALK_IN_BOOKING_CONFLICT");
 
-    if (servicesSubtotal > 0 && entries.length > 0) {
-      // Dịch vụ đã chọn được cộng vào buổi đầu tiên thực sự tạo được, không nhân bản cho các occurrence sau.
-      entries[0].subtotal += servicesSubtotal;
-      // Services remain on the open tab; the court charge is unchanged.
-    }
-
-    const bookingIds = await Promise.all(entries.map(() => nextPrefixedId("b", "seq_bookings")));
-
-    const created = await prisma.$transaction(
-      async (tx) => {
-        const rows: Awaited<ReturnType<typeof tx.booking.create>>[] = [];
-        for (let i = 0; i < entries.length; i++) {
-          const entry = entries[i];
-          const createdBooking = await tx.booking.create({
-            data: {
-              id: bookingIds[i],
-              bookingCode: bookingCode(),
-              userId: customer.id,
-              courtId,
-              courtSurfaceId: entry.courtSurfaceId,
-              bookingSeriesId: entry.seriesId,
-              bookingOrderId: orderId ?? undefined,
-              bookingDate: toDbDate(entry.occurrenceDate),
-              startTime: entry.startTime,
-              endTime: entry.endTime,
-              basePrice: entry.basePrice,
-              dynamicAdjustmentAmount: entry.dynamicAdjustmentAmount,
-              subtotal: entry.subtotal,
-              totalPrice: entry.subtotal,
-              depositAmount: entry.chargeAmount,
-              paymentMethod,
-              paymentStatus: isCash ? "PAID" : "UNPAID",
-              bookingStatus: isCash && wantsDeposit ? BookingStatus.DEPOSIT_PAID : BookingStatus.CONFIRMED,
-              note: input.note
-            }
-          });
-
-          await tx.bookingSlot.create({
-            data: {
-              bookingId: createdBooking.id,
-              courtId,
-              bookingDate: toDbDate(entry.occurrenceDate),
-              startTime: entry.startTime,
-              endTime: entry.endTime,
-              slotPrice: entry.courtSubtotal
-            }
-          });
-
-          rows.push(createdBooking);
-        }
-
-        if (serviceLines.length && rows.length) {
-          await bookingRepository.attachServicesToBooking(tx, rows[0].id, serviceLines);
-        }
-
-        return rows;
-      },
-      { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 }
-    );
-
-    let payment = null;
-    if (orderId) {
-      if (created.length === 0) {
-        // Nothing was actually booked (every occurrence conflicted/blocked) — drop the empty placeholder order.
-        await prisma.bookingOrder.delete({ where: { id: orderId } }).catch(() => {});
-      } else {
-        const totalAmount = created.reduce((sum, b) => sum + Number(b.subtotal), 0);
-        const totalChargeAmount = created.reduce((sum, b) => sum + Number(b.depositAmount), 0);
-        const expiresAt = new Date(Date.now() + env.BOOKING_HOLD_EXPIRES_MINUTES * 60 * 1000);
-        const reference = paymentReference();
-        const providerOrderId =
-          env.PAYMENT_PROVIDER === "PAYOS"
-            ? String(Number(String(Date.now()).slice(-9) + String(Math.floor(Math.random() * 1000)).padStart(3, "0")))
-            : `${reference}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-        const providerResult = await paymentProvider.createQrPayment({
-          amount: totalChargeAmount,
-          currency: "VND",
-          orderId: providerOrderId,
-          paymentReference: reference,
-          description: wantsDeposit ? "Dat coc san dinh ky tai quay" : "Thanh toan dat san dinh ky tai quay",
-          expiresAt
-        });
-
-        await prisma.bookingOrder.update({ where: { id: orderId }, data: { subtotal: totalAmount, totalAmount } });
-
-        payment = await prisma.payment.create({
+      const { customer, summary } = await resolveWalkInCustomer(tx, input.customerName, input.customerPhone);
+      // A series exists only for a template that got at least one booking.
+      const templates = [...new Set(kept.map((entry) => entry.templateIndex))];
+      for (const templateIndex of templates) {
+        const slot = input.slots[templateIndex];
+        await tx.bookingSeries.create({
           data: {
-            bookingId: created[0].id,
-            bookingOrderId: orderId,
-            userId: customer.id,
-            provider: providerResult.provider,
-            paymentMethod: "QR_TRANSFER",
-            paymentType: wantsDeposit ? "DEPOSIT" : "FULL_PAYMENT",
-            amount: totalChargeAmount,
-            currency: "VND",
-            status: "PENDING",
-            externalOrderId: providerResult.externalOrderId,
-            qrCodeUrl: providerResult.qrCodeUrl ?? undefined,
-            qrPayload: providerResult.qrPayload ?? undefined,
-            paymentReference: reference,
-            expiresAt
+            id: seriesIds[templateIndex],
+            courtId,
+            courtSurfaceId: slot.courtSurfaceId,
+            createdByUserId: userId,
+            customerName: input.customerName,
+            customerPhone: input.customerPhone,
+            startTime: timeToDate(slot.startTime),
+            durationMinutes: slot.minutes,
+            firstBookingDate: toDbDate(slot.bookingDate),
+            occurrencesRequested: input.occurrences,
+            note: input.note
           }
         });
       }
+      if (orderId) {
+        const totalAmount = kept.reduce((sum, entry) => sum + entry.courtSubtotal, 0) + plan.servicesSubtotal;
+        await tx.bookingOrder.create({
+          data: { id: orderId, userId: customer.id, courtId, subtotal: totalAmount, totalAmount, paymentType: plan.paymentMethod, status: "PENDING", note: input.note }
+        });
+      }
+      const created = await createWalkInRows(tx, courtId, plan, kept, {
+        customerId: customer.id,
+        bookingIds: kept.map((entry) => bookingIds[plan.entries.indexOf(entry)]),
+        bookingOrderId: orderId ?? undefined,
+        seriesIds,
+        note: input.note
+      });
+      return { created, customer: summary, series: templates.map((templateIndex) => ({ id: seriesIds[templateIndex] })) };
+    }, SERIALIZABLE).catch(walkInSerializationConflict);
+
+    let payment = null;
+    if (orderId) {
+      const amount = created.reduce((sum, booking) => sum + Number(booking.depositAmount), 0);
+      const qr = await createWalkInQr(amount, plan.wantsDeposit ? "Dat coc san dinh ky tai quay" : "Thanh toan dat san dinh ky tai quay");
+      payment = await prisma.payment.create({
+        data: walkInPaymentData(qr, { bookingId: created[0].id, bookingOrderId: orderId, userId: created[0].userId, amount, deposit: plan.wantsDeposit })
+      });
     }
 
-    invalidateWeeklyScheduleCache(courtId);
-    realtimeService.toCourt(courtId, realtimeEvents.courtAvailabilityUpdated, { courtId });
-    return { series, created, skipped, payment };
+    return { series, created, skipped, payment, customer };
   },
 
   async paymentStatus(userId: string, paymentId: string) {
     const courtId = await getManagedCourtId(userId);
-    const payment = await prisma.payment.findFirst({
-      where: { id: paymentId, booking: { courtId } },
-      include: { booking: { select: { bookingStatus: true } } }
-    });
-    if (!payment) throw new NotFoundError("Khong tim thay thanh toan thuoc quyen quan ly cua ban");
+    const find = () =>
+      prisma.payment.findFirst({
+        where: { id: paymentId, booking: { courtId } },
+        include: { booking: { select: { bookingStatus: true } } }
+      });
+    let payment = await find();
+    if (!payment) throw new NotFoundError("Không tìm thấy thanh toán thuộc quyền quản lý của bạn");
+    // Same lazy expiry as paymentService.detail, so the counter sees an expired QR without waiting for the sweep.
+    if ((payment.status === "PENDING" || payment.status === "UNPAID") && payment.expiresAt.getTime() <= Date.now()) {
+      await paymentRepository.expirePendingPayment(payment.id);
+      payment = (await find()) ?? payment;
+    }
 
     return {
       id: payment.id,
@@ -1558,142 +1413,91 @@ export const recipientService = {
       bookingStatus: payment.booking.bookingStatus,
       amount: Number(payment.amount),
       expiresAt: payment.expiresAt,
-      paidAt: payment.paidAt
+      paidAt: payment.paidAt,
+      // The counter UI shows the QA-only "Xác nhận đã nhận tiền" button only where the API accepts it.
+      manualConfirmAllowed: paymentService.manualCompletionAllowed()
     };
   },
 
+  /**
+   * Walk-in QR money goes to the platform's PayOS account, so it must be marked paid by the provider
+   * (webhook, poller or syncWalkInPayment) through applyWebhook, which records the PLATFORM settlement
+   * and credits the partner's wallet. Staff cannot see that account: outside production this is only a
+   * QA shortcut through that same path, never a direct status update.
+   */
   async confirmWalkInPayment(userId: string, paymentId: string) {
+    const courtId = await getManagedCourtId(userId);
+    const payment = await prisma.payment.findFirst({ where: { id: paymentId, booking: { courtId } } });
+    if (!payment) throw new NotFoundError("Không tìm thấy thanh toán thuộc quyền quản lý của bạn");
+    if (payment.status !== "PAID") {
+      if (!(payment.status === "PENDING" || payment.status === "UNPAID") || payment.expiresAt.getTime() <= Date.now()) {
+        throw new ValidationError("Mã QR đã hết hạn hoặc bị huỷ nên đơn đã bị huỷ, vui lòng tạo lại đơn");
+      }
+      if (!paymentService.manualCompletionAllowed()) {
+        throw new ForbiddenError("Thanh toán QR được xác nhận tự động khi tiền về tài khoản. Bấm 'Kiểm tra lại' nếu khách đã chuyển khoản");
+      }
+      await paymentService.devCompletePayment(payment, userId);
+    }
+    return this.paymentStatus(userId, paymentId);
+  },
+
+  /** "Kiểm tra lại" at the counter: asks the provider now instead of waiting for the webhook or the next poll. */
+  async syncWalkInPayment(userId: string, paymentId: string) {
     const courtId = await getManagedCourtId(userId);
     const payment = await prisma.payment.findFirst({
       where: { id: paymentId, booking: { courtId } },
-      include: { bookingOrder: { include: { bookings: true } } }
+      include: { booking: { select: { courtId: true } } }
     });
-    if (!payment) throw new NotFoundError("Khong tim thay thanh toan thuoc quyen quan ly cua ban");
-    if (payment.status === "PAID") return payment;
-
-    // A walk-in order/recurring series QR covers several bookings at once — mark every
-    // booking sharing this bookingOrderId as paid too, not just the one on the Payment row.
-    const bookingIds = payment.bookingOrder?.bookings.length ? payment.bookingOrder.bookings.map((b) => b.id) : [payment.bookingId];
-
-    const [updatedPayment] = await prisma.$transaction([
-      prisma.payment.update({ where: { id: paymentId }, data: { status: "PAID", paidAt: new Date() } }),
-      prisma.booking.updateMany({ where: { id: { in: bookingIds } }, data: { paymentStatus: "PAID" } })
-    ]);
-
-    return updatedPayment;
+    if (!payment) throw new NotFoundError("Không tìm thấy thanh toán thuộc quyền quản lý của bạn");
+    if (payment.status === "PENDING" && payment.expiresAt.getTime() > Date.now()) {
+      await syncPaymentWithProvider(payment);
+    }
+    return this.paymentStatus(userId, paymentId);
   },
 
+  /** The same check-in as the cashier's (recipient.counter), for a booking of this staff member's court. */
   async checkInBooking(userId: string, bookingId: string) {
     const courtId = await getManagedCourtId(userId);
     const booking = await prisma.booking.findFirst({ where: { id: bookingId, courtId } });
-    if (!booking) throw new NotFoundError("Khong tim thay don dat san thuoc quyen quan ly cua ban");
-    if (!extendableBookingStatuses.includes(booking.bookingStatus)) {
-      throw new ValidationError("Chi co the check-in don dang cho xu ly hoac da xac nhan");
-    }
-    if (booking.checkedInAt) return booking; // Idempotent: đã check-in rồi thì không làm gì thêm
-
-    const today = new Date().toISOString().slice(0, 10);
-    const date = booking.bookingDate.toISOString().slice(0, 10);
-    if (date !== today) throw new ValidationError("Chi co the check-in cho booking hom nay");
-
-    const currentTime = new Date().toTimeString().slice(0, 5);
-    const now = new Date();
-
-    // Đến đúng giờ hoặc trễ giờ — không cần dời giờ, chỉ đánh dấu đã check-in
-    if (timeToMinutes(currentTime) >= timeToMinutes(dbTime(booking.startTime))) {
-      return prisma.booking.update({
-        where: { id: booking.id },
-        data: { checkedInAt: now }
-      });
-    }
-
-    // Đến sớm hơn giờ đặt — giữ nguyên logic cũ: kiểm tra sân có đang bị người khác chiếm không,
-    // nếu trống thì dời giờ bắt đầu lên hiện tại (khách được chơi bù thêm thời gian)
-    const newStartTime = timeToDate(currentTime);
-    const conflict = await prisma.booking.findFirst({
-      where: {
-        id: { not: booking.id },
-        courtId,
-        OR: booking.courtSurfaceId ? [{ courtSurfaceId: booking.courtSurfaceId }, { courtSurfaceId: null }] : undefined,
-        bookingDate: booking.bookingDate,
-        bookingStatus: { in: activeOperationStatuses },
-        ...overlapWhere(newStartTime, booking.startTime)
-      }
-    });
-    if (conflict) throw new ConflictError("San dang co khach, khong the check-in som", "EARLY_CHECK_IN_CONFLICT");
-
-    // Khach den som duoc choi bu them thoi gian nhung van phai tra tien cho phan do
-    const extraStartTime = currentTime;
-    const extraEndTime = dbTime(booking.startTime);
-    const dynamicPrice = await dynamicPricingService.calculate(courtId, { date, startTime: extraStartTime, endTime: extraEndTime });
-    const hours = durationHours(extraStartTime, extraEndTime);
-    const extraAmount = dynamicPrice.finalPrice * hours;
-
-    const { updated } = await prisma.$transaction(async (tx) => {
-      const updatedBooking = await tx.booking.update({
-        where: { id: booking.id },
-        data: {
-          startTime: newStartTime,
-          bookingStatus: BookingStatus.CONFIRMED,
-          checkedInAt: now,
-          basePrice: { increment: dynamicPrice.basePrice * hours },
-          dynamicAdjustmentAmount: { increment: dynamicPrice.dynamicAdjustmentAmount * hours },
-          subtotal: { increment: extraAmount },
-          totalPrice: { increment: extraAmount }
-        }
-      });
-      await tx.bookingSlot.updateMany({
-        where: { bookingId: booking.id, startTime: booking.startTime },
-        data: { startTime: newStartTime, slotPrice: { increment: extraAmount } }
-      });
-      // Early play is collected at checkout.
-      return { updated: updatedBooking };
-    });
-
-    return { ...updated, extraChargeAmount: extraAmount };
+    if (!booking) throw new NotFoundError("Không tìm thấy đơn đặt sân thuộc quyền quản lý của bạn");
+    return checkInBooking(booking);
   },
 
+  /**
+   * The guest leaves before the booked end: the booking finishes now and frees the rest of its time. Only once the
+   * bill is paid; money still owed is taken at the cashier, which finishes the booking itself.
+   */
   async earlyCheckOutBooking(userId: string, bookingId: string) {
     const courtId = await getManagedCourtId(userId);
     const booking = await prisma.booking.findFirst({ where: { id: bookingId, courtId } });
-    if (!booking) throw new NotFoundError("Khong tim thay don dat san thuoc quyen quan ly cua ban");
-    if (!extendableBookingStatuses.includes(booking.bookingStatus)) {
-      throw new ValidationError("Chi co the check-out don dang cho xu ly hoac da xac nhan");
+    if (!booking) throw new NotFoundError("Không tìm thấy đơn đặt sân thuộc quyền quản lý của bạn");
+    if (!checkOutBookingStatuses.includes(booking.bookingStatus)) {
+      throw new ValidationError("Chỉ check-out được đơn đã xác nhận hoặc đang chơi");
     }
 
-    const today = new Date().toISOString().slice(0, 10);
+    const { date: today, time: currentTime } = vietnamNow();
     const date = booking.bookingDate.toISOString().slice(0, 10);
-    if (date !== today) throw new ValidationError("Chi co the check-out cho booking hom nay");
-
-    const currentTime = new Date().toTimeString().slice(0, 5);
+    if (date !== today) throw new ValidationError("Chỉ check-out được đơn của hôm nay");
     if (timeToMinutes(currentTime) <= timeToMinutes(dbTime(booking.startTime)) || timeToMinutes(currentTime) >= timeToMinutes(dbTime(booking.endTime))) {
-      throw new ValidationError("Chi co the check-out khi booking dang dien ra");
+      throw new ValidationError("Chỉ check-out được khi khách đang trong giờ chơi");
     }
 
     const newEndTime = timeToDate(currentTime);
-    const checkoutNote = `Khach check-out luc ${currentTime}`;
     const { updated, settlement } = await prisma.$transaction(async (tx) => {
-      const updatedBooking = await tx.booking.update({
-        where: { id: booking.id },
-        data: {
-          endTime: newEndTime,
-          bookingStatus: BookingStatus.COMPLETED,
-          note: booking.note ? `${booking.note}\n${checkoutNote}` : checkoutNote
-        },
-        include: { court: { include: { partner: true } } }
+      await assertNothingOwed(booking.id, tx);
+      const { count } = await tx.booking.updateMany({
+        where: { id: booking.id, bookingStatus: booking.bookingStatus, endTime: booking.endTime },
+        data: { endTime: newEndTime, bookingStatus: BookingStatus.COMPLETED, note: appendNote(booking.note, `Khách check-out lúc ${currentTime}`) }
       });
-
+      if (!count) throw new ConflictError("Đơn vừa được cập nhật ở nơi khác, hãy tải lại trang");
+      const updatedBooking = await tx.booking.findUniqueOrThrow({ where: { id: booking.id }, include: { court: { include: { partner: true } } } });
       await tx.bookingSlot.updateMany({
         where: { bookingId: booking.id, endTime: booking.endTime },
         data: { endTime: newEndTime }
       });
-
-      await commissionService.createEarning(updatedBooking, BookingStatus.COMPLETED, tx);
-      const updatedSettlement = await settlementService.settleForBooking(booking.id, tx);
+      const updatedSettlement = await settlementService.finishBooking(updatedBooking, BookingStatus.COMPLETED, tx);
       return { updated: updatedBooking, settlement: updatedSettlement };
-    },
-    { isolationLevel: "Serializable", maxWait: 10000, timeout: 20000 }
-    );
+    }, SERIALIZABLE);
 
     if (settlement) {
       realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
@@ -1701,6 +1505,7 @@ export const recipientService = {
       realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
       realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
     }
+    realtimeService.toCourt(courtId, realtimeEvents.courtAvailabilityUpdated, { courtId });
     return updated;
   }
 };

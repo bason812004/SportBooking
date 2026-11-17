@@ -37,7 +37,7 @@ export type Court = {
   description?: string | null;
   address: string;
   city: string;
-  district: string;
+  district?: string | null;
   ward?: string | null;
   latitude?: number | null;
   longitude?: number | null;
@@ -59,7 +59,15 @@ export type Court = {
   surfaces?: Array<{ id: string; name: string; code?: string; surface?: string; capacity?: string; imageUrl?: string | null; sortOrder?: number }>;
   prices: Array<{ id: string; dayType: string; startTime: string; endTime: string; price: string | number; note?: string | null }>;
   services: Array<{ id: string; name: string; description?: string | null; price: string | number; status: string; unit?: string }>;
-  reviews?: Array<{ id: string; rating: number; comment?: string | null; createdAt: string; user: { id: string; fullName: string; avatarUrl?: string | null } }>;
+  reviews?: Array<{
+    id: string;
+    rating: number;
+    comment?: string | null;
+    createdAt: string;
+    user: { id: string; fullName: string; avatarUrl?: string | null };
+    /** The court owner's public reply. */
+    reply?: { content: string; repliedAt: string; businessName: string | null } | null;
+  }>;
   ratingBreakdown?: Array<{ rating: number; count: number; percent: number }>;
   nearbyCourts?: Court[];
 };

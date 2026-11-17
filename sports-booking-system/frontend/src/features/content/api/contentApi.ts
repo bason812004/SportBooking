@@ -38,7 +38,7 @@ export const contentApi = {
     return data.data;
   },
 
-  async blogs(params: { search?: string } = {}) {
+  async blogs(params: { search?: string; sort?: "newest" | "oldest" | "views"; page?: number; limit?: number } = {}) {
     const { data } = await api.get<ApiResponse<BlogPost[]>>("/blogs", { params: clean(params) });
     return repairObject(data.data);
   },
@@ -230,6 +230,6 @@ export const contentApi = {
   }
 };
 
-function clean(params: Record<string, string | undefined>) {
+function clean(params: Record<string, string | number | undefined>) {
   return Object.fromEntries(Object.entries(params).filter(([, value]) => value !== "" && value !== undefined));
 }

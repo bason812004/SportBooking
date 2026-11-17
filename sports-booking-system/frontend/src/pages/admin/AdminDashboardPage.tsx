@@ -1,13 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Building2, FolderCheck, Users, WalletCards } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
+import { BarChart } from "../../components/charts/BarChart";
 import { LoadingState, ErrorState } from "../../components/common/States";
 import { PageHero } from "../../components/common/PageHero";
 import { StatCard } from "../../components/common/StatCard";
 import { Button } from "../../components/ui/Button";
+import { formatDate } from "../../lib/format";
 
 const money = (v: number) => `${v.toLocaleString("vi-VN")} đ`;
 
@@ -62,15 +63,16 @@ export function AdminDashboardPage() {
         <section className="rounded-2xl border bg-white p-6">
           <h2 className="text-xl font-bold">Booking 30 ngày</h2>
           <div className="mt-4 h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={d.trend}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" tickFormatter={(v) => v.slice(5)} />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="bookings" fill="#16a34a" />
-              </BarChart>
-            </ResponsiveContainer>
+            <BarChart
+              title="Booking 30 ngày"
+              categoryLabel="Ngày"
+              seriesLabel="Lượt đặt"
+              labels={d.trend.map((point) => formatDate(point.date))}
+              values={d.trend.map((point) => point.bookings)}
+              color="#16a34a"
+              integer
+              tickLabel={(label) => label.slice(0, 5)}
+            />
           </div>
         </section>
         <section className="rounded-2xl border bg-white p-6">

@@ -3,8 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { vi } from "date-fns/locale";
-import { CalendarDays, ChevronLeft, ChevronRight, Clock, Filter, LayoutGrid, PhoneCall, ShieldAlert, Table2, User, Wallet, ShoppingBag } from "lucide-react";
-import { QuickCashierModal } from "../../components/booking/QuickCashierModal";
+import { CalendarDays, ChevronLeft, ChevronRight, Clock, Eye, LayoutGrid, PhoneCall, ShieldAlert, Table2, User, Wallet, ShoppingBag } from "lucide-react";
 import { partnerApi, type PartnerBookingGroup, type PartnerCalendarBooking } from "../../features/partner/api/partnerApi";
 import { LoadingState, ErrorState, EmptyState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
@@ -14,15 +13,21 @@ import { DayPickerCalendar } from "../../components/ui/DayPickerCalendar";
 import { Select } from "../../components/ui/Select";
 import { useClickOutside } from "../../hooks/useClickOutside";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
+import { ReasonModal } from "../../components/common/ReasonModal";
+import { useDebounce } from "../../hooks/useDebounce";
 import { SortableTh } from "../../components/common/SortableTh";
 import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { Overlay } from "../../components/common/Overlay";
+import { RowActionsMenu } from "../../components/common/RowActionsMenu";
+import { TablePagination } from "../../components/common/TablePagination";
 import { useUrlSort } from "../../hooks/useUrlSort";
+import { BookingBillSummary } from "../../components/booking/BookingBillSummary";
 import { BookingCalendarGrid } from "../../components/booking/BookingCalendarGrid";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { PageHero } from "../../components/common/PageHero";
+import { canCorrectAutoNoShow, OverdueBookingsPanel } from "../../features/bookings/components/OverdueBookingsPanel";
 import { bookingStatusTones, paymentStatusTones } from "../../lib/statusTones";
-import { bookingStatusLabel, paymentStatusLabel } from "../../lib/format";
+import { bookingStatusLabel, formatCurrency, localDateKey, paymentStatusLabel } from "../../lib/format";
 import {
   addDays,
   formatLongDayLabel,
@@ -30,7 +35,8 @@ import {
   formatYmd,
   startOfWeek
 } from "../../features/bookings/components/BookingCalendar/utils";
-import { RentEquipmentModal } from "../../features/recipient/components/RentEquipmentModal";
+import { canRentEquipment, RentEquipmentModal } from "../../features/recipient/components/RentEquipmentModal";
+import { useBalanceDueRedirect } from "../../features/cashier/hooks/useBalanceDueRedirect";
 import type { Booking } from "../../types/api";
 
 type Action = "confirm" | "reject" | "complete" | "no-show";
@@ -39,13 +45,14 @@ type SortField = "customerName" | "bookingDate" | "totalPrice" | "bookingStatus"
 
 const SORT_FIELDS: SortField[] = ["customerName", "bookingDate", "totalPrice", "bookingStatus", "paymentStatus"];
 
-const BOOKING_STATUS_VALUES = ["PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "NO_SHOW"];
+const BOOKING_STATUS_VALUES = ["PENDING", "CONFIRMED", "IN_PROGRESS", "COMPLETED", "CANCELLED", "NO_SHOW"];
 
 const bookingStatusLabels = Object.fromEntries(BOOKING_STATUS_VALUES.map((value) => [value, bookingStatusLabel(value)]));
 const paymentStatusLabels = Object.fromEntries(Object.keys(paymentStatusTones).map((value) => [value, paymentStatusLabel(value)]));
 
+// Days in the browser's time zone: toISOString would give yesterday before 7am in Vietnam.
 function todayValue() {
-  return new Date().toISOString().slice(0, 10);
+  return localDateKey();
 }
 
 function currentYearRange() {
@@ -53,17 +60,9 @@ function currentYearRange() {
   return { fromDate: `${year}-01-01`, toDate: `${year}-12-31` };
 }
 
-function hasCustomerArrived(bookingDate: string, startTime: string) {
-  const datePart = bookingDate.slice(0, 10);
-  const timePart = startTime.slice(11, 16) || startTime.slice(0, 5);
-  const startsAt = new Date(`${datePart}T${timePart}:00`);
-  return new Date() >= startsAt;
-}
-
 function shiftDate(date: string, days: number) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next.toISOString().slice(0, 10);
+  const [year, month, day] = date.split("-").map(Number);
+  return localDateKey(new Date(year, month - 1, day + days));
 }
 
 type RangeMode = "day" | "week" | "month" | "custom";
@@ -90,9 +89,12 @@ export function PartnerBookingsPage() {
   const viewMode = searchParams.get("view") === "calendar" ? "calendar" : "table";
 
   const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
   const [courtId, setCourtId] = useState("");
+  const [calendarCourtId, setCalendarCourtId] = useState("");
   const [status, setStatus] = useState(() => searchParams.get("status") ?? "");
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search.trim(), 400);
   const [rangeMode, setRangeMode] = useState<RangeMode>("day");
   const [periodAnchor, setPeriodAnchor] = useState(() => new Date());
   const [customFrom, setCustomFrom] = useState(() => currentYearRange().fromDate);
@@ -101,7 +103,6 @@ export function PartnerBookingsPage() {
   const [confirm, setConfirm] = useState<{ id: string; action: Action } | null>(null);
   const [calendarDetail, setCalendarDetail] = useState<PartnerCalendarBooking | null>(null);
   const [rowDetail, setRowDetail] = useState<PartnerBookingGroup | null>(null);
-  const [cashierBookingId, setCashierBookingId] = useState<string | null>(null);
   const [servingOnly, setServingOnly] = useState(false);
   const [interveningId, setInterveningId] = useState<string | null>(null);
   const [calendarIntervening, setCalendarIntervening] = useState(false);
@@ -118,11 +119,12 @@ export function PartnerBookingsPage() {
   };
 
   // Lịch dạng lưới luôn cần đúng 1 sân — tự chọn sân đầu tiên nếu chưa chọn sân nào.
+  // Tách riêng khỏi bộ lọc bảng để bảng luôn mặc định "Tất cả sân".
   useEffect(() => {
-    if (viewMode === "calendar" && !courtId && courts.data?.length) {
-      setCourtId(courts.data[0].id);
+    if (viewMode === "calendar" && !calendarCourtId && courts.data?.length) {
+      setCalendarCourtId(courts.data[0].id);
     }
-  }, [viewMode, courts.data, courtId]);
+  }, [viewMode, courts.data, calendarCourtId]);
 
   const range = useMemo(() => {
     if (rangeMode === "day") {
@@ -190,14 +192,15 @@ export function PartnerBookingsPage() {
   };
 
   const bookings = useQuery({
-    queryKey: ["partner-bookings", page, courtId, status, search, range, sortField, sortOrder],
+    queryKey: ["partner-bookings", page, limit, courtId, status, servingOnly, debouncedSearch, range, sortField, sortOrder],
     queryFn: () =>
       partnerApi.bookings({
         page,
-        limit: 10,
+        limit,
         courtId,
         status,
-        search,
+        serving: servingOnly ? "true" : undefined,
+        search: debouncedSearch,
         fromDate: range.fromDate,
         toDate: range.toDate,
         sortBy: sortField ?? undefined,
@@ -207,51 +210,66 @@ export function PartnerBookingsPage() {
     enabled: viewMode === "table"
   });
 
-  const displayGroups = useMemo(() => {
-    const rawGroups = bookings.data?.items ?? [];
-    if (!servingOnly) return rawGroups;
-    return rawGroups.filter((group) => {
-      const primary = group.bookings[0];
-      if (!primary) return false;
-      if (!["CONFIRMED", "IN_PROGRESS", "DEPOSIT_PAID", "CHECKOUT_PENDING", "PENDING"].includes(primary.bookingStatus)) return false;
-      const startsAt = new Date(`${primary.bookingDate.slice(0, 10)}T${primary.startTime.slice(11, 16)}:00`);
-      return new Date() >= startsAt;
-    });
-  }, [bookings.data?.items, servingOnly]);
+  // An action (e.g. completing the last order on the last page) can shrink the list under the current page.
+  const totalPages = bookings.data?.meta.totalPages;
+  useEffect(() => {
+    if (totalPages && page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   const calendarQuery = useQuery({
-    queryKey: ["partner-calendar", calendarDate, courtId],
-    queryFn: () => partnerApi.calendar({ fromDate: calendarDate, toDate: calendarDate, courtId }),
-    enabled: viewMode === "calendar" && Boolean(courtId)
+    queryKey: ["partner-calendar", calendarDate, calendarCourtId],
+    queryFn: () => partnerApi.calendar({ fromDate: calendarDate, toDate: calendarDate, courtId: calendarCourtId }),
+    enabled: viewMode === "calendar" && Boolean(calendarCourtId)
   });
 
   const courtSurfacesQuery = useQuery({
-    queryKey: ["partner-court-surfaces", courtId],
-    queryFn: () => partnerApi.courtSurfaces(courtId),
-    enabled: viewMode === "calendar" && Boolean(courtId)
+    queryKey: ["partner-court-surfaces", calendarCourtId],
+    queryFn: () => partnerApi.courtSurfaces(calendarCourtId),
+    enabled: viewMode === "calendar" && Boolean(calendarCourtId)
   });
+
+  const overdue = useQuery({ queryKey: ["partner-overdue-bookings"], queryFn: partnerApi.overdueBookings, refetchInterval: 5 * 60_000 });
 
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: ["partner-bookings"] });
     queryClient.invalidateQueries({ queryKey: ["partner-calendar"] });
+    queryClient.invalidateQueries({ queryKey: ["partner-overdue-bookings"] });
   };
 
   const [rentEquipmentBooking, setRentEquipmentBooking] = useState<Booking | null>(null);
 
+  // A booking still owing money is finished at the cashier, which takes the money first.
+  const openCashierIfOwed = useBalanceDueRedirect("/partner/cashier");
   const statusMutation = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: Action }) => partnerApi.setBookingStatus(id, action),
-    onSuccess: () => {
-      toast.success("Đã cập nhật đơn");
+    mutationFn: ({ id, action, reason }: { id: string; action: Action; reason?: string }) => partnerApi.setBookingStatus(id, action, reason),
+    onSuccess: (_data, variables) => {
+      toast.success(variables.action === "reject" ? "Đã huỷ đơn và báo lý do cho khách" : "Đã cập nhật đơn");
       setConfirm(null);
       setCalendarDetail(null);
       invalidateAll();
     },
-    onError: (error) => toast.error(error.message)
+    onError: (error, variables) => {
+      setConfirm(null);
+      if (openCashierIfOwed(error, variables.id)) return;
+      toast.error(error.message);
+      // Changed meanwhile (staff, another tab, the overdue job): show it as it is now.
+      invalidateAll();
+    }
   });
 
   const actionLabel: Record<Action, string> = { confirm: "Xác nhận", reject: "Từ chối/Hủy", complete: "Hoàn thành", "no-show": "Khách không đến" };
-  const actionsForStatus = (status: string): Action[] =>
-    status === "PENDING" ? ["confirm", "reject"] : status === "CONFIRMED" ? ["complete", "no-show", "reject"] : [];
+  // A guest already checked in can only be finished; a no-show the system recorded can be turned into completed
+  // for 7 days, if the customer did play. Finishing needs the bill paid (otherwise the cashier opens).
+  const actionsForStatus = (status: string, autoFinishedAt?: string | null): Action[] =>
+    status === "PENDING"
+      ? ["confirm", "reject"]
+      : status === "CONFIRMED" || status === "DEPOSIT_PAID"
+        ? ["complete", "no-show", "reject"]
+        : status === "IN_PROGRESS" || status === "CHECKOUT_PENDING"
+          ? ["complete"]
+          : canCorrectAutoNoShow({ bookingStatus: status, autoFinishedAt })
+            ? ["complete"]
+            : [];
   const run = (id: string, action: Action) => (action === "reject" || action === "no-show" ? setConfirm({ id, action }) : statusMutation.mutate({ id, action }));
   const openCalendarDetail = (booking: PartnerCalendarBooking) => {
     setCalendarIntervening(false);
@@ -266,7 +284,7 @@ export function PartnerBookingsPage() {
 
     const rowKey = group.orderId ?? primary.id;
     const isGroup = group.bookings.length > 1;
-    const totalPrice = group.bookings.reduce((sum, b) => sum + Number(b.totalPrice), 0);
+    const billTotal = group.bookings.reduce((sum, b) => sum + b.bill.totalAmount, 0);
     const allSamePayment = group.bookings.every((b) => b.paymentStatus === primary.paymentStatus);
     const allSameStatus = group.bookings.every((b) => b.bookingStatus === primary.bookingStatus);
     const distinctSurfaceIds = new Set(group.bookings.map((b) => b.courtSurface?.id ?? b.court.id));
@@ -275,29 +293,21 @@ export function PartnerBookingsPage() {
         ? `${primary.court.name}${primary.courtSurface ? ` · ${primary.courtSurface.name}` : ""}`
         : `${distinctSurfaceIds.size} sân`;
 
-    const bookedTimeLabel = primary.startTime && primary.endTime
-      ? `${primary.startTime.slice(11, 16) || primary.startTime.slice(0, 5)} - ${primary.endTime.slice(11, 16) || primary.endTime.slice(0, 5)}`
-      : "Chưa chọn giờ";
-
     return (
       <Tr key={rowKey} className={isGroup ? "bg-emerald-50/40" : undefined}>
         <Td className="font-medium">
           {primary.bookingCode}
           {isGroup ? <span className="ml-1 text-xs font-normal text-slate-400">(+{group.bookings.length - 1})</span> : null}
         </Td>
-        <Td>
+        <Td className="whitespace-nowrap">
           {primary.user?.fullName}
           <br />
           <span className="text-xs text-slate-500">{primary.user?.phone}</span>
         </Td>
         <Td>
           <span className="font-bold text-slate-800">{surfaceLabel}</span>
-          <br />
-          <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-[#02712a] bg-emerald-50 px-2 py-0.5 rounded-md mt-1 border border-emerald-200">
-            <Clock className="h-3 w-3 text-[#02712a]" /> Giờ phục vụ: {bookedTimeLabel}
-          </span>
         </Td>
-        <Td>
+        <Td className="whitespace-nowrap">
           {isGroup ? (
             `${group.bookings.length} khung giờ`
           ) : (
@@ -310,70 +320,60 @@ export function PartnerBookingsPage() {
             </>
           )}
         </Td>
-        <Td>
+        <Td className="whitespace-nowrap">
           {allSamePayment ? (
             <StatusBadge value={primary.paymentStatus} tones={paymentStatusTones} labels={paymentStatusLabels} />
           ) : (
             <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-bold text-slate-600">Nhiều trạng thái</span>
           )}
         </Td>
-        <Td>
+        <Td className="whitespace-nowrap">
           {allSameStatus ? (
-            <StatusBadge value={primary.bookingStatus} tones={bookingStatusTones} labels={bookingStatusLabels} />
+            <>
+              <StatusBadge value={primary.bookingStatus} tones={bookingStatusTones} labels={bookingStatusLabels} />
+              {primary.autoFinishedAt && <span className="mt-1 block text-[11px] font-semibold text-slate-500">Hệ thống tự kết thúc</span>}
+            </>
           ) : (
             <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-bold text-slate-600">Nhiều trạng thái</span>
           )}
         </Td>
-        <Td className="text-right">{totalPrice.toLocaleString("vi-VN")} đ</Td>
+        <Td className="whitespace-nowrap text-right">{formatCurrency(billTotal)}</Td>
         <Td>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center justify-end gap-2 whitespace-nowrap">
             {["CONFIRMED", "IN_PROGRESS", "DEPOSIT_PAID", "CHECKOUT_PENDING"].includes(primary.bookingStatus) && (
               <Button
                 size="sm"
                 className="bg-[#02712a] text-white hover:bg-[#1fa955] font-bold text-xs shadow-sm"
-                onClick={() => navigate(`/partner/pos/${primary.id}`)}
+                onClick={() => navigate(`/partner/cashier?bookingId=${primary.id}`)}
               >
                 <ShoppingBag className="mr-1 h-3.5 w-3.5" /> Dịch vụ (POS)
               </Button>
             )}
-            {["CONFIRMED", "DEPOSIT_PAID"].includes(primary.bookingStatus) && !hasCustomerArrived(primary.bookingDate, primary.startTime) && (
-              <Button
-                size="sm"
-                variant="secondary"
-                className="border-emerald-300 text-[#02712a] hover:bg-emerald-50 font-bold text-xs"
-                onClick={() => setRentEquipmentBooking(primary)}
-              >
-                <ShoppingBag className="mr-1 h-3.5 w-3.5" /> Thuê dụng cụ
-              </Button>
-            )}
-            <Button variant="secondary" onClick={() => setRowDetail(group)}>
-              Chi tiết
-            </Button>
-            {!isGroup && actionsForStatus(primary.bookingStatus).length > 0 ? (
-              interveningId === primary.id ? (
-                <div className="space-y-1.5">
-                  <div className="flex flex-wrap gap-2">
-                    {actionsForStatus(primary.bookingStatus).map((action) => (
-                      <Button
-                        key={action}
-                        variant={action === "reject" || action === "no-show" ? "danger" : "secondary"}
-                        disabled={statusMutation.isPending}
-                        onClick={() => run(primary.id, action)}
-                      >
-                        {actionLabel[action]}
-                      </Button>
-                    ))}
-                    <Button variant="secondary" onClick={() => setInterveningId(null)}>Đóng</Button>
-                  </div>
-                  <p className="text-xs text-amber-700">Đang can thiệp trực tiếp — ưu tiên để nhân viên phụ trách xử lý khi có thể.</p>
-                </div>
-              ) : (
-                <Button variant="secondary" onClick={() => setInterveningId(primary.id)}>
-                  <ShieldAlert className="h-4 w-4" />
-                  Can thiệp
-                </Button>
-              )
-            ) : null}
+            <RowActionsMenu
+              sections={[
+                {
+                  items: [
+                    ...(canRentEquipment(primary)
+                      ? [{ key: "rent", label: "Thuê dụng cụ", icon: ShoppingBag, onClick: () => setRentEquipmentBooking(primary) }]
+                      : []),
+                    { key: "detail", label: "Chi tiết", icon: Eye, onClick: () => setRowDetail(group) }
+                  ]
+                },
+                {
+                  title: "Can thiệp",
+                  note: "Ưu tiên để nhân viên phụ trách xử lý khi có thể.",
+                  items: isGroup
+                    ? []
+                    : actionsForStatus(primary.bookingStatus, primary.autoFinishedAt).map((action) => ({
+                        key: action,
+                        label: actionLabel[action],
+                        danger: action === "reject" || action === "no-show",
+                        disabled: statusMutation.isPending,
+                        onClick: () => run(primary.id, action)
+                      }))
+                }
+              ]}
+            />
           </div>
         </Td>
       </Tr>
@@ -408,13 +408,11 @@ export function PartnerBookingsPage() {
         }
       />
 
+      <OverdueBookingsPanel bookings={overdue.data} />
+
       {viewMode === "table" ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
-          <p className="mb-3 flex items-center gap-1.5 text-xs font-black uppercase tracking-wide text-slate-500">
-            <Filter className="h-3.5 w-3.5" />
-            Bộ lọc
-          </p>
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-[repeat(3,minmax(0,1fr))_auto]">
             <Select
               label="Sân"
               value={courtId}
@@ -440,6 +438,15 @@ export function PartnerBookingsPage() {
                 }))
               ]}
             />
+            <Input
+              label="Tìm kiếm"
+              value={search}
+              onChange={(e) => {
+                setPage(1);
+                setSearch(e.target.value);
+              }}
+              placeholder="Mã đơn, tên khách hoặc SĐT"
+            />
             <div className="flex items-end">
               <button
                 type="button"
@@ -458,97 +465,93 @@ export function PartnerBookingsPage() {
                 <ShoppingBag className="h-3.5 w-3.5" />
                 Sân đang phục vụ
               </button>
-            </div><Input
-              label="Tìm kiếm"
-              value={search}
-              onChange={(e) => {
-                setPage(1);
-                setSearch(e.target.value);
-              }}
-              placeholder="Mã đơn, tên khách hoặc SĐT"
-            />
-          </div>
-
-          <div className="mt-3 flex overflow-hidden rounded-lg border border-emerald-200 text-xs font-bold w-fit">
-            {(["day", "week", "month", "custom"] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => switchRangeMode(mode)}
-                className={`px-3 py-2 transition ${rangeMode === mode ? "bg-emerald-600 text-white" : "bg-white text-emerald-700 hover:bg-emerald-50"}`}
-              >
-                {rangeModeLabel[mode]}
-              </button>
-            ))}
-          </div>
-
-          {rangeMode === "custom" ? (
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <DatePicker
-                label="Từ ngày"
-                value={customFrom}
-                onChange={(value) => {
-                  setPage(1);
-                  setCustomFrom(value);
-                }}
-              />
-              <DatePicker
-                label="Đến ngày"
-                value={customTo}
-                onChange={(value) => {
-                  setPage(1);
-                  setCustomTo(value);
-                }}
-              />
             </div>
-          ) : (
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button variant="secondary" onClick={() => shiftPeriod(-1)}>
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <span className="rounded-xl bg-slate-50 px-4 py-1.5 text-sm font-black text-slate-800 ring-1 ring-slate-200">{periodLabel}</span>
-              <Button variant="secondary" onClick={() => shiftPeriod(1)}>
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-              <Button variant="secondary" onClick={jumpToTodayPeriod}>
-                Hôm nay
-              </Button>
-              {rangeMode === "day" || rangeMode === "week" ? (
-                <span className="relative inline-flex" ref={dayPickerRef}>
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      setDayPickerMonth(periodAnchor);
-                      setDayPickerOpen((o) => !o);
-                    }}
-                    title="Chọn ngày"
-                  >
-                    <CalendarDays className="h-4 w-4" />
-                    Chọn ngày
-                  </Button>
-                  {dayPickerOpen && (
-                    <DayPickerCalendar
-                      required
-                      selected={periodAnchor}
-                      onSelect={(date) => {
-                        setPeriodAnchor(date);
-                        setPage(1);
-                        setDayPickerOpen(false);
-                      }}
-                      month={dayPickerMonth}
-                      onMonthChange={setDayPickerMonth}
-                      locale={vi}
-                    />
-                  )}
-                </span>
-              ) : (
-                <Button variant="secondary" onClick={openMonthPicker} title="Chọn tháng">
-                  <CalendarDays className="h-4 w-4" />
-                  Chọn tháng
+          </div>
+
+          <div className={`mt-3 flex flex-wrap gap-3 ${rangeMode === "custom" ? "items-end" : "items-center"}`}>
+            <div className="flex overflow-hidden rounded-lg border border-emerald-200 text-xs font-bold w-fit">
+              {(["day", "week", "month", "custom"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => switchRangeMode(mode)}
+                  className={`px-3 py-2 transition ${rangeMode === mode ? "bg-emerald-600 text-white" : "bg-white text-emerald-700 hover:bg-emerald-50"}`}
+                >
+                  {rangeModeLabel[mode]}
+                </button>
+              ))}
+            </div>
+  
+            {rangeMode === "custom" ? (
+              <div className="flex flex-wrap items-end gap-3">
+                <DatePicker
+                  label="Từ ngày"
+                  value={customFrom}
+                  className="min-w-[11rem]"
+                  onChange={(value) => {
+                    setPage(1);
+                    setCustomFrom(value);
+                  }}
+                />
+                <DatePicker
+                  label="Đến ngày"
+                  value={customTo}
+                  className="min-w-[11rem]"
+                  onChange={(value) => {
+                    setPage(1);
+                    setCustomTo(value);
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="secondary" onClick={() => shiftPeriod(-1)}>
+                  <ChevronLeft className="h-4 w-4" />
                 </Button>
-              )}
-            </div>
-          )}
+                <span className="rounded-xl bg-slate-50 px-4 py-1.5 text-sm font-black text-slate-800 ring-1 ring-slate-200">{periodLabel}</span>
+                <Button variant="secondary" onClick={() => shiftPeriod(1)}>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <Button variant="secondary" onClick={jumpToTodayPeriod}>
+                  Hôm nay
+                </Button>
+                {rangeMode === "day" || rangeMode === "week" ? (
+                  <span className="relative inline-flex" ref={dayPickerRef}>
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setDayPickerMonth(periodAnchor);
+                        setDayPickerOpen((o) => !o);
+                      }}
+                      title="Chọn ngày"
+                    >
+                      <CalendarDays className="h-4 w-4" />
+                      Chọn ngày
+                    </Button>
+                    {dayPickerOpen && (
+                      <DayPickerCalendar
+                        required
+                        selected={periodAnchor}
+                        onSelect={(date) => {
+                          setPeriodAnchor(date);
+                          setPage(1);
+                          setDayPickerOpen(false);
+                        }}
+                        month={dayPickerMonth}
+                        onMonthChange={setDayPickerMonth}
+                        locale={vi}
+                      />
+                    )}
+                  </span>
+                ) : (
+                  <Button variant="secondary" onClick={openMonthPicker} title="Chọn tháng">
+                    <CalendarDays className="h-4 w-4" />
+                    Chọn tháng
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -557,7 +560,7 @@ export function PartnerBookingsPage() {
             Ngày xem lịch
           </p>
           <div className="flex flex-wrap items-end gap-3">
-            <Select label="Sân" value={courtId} onChange={(e) => setCourtId(e.target.value)} options={courtOptions} />
+            <Select label="Sân" value={calendarCourtId} onChange={(e) => setCalendarCourtId(e.target.value)} options={courtOptions} />
             <div className="flex items-center gap-2">
               <Button variant="secondary" onClick={() => setCalendarDate(shiftDate(calendarDate, -1))}>
                 <ChevronLeft className="h-4 w-4" />
@@ -578,7 +581,7 @@ export function PartnerBookingsPage() {
         bookings.isLoading ? (
           <LoadingState />
         ) : bookings.isError ? (
-          <ErrorState message={bookings.error.message} />
+          <ErrorState message={bookings.error.message} onRetry={() => bookings.refetch()} />
         ) : bookings.data?.items.length === 0 ? (
           <EmptyState title="Chưa có đơn phù hợp" />
         ) : (
@@ -587,31 +590,38 @@ export function PartnerBookingsPage() {
               <THead>
                 <tr>
                   <Th>Mã</Th>
-                  <SortableTh label="Khách hàng" field="customerName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <SortableTh className="whitespace-nowrap" label="Khách hàng" field="customerName" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
                   <Th>Sân</Th>
-                  <SortableTh label="Khung giờ" field="bookingDate" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-                  <SortableTh label="Thanh toán" field="paymentStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-                  <SortableTh label="Trạng thái" field="bookingStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
-                  <SortableTh className="text-right" label="Tổng tiền" field="totalPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <SortableTh className="whitespace-nowrap" label="Khung giờ" field="bookingDate" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <SortableTh className="whitespace-nowrap" label="Thanh toán" field="paymentStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <SortableTh className="whitespace-nowrap" label="Trạng thái" field="bookingStatus" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
+                  <SortableTh className="whitespace-nowrap text-right" label="Tổng hoá đơn" field="totalPrice" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
                   <Th></Th>
                 </tr>
               </THead>
-              <TBody>{displayGroups.map((group) => renderBookingRow(group))}</TBody>
+              <TBody>{bookings.data?.items.map((group) => renderBookingRow(group))}</TBody>
             </Table>
 
-            <div className="flex items-center justify-end gap-3">
-              <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Trang trước</Button>
-              <span>Trang {bookings.data?.meta.page}/{Math.max(bookings.data?.meta.totalPages ?? 1, 1)}</span>
-              <Button variant="secondary" disabled={page >= (bookings.data?.meta.totalPages ?? 1)} onClick={() => setPage(page + 1)}>Trang sau</Button>
-            </div>
+            <TablePagination
+              page={page}
+              totalPages={bookings.data?.meta.totalPages ?? 1}
+              total={bookings.data?.meta.total ?? 0}
+              limit={limit}
+              itemLabel="đơn"
+              onPageChange={setPage}
+              onLimitChange={(value) => {
+                setPage(1);
+                setLimit(value);
+              }}
+            />
           </>
         )
-      ) : !courtId ? (
+      ) : !calendarCourtId ? (
         <EmptyState title="Chọn 1 sân để xem lịch dạng lưới giờ" />
       ) : calendarQuery.isLoading || courtSurfacesQuery.isLoading ? (
         <LoadingState />
       ) : calendarQuery.isError ? (
-        <ErrorState message={calendarQuery.error.message} />
+        <ErrorState message={calendarQuery.error.message} onRetry={() => calendarQuery.refetch()} />
       ) : (
         <BookingCalendarGrid
           date={calendarDate}
@@ -624,11 +634,24 @@ export function PartnerBookingsPage() {
       )}
 
       <ConfirmModal
-        open={Boolean(confirm)}
-        title={confirm?.action === "no-show" ? "Xác nhận khách không đến" : "Xác nhận hủy đơn"}
-        message={confirm?.action === "no-show" ? "Thao tác này tạo hoa hồng trên tiền cọc và không thể hoàn tác." : "Đơn sẽ bị hủy và áp dụng chính sách hoàn tiền."}
+        open={confirm?.action === "no-show"}
+        title="Xác nhận khách không đến"
+        message="Đơn được ghi nhận không đến, tính hoa hồng trên tiền cọc và khách nhận thông báo. Không hoàn tác được."
         onCancel={() => setConfirm(null)}
         onConfirm={() => confirm && statusMutation.mutate(confirm)}
+      />
+      <ReasonModal
+        key={confirm?.action === "reject" ? `reject-${confirm.id}` : "none"}
+        open={confirm?.action === "reject"}
+        required
+        title="Huỷ đơn đặt sân?"
+        description="Đơn bị huỷ và áp dụng chính sách hoàn tiền. Khách nhận thông báo kèm lý do bạn nhập."
+        label="Lý do huỷ (gửi cho khách)"
+        placeholder="Ví dụ: sân bảo trì đột xuất, xin lỗi vì sự bất tiện"
+        confirmLabel="Huỷ đơn"
+        pending={statusMutation.isPending}
+        onClose={() => setConfirm(null)}
+        onConfirm={(reason) => confirm && statusMutation.mutate({ ...confirm, reason })}
       />
 
       {calendarDetail ? (
@@ -661,20 +684,20 @@ export function PartnerBookingsPage() {
             </p>
             <div className="flex items-center justify-between gap-2 pt-1">
               <StatusBadge value={calendarDetail.paymentStatus} tones={paymentStatusTones} labels={paymentStatusLabels} />
-              <span className="flex items-center gap-1 font-bold text-slate-800">
+              <span className="flex items-center gap-1 font-bold text-slate-800" title="Chưa gồm dịch vụ thêm tại quầy">
                 <Wallet className="h-3.5 w-3.5 shrink-0" />
-                {Number(calendarDetail.totalPrice).toLocaleString("vi-VN")} đ
+                Tiền đặt sân: {Number(calendarDetail.totalPrice).toLocaleString("vi-VN")} đ
               </span>
             </div>
           </div>
 
           <div className="mt-4">
-            {actionsForStatus(calendarDetail.bookingStatus).length === 0 ? (
+            {actionsForStatus(calendarDetail.bookingStatus, calendarDetail.autoFinishedAt).length === 0 ? (
               <p className="text-sm text-slate-500">Đơn này không còn thao tác nào khả dụng.</p>
             ) : calendarIntervening ? (
               <div className="space-y-1.5">
                 <div className="flex flex-wrap gap-2">
-                  {actionsForStatus(calendarDetail.bookingStatus).map((action) => (
+                  {actionsForStatus(calendarDetail.bookingStatus, calendarDetail.autoFinishedAt).map((action) => (
                     <Button key={action} variant={action === "reject" || action === "no-show" ? "danger" : "secondary"} disabled={statusMutation.isPending} onClick={() => run(calendarDetail.id, action)}>
                       {actionLabel[action]}
                     </Button>
@@ -708,9 +731,13 @@ export function PartnerBookingsPage() {
               <p className="text-lg font-black text-slate-800">{rowDetail.bookings.length}</p>
             </div>
             <div className="flex-1 rounded-xl bg-slate-50 px-3 py-2.5">
-              <p className="text-xs font-semibold text-slate-500">Tổng tiền</p>
-              <p className="text-lg font-black text-emerald-700">
-                {rowDetail.bookings.reduce((sum, b) => sum + Number(b.totalPrice), 0).toLocaleString("vi-VN")}đ
+              <p className="text-xs font-semibold text-slate-500">Tổng hoá đơn</p>
+              <p className="text-lg font-black text-slate-800">{formatCurrency(rowDetail.bookings.reduce((sum, b) => sum + b.bill.totalAmount, 0))}</p>
+            </div>
+            <div className="flex-1 rounded-xl bg-slate-50 px-3 py-2.5">
+              <p className="text-xs font-semibold text-slate-500">Còn phải thu</p>
+              <p className={`text-lg font-black ${rowDetail.bookings.some((b) => !b.bill.isFullyPaid) ? "text-amber-700" : "text-emerald-700"}`}>
+                {formatCurrency(rowDetail.bookings.reduce((sum, b) => sum + b.bill.remainingAmount, 0))}
               </p>
             </div>
           </div>
@@ -736,35 +763,17 @@ export function PartnerBookingsPage() {
                     {booking.startTime.slice(11, 16)} - {booking.endTime.slice(11, 16)}
                   </span>
                   <StatusBadge value={booking.paymentStatus} tones={paymentStatusTones} labels={paymentStatusLabels} />
-                  <span className="ml-auto flex items-center gap-1 font-bold text-slate-700">
-                    <Wallet className="h-3.5 w-3.5 shrink-0" />
-                    {Number(booking.totalPrice).toLocaleString("vi-VN")}đ
-                  </span>
                 </div>
 
-                {booking.bookingServices?.length ? (
-                  <div className="mt-1.5 border-t border-slate-100 pt-1.5">
-                    <p className="mb-1 text-xs font-semibold text-slate-500">Dịch vụ</p>
-                    <div className="max-h-28 overflow-y-auto rounded border border-slate-100">
-                      <table className="w-full text-xs">
-                        <tbody>
-                          {booking.bookingServices.map((item) => (
-                            <tr key={item.id} className="border-t border-slate-100 first:border-t-0">
-                              <td className="p-1.5 text-slate-700">{item.service.name}</td>
-                              <td className="p-1.5 text-right text-slate-500">x{item.quantity}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                ) : null}
+                <div className="mt-2">
+                  <BookingBillSummary bill={booking.bill} />
+                </div>
 
-                {actionsForStatus(booking.bookingStatus).length > 0 ? (
+                {actionsForStatus(booking.bookingStatus, booking.autoFinishedAt).length > 0 ? (
                   interveningId === booking.id ? (
                     <div className="mt-2 space-y-1.5 border-t border-slate-100 pt-2">
                       <div className="flex flex-wrap gap-2">
-                        {actionsForStatus(booking.bookingStatus).map((action) => (
+                        {actionsForStatus(booking.bookingStatus, booking.autoFinishedAt).map((action) => (
                           <Button
                             key={action}
                             variant={action === "reject" || action === "no-show" ? "danger" : "secondary"}
@@ -828,21 +837,13 @@ export function PartnerBookingsPage() {
           </div>
         </Overlay>
       ) : null}
-      <QuickCashierModal
-        isOpen={Boolean(cashierBookingId)}
-        onClose={() => setCashierBookingId(null)}
-        bookingId={cashierBookingId}
-      />
       <RentEquipmentModal
         isOpen={Boolean(rentEquipmentBooking)}
         onClose={() => setRentEquipmentBooking(null)}
         bookingId={rentEquipmentBooking?.id ?? ""}
         courtId={rentEquipmentBooking?.court.id ?? ""}
         courtName={rentEquipmentBooking?.court.name}
-        onRented={() => {
-          toast.success("Đã thuê dụng cụ cho khách");
-          invalidateAll();
-        }}
+        onRented={invalidateAll}
       />
     </div>
   );

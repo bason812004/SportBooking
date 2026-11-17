@@ -4,6 +4,7 @@ import { MapPin } from "lucide-react";
 import { motion } from "framer-motion";
 import { useCourts } from "../../../features/courts/hooks/useCourts";
 import { Reveal, SectionShell, SkeletonCard } from "./homeUtils";
+import { courtArea } from "../../../lib/format";
 
 const FALLBACK_IMAGES = [
   "https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=900&q=80",
@@ -46,7 +47,7 @@ export function MapSection() {
                   <div>
                     <p className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.16em] text-[#0f766e]"><MapPin className="h-4 w-4" /> Marker #{index + 1}</p>
                     <h3 className="mt-2 font-black">{court.name}</h3>
-                    <p className="mt-1 text-sm text-slate-500">{court.district}, {court.city} — {Number(court.minPrice ?? 0).toLocaleString("vi-VN")}đ</p>
+                    <p className="mt-1 text-sm text-slate-500">{courtArea(court)} — {Number(court.minPrice ?? 0).toLocaleString("vi-VN")}đ</p>
                     <p className="mt-2 text-sm font-bold text-blue-700">Đặt sân</p>
                   </div>
                 </Link>

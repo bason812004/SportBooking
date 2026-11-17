@@ -7,6 +7,7 @@ import { dynamicPricingService } from "../dynamic-pricing/dynamicPricing.service
 import { realtimeService } from "../realtime/realtime.service.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { voucherRepository, type VoucherRow } from "./voucher.repository.js";
+import { activationProblem, normalizeVoucherTerms, runningVoucherChanges, type VoucherTermsInput } from "./voucher.terms.js";
 import {
   evaluateVoucherEligibility,
   translateReason,
@@ -36,24 +37,24 @@ export const voucherService = {
 
   async detail(id: string) {
     const [voucher] = await voucherRepository.findActiveById(id);
-    if (!voucher) throw new NotFoundError("Khong tim thay voucher");
+    if (!voucher) throw new NotFoundError("Không tìm thấy voucher");
     return voucher;
   },
 
   async trackClick(id: string) {
     const clicked = await voucherRepository.incrementClickCount(id);
-    if (!clicked || clicked.length === 0) throw new NotFoundError("Khong tim thay voucher");
+    if (!clicked || clicked.length === 0) throw new NotFoundError("Không tìm thấy voucher");
     return clicked[0];
   },
 
   async claim(userId: string, voucherId: string) {
     const voucher = await voucherRepository.findActiveVoucher(voucherId);
-    if (!voucher) throw new NotFoundError("Khong tim thay voucher kha dung");
+    if (!voucher) throw new NotFoundError("Không tìm thấy voucher khả dụng");
     if (voucher.usageLimit != null && voucher.usedCount >= voucher.usageLimit) {
-      throw new ValidationError("Voucher da het luot su dung", { voucher: ["usage_limit"] });
+      throw new ValidationError("Voucher đã hết lượt sử dụng", { voucher: ["usage_limit"] });
     }
     if (await voucherRepository.userVoucher(userId, voucherId)) {
-      throw new ConflictError("Ban da nhan voucher nay", "VOUCHER_ALREADY_CLAIMED");
+      throw new ConflictError("Bạn đã nhận voucher này", "VOUCHER_ALREADY_CLAIMED");
     }
     const claimed = await voucherRepository.claim(userId, voucherId);
     void trackEvent({
@@ -201,7 +202,7 @@ export const voucherService = {
       code: input.code,
       courtId: input.courtId
     });
-    if (!voucher) throw new NotFoundError("Voucher khong hop le");
+    if (!voucher) throw new NotFoundError("Voucher không hợp lệ");
 
     const eligibility = await this.checkOne(voucher, {
       bookingDate: input.bookingDate ?? new Date().toISOString().slice(0, 10),
@@ -212,6 +213,9 @@ export const voucherService = {
     });
     if (!eligibility.eligible) {
       throw new ValidationError(eligibility.message, { eligibility: [eligibility.code] });
+    }
+    if (input.userId && (await voucherRepository.userHasLiveUse(input.userId, voucher.id))) {
+      throw new ValidationError(translateReason("VOUCHER_ALREADY_USED"), { eligibility: ["VOUCHER_ALREADY_USED"] });
     }
 
     const discount = calculateVoucherDiscount({
@@ -242,9 +246,52 @@ export const voucherService = {
     };
   },
 
-  async checkOne(voucher: VoucherLike, ctx: EligibilityContext) {
+  async checkOne(voucher: VoucherLike | VoucherRow, ctx: EligibilityContext) {
     const systemHolidays = (await voucherRepository.isHoliday(ctx.bookingDate)).map(() => ctx.bookingDate);
-    return evaluateVoucherEligibility(voucher, { ...ctx, systemHolidays });
+    // Rows carry the owner and court as objects; the scope check needs their ids and the booked court's partner.
+    const row = voucher as Partial<VoucherRow> & VoucherLike;
+    const scoped: VoucherLike = {
+      ...voucher,
+      partnerId: row.partnerId !== undefined ? row.partnerId : row.partner?.id ?? null,
+      courtId: row.courtId ?? row.court?.id ?? null
+    } as VoucherLike;
+    const courtPartnerId = ctx.courtPartnerId !== undefined ? ctx.courtPartnerId : await voucherRepository.courtPartnerId(ctx.courtId);
+    return evaluateVoucherEligibility(scoped, { ...ctx, courtPartnerId, systemHolidays });
+  },
+
+  /**
+   * The authoritative voucher check for a booking quote (checkout and chatbot go through it): status, dates,
+   * usage, court/partner scope, day/time/holiday conditions for every booked slot, and one use per customer.
+   */
+  async evaluateForQuote(input: {
+    voucherId?: string;
+    code?: string;
+    courtId: string;
+    userId?: string;
+    subtotal: number;
+    slots: Array<{ date: string; startTime: string; endTime: string }>;
+  }): Promise<{ eligible: true; voucherId: string; discountAmount: number } | { eligible: false; code: EligibilityReasonCode; message: string }> {
+    const voucher = await voucherRepository.findForEligibility({ voucherId: input.voucherId, code: input.code });
+    if (!voucher) return { eligible: false, code: "VOUCHER_NOT_FOUND", message: translateReason("VOUCHER_NOT_FOUND") };
+    const courtPartnerId = await voucherRepository.courtPartnerId(input.courtId);
+
+    let discountAmount = 0;
+    for (const slot of input.slots) {
+      const result = await this.checkOne(voucher, {
+        bookingDate: slot.date,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        courtId: input.courtId,
+        courtPartnerId,
+        subtotal: input.subtotal
+      });
+      if (!result.eligible) return { eligible: false, code: result.code, message: result.message };
+      discountAmount = result.discountAmount;
+    }
+    if (input.userId && (await voucherRepository.userHasLiveUse(input.userId, voucher.id))) {
+      return { eligible: false, code: "VOUCHER_ALREADY_USED", message: translateReason("VOUCHER_ALREADY_USED") };
+    }
+    return { eligible: true, voucherId: voucher.id, discountAmount };
   },
 
   /**
@@ -262,15 +309,21 @@ export const voucherService = {
     userId?: string;
   }) {
     const vouchers = await voucherRepository.listActive();
+    const courtPartnerId = await voucherRepository.courtPartnerId(input.courtId);
+    const usedByUser = input.userId ? await voucherRepository.liveVoucherIdsForUser(input.userId) : new Set<string>();
     const result = [];
     for (const v of vouchers) {
-      const eligibility = await this.checkOne(v, {
+      const checked = await this.checkOne(v, {
         courtId: input.courtId,
+        courtPartnerId,
         bookingDate: input.bookingDate,
         startTime: input.startTime,
         endTime: input.endTime,
         subtotal: input.subtotal
       });
+      const eligibility = checked.eligible && usedByUser.has(v.id)
+        ? { eligible: false as const, code: "VOUCHER_ALREADY_USED" as const, message: translateReason("VOUCHER_ALREADY_USED", input.lang ?? "vi") }
+        : checked;
       result.push({
         voucher: this.serializeForEligibility(v),
         eligible: eligibility.eligible,
@@ -390,7 +443,7 @@ export const voucherService = {
     services?: Array<{ serviceId: string; quantity: number }>;
   }) {
     if (!input.code && !input.voucherId) {
-      throw new ValidationError("Vui long cung cap ma voucher hoac id voucher");
+      throw new ValidationError("Vui lòng cung cấp mã voucher hoặc id voucher");
     }
 
     const [voucher] = await voucherRepository.findUsableFull({
@@ -398,14 +451,14 @@ export const voucherService = {
       code: input.code,
       courtId: input.courtId
     });
-    if (!voucher) throw new NotFoundError("Ma voucher khong hop le hoac da het han");
+    if (!voucher) throw new NotFoundError("Mã voucher không hợp lệ hoặc đã hết hạn");
 
     if (input.startTime >= input.endTime) {
-      throw new ValidationError("Khung gio khong hop le");
+      throw new ValidationError("Khung giờ không hợp lệ");
     }
 
     const court = await courtRepository.findPublicById(input.courtId);
-    if (!court) throw new NotFoundError("San khong ton tai hoac chua duoc duyet");
+    if (!court) throw new NotFoundError("Sân không tồn tại hoặc chưa được duyệt");
 
     const dynamicPrice = await dynamicPricingService.calculate(input.courtId, {
       date: input.bookingDate,
@@ -422,8 +475,8 @@ export const voucherService = {
       const serviceMap = new Map(services.map((s) => [s.id, s]));
       for (const line of input.services ?? []) {
         const service = serviceMap.get(line.serviceId);
-        if (!service) throw new ValidationError(`Dich vu ${line.serviceId} khong ton tai`);
-        if (service.status !== "ACTIVE") throw new ValidationError(`Dich vu ${service.name} khong kha dung`);
+        if (!service) throw new ValidationError(`Dịch vụ ${line.serviceId} không tồn tại`);
+        if (service.status !== "ACTIVE") throw new ValidationError(`Dịch vụ ${service.name} không khả dụng`);
         servicesTotal += Number(service.price) * line.quantity;
       }
     }
@@ -438,6 +491,9 @@ export const voucherService = {
     });
     if (!eligibility.eligible) {
       throw new ValidationError(eligibility.message, { eligibility: [eligibility.code] });
+    }
+    if (input.userId && (await voucherRepository.userHasLiveUse(input.userId, voucher.id))) {
+      throw new ValidationError(translateReason("VOUCHER_ALREADY_USED"), { eligibility: ["VOUCHER_ALREADY_USED"] });
     }
 
     const discountAmount = eligibility.discountAmount;
@@ -475,38 +531,46 @@ export const voucherService = {
 
   async detailForPartner(partnerId: string, id: string) {
     const [voucher] = await voucherRepository.findForPartner(id, partnerId);
-    if (!voucher) throw new NotFoundError("Khong tim thay voucher cua ban");
+    if (!voucher) throw new NotFoundError("Không tìm thấy voucher của bạn");
     return voucher;
   },
 
   async createForPartner(partnerId: string, input: PartnerVoucherInput) {
-    const normalized = await validatePartnerVoucher(partnerId, input);
-    const created = await voucherRepository.createForPartner(partnerId, normalized);
+    const terms = await partnerVoucherTerms(partnerId, input);
+    const created = await withVoucherCodeGuard(() => voucherRepository.createForPartner(partnerId, terms));
     return this.detailForPartner(partnerId, created.id);
   },
 
-  async updateForPartner(partnerId: string, id: string, input: PartnerVoucherInput) {
+  /** A draft can change entirely; an activated voucher only its wording, end date and usage limit. */
+  async updateForPartner(partnerId: string, id: string, input: Partial<PartnerVoucherInput>) {
     const current = await this.detailForPartner(partnerId, id);
-    if (current.status !== "DRAFT") {
-      throw new ValidationError("Chi co the sua voucher dang nhap");
+    if (current.status === "DRAFT") {
+      const terms = await partnerVoucherTerms(partnerId, requireFullTerms(input), id);
+      if (!(await withVoucherCodeGuard(() => voucherRepository.updateForPartner(id, partnerId, terms)))) {
+        throw new ConflictError("Voucher vừa được kích hoạt, hãy tải lại trang");
+      }
+    } else {
+      const changes = runningVoucherChanges(current, input);
+      if (Object.keys(changes).length && !(await voucherRepository.updateRunning(id, changes, partnerId))) {
+        throw new ConflictError("Voucher không còn sửa được, hãy tải lại trang");
+      }
+      this.invalidateListCache();
     }
-    const normalized = await validatePartnerVoucher(partnerId, input, id);
-    await voucherRepository.updateForPartner(id, partnerId, normalized);
     return this.detailForPartner(partnerId, id);
   },
 
   async activateForPartner(partnerId: string, id: string) {
     const voucher = await this.detailForPartner(partnerId, id);
-    if (!["DRAFT", "DISABLED"].includes(voucher.status)) {
-      throw new ValidationError("Voucher khong the kich hoat");
+    if (voucher.lockedByAdmin) {
+      throw new ForbiddenError("Voucher đang bị quản trị viên tạm ngưng. Hãy liên hệ quản trị viên để được kích hoạt lại");
     }
-    if (new Date(voucher.endDate) <= new Date()) {
-      throw new ValidationError("Voucher da het han");
+    const problem = activationProblem(voucher);
+    if (problem) throw new ValidationError(problem);
+    // Moves only from the status just checked, so an admin's disable made meanwhile is not overridden.
+    if (!(await voucherRepository.setStatus(id, partnerId, [voucher.status], "ACTIVE"))) {
+      throw new ConflictError("Trạng thái voucher vừa thay đổi, hãy tải lại trang");
     }
-    if (voucher.usageLimit !== null && voucher.usedCount >= voucher.usageLimit) {
-      throw new ValidationError("Voucher da het luot su dung");
-    }
-    await voucherRepository.setStatus(id, partnerId, ["DRAFT", "DISABLED"], "ACTIVE");
+    this.invalidateListCache();
     const activated = await this.detailForPartner(partnerId, id);
     const [publicVoucher] = await voucherRepository.findActiveById(id);
     realtimeService.toPublic(realtimeEvents.voucherNew, publicVoucher ?? activated);
@@ -515,8 +579,11 @@ export const voucherService = {
 
   async disableForPartner(partnerId: string, id: string) {
     const voucher = await this.detailForPartner(partnerId, id);
-    if (voucher.status !== "ACTIVE") throw new ValidationError("Voucher khong dang hoat dong");
-    await voucherRepository.setStatus(id, partnerId, ["ACTIVE"], "DISABLED");
+    if (voucher.status !== "ACTIVE") throw new ValidationError("Voucher không đang hoạt động");
+    if (!(await voucherRepository.setStatus(id, partnerId, ["ACTIVE"], "DISABLED"))) {
+      throw new ConflictError("Trạng thái voucher vừa thay đổi, hãy tải lại trang");
+    }
+    this.invalidateListCache();
     realtimeService.toPublic(realtimeEvents.voucherNew, { id, status: "DISABLED" });
     return this.detailForPartner(partnerId, id);
   },
@@ -524,96 +591,84 @@ export const voucherService = {
   async deleteForPartner(partnerId: string, id: string) {
     await this.detailForPartner(partnerId, id);
     const deleted = await voucherRepository.deleteDraft(id, partnerId);
-    if (!deleted) throw new ValidationError("Chi co the xoa voucher nhap chua duoc su dung");
+    if (!deleted) throw new ValidationError("Chỉ có thể xóa voucher nháp chưa được sử dụng");
     return { id };
   },
 
   async listPartner(userId: string) {
     const profile = await voucherRepository.partnerProfile(userId);
-    if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+    if (!profile) throw new ForbiddenError("Tài khoản đối tác chưa có hồ sơ");
     return this.listForPartner(profile.id);
+  },
+
+  async detailPartner(userId: string, id: string) {
+    const profile = await voucherRepository.partnerProfile(userId);
+    if (!profile) throw new ForbiddenError("Tài khoản đối tác chưa có hồ sơ");
+    return this.detailForPartner(profile.id, id);
   },
 
   async createPartner(userId: string, input: PartnerVoucherInput) {
     const profile = await voucherRepository.partnerProfile(userId);
-    if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+    if (!profile) throw new ForbiddenError("Tài khoản đối tác chưa có hồ sơ");
     return this.createForPartner(profile.id, input);
   },
 
-  async updatePartner(userId: string, id: string, input: PartnerVoucherInput) {
+  async updatePartner(userId: string, id: string, input: Partial<PartnerVoucherInput>) {
     const profile = await voucherRepository.partnerProfile(userId);
-    if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+    if (!profile) throw new ForbiddenError("Tài khoản đối tác chưa có hồ sơ");
     return this.updateForPartner(profile.id, id, input);
   },
 
   async deletePartner(userId: string, id: string) {
     const profile = await voucherRepository.partnerProfile(userId);
-    if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+    if (!profile) throw new ForbiddenError("Tài khoản đối tác chưa có hồ sơ");
     return this.deleteForPartner(profile.id, id);
   },
 
   async setPartnerStatus(userId: string, id: string, status: "ACTIVE" | "DISABLED") {
     const profile = await voucherRepository.partnerProfile(userId);
-    if (!profile) throw new ForbiddenError("Tai khoan doi tac chua co ho so");
+    if (!profile) throw new ForbiddenError("Tài khoản đối tác chưa có hồ sơ");
     return status === "ACTIVE" ? this.activateForPartner(profile.id, id) : this.disableForPartner(profile.id, id);
   }
 };
 
-type PartnerVoucherInput = {
-  courtId?: string | null;
-  code: string;
-  title: string;
-  description?: string;
-  discountType: "PERCENTAGE" | "FIXED_AMOUNT";
-  discountValue: number;
-  maxDiscountAmount?: number | null;
-  minBookingAmount: number;
-  usageLimit?: number | null;
-  startDate: string;
-  endDate: string;
-  applicableDays?: string | null;
-  startTime?: string | null;
-  endTime?: string | null;
-  holidayOnly?: boolean;
-  holidayDates?: string[] | null;
-  applicableStartDate?: string | null;
-  applicableEndDate?: string | null;
-};
+type PartnerVoucherInput = VoucherTermsInput & { courtId?: string | null };
 
-async function validatePartnerVoucher(partnerId: string, input: PartnerVoucherInput, excludeId?: string) {
-  const code = input.code.trim().toUpperCase();
-  const startDate = new Date(input.startDate);
-  const endDate = new Date(input.endDate);
-  if (startDate >= endDate) throw new ValidationError("Ngay bat dau phai truoc ngay ket thuc");
-  if (input.discountType === "PERCENTAGE" && input.discountValue > 100) {
-    throw new ValidationError("Voucher phan tram khong duoc vuot qua 100%");
-  }
-  if (input.courtId && !(await voucherRepository.courtBelongsToPartner(input.courtId, partnerId))) {
-    throw new ValidationError("San ap dung khong thuoc doi tac");
-  }
+const REQUIRED_TERMS = ["code", "title", "discountType", "discountValue", "startDate", "endDate"] as const;
+
+/** Editing a draft replaces all its terms, so the update must carry every required field. */
+export function requireFullTerms<T extends Partial<VoucherTermsInput>>(input: T) {
+  const missing = REQUIRED_TERMS.filter((field) => input[field] === undefined);
+  if (missing.length) throw new ValidationError(`Thiếu thông tin voucher: ${missing.join(", ")}`);
+  return input as T & VoucherTermsInput;
+}
+
+/** Throws when the code is taken by any other voucher (codes are unique across admin and partner vouchers). */
+export async function assertVoucherCodeFree(code: string, excludeId?: string) {
   const [duplicate] = await voucherRepository.codeExists(code, excludeId);
-  if (duplicate.exists) throw new ConflictError("Ma voucher da ton tai", "VOUCHER_CODE_EXISTS");
+  if (duplicate.exists) throw new ConflictError("Mã voucher đã tồn tại", "VOUCHER_CODE_EXISTS");
+}
 
-  // Validate time window if both supplied
-  if (input.startTime && input.endTime && input.startTime >= input.endTime) {
-    throw new ValidationError("Gio bat dau phai truoc gio ket thuc");
+/** Runs a voucher write; a code saved by another request since assertVoucherCodeFree reads as the same conflict. */
+export async function withVoucherCodeGuard<T>(write: () => Promise<T>) {
+  try {
+    return await write();
+  } catch (error) {
+    const failure = error as { code?: string; meta?: { code?: string }; message?: string };
+    if (failure?.code === "P2002" || failure?.meta?.code === "23505" || /23505|unique constraint/i.test(failure?.message ?? "")) {
+      throw new ConflictError("Mã voucher đã tồn tại", "VOUCHER_CODE_EXISTS");
+    }
+    throw error;
   }
+}
 
-  return {
-    ...input,
-    code,
-    courtId: input.courtId || null,
-    maxDiscountAmount: input.discountType === "PERCENTAGE" ? input.maxDiscountAmount ?? null : null,
-    usageLimit: input.usageLimit ?? null,
-    startDate,
-    endDate,
-    startTime: input.startTime ?? null,
-    endTime: input.endTime ?? null,
-    holidayOnly: input.holidayOnly ?? false,
-    holidayDates: input.holidayDates ?? null,
-    applicableStartDate: input.applicableStartDate ? new Date(input.applicableStartDate) : null,
-    applicableEndDate: input.applicableEndDate ? new Date(input.applicableEndDate) : null
-  };
+async function partnerVoucherTerms(partnerId: string, input: PartnerVoucherInput, excludeId?: string) {
+  const terms = normalizeVoucherTerms(input);
+  if (input.courtId && !(await voucherRepository.courtBelongsToPartner(input.courtId, partnerId))) {
+    throw new ValidationError("Sân áp dụng không thuộc đối tác");
+  }
+  await assertVoucherCodeFree(terms.code, excludeId);
+  return { ...terms, courtId: input.courtId || null };
 }
 
 export type { EligibilityReasonCode };

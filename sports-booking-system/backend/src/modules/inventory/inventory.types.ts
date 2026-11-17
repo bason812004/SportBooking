@@ -69,5 +69,5 @@ export interface InventoryActor {
   courtId: string | null;
 }
 
-/** The part of the actor a purchase-order write is scoped by. */
-export type PurchaseOrderScope = Pick<InventoryActor, "userId" | "partnerId" | "courtId">;
+/** The part of the actor a purchase-order write is scoped by; a receptionist changes only drafts they proposed. */
+export type PurchaseOrderScope = Pick<InventoryActor, "userId" | "partnerId" | "courtId"> & { role?: InventoryActor["role"] };

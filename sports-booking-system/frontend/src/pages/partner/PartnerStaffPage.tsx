@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, Trash2, Edit2, ShieldAlert } from "lucide-react";
+import { Plus, Trash2, Edit2, Lock, Unlock } from "lucide-react";
 import { partnerApi } from "../../features/partner/api/partnerApi";
 import { LoadingState, ErrorState } from "../../components/common/States";
 import { Button } from "../../components/ui/Button";
@@ -15,12 +15,18 @@ import { useUrlSort } from "../../hooks/useUrlSort";
 type SortField = "fullName" | "email" | "phone" | "managedCourt";
 
 const SORT_FIELDS: SortField[] = ["fullName", "email", "phone", "managedCourt"];
+// Same rule as every other account (the server checks it too).
+const MIN_PASSWORD = 8;
+
+function firstFieldError(error: any) {
+  return Object.values((error?.fieldErrors ?? {}) as Record<string, string[]>).flat()[0];
+}
 
 export function PartnerStaffPage() {
   const queryClient = useQueryClient();
   const [modalOpen, setModalOpen] = useState(false);
   const [editStaff, setEditStaff] = useState<any | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<any | null>(null);
   const [search, setSearch] = useState("");
   const { sortField, sortOrder, handleSort } = useUrlSort<SortField>({
     fields: SORT_FIELDS,
@@ -45,27 +51,39 @@ export function PartnerStaffPage() {
       closeModal();
       queryClient.invalidateQueries({ queryKey: ["partner-recipients"] });
     },
-    onError: (error: any) => toast.error(error.response?.data?.message || error.message || "Không thể tạo tài khoản")
+    onError: (error: any) => toast.error(firstFieldError(error) || error.message || "Không thể tạo tài khoản")
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: any }) => partnerApi.updateRecipient(id, payload),
-    onSuccess: () => {
-      toast.success("Đã cập nhật thông tin nhân viên");
+    onSuccess: (_data, { payload }) => {
+      toast.success(
+        payload.password ? "Đã cập nhật nhân viên. Mật khẩu mới có hiệu lực, các phiên đăng nhập cũ đã bị đăng xuất." : "Đã cập nhật thông tin nhân viên"
+      );
       closeModal();
       queryClient.invalidateQueries({ queryKey: ["partner-recipients"] });
     },
-    onError: (error: any) => toast.error(error.response?.data?.message || error.message || "Không thể cập nhật")
+    onError: (error: any) => toast.error(firstFieldError(error) || error.message || "Không thể cập nhật")
+  });
+
+  const statusMutation = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: "ACTIVE" | "LOCKED" }) => partnerApi.setRecipientStatus(id, status),
+    onSuccess: (_data, { status }) => {
+      toast.success(status === "LOCKED" ? "Đã khoá tài khoản: nhân viên bị đăng xuất và không đăng nhập được nữa" : "Đã mở khoá tài khoản nhân viên");
+      queryClient.invalidateQueries({ queryKey: ["partner-recipients"] });
+    },
+    onError: (error: any) => toast.error(error.message || "Không thể đổi trạng thái tài khoản")
   });
 
   const deleteMutation = useMutation({
     mutationFn: partnerApi.deleteRecipient,
-    onSuccess: () => {
-      toast.success("Đã xóa tài khoản nhân viên");
+    onSuccess: (result) => {
+      if (result.deleted) toast.success("Đã xóa tài khoản nhân viên");
+      else toast.info("Nhân viên đã có lịch sử thao tác (đơn, nhập hàng...) nên tài khoản được khoá thay vì xoá, để giữ dấu vết.");
       setDeleteConfirm(null);
       queryClient.invalidateQueries({ queryKey: ["partner-recipients"] });
     },
-    onError: (error: any) => toast.error(error.response?.data?.message || error.message || "Không thể xóa nhân viên")
+    onError: (error: any) => toast.error(error.message || "Không thể xóa nhân viên")
   });
 
   const visibleStaff = useMemo(() => {
@@ -83,7 +101,7 @@ export function PartnerStaffPage() {
   }, [staffQuery.data, search, sortField, sortOrder]);
 
   if (staffQuery.isLoading || courtsQuery.isLoading || profileQuery.isLoading) return <LoadingState />;
-  if (staffQuery.isError) return <ErrorState message={staffQuery.error.message} />;
+  if (staffQuery.isError) return <ErrorState message={staffQuery.error.message} onRetry={() => staffQuery.refetch()} />;
 
   const partnerEmail = profileQuery.data?.user?.email || "";
   const [localPart, domain] = partnerEmail.split("@");
@@ -120,22 +138,22 @@ export function PartnerStaffPage() {
     if (editStaff) {
       const payload: any = {
         fullName: fullName.trim(),
-        phone: phone.trim(),
-        managedCourtId
+        phone: phone.trim()
       };
-      if (password.trim()) {
-        if (password.length < 6) return toast.error("Mật khẩu phải từ 6 ký tự");
+      if (managedCourtId !== editStaff.managedCourtId) payload.managedCourtId = managedCourtId;
+      if (password) {
+        if (password.length < MIN_PASSWORD) return toast.error(`Mật khẩu tối thiểu ${MIN_PASSWORD} ký tự`);
         payload.password = password;
       }
       updateMutation.mutate({ id: editStaff.id, payload });
     } else {
       if (!emailSuffix.trim()) return toast.error("Vui lòng điền mã nhân viên");
-      if (!password.trim() || password.length < 6) return toast.error("Mật khẩu phải từ 6 ký tự");
+      if (password.length < MIN_PASSWORD) return toast.error(`Mật khẩu tối thiểu ${MIN_PASSWORD} ký tự`);
 
       createMutation.mutate({
         fullName: fullName.trim(),
         emailSuffix: emailSuffix.trim(),
-        password: password.trim(),
+        password,
         phone: phone.trim(),
         managedCourtId
       });
@@ -184,16 +202,26 @@ export function PartnerStaffPage() {
                 <Td className="text-slate-600">{staff.phone || "Chưa cung cấp"}</Td>
                 <Td className="font-semibold text-emerald-800">{staff.managedCourt?.name || "Chưa phân công"}</Td>
                 <Td>
-                  <span className="bg-green-100 text-green-800 px-2.5 py-0.5 rounded-full text-xs font-semibold">
-                    Hoạt động
-                  </span>
+                  {staff.status === "ACTIVE" ? (
+                    <span className="bg-green-100 text-green-800 px-2.5 py-0.5 rounded-full text-xs font-semibold">Hoạt động</span>
+                  ) : (
+                    <span className="bg-slate-200 text-slate-700 px-2.5 py-0.5 rounded-full text-xs font-semibold">Đã khoá</span>
+                  )}
                 </Td>
                 <Td>
                   <div className="flex gap-2 justify-end">
-                    <Button variant="secondary" onClick={() => openEditModal(staff)}>
+                    <Button variant="secondary" onClick={() => openEditModal(staff)} title="Sửa">
                       <Edit2 className="h-4 w-4" />
                     </Button>
-                    <Button variant="danger" onClick={() => setDeleteConfirm(staff.id)}>
+                    <Button
+                      variant="secondary"
+                      title={staff.status === "ACTIVE" ? "Khoá tài khoản (nghỉ việc)" : "Mở khoá tài khoản"}
+                      disabled={statusMutation.isPending}
+                      onClick={() => statusMutation.mutate({ id: staff.id, status: staff.status === "ACTIVE" ? "LOCKED" : "ACTIVE" })}
+                    >
+                      {staff.status === "ACTIVE" ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
+                    </Button>
+                    <Button variant="danger" onClick={() => setDeleteConfirm(staff)} title="Xoá">
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
@@ -244,9 +272,13 @@ export function PartnerStaffPage() {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="******"
+                  placeholder={`Tối thiểu ${MIN_PASSWORD} ký tự`}
+                  minLength={editStaff && !password ? undefined : MIN_PASSWORD}
                   required={!editStaff}
                 />
+                {editStaff && password && (
+                  <p className="mt-1 text-xs font-medium text-amber-700">Đổi mật khẩu sẽ đăng xuất nhân viên khỏi mọi thiết bị đang đăng nhập.</p>
+                )}
               </div>
 
               <div>
@@ -280,9 +312,9 @@ export function PartnerStaffPage() {
       <ConfirmModal
         open={Boolean(deleteConfirm)}
         title="Xác nhận xóa nhân viên"
-        message="Nhân viên này sẽ bị xóa vĩnh viễn khỏi danh sách quản lý. Họ sẽ không thể đăng nhập vào cổng quản lý sân nữa."
+        message={`${deleteConfirm?.fullName ?? "Nhân viên này"} sẽ không đăng nhập được nữa. Nếu đã từng xử lý đơn, nhập hàng hay thao tác khác, tài khoản được khoá thay vì xoá để giữ lịch sử; tài khoản chưa dùng sẽ bị xoá hẳn.`}
         onCancel={() => setDeleteConfirm(null)}
-        onConfirm={() => deleteConfirm && deleteMutation.mutate(deleteConfirm)}
+        onConfirm={() => deleteConfirm && deleteMutation.mutate(deleteConfirm.id)}
       />
     </div>
   );

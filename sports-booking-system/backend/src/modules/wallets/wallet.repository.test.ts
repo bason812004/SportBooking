@@ -151,3 +151,61 @@ describe("wallet.repository money mutators", () => {
     assert.equal("availableBalance" in call.data, false);
   });
 });
+
+describe("wallet.repository commission debt", () => {
+  // Captures each tagged-template $executeRaw call as normalized SQL text plus its bound values.
+  function rawDb(overrides: Partial<Record<string, (...args: any[]) => any>> = {}) {
+    const statements: Array<{ sql: string; values: unknown[] }> = [];
+    const db = fakeDb(overrides) as any;
+    db.$executeRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      statements.push({ sql: strings.join("?").replace(/\s+/g, " ").trim(), values });
+      return 1;
+    };
+    return { db, statements };
+  }
+
+  it("chargeCommission takes what the available balance covers and turns the rest into debt in one statement", async () => {
+    let upserted: any = null;
+    const { db, statements } = rawDb({ upsert: async (args: any) => (upserted = args) });
+
+    await walletRepository.chargeCommission("p1", 40000, db);
+
+    assert.deepEqual(upserted.create, { partnerId: "p1" });
+    assert.equal(statements.length, 1);
+    const [{ sql, values }] = statements;
+    assert.match(sql, /available_balance = available_balance - least\(available_balance, \?::numeric\)/);
+    assert.match(sql, /total_earned = total_earned - least\(available_balance, \?::numeric\)/);
+    assert.match(sql, /commission_debt = commission_debt \+ \?::numeric - least\(available_balance, \?::numeric\)/);
+    assert.deepEqual(values, [40000, 40000, 40000, 40000, "p1"]);
+  });
+
+  it("chargeCommission does nothing for a zero commission", async () => {
+    const { db, statements } = rawDb();
+    await walletRepository.chargeCommission("p1", 0, db);
+    assert.equal(statements.length, 0);
+  });
+
+  it("offsetDebt pays debt from the available balance only when both are positive", async () => {
+    const { db, statements } = rawDb();
+    await walletRepository.offsetDebt("p1", db);
+    assert.match(statements[0].sql, /commission_debt = commission_debt - least\(available_balance, commission_debt\)/);
+    assert.match(statements[0].sql, /where partner_id = \? and commission_debt > 0 and available_balance > 0$/);
+    assert.deepEqual(statements[0].values, ["p1"]);
+  });
+
+  it("refundCommission clears debt first and returns the rest to the available balance", async () => {
+    const { db, statements } = rawDb();
+    await walletRepository.refundCommission("p1", 25000, db);
+    assert.match(statements[0].sql, /commission_debt = commission_debt - least\(commission_debt, \?::numeric\)/);
+    assert.match(statements[0].sql, /available_balance = available_balance \+ \?::numeric - least\(commission_debt, \?::numeric\)/);
+    assert.equal(statements[0].values.at(-1), "p1");
+  });
+
+  it("payDebt only succeeds when the debt covers the amount", async () => {
+    let call: any = null;
+    const db = fakeDb({ updateMany: async (args: any) => { call = args; return { count: 0 }; } });
+    assert.equal(await walletRepository.payDebt("p1", 50000, db), 0);
+    assert.deepEqual(call.where, { partnerId: "p1", commissionDebt: { gte: 50000 } });
+    assert.deepEqual(call.data, { commissionDebt: { decrement: 50000 } });
+  });
+});

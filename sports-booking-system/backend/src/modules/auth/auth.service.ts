@@ -5,6 +5,9 @@ import { AppError, AuthError, ConflictError, NotFoundError, ValidationError } fr
 import { omitPassword } from "../../shared/utils/response.js";
 import { emailService } from "../email/email.service.js";
 import { authRepository } from "./auth.repository.js";
+import { forgetAccountStatus } from "./accountStatus.js";
+import { clearPasswordFailures, MAX_PASSWORD_FAILURES, passwordRetryAfter, recordPasswordFailure } from "./passwordAttempts.js";
+import { realtimeService } from "../realtime/realtime.service.js";
 import {
   comparePassword,
   compareOtp,
@@ -299,16 +302,59 @@ export const authService = {
     return omitPassword(user);
   },
 
-  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+  /**
+   * The signed-in account's current password, asked before a sensitive change (a new password, the bank account
+   * withdrawals go to). A wrong answer is a 400, not a 401: the session itself is fine, and a 401 would make the
+   * browser refresh it. After 5 wrong answers in 15 minutes the account has to wait.
+   */
+  async verifyCurrentPassword(userId: string, password: string | undefined) {
+    const wait = passwordRetryAfter(userId);
+    if (wait > 0) {
+      throw new ValidationError(`Bạn đã nhập sai mật khẩu ${MAX_PASSWORD_FAILURES} lần. Hãy thử lại sau ${Math.ceil(wait / 60_000)} phút.`);
+    }
+    if (!password) throw new ValidationError("Nhập mật khẩu hiện tại");
     const user = await authRepository.findById(userId);
-    if (!user) throw new NotFoundError("Khong tim thay tai khoan");
-    if (FIXED_DEMO_ACCOUNTS.has(user.email.trim().toLowerCase())) {
+    if (!user) throw new NotFoundError("Không tìm thấy tài khoản");
+    if (!user.passwordHash) {
+      throw new ValidationError("Tài khoản chưa có mật khẩu đăng nhập (đăng nhập bằng Google); hãy đặt mật khẩu bằng chức năng Quên mật khẩu trước");
+    }
+    if (!(await comparePassword(password, user.passwordHash))) {
+      const left = recordPasswordFailure(userId);
+      throw new ValidationError(
+        left > 0
+          ? `Mật khẩu hiện tại không đúng (còn ${left} lần thử)`
+          : `Mật khẩu hiện tại không đúng. Bạn đã nhập sai ${MAX_PASSWORD_FAILURES} lần, hãy thử lại sau 15 phút.`
+      );
+    }
+    clearPasswordFailures(userId);
+    return { ...user, passwordHash: user.passwordHash };
+  },
+
+  /**
+   * A new password signs every other device out (their refresh tokens are revoked and older access tokens refused);
+   * this device gets a fresh session in the answer. The owner is emailed in case it was not them.
+   */
+  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+    const account = await authRepository.findById(userId);
+    if (!account) throw new NotFoundError("Không tìm thấy tài khoản");
+    if (FIXED_DEMO_ACCOUNTS.has(account.email.trim().toLowerCase())) {
       throw new ValidationError("Tài khoản mẫu luôn sử dụng mật khẩu mặc định 123456.");
     }
-    if (!user.passwordHash) throw new AuthError("Tai khoan nay chua co mat khau cuc bo");
-    const valid = await comparePassword(currentPassword, user.passwordHash);
-    if (!valid) throw new AuthError("Mat khau hien tai khong dung");
+    const user = await this.verifyCurrentPassword(userId, currentPassword);
+    if (await comparePassword(newPassword, user.passwordHash)) throw new ValidationError("Mật khẩu mới phải khác mật khẩu hiện tại");
+
     await authRepository.updatePassword(userId, await hashPassword(newPassword));
-    return { message: "Doi mat khau thanh cong" };
+    await authRepository.revokeAllSessions(userId);
+    forgetAccountStatus(userId);
+    realtimeService.disconnectUser(userId);
+    const session = await createSession(user as { id: string; role: UserRole });
+
+    try {
+      await emailService.sendPasswordChanged({ to: user.email, fullName: user.fullName, changedAt: new Date() });
+    } catch (error) {
+      // Email may not be configured; the password change itself stands.
+      console.error("[Auth] Password change email failed:", error);
+    }
+    return { message: "Đổi mật khẩu thành công", user: omitPassword(user), ...session };
   }
 };

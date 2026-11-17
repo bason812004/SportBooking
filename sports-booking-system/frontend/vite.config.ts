@@ -11,7 +11,7 @@ export default defineConfig({
       output: {
         manualChunks: {
           "react-vendor": ["react", "react-dom", "react-router-dom"],
-          "charts-vendor": ["recharts"],
+          "charts-vendor": ["chart.js", "react-chartjs-2"],
           "query-vendor": ["@tanstack/react-query"],
           "form-vendor": ["react-hook-form", "@hookform/resolvers", "zod"]
         }

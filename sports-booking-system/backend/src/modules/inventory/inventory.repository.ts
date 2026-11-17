@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
-import { ConflictError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { ensureServiceTables } from "../services/service.repository.js";
 import type {
   AdjustStockInput,
@@ -68,6 +68,13 @@ const purchaseOrderInclude = {
 /** Restricts a purchase-order lookup to the actor's partner and, for a receptionist, their court. */
 function scopedOrderWhere(scope: PurchaseOrderScope, id: string): Prisma.PurchaseOrderWhereInput {
   return { id, partnerId: scope.partnerId, ...(scope.courtId ? { courtId: scope.courtId } : {}) };
+}
+
+/** A receptionist edits or withdraws only the drafts they proposed, never one the partner wrote. */
+function assertOwnProposal(scope: PurchaseOrderScope, order: { createdById: string | null }) {
+  if (scope.role === "RECIPIENT" && order.createdById !== scope.userId) {
+    throw new ForbiddenError("Lễ tân chỉ sửa hoặc rút được đề xuất nhập hàng do mình tạo");
+  }
 }
 
 /**
@@ -547,6 +554,11 @@ export const inventoryRepository = {
       });
   },
 
+  /**
+   * A manual stock change. ADJUSTMENT sets the counted quantity and logs the difference (+/-), so the history adds up;
+   * removals cannot take more than is free (gear out with customers comes back through the rental return), and a count
+   * cannot go below the gear that is out.
+   */
   async adjustStock(partnerId: string, data: AdjustStockInput) {
     await ensureServiceTables();
     return prisma.$transaction(async (tx) => {
@@ -555,31 +567,46 @@ export const inventoryRepository = {
       if (!service) throw new NotFoundError("Sản phẩm/Dịch vụ không hợp lệ");
 
       // A missing stock row means nothing has been counted yet: start from 0, matching the stock list.
-      const inv =
-        (await tx.serviceInventory.findUnique({ where: { serviceId: data.serviceId } })) ??
-        (await tx.serviceInventory.create({ data: { serviceId: data.serviceId, quantity: 0, minimumStock: 5, unit: service.unit } }));
+      await tx.$executeRaw`
+        INSERT INTO service_inventories (id, service_id, quantity, minimum_stock, unit)
+        VALUES (gen_random_uuid(), ${data.serviceId}, 0, 5, ${service.unit || "cái"})
+        ON CONFLICT (service_id) DO NOTHING
+      `;
+      const [inv] = await tx.$queryRaw<Array<{ quantity: number; reservedQuantity: number }>>`
+        SELECT quantity, reserved_quantity AS "reservedQuantity" FROM service_inventories WHERE service_id = ${data.serviceId} FOR UPDATE
+      `;
+      const current = Number(inv.quantity);
+      const reserved = Number(inv.reservedQuantity ?? 0);
+      const free = Math.max(0, current - reserved);
 
-      const amount = Math.abs(data.quantity);
-      const quantityUpdate =
-        data.type === "ADJUSTMENT"
-          ? { set: Math.max(0, data.quantity) }
-          : ["SALE", "RENTAL_OUT", "DAMAGED", "LOST"].includes(data.type)
-          ? { decrement: amount }
-          : { increment: amount };
+      let change: number;
+      if (data.type === "ADJUSTMENT") {
+        if (data.quantity < reserved) {
+          throw new ValidationError(`Đang có ${reserved} ${service.unit} cho thuê chưa trả, số tồn thực tế không thể thấp hơn ${reserved}`);
+        }
+        change = data.quantity - current;
+        if (change === 0) throw new ValidationError(`Số tồn đang là ${current} ${service.unit}, không có gì thay đổi`);
+      } else {
+        if (data.quantity <= 0) throw new ValidationError("Số lượng phải lớn hơn 0");
+        const removes = ["SALE", "RENTAL_OUT", "DAMAGED", "LOST"].includes(data.type);
+        if (removes && data.quantity > free) {
+          throw new ValidationError(
+            reserved > 0
+              ? `Chỉ còn ${free} ${service.unit} trong kho (${reserved} đang cho thuê), không thể xuất ${data.quantity}`
+              : `Chỉ còn ${free} ${service.unit} trong kho, không thể xuất ${data.quantity}`
+          );
+        }
+        change = removes ? -data.quantity : data.quantity;
+      }
 
-      let { quantity: newQty } = await tx.serviceInventory.update({
+      const newQty = current + change;
+      await tx.serviceInventory.update({
         where: { serviceId: data.serviceId },
         data: {
-          quantity: quantityUpdate,
+          quantity: newQty,
           ...(data.unitCost && data.unitCost > 0 ? { lastPurchasePrice: data.unitCost } : {})
-        },
-        select: { quantity: true }
+        }
       });
-      // Stock never goes negative: removing more than is on hand empties it.
-      if (newQty < 0) {
-        newQty = 0;
-        await tx.serviceInventory.update({ where: { serviceId: data.serviceId }, data: { quantity: 0 } });
-      }
 
       if (data.unitCost && data.unitCost > 0) {
         await tx.service.update({
@@ -588,20 +615,21 @@ export const inventoryRepository = {
         });
       }
 
+      // ADJUSTMENT rows hold the signed difference; the other types hold how many moved, their direction set by the type.
       const txLog = await tx.inventoryTransaction.create({
         data: {
           serviceId: data.serviceId,
           type: data.type as any,
-          quantity: data.quantity,
+          quantity: data.type === "ADJUSTMENT" ? change : data.quantity,
           unitCost: data.unitCost ?? Number(service.costPrice),
           referenceType: "MANUAL_ADJUSTMENT",
-          note: data.note ?? null
+          note: data.type === "ADJUSTMENT" ? [`Kiểm kê: ${current} → ${newQty}`, data.note].filter(Boolean).join(". ") : data.note ?? null
         }
       });
 
       return {
         serviceId: data.serviceId,
-        previousQuantity: inv.quantity,
+        previousQuantity: current,
         newQuantity: newQty,
         transaction: txLog
       };
@@ -741,8 +769,9 @@ export const inventoryRepository = {
     await ensureServiceTables();
     return prisma.$transaction(async (tx) => {
       const where = scopedOrderWhere(scope, id);
-      const current = await tx.purchaseOrder.findFirst({ where, select: { courtId: true } });
+      const current = await tx.purchaseOrder.findFirst({ where, select: { courtId: true, createdById: true, status: true } });
       if (!current) throw new NotFoundError("Không tìm thấy đơn nhập hàng");
+      if (current.status === "DRAFT") assertOwnProposal(scope, current);
       // Orders from before courts were tracked adopt the court of their products here.
       const { courtId } = await resolvePurchaseOrderCourt(tx, scope.partnerId, current.courtId ?? undefined, data.items.map((item) => item.serviceId));
       await assertSupplierOwned(tx, scope.partnerId, data.supplierId);
@@ -779,6 +808,8 @@ export const inventoryRepository = {
       const where = scopedOrderWhere(scope, id);
       const po = await tx.purchaseOrder.findFirst({ where, include: { items: { include: { service: { select: { unit: true } } } } } });
       if (!po) throw new NotFoundError("Không tìm thấy đơn nhập hàng");
+      // Receiving is for whoever is on site; withdrawing a draft only for the one who proposed it.
+      if (to === "CANCELLED" && po.status === "DRAFT") assertOwnProposal(scope, po);
 
       const now = new Date();
       const counted = to === "COMPLETED" ? countedQuantities(po.items, receipt.items) : null;

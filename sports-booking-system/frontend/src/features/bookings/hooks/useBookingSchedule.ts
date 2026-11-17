@@ -25,10 +25,10 @@ export function useWeeklySchedule(courtId?: string, weekStart?: string, surfaceI
     queryKey: weeklyScheduleQueryKey(courtId, weekStart, surfaceId),
     queryFn: () => bookingScheduleApi.weekly(courtId!, weekStart, surfaceId),
     enabled: Boolean(courtId) && enabled,
-    staleTime: 10_000,    // 10s — snappy cached rendering while staying fresh
-    gcTime: 5 * 60_000,   // 5 min — keep cached data for instant back/forth navigation
+    staleTime: 30_000,    // 30s — data is relatively stable per week
+    gcTime: 5 * 60_000,   // 5 min — keep cached data for faster back navigation
     refetchInterval: false, // disable polling; rely on Socket.IO realtime invalidation
-    refetchOnWindowFocus: true, // auto refetch when user refocuses window
+    refetchOnWindowFocus: false,
     placeholderData: (previousData, previousQuery) => {
       const prevSurfaceId = previousQuery?.queryKey?.[3];
       const targetSurfaceId = surfaceId ?? "ALL";

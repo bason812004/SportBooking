@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { CalendarDays, Edit3, Eye, FileText, MessageCircleOff, Search, UserRound } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { EmptyState, ErrorState } from "../../components/common/States";
-import { useBlogs } from "../../features/content/hooks/useContent";
+import { useBlogFeed } from "../../features/content/hooks/useContent";
 
 type BlogSort = "newest" | "oldest" | "views";
 
@@ -14,25 +14,18 @@ const sortOptions: Array<{ value: BlogSort; label: string }> = [
   { value: "views", label: "Lượt xem" }
 ];
 
-function postTime(post: { publishedAt?: string | null; createdAt: string }) {
-  return new Date(post.publishedAt ?? post.createdAt).getTime();
-}
-
 export function BlogPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [keyword, setKeyword] = useState(searchParams.get("search") ?? "");
   const search = searchParams.get("search") ?? "";
-  const blogs = useBlogs(search);
   const [sortBy, setSortBy] = useState<BlogSort>("newest");
+  const blogs = useBlogFeed(search, sortBy);
 
-  const sortedBlogs = useMemo(() => {
-    const posts = [...(blogs.data ?? [])];
-    return posts.sort((left, right) => {
-      if (sortBy === "views") return (right.viewCount ?? 0) - (left.viewCount ?? 0) || postTime(right) - postTime(left);
-      if (sortBy === "oldest") return postTime(left) - postTime(right);
-      return postTime(right) - postTime(left);
-    });
-  }, [blogs.data, sortBy]);
+  // Already sorted by the server; pages are concatenated, de-duplicated in case a post moved between pages.
+  const sortedBlogs = useMemo(
+    () => [...new Map((blogs.data?.pages.flat() ?? []).map((post) => [post.id, post])).values()],
+    [blogs.data]
+  );
 
   function submitSearch(event: FormEvent) {
     event.preventDefault();
@@ -105,7 +98,7 @@ export function BlogPage() {
           </form>
         </div>
 
-        {!blogs.data?.length ? (
+        {!sortedBlogs.length ? (
           <div className="mt-8">
             <EmptyState
               title={search ? "Không tìm thấy bài viết phù hợp." : "Chưa có bài viết đã xuất bản."}
@@ -188,6 +181,18 @@ export function BlogPage() {
                 </motion.article>
               ))}
             </div>
+            {blogs.hasNextPage && (
+              <div className="mt-8 flex justify-center">
+                <button
+                  type="button"
+                  disabled={blogs.isFetchingNextPage}
+                  onClick={() => void blogs.fetchNextPage()}
+                  className="inline-flex min-h-12 items-center rounded-2xl border border-stone-200 bg-white px-6 text-sm font-black text-slate-700 shadow-sm hover:bg-emerald-50 disabled:opacity-60"
+                >
+                  {blogs.isFetchingNextPage ? "Đang tải..." : "Xem thêm bài viết"}
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>

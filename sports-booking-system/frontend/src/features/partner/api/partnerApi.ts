@@ -2,21 +2,39 @@ import { api } from "../../../lib/axios";
 import type {
   ApiResponse,
   Booking,
+  BookingBill,
   Court,
   DynamicPricingRule,
   DynamicPricingRuleInput,
+  ModeratedReview,
+  OverdueBooking,
   Paginated,
+  ReviewSummary,
   PartnerBlog,
   PartnerDashboard,
   PartnerProfile,
   PartnerRevenueReport,
   PartnerTournament,
   PartnerVoucher,
+  VoucherConditionsInput,
+  VoucherRunningInput,
   PartnerWallet,
   Settlement,
   SettlementSummary,
   WithdrawalRequest
 } from "../../../types/api";
+
+/** How the counter charges play outside the booked hours on one court. */
+export type CourtTimeChargePolicy = {
+  /** Minutes right before the booked start that are not charged. */
+  earlyFreeMinutes: number;
+  /** How early play may start; null = no limit, 0 = early check-in not allowed. */
+  earlyMaxMinutes: number | null;
+  /** % of the hourly court price for the charged early minutes. */
+  earlyPricePercent: number;
+  /** % of the hourly court price when play is extended. */
+  extensionPricePercent: number;
+};
 
 export type PartnerCourtSurface = {
   id: string;
@@ -31,6 +49,22 @@ export type PartnerCourtSurface = {
   sortOrder: number;
   openingTime?: string | null;
   closingTime?: string | null;
+};
+
+/** Venue registration: the venue fields are shared by the courts created for each sport. */
+export type PartnerCourtRegistrationInput = {
+  name: string;
+  description?: string;
+  address: string;
+  ward: string;
+  city: string;
+  openingTime: string;
+  closingTime: string;
+  depositPercent?: number | null;
+  sports: Array<{
+    categoryId: string;
+    surfaces: Array<{ name: string; surface?: string | null; size?: string | null }>;
+  }>;
 };
 
 export type PartnerCourtBlock = {
@@ -59,9 +93,23 @@ export type PartnerSurfaceSlot = {
   startTime: string;
   endTime: string;
   status: "AVAILABLE" | "PENDING_PAYMENT" | "BOOKED" | "BLOCKED";
-  price: number;
+  /** Null for an hour without a price: it cannot be booked. */
+  price: number | null;
   bookingId: string | null;
   blockId: string | null;
+};
+
+/** An upcoming booking a pause or a change of hours would touch; its customer is told. */
+export type AffectedBooking = {
+  id: string;
+  bookingCode: string;
+  bookingDate: string;
+  startTime: string;
+  endTime: string;
+  bookingStatus: string;
+  customerName: string;
+  customerPhone: string | null;
+  surfaceName: string | null;
 };
 
 export type PartnerSurfaceGrid = {
@@ -95,6 +143,8 @@ export type PartnerCalendarBooking = {
   courtSurface: { id: string; name: string; code: string } | null;
   court: { id: string; name: string };
   user: { fullName: string; phone?: string | null } | null;
+  /** Set when the system finished it; an automatic no-show can be corrected for 7 days. */
+  autoFinishedAt?: string | null;
 };
 
 export type PartnerCalendar = {
@@ -104,14 +154,14 @@ export type PartnerCalendar = {
 
 export type PartnerBookingGroup = {
   orderId: string | null;
-  bookings: Booking[];
+  bookings: Array<Booking & { bill: BookingBill }>;
 };
 
-export type PartnerVoucherPayload = {
+export type PartnerVoucherPayload = VoucherConditionsInput & {
   courtId?: string | null;
   code: string;
   title: string;
-  description?: string;
+  description?: string | null;
   discountType: "PERCENTAGE" | "FIXED_AMOUNT";
   discountValue: number;
   maxDiscountAmount?: number | null;
@@ -130,8 +180,19 @@ export const partnerApi = {
     const { data } = await api.get<ApiResponse<PartnerProfile>>("/partner/profile");
     return data.data;
   },
-  async updateProfile(payload: Omit<PartnerProfile, "id" | "approvalStatus" | "user"> & { fullName: string; phone?: string; avatarUrl?: string }) {
+  /** `currentPassword` is required when the bank account (where withdrawals go) changes. */
+  async updateProfile(
+    payload: Omit<PartnerProfile, "id" | "approvalStatus" | "user" | "latestReview"> & { fullName: string; phone?: string; avatarUrl?: string; currentPassword?: string }
+  ) {
     const { data } = await api.put<ApiResponse<PartnerProfile>>("/partner/profile", payload);
+    return data.data;
+  },
+  /** Uploads a verification document (photo or PDF); the returned link is saved with the profile. */
+  async uploadProfileDocument(file: File) {
+    const form = new FormData();
+    form.append("file", file);
+    // DO NOT set Content-Type — Axios must auto-generate the multipart boundary.
+    const { data } = await api.post<ApiResponse<{ url: string; fileName: string; size: number }>>("/partner/profile/document", form);
     return data.data;
   },
   async courts() {
@@ -142,8 +203,18 @@ export const partnerApi = {
     const { data } = await api.post<ApiResponse<Court>>("/partner/courts", payload);
     return data.data;
   },
+  /** One court per sport, each with its declared sub-courts, created in a single transaction. */
+  async registerCourts(payload: PartnerCourtRegistrationInput) {
+    const { data } = await api.post<ApiResponse<{ courts: Court[] }>>("/partner/courts/register", payload);
+    return data.data.courts;
+  },
+  /** reviewRequired: the change went back to the admin; notifiedBookings: customers told about new hours. */
   async updateCourt(id: string, payload: Record<string, unknown>) {
-    const { data } = await api.put<ApiResponse<Court>>(`/partner/courts/${id}`, payload);
+    const { data } = await api.put<ApiResponse<Court & { reviewRequired?: boolean; notifiedBookings?: number }>>(`/partner/courts/${id}`, payload);
+    return data.data;
+  },
+  async affectedBookings(id: string, params: { surfaceId?: string; openingTime?: string; closingTime?: string } = {}) {
+    const { data } = await api.get<ApiResponse<AffectedBooking[]>>(`/partner/courts/${id}/affected-bookings`, { params });
     return data.data;
   },
   async updateCourtStatus(id: string, activeStatus: "ACTIVE" | "INACTIVE") {
@@ -152,6 +223,15 @@ export const partnerApi = {
   },
   async courtDetail(id: string) {
     const { data } = await api.get<ApiResponse<Court>>(`/partner/courts/${id}`);
+    return data.data;
+  },
+  async timeChargePolicy(courtId: string) {
+    const { data } = await api.get<ApiResponse<CourtTimeChargePolicy>>(`/partner/courts/${courtId}/time-charge-policy`);
+    return data.data;
+  },
+  /** Saved on its own endpoint, so unlike updateCourt it does not send the court back to admin approval. */
+  async updateTimeChargePolicy(courtId: string, payload: CourtTimeChargePolicy) {
+    const { data } = await api.put<ApiResponse<CourtTimeChargePolicy>>(`/partner/courts/${courtId}/time-charge-policy`, payload);
     return data.data;
   },
   async addCourtImage(courtId: string, image: File, sortOrder = 0, replaceImageId?: string) {
@@ -206,8 +286,14 @@ export const partnerApi = {
     });
     return data.data;
   },
-  async setBookingStatus(id: string, action: "confirm" | "reject" | "complete" | "no-show") {
-    const { data } = await api.put<ApiResponse<Booking>>(`/partner/bookings/${id}/${action}`);
+  /** The partner's bookings that are over but still open, with when the system finishes each. */
+  async overdueBookings() {
+    const { data } = await api.get<ApiResponse<OverdueBooking[]>>("/partner/bookings/overdue");
+    return data.data;
+  },
+  /** Rejecting needs the reason the customer is told. */
+  async setBookingStatus(id: string, action: "confirm" | "reject" | "complete" | "no-show", reason?: string) {
+    const { data } = await api.put<ApiResponse<Booking>>(`/partner/bookings/${id}/${action}`, action === "reject" ? { reason } : undefined);
     return data.data;
   },
   async revenue(month: string) {
@@ -272,7 +358,8 @@ export const partnerApi = {
     const { data } = await api.post<ApiResponse<PartnerVoucher>>("/partner/vouchers", payload);
     return data.data;
   },
-  async updateVoucher(id: string, payload: PartnerVoucherPayload) {
+  /** A draft takes every term again; an activated voucher only VoucherRunningInput. */
+  async updateVoucher(id: string, payload: PartnerVoucherPayload | VoucherRunningInput) {
     const { data } = await api.put<ApiResponse<PartnerVoucher>>(`/partner/vouchers/${id}`, payload);
     return data.data;
   },
@@ -314,6 +401,22 @@ export const partnerApi = {
   },
   async deletePricingRule(id: string) {
     const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/dynamic-pricing/rules/${id}`);
+    return data.data;
+  },
+  /** Writes or rewrites the court owner's public reply to a review. */
+  async replyReview(id: string, reply: string) {
+    const { data } = await api.put<ApiResponse<{ id: string; reply: string }>>(`/partner/reviews/${id}/reply`, { reply });
+    return data.data;
+  },
+  async deleteReviewReply(id: string) {
+    const { data } = await api.delete<ApiResponse<{ id: string; reply: null }>>(`/partner/reviews/${id}/reply`);
+    return data.data;
+  },
+  async reviews(params: { page?: number; limit?: number; courtId?: string; status?: string; rating?: string; search?: string; replied?: string } = {}) {
+    const { data } = await api.get<ApiResponse<Paginated<ModeratedReview> & { summary: ReviewSummary }>>("/partner/reviews", {
+      // Empty filters are left out rather than sent as "".
+      params: Object.fromEntries(Object.entries(params).filter(([, value]) => value !== "" && value !== undefined))
+    });
     return data.data;
   },
   async blogs() {
@@ -376,8 +479,14 @@ export const partnerApi = {
     const { data } = await api.put<ApiResponse<any>>(`/partner/recipients/${id}`, payload);
     return data.data;
   },
+  /** A staff account that never did anything is deleted; one with history is locked instead. */
   async deleteRecipient(id: string) {
-    const { data } = await api.delete<ApiResponse<{ id: string }>>(`/partner/recipients/${id}`);
+    const { data } = await api.delete<ApiResponse<{ id: string; deleted: boolean; locked: boolean }>>(`/partner/recipients/${id}`);
+    return data.data;
+  },
+  /** LOCKED signs the staff member out at once and stops them signing in; ACTIVE opens the account again. */
+  async setRecipientStatus(id: string, status: "ACTIVE" | "LOCKED") {
+    const { data } = await api.put<ApiResponse<any>>(`/partner/recipients/${id}/status`, { status });
     return data.data;
   },
   async myWallet() {
@@ -406,13 +515,14 @@ export const partnerApi = {
     const { data } = await api.get<ApiResponse<Paginated<WithdrawalRequest>>>("/partner/withdrawals", { params: cleaned });
     return data.data;
   },
-  async createWithdrawal(payload: {
-    amount: number;
-    bankName?: string;
-    bankAccountNumber?: string;
-    bankAccountName?: string;
-  }) {
+  /** The money goes to the bank account saved in the profile (Cài đặt); the request carries only the amount. */
+  async createWithdrawal(payload: { amount: number }) {
     const { data } = await api.post<ApiResponse<WithdrawalRequest>>("/partner/withdrawals", payload);
+    return data.data;
+  },
+  /** Takes back a request no admin has handled yet; the amount returns to the available balance. */
+  async cancelWithdrawal(id: string) {
+    const { data } = await api.put<ApiResponse<WithdrawalRequest>>(`/partner/withdrawals/${id}/cancel`);
     return data.data;
   }
 };

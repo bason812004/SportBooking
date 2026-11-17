@@ -31,8 +31,9 @@ export const authApi = {
     const { data } = await api.post<ApiResponse<{ message: string }>>("/auth/logout", { refreshToken });
     return data.data;
   },
+  /** Signs every other device out; this one gets a fresh session in the answer, which must be kept (setSession). */
   async changePassword(payload: { currentPassword: string; newPassword: string }) {
-    const { data } = await api.put<ApiResponse<{ message: string }>>("/auth/change-password", payload);
+    const { data } = await api.put<ApiResponse<{ message: string; user: User; accessToken: string; refreshToken: string }>>("/auth/change-password", payload);
     return data.data;
   },
   async googleLogin(idToken: string) {

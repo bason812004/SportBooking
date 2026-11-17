@@ -2,6 +2,7 @@ import { Link, useParams } from "react-router-dom";
 import { CalendarDays, MapPin, Trophy, UsersRound, WalletCards } from "lucide-react";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { useTournament } from "../../features/content/hooks/useContent";
+import { courtArea } from "../../lib/format";
 
 const currency = new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 });
 const dateFormat = new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -55,7 +56,7 @@ export function TournamentDetailPage() {
           <div className="rounded-3xl bg-white p-6 shadow-sm ring-1 ring-emerald-100">
             <h2 className="text-2xl font-black">Thông tin giải đấu</h2>
             <div className="mt-5 grid gap-4 text-sm leading-6 text-slate-600 md:grid-cols-2">
-              <p><span className="font-black text-slate-900">Địa điểm: </span>{item.court.district}, {item.court.city}</p>
+              <p><span className="font-black text-slate-900">Địa điểm: </span>{courtArea(item.court)}</p>
               <p><span className="font-black text-slate-900">Sân tổ chức: </span>{item.court.name}</p>
               <p><span className="font-black text-slate-900">Giải thưởng: </span>{item.prizeDescription || "Đang cập nhật"}</p>
               <p><span className="font-black text-slate-900">Đơn vị tổ chức: </span>{item.partner.businessName}</p>

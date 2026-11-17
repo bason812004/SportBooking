@@ -1,7 +1,23 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { contentApi } from "../api/contentApi";
 
 const realtimeQuery = { staleTime: 60000, gcTime: 300000, refetchInterval: 60000, refetchOnWindowFocus: false };
+
+const BLOG_PAGE_SIZE = 12;
+
+/**
+ * The /blogs page, loaded page by page and sorted on the server, so "Lượt xem" ranks every published
+ * post and older posts stay reachable. Shares the "public-blogs" key prefix, so blog invalidations refresh it.
+ */
+export function useBlogFeed(search = "", sort: "newest" | "oldest" | "views" = "newest") {
+  return useInfiniteQuery({
+    queryKey: ["public-blogs", "feed", search, sort],
+    queryFn: ({ pageParam }) => contentApi.blogs({ search, sort, page: pageParam, limit: BLOG_PAGE_SIZE }),
+    initialPageParam: 1,
+    getNextPageParam: (last, pages) => (last.length === BLOG_PAGE_SIZE ? pages.length + 1 : undefined),
+    refetchOnWindowFocus: true
+  });
+}
 
 export function useVouchers() {
   return useQuery({ queryKey: ["public-vouchers"], queryFn: contentApi.vouchers, ...realtimeQuery });

@@ -15,5 +15,3 @@ checkoutRoutes.get("/booking/:bookingId", asyncHandler(checkoutController.getChe
 checkoutRoutes.post("/booking/:bookingId", asyncHandler(checkoutController.getCheckoutByBooking));
 checkoutRoutes.post("/:checkoutId/payment", requireRole(UserRole.PARTNER, UserRole.RECIPIENT, UserRole.ADMIN), validate(checkoutPaymentByIdSchema), asyncHandler(checkoutController.processPayment));
 checkoutRoutes.post("/payment", requireRole(UserRole.PARTNER, UserRole.RECIPIENT, UserRole.ADMIN), validate(checkoutPaymentSchema), asyncHandler(checkoutController.processPayment));
-
-checkoutRoutes.get("/partner/list", requireRole(UserRole.PARTNER, UserRole.RECIPIENT, UserRole.ADMIN), asyncHandler(checkoutController.listCheckouts));

@@ -54,9 +54,21 @@ export interface CreateServiceInput {
   unit?: string;
   imageUrl?: string | null;
   trackInventory?: boolean;
-  initialStock?: number;
+  /** One row, with its own stock, is created per court. */
+  courtIds: string[];
+  /** On hand at each court; products start at 0 when left out, rental gear left out is not counted. */
+  initialStock?: number | null;
   minimumStock?: number;
 }
+
+export type UpdateServiceInput = Partial<Omit<CreateServiceInput, "courtIds" | "initialStock">> & {
+  status?: "ACTIVE" | "INACTIVE";
+  /** Only to place a service that has no court yet. */
+  courtId?: string;
+};
+
+/** A service nobody used yet is deleted; one with sales or stock history is only taken off sale. */
+export type DeleteServiceResult = { deleted: boolean; deactivated: boolean };
 
 /**
  * A partner owns one services row per court for the same product name, so a partner-wide list
@@ -108,18 +120,19 @@ export const serviceApi = {
     return res.data.data;
   },
 
+  /** Returns one row per chosen court. */
   async createService(data: CreateServiceInput) {
-    const res = await api.post<ApiResponse<ServiceItem>>("/services/partner", data);
+    const res = await api.post<ApiResponse<ServiceItem[]>>("/services/partner", data);
     return res.data.data;
   },
 
-  async updateService(id: string, data: Partial<CreateServiceInput> & { status?: "ACTIVE" | "INACTIVE" }) {
+  async updateService(id: string, data: UpdateServiceInput) {
     const res = await api.patch<ApiResponse<ServiceItem>>(`/services/partner/${id}`, data);
     return res.data.data;
   },
 
   async deleteService(id: string) {
-    const res = await api.delete<ApiResponse<null>>(`/services/partner/${id}`);
+    const res = await api.delete<ApiResponse<DeleteServiceResult>>(`/services/partner/${id}`);
     return res.data.data;
   }
 };

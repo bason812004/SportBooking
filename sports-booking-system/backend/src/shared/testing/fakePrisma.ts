@@ -33,12 +33,19 @@ export function createFakePrisma(models: Record<string, FakeModel>, options: { q
 export function createDynamicFakePrisma() {
   let current: Record<string, FakeModel> = {};
   let queryRaw: ((...args: any[]) => any) | undefined;
+  let executeRaw: ((...args: any[]) => any) | undefined;
   const client: any = new Proxy(
     {},
     {
       get(_target, prop) {
         if (prop === "$transaction") {
           return async (fn: any) => (typeof fn === "function" ? fn(client) : Promise.all(fn));
+        }
+        if (prop === "$executeRaw" || prop === "$executeRawUnsafe") {
+          return (...args: any[]) => {
+            if (!executeRaw) throw new Error(`fakePrisma.${String(prop)} is not stubbed for this test -- pass executeRaw to setModels`);
+            return executeRaw(...args);
+          };
         }
         if (prop === "$queryRaw" || prop === "$queryRawUnsafe") {
           return (...args: any[]) => {
@@ -66,9 +73,13 @@ export function createDynamicFakePrisma() {
   );
   return {
     client,
-    setModels(models: Record<string, FakeModel>, options: { queryRaw?: (...args: any[]) => any } = {}) {
+    setModels(
+      models: Record<string, FakeModel>,
+      options: { queryRaw?: (...args: any[]) => any; executeRaw?: (...args: any[]) => any } = {}
+    ) {
       current = models;
       queryRaw = options.queryRaw;
+      executeRaw = options.executeRaw;
     }
   };
 }

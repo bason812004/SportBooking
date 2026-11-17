@@ -60,22 +60,48 @@ function timeText(value?: string | null) {
   return match ? match[1] : value.slice(11, 16);
 }
 
+/** Rule types that only raise the price, and those that only lower it (the server checks the same). */
+const SURCHARGE_TYPES = ["PEAK_HOUR", "WEEKEND", "HOLIDAY", "HIGH_DEMAND"];
+const DISCOUNT_TYPES = ["OFF_PEAK_HOUR", "LOW_DEMAND"];
+
+function valueHint(ruleType: string) {
+  if (DISCOUNT_TYPES.includes(ruleType)) return "Loại này giảm giá: nhập số âm, ví dụ -20.";
+  if (SURCHARGE_TYPES.includes(ruleType)) return "Loại này tăng giá: nhập số dương, ví dụ 20.";
+  return "Số dương tăng giá, số âm giảm giá.";
+}
+
+/** Empty fields go as null so an edit can take a rule back to every day, all day, or no limit. */
 function buildPayload(values: FormValues): DynamicPricingRuleInput {
   return {
     courtId: values.courtId,
-    name: values.name,
-    description: values.description || undefined,
+    name: values.name.trim(),
+    description: values.description.trim() || null,
     ruleType: values.ruleType,
-    dayType: values.dayType || undefined,
-    startTime: values.startTime || undefined,
-    endTime: values.endTime || undefined,
+    dayType: values.dayType || null,
+    startTime: values.startTime || null,
+    endTime: values.endTime || null,
     priceAdjustmentType: values.priceAdjustmentType,
     priceAdjustmentValue: Number(values.priceAdjustmentValue),
-    minPrice: Number.isFinite(values.minPrice) ? Number(values.minPrice) : undefined,
-    maxPrice: Number.isFinite(values.maxPrice) ? Number(values.maxPrice) : undefined,
+    minPrice: Number.isFinite(values.minPrice) ? Number(values.minPrice) : null,
+    maxPrice: Number.isFinite(values.maxPrice) ? Number(values.maxPrice) : null,
     priority: Number(values.priority),
     status: values.status
   };
+}
+
+/** The same checks the server makes, so the partner sees the reason before sending. */
+function formProblem(values: FormValues) {
+  const value = Number(values.priceAdjustmentValue);
+  if (!Number.isFinite(value) || value === 0) return "Mức điều chỉnh phải khác 0";
+  if (SURCHARGE_TYPES.includes(values.ruleType) && value < 0) return "Loại quy tắc này chỉ tăng giá: nhập mức điều chỉnh dương";
+  if (DISCOUNT_TYPES.includes(values.ruleType) && value > 0) return "Giờ thấp điểm / nhu cầu thấp là giảm giá: nhập mức điều chỉnh âm";
+  if (values.priceAdjustmentType === "PERCENTAGE" && (value < -90 || value > 300)) return "Phần trăm điều chỉnh từ -90% đến +300%";
+  if (Boolean(values.startTime) !== Boolean(values.endTime)) return "Chọn đủ giờ bắt đầu và kết thúc, hoặc để cả hai là Cả ngày";
+  if (values.startTime && values.endTime && values.startTime >= values.endTime) return "Giờ bắt đầu phải trước giờ kết thúc";
+  if (Number.isFinite(values.minPrice) && Number.isFinite(values.maxPrice) && Number(values.minPrice) > Number(values.maxPrice)) {
+    return "Giá tối thiểu không được lớn hơn giá tối đa";
+  }
+  return null;
 }
 
 export function PartnerDynamicPricingFormPage() {
@@ -139,8 +165,14 @@ export function PartnerDynamicPricingFormPage() {
       queryClient.invalidateQueries({ queryKey: ["partner-pricing-rules"] });
       navigate("/partner/dynamic-pricing");
     },
-    onError: (error) => toast.error(error.message)
+    onError: (error: any) => toast.error(Object.values((error?.fieldErrors ?? {}) as Record<string, string[]>).flat()[0] || error.message)
   });
+
+  const submit = (input: FormValues) => {
+    const problem = formProblem(input);
+    if (problem) return toast.error(problem);
+    save.mutate(input);
+  };
 
   if (courts.isLoading || (editing && rule.isLoading)) return <LoadingState />;
   if (courts.isError) return <ErrorState message={courts.error.message} />;
@@ -153,7 +185,7 @@ export function PartnerDynamicPricingFormPage() {
         <p className="mt-2 text-slate-600">Tự động điều chỉnh giá sân theo khung giờ, ngày trong tuần hoặc nhu cầu đặt sân.</p>
       </div>
 
-      <form className="mt-6 space-y-6" onSubmit={form.handleSubmit((input) => save.mutate(input))}>
+      <form className="mt-6 space-y-6" onSubmit={form.handleSubmit(submit)}>
         <FormSection title="Thông tin quy tắc" icon={<Percent className="h-5 w-5" />}>
           <div className="grid gap-4 md:grid-cols-2">
             <Select
@@ -198,9 +230,15 @@ export function PartnerDynamicPricingFormPage() {
             <Input label="Giá tối thiểu (đ)" type="number" min="0" placeholder="Không giới hạn" {...form.register("minPrice", { valueAsNumber: true })} />
             <Input label="Giá tối đa (đ)" type="number" min="0" placeholder="Không giới hạn" {...form.register("maxPrice", { valueAsNumber: true })} />
           </div>
-          <p className="mt-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">
-            Giá trị dương sẽ tăng giá, giá trị âm sẽ giảm giá so với giá gốc của khung giờ đó.
-          </p>
+          <p className="mt-2 text-sm font-medium text-slate-600">{valueHint(values.ruleType)}</p>
+          <div className="mt-3 space-y-1.5 rounded-lg bg-blue-50 p-3 text-sm text-blue-800">
+            <p>Mức điều chỉnh tính trên giá gốc của khung giờ. Nhiều quy tắc cùng áp dụng thì cộng dồn (+20% và +20% là +40%).</p>
+            <p>
+              Giá tối thiểu / tối đa áp lên giá cuối cùng sau khi cộng mọi quy tắc: lấy mức tối đa thấp nhất và mức tối thiểu cao nhất
+              trong các quy tắc đang áp dụng. Giới hạn chỉ chặn mức tăng/giảm, không đẩy giá ngược lại.
+            </p>
+            <p>"Nhu cầu cao / thấp" chỉ là nhãn: quy tắc áp dụng theo loại ngày và khung giờ bạn chọn, không tự bật theo Dự đoán nhu cầu.</p>
+          </div>
         </FormSection>
 
         <div className="flex flex-wrap gap-3">

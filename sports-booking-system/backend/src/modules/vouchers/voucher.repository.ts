@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+import { VOUCHER_RELEASING_STATUSES } from "./voucher.terms.js";
 
 // ============================================================
 // Voucher shape returned to the API surface.
@@ -34,7 +35,15 @@ export type VoucherRow = {
   courtId: string | null;
 };
 
-export type PartnerVoucherRow = Omit<VoucherRow, "partner"> & {
+/** A partner's own voucher, with its conditions as the edit form shows them (dates as YYYY-MM-DD, times as HH:mm). */
+export type PartnerVoucherRow = Omit<VoucherRow, "partner" | "applicableStartDate" | "applicableEndDate"> & {
+  partnerId: string | null;
+  applicableStartDate: string | null;
+  applicableEndDate: string | null;
+  /** An admin disabled it (their last moderation decision): only an admin may turn it back on. */
+  lockedByAdmin: boolean;
+  /** The reason that admin gave, while the voucher is locked. */
+  lockReason: string | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -131,6 +140,50 @@ async function eligibilitySelectSql() {
   };
 }
 
+/** One voucher with everything the eligibility check needs (conditions, owner, court); `where` picks it. */
+async function voucherRowSql(where: Prisma.Sql) {
+  const elig = await eligibilitySelectSql();
+  return prisma.$queryRaw<VoucherRow[]>(Prisma.sql`
+    select
+      v.id, v.code, v.title, v.description,
+      v.discount_type as "discountType",
+      v.discount_value::float as "discountValue",
+      v.max_discount_amount::float as "maxDiscountAmount",
+      v.min_booking_amount::float as "minBookingAmount",
+      v.usage_limit as "usageLimit",
+      v.used_count as "usedCount",
+      coalesce(v.click_count, 0)::int as "clickCount",
+      v.start_date as "startDate",
+      v.end_date as "endDate",
+      v.status::text as "status",
+      coalesce(v.funded_by, 'PARTNER'::voucher_funded_by)::text as "fundedBy",
+      coalesce(v.partner_funding_percent, 100)::float as "partnerFundingPercent",
+      coalesce(v.platform_funding_percent, 0)::float as "platformFundingPercent",
+      ${elig.applicableDays} as "applicableDays",
+      ${elig.startTime} as "startTime",
+      ${elig.endTime} as "endTime",
+      ${elig.holidayOnly} as "holidayOnly",
+      ${elig.holidayDates} as "holidayDates",
+      ${elig.applicableStartDate} as "applicableStartDate",
+      ${elig.applicableEndDate} as "applicableEndDate",
+      case when p.id is null then null
+           else json_build_object('id', p.id, 'businessName', p.business_name)
+      end as "partner",
+      case when c.id is null then null
+           else json_build_object('id', c.id, 'name', c.name, 'city', c.city, 'district', c.district, 'imageUrl', ci.image_url)
+      end as "court",
+      v.court_id as "courtId"
+    from vouchers v
+    left join partner_profiles p on p.id = v.partner_id
+    left join courts c on c.id = v.court_id
+    left join lateral (
+      select image_url from court_images where court_id = c.id order by sort_order asc limit 1
+    ) ci on true
+    ${where}
+    limit 1
+  `);
+}
+
 const partnerVoucherSelect = Prisma.sql`
   select
     v.id,
@@ -150,6 +203,29 @@ const partnerVoucherSelect = Prisma.sql`
       when v.status = 'ACTIVE'::voucher_status and v.end_date < now() then 'EXPIRED'
       else v.status::text
     end as "status",
+    v.partner_id as "partnerId",
+    v.court_id as "courtId",
+    v.applicable_days as "applicableDays",
+    to_char(v.start_time, 'HH24:MI') as "startTime",
+    to_char(v.end_time, 'HH24:MI') as "endTime",
+    v.holiday_only as "holidayOnly",
+    coalesce((select array_agg(to_char(d, 'YYYY-MM-DD') order by d) from unnest(v.holiday_dates) d), '{}'::text[]) as "holidayDates",
+    to_char(v.applicable_start_date at time zone 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') as "applicableStartDate",
+    to_char(v.applicable_end_date at time zone 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') as "applicableEndDate",
+    coalesce((
+      select mh.action = 'DISABLED'
+      from moderation_history mh
+      where mh.entity_type = 'VOUCHER' and mh.entity_id = v.id
+      order by mh.created_at desc
+      limit 1
+    ), false) as "lockedByAdmin",
+    (
+      select case when mh.action = 'DISABLED' then mh.reason end
+      from moderation_history mh
+      where mh.entity_type = 'VOUCHER' and mh.entity_id = v.id
+      order by mh.created_at desc
+      limit 1
+    ) as "lockReason",
     case
       when c.id is null then null
       else json_build_object(
@@ -347,52 +423,106 @@ export const voucherRepository = {
     const fundedByFilter = hasFundedBy
       ? Prisma.sql`and coalesce(v.funded_by, 'PARTNER'::voucher_funded_by) in ('PARTNER'::voucher_funded_by, 'PLATFORM'::voucher_funded_by, 'SHARED'::voucher_funded_by)`
       : Prisma.sql``;
-    const elig = await eligibilitySelectSql();
-
-    return prisma.$queryRaw<VoucherRow[]>(Prisma.sql`
-      select
-        v.id, v.code, v.title, v.description,
-        v.discount_type as "discountType",
-        v.discount_value::float as "discountValue",
-        v.max_discount_amount::float as "maxDiscountAmount",
-        v.min_booking_amount::float as "minBookingAmount",
-        v.usage_limit as "usageLimit",
-        v.used_count as "usedCount",
-        coalesce(v.click_count, 0)::int as "clickCount",
-        v.start_date as "startDate",
-        v.end_date as "endDate",
-        v.status::text as "status",
-        coalesce(v.funded_by, 'PARTNER'::voucher_funded_by)::text as "fundedBy",
-        coalesce(v.partner_funding_percent, 100)::float as "partnerFundingPercent",
-        coalesce(v.platform_funding_percent, 0)::float as "platformFundingPercent",
-        ${elig.applicableDays} as "applicableDays",
-        ${elig.startTime} as "startTime",
-        ${elig.endTime} as "endTime",
-        ${elig.holidayOnly} as "holidayOnly",
-        ${elig.holidayDates} as "holidayDates",
-        ${elig.applicableStartDate} as "applicableStartDate",
-        ${elig.applicableEndDate} as "applicableEndDate",
-        case when p.id is null then null
-             else json_build_object('id', p.id, 'businessName', p.business_name)
-        end as "partner",
-        case when c.id is null then null
-             else json_build_object('id', c.id, 'name', c.name, 'city', c.city, 'district', c.district, 'imageUrl', ci.image_url)
-        end as "court"
-      from vouchers v
-      left join partner_profiles p on p.id = v.partner_id
-      left join courts c on c.id = v.court_id
-      left join lateral (
-        select image_url from court_images where court_id = c.id order by sort_order asc limit 1
-      ) ci on true
+    return voucherRowSql(Prisma.sql`
       where v.status = 'ACTIVE'::voucher_status
         and v.start_date <= now()
         and v.end_date >= now()
         and (v.court_id = ${input.courtId} or v.court_id is null)
+        -- A partner voucher only applies to that partner's own courts.
+        and (v.partner_id is null or v.partner_id = (select c2.partner_id from courts c2 where c2.id = ${input.courtId}))
         and (${input.voucherId ?? null}::varchar is null or v.id = ${input.voucherId ?? null})
         and (${input.code ?? null}::varchar is null or upper(v.code) = upper(${input.code ?? null}))
         ${fundedByFilter}
-      limit 1
     `);
+  },
+
+  /** A voucher by id or code whatever its state, so the eligibility check can say exactly why it does not apply. */
+  async findForEligibility(input: { voucherId?: string; code?: string }) {
+    const [row] = await voucherRowSql(Prisma.sql`
+      where (${input.voucherId ?? null}::varchar is null or v.id = ${input.voucherId ?? null})
+        and (${input.code ?? null}::varchar is null or upper(v.code) = upper(${input.code ?? null}))
+    `);
+    return row ?? null;
+  },
+
+  async courtPartnerId(courtId: string) {
+    const court = await prisma.court.findUnique({ where: { id: courtId }, select: { partnerId: true } });
+    return court?.partnerId ?? null;
+  },
+
+  /** Vouchers the customer holds a live use of: used on a booking that was not cancelled, rejected or expired. */
+  async liveVoucherIdsForUser(userId: string, tx?: Prisma.TransactionClient) {
+    const rows = await (tx ?? prisma).$queryRaw<Array<{ voucherId: string }>>`
+      select distinct bv.voucher_id as "voucherId"
+      from booking_vouchers bv
+      join bookings b on b.id = bv.booking_id
+      where b.user_id = ${userId}
+        and bv.released_at is null
+        and b.booking_status::text not in (${Prisma.join([...VOUCHER_RELEASING_STATUSES])})
+    `;
+    return new Set(rows.map((row) => row.voucherId));
+  },
+
+  /** Each customer uses a voucher once; a use given back by a cancellation does not count. */
+  async userHasLiveUse(userId: string, voucherId: string, tx?: Prisma.TransactionClient) {
+    return (await this.liveVoucherIdsForUser(userId, tx)).has(voucherId);
+  },
+
+  /**
+   * Gives voucher uses back for bookings that just ended without being played. A use is a standalone booking or a
+   * whole multi-day order, so an order's use returns only once every booking of it has ended. released_at makes
+   * this run once per use whichever cancellation path calls it, also when two paths race.
+   * Call it after updating the bookings' status, in the same transaction.
+   */
+  async releaseVoucherUses(bookingIds: string[], tx?: Prisma.TransactionClient) {
+    if (!bookingIds.length) return 0;
+    const client = tx ?? prisma;
+    const uses = await client.$queryRaw<Array<{ voucherId: string; userId: string; orderId: string | null; bookingId: string }>>`
+      select bv.voucher_id as "voucherId", b.user_id as "userId", b.booking_order_id as "orderId", b.id as "bookingId"
+      from booking_vouchers bv
+      join bookings b on b.id = bv.booking_id
+      where bv.booking_id = any(${bookingIds}::text[])
+        and bv.released_at is null
+    `;
+    const releasing = Prisma.join([...VOUCHER_RELEASING_STATUSES]);
+    const seen = new Set<string>();
+    let released = 0;
+    for (const use of uses) {
+      const key = `${use.voucherId}|${use.orderId ?? use.bookingId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const sameUse = (alias: string) =>
+        use.orderId ? Prisma.sql`${Prisma.raw(alias)}.booking_order_id = ${use.orderId}` : Prisma.sql`${Prisma.raw(alias)}.id = ${use.bookingId}`;
+      const marked = await client.$executeRaw`
+        update booking_vouchers bv
+        set released_at = now()
+        from bookings b
+        where b.id = bv.booking_id
+          and bv.voucher_id = ${use.voucherId}
+          and bv.released_at is null
+          and ${sameUse("b")}
+          and not exists (
+            select 1
+            from booking_vouchers bv2
+            join bookings b2 on b2.id = bv2.booking_id
+            where bv2.voucher_id = ${use.voucherId}
+              and ${sameUse("b2")}
+              and b2.booking_status::text not in (${releasing})
+          )
+      `;
+      // 0 rows: another booking of the order still holds the use, or someone else just released it.
+      if (marked === 0) continue;
+      await client.$executeRaw`
+        update vouchers set used_count = greatest(used_count - 1, 0), updated_at = now() where id = ${use.voucherId}
+      `;
+      await client.$executeRaw`
+        update user_vouchers
+        set status = 'CLAIMED'::user_voucher_status, used_at = null
+        where user_id = ${use.userId} and voucher_id = ${use.voucherId} and status = 'USED'::user_voucher_status
+      `;
+      released += 1;
+    }
+    return released;
   },
 
   incrementClickCount(id: string) {
@@ -614,7 +744,7 @@ export const voucherRepository = {
       courtId?: string | null;
       code: string;
       title: string;
-      description?: string;
+      description?: string | null;
       discountType: "PERCENTAGE" | "FIXED_AMOUNT";
       discountValue: number;
       maxDiscountAmount?: number | null;
@@ -696,7 +826,7 @@ export const voucherRepository = {
       courtId?: string | null;
       code: string;
       title: string;
-      description?: string;
+      description?: string | null;
       discountType: "PERCENTAGE" | "FIXED_AMOUNT";
       discountValue: number;
       maxDiscountAmount?: number | null;
@@ -759,6 +889,23 @@ export const voucherRepository = {
         and partner_id = ${partnerId}
         and status = 'DRAFT'::voucher_status
     `;
+  },
+
+  /**
+   * The edits an activated voucher still allows (see runningVoucherChanges). partnerId scopes it to that partner's
+   * vouchers; null scopes it to admin vouchers.
+   */
+  async updateRunning(
+    id: string,
+    changes: { title?: string; description?: string | null; endDate?: Date; usageLimit?: number | null },
+    partnerId: string | null,
+    db: Prisma.TransactionClient | typeof prisma = prisma
+  ) {
+    const { count } = await db.voucher.updateMany({
+      where: { id, partnerId, status: { in: ["ACTIVE", "DISABLED"] } },
+      data: changes
+    });
+    return count > 0;
   },
 
   setStatus(id: string, partnerId: string, from: string[], status: "ACTIVE" | "DISABLED") {

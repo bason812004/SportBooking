@@ -1,23 +1,26 @@
+import type { ReactNode } from "react";
 import { BadgeCheck, Clock3, MapPin, Star } from "lucide-react";
 
-export function CourtInfo({ 
-  name, 
-  category, 
-  address, 
-  openingHours, 
-  rating, 
-  reviewCount, 
+export function CourtInfo({
+  name,
+  category,
+  address,
+  openingHours,
+  rating,
+  reviewCount,
   bookingCount,
-  distance 
-}: { 
-  name: string; 
-  category: string; 
-  address: string; 
-  openingHours: string; 
-  rating: number | string; 
-  reviewCount: number; 
+  distance,
+  actions
+}: {
+  name: string;
+  category: string;
+  address: string;
+  openingHours: string;
+  rating: number | string;
+  reviewCount: number;
   bookingCount: number;
   distance?: string | null;
+  actions?: ReactNode;
 }) {
   return (
     <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
@@ -37,10 +40,13 @@ export function CourtInfo({
           </p>
           <p className="mt-2 flex items-center gap-2 text-slate-600"><Clock3 className="h-5 w-5 text-[#0f766e]" /> Mở cửa {openingHours}</p>
         </div>
-        <div className="rounded-[1.5rem] bg-slate-50 p-5 text-right">
-          <p className="inline-flex items-center gap-1 text-2xl font-black text-amber-600"><Star className="h-6 w-6 fill-amber-400" /> {rating}</p>
-          <p className="mt-1 text-sm text-slate-500">{reviewCount} review</p>
-          <p className="mt-1 text-sm font-bold text-[#0f766e]">{bookingCount.toLocaleString("vi-VN")} lượt đặt</p>
+        <div className="flex flex-col items-end gap-3">
+          <div className="rounded-[1.5rem] bg-slate-50 p-5 text-right">
+            <p className="inline-flex items-center gap-1 text-2xl font-black text-amber-600"><Star className="h-6 w-6 fill-amber-400" /> {rating}</p>
+            <p className="mt-1 text-sm text-slate-500">{reviewCount} review</p>
+            <p className="mt-1 text-sm font-bold text-[#0f766e]">{bookingCount.toLocaleString("vi-VN")} lượt đặt</p>
+          </div>
+          {actions}
         </div>
       </div>
     </section>

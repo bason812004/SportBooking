@@ -6,7 +6,7 @@ export function RecipientReportPage() {
   return (
     <div className="space-y-5">
       <PageHero eyebrow="Báo cáo" title="Báo cáo hoạt động" subtitle="Doanh thu, booking và dịch vụ tại sân bạn đang quản lý." />
-      <ReportView queryKeyPrefix="recipient-report" api={recipientReportApi} includeCommission={false} filenameBase="bao-cao-recipient" />
+      <ReportView queryKeyPrefix="recipient-report" api={recipientReportApi} includeCommission={false} filenameBase="bao-cao-san" />
     </div>
   );
 }

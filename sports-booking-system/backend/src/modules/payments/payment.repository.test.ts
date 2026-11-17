@@ -4,6 +4,10 @@ import type { TestContext } from "node:test";
 import { createFakePrisma } from "../../shared/testing/fakePrisma.js";
 
 let caseId = 0;
+// Admin notices queued through the outbox inside applyWebhook's transaction.
+const adminEvents: any[] = [];
+// Bookings whose voucher use was given back, per call.
+const voucherReleases: string[][] = [];
 
 async function loadRepository(
   t: TestContext,
@@ -11,7 +15,15 @@ async function loadRepository(
   settlement: Partial<{ createFromPaidBooking: (...args: any[]) => any; cancelForBooking: (...args: any[]) => any }> = {}
 ) {
   const fakePrisma = createFakePrisma(models);
+  adminEvents.length = 0;
+  voucherReleases.length = 0;
   t.mock.module("../../config/db.js", { namedExports: { prisma: fakePrisma } });
+  t.mock.module("../vouchers/voucher.repository.js", {
+    namedExports: { voucherRepository: { releaseVoucherUses: async (ids: string[]) => { voucherReleases.push(ids); return 0; } } }
+  });
+  t.mock.module("../notifications/notificationOutbox.repository.js", {
+    namedExports: { enqueueAdminEvent: async (tx: any, event: any) => adminEvents.push({ sameTransaction: tx === fakePrisma, ...event }) }
+  });
   t.mock.module("../settlements/settlement.service.js", {
     namedExports: {
       settlementService: {
@@ -134,6 +146,7 @@ describe("payment.repository applyWebhook", () => {
     assert.equal(bookingUpdateArgs.data.paymentStatus, "PAID");
     assert.equal(settledBooking.id, "bk0001");
     assert.equal(result?.settlement?.id, "st1");
+    assert.equal(adminEvents.length, 0, "an on-time payment needs no refund notice");
   });
 
   it("rejects the payment when the webhook amount does not match, and cancels the booking instead of settling it", async (t) => {
@@ -181,6 +194,7 @@ describe("payment.repository applyWebhook", () => {
     assert.equal(bookingUpdateArgs.data.paymentStatus, "FAILED");
     assert.equal(cancelCalledWithBookingId, "bk0001");
     assert.equal(createCalled, false);
+    assert.deepEqual(voucherReleases, [["bk0001"]], "a failed payment gives the voucher use back");
   });
 
   it("settles every booking in a multi-booking order, not just the first", async (t) => {
@@ -266,6 +280,7 @@ describe("payment.repository expirePendingPayment", () => {
     assert.deepEqual(bookingUpdateArgs.where.id.in, ["bk1"]);
     assert.equal(bookingUpdateArgs.data.bookingStatus, "CANCELLED");
     assert.equal(bookingUpdateArgs.data.paymentStatus, "EXPIRED");
+    assert.deepEqual(voucherReleases, [["bk1"]]);
   });
 });
 
@@ -322,6 +337,7 @@ describe("payment.repository cancelPendingPayment", () => {
     assert.deepEqual(bookingUpdateArgs.where.id.in, ["bk1", "bk2", "bk3"]);
     assert.deepEqual(bookingUpdateArgs.data, { bookingStatus: "CANCELLED", paymentStatus: "CANCELLED" });
     assert.equal(paymentUpdateArgs.data.status, "CANCELLED");
+    assert.deepEqual(voucherReleases, [["bk1", "bk2", "bk3"]], "the whole order's voucher use is offered back");
   });
 
   it("leaves a payment that was already paid alone", async (t) => {
@@ -399,6 +415,11 @@ describe("payment.repository applyWebhook for money that arrives after expiry", 
     assert.equal(bookingUpdateArgs.data.paymentStatus, "PAID");
     assert.match(bookingUpdateArgs.data.cancelReason, /hoàn tiền/);
     assert.equal(settleCalled, false);
+    // The admin refund notice is queued in the webhook's own transaction, not sent after it.
+    assert.equal(adminEvents.length, 1);
+    assert.equal(adminEvents[0].type, "PAYMENT_LATE_REFUND");
+    assert.equal(adminEvents[0].sameTransaction, true);
+    assert.deepEqual(adminEvents[0].metadata, { paymentId: "pay0001", bookingIds: ["bk0001"], amount: 200000 });
   });
 
   it("flags every day of a cancelled multi-day order", async (t) => {
@@ -409,5 +430,7 @@ describe("payment.repository applyWebhook for money that arrives after expiry", 
     assert.equal(bookingUpdateArgs.data.bookingStatus, "CANCELLED");
     assert.equal(result.bookings.length, 2);
     assert.equal(settleCalled, false);
+    assert.equal(adminEvents.length, 1);
+    assert.match(adminEvents[0].content, /cho đơn BK1, BK2 sau khi đơn hết hạn/);
   });
 });

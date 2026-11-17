@@ -2,6 +2,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { CalendarDays, Check, Gift, MapPin, TicketPercent, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "../ui/Button";
+import { courtArea } from "../../lib/format";
 
 type Props = {
   voucher: VoucherData | null;
@@ -23,7 +24,7 @@ type VoucherData = {
   usageLimit?: number | null;
   usedCount: number;
   partner?: { id: string; businessName: string } | null;
-  court?: { id: string; name: string; city: string; district: string; imageUrl?: string | null } | null;
+  court?: { id: string; name: string; city: string; district?: string | null; ward?: string | null; imageUrl?: string | null } | null;
 };
 
 const currency = new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 });
@@ -146,7 +147,7 @@ export function ClaimVoucherModal({ voucher, open, onClaim, onClose }: Props) {
                     </p>
                     <p className="flex items-center gap-2">
                       <MapPin className="h-4 w-4 shrink-0 text-teal-600" />
-                      {voucher.court ? `${voucher.court.name}, ${voucher.court.district}` : ownerName}
+                      {voucher.court ? [voucher.court.name, courtArea(voucher.court)].filter(Boolean).join(", ") : ownerName}
                     </p>
                     <p className="text-xs text-slate-500">Đơn tối thiểu {currency.format(voucher.minBookingAmount)}</p>
                     {remaining != null && (

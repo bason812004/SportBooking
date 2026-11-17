@@ -14,10 +14,10 @@ export const blogCommentController = {
   }),
   update: asyncHandler(async (req, res) => {
     if (!req.params.slug) throw new ValidationError("Slug bài viết không hợp lệ");
-    return sendSuccess(res, await blogCommentService.update(req.params.slug, req.params.commentId, req.user!.id, req.user!.role, req.body.content));
+    return sendSuccess(res, await blogCommentService.update(req.params.slug, req.params.commentId, req.user!.id, req.body.content));
   }),
   delete: asyncHandler(async (req, res) => {
     if (!req.params.slug) throw new ValidationError("Slug bài viết không hợp lệ");
-    return sendSuccess(res, await blogCommentService.delete(req.params.slug, req.params.commentId, req.user!.id, req.user!.role));
+    return sendSuccess(res, await blogCommentService.delete(req.params.slug, req.params.commentId, req.user!.id));
   })
 };

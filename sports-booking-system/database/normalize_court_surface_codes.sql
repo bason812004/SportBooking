@@ -1,3 +1,5 @@
+-- WARNING: this also renames every matched sub-court to "<venue name> - Sân NN", overwriting names a
+-- partner typed at registration or edited later. Run it only for legacy data, never as a routine step.
 -- Normalize legacy numeric/S-prefixed codes without deleting or merging courts.
 -- Existing IDs, bookings and closure history are preserved. Re-running is safe.
 begin;

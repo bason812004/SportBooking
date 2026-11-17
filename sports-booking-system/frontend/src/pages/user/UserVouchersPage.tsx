@@ -8,6 +8,7 @@ import { EmptyState, ErrorState, LoadingState } from "../../components/common/St
 import { voucherApi } from "../../features/bookings/api/bookingApi";
 import { useVouchers } from "../../features/content/hooks/useContent";
 import type { MyVoucher, UserVoucherStatus, Voucher } from "../../types/api";
+import { courtArea } from "../../lib/format";
 
 const currency = new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 });
 const dateFormat = new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
@@ -220,7 +221,7 @@ function VoucherCard({ voucher, action, onCopy }: { voucher: Voucher | MyVoucher
           <p className="flex items-center gap-2">
             <MapPin className="h-4 w-4 text-[#0f766e]" />
             {voucher.court
-              ? `${voucher.court.name}, ${voucher.court.district}`
+              ? [voucher.court.name, courtArea(voucher.court)].filter(Boolean).join(", ")
               : voucher.partner
                 ? voucher.partner.businessName
                 : "Áp dụng toàn hệ thống"}

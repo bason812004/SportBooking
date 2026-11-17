@@ -80,9 +80,11 @@ export function UserProfilePage() {
 
   const changePassword = useMutation({
     mutationFn: (values: PasswordValues) => authApi.changePassword({ currentPassword: values.currentPassword, newPassword: values.newPassword }),
-    onSuccess: () => {
+    onSuccess: (session) => {
+      // The old session was ended with every other device's; keep the new one.
+      auth.setSession(session.user, session.accessToken, session.refreshToken);
       passwordForm.reset();
-      toast.success("Đổi mật khẩu thành công.");
+      toast.success("Đổi mật khẩu thành công. Các thiết bị khác đã được đăng xuất.");
     },
     onError: (error) => toast.error(error.message)
   });

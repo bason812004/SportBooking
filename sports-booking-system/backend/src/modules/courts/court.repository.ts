@@ -1,5 +1,6 @@
 import { BookingStatus, Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+import { partnerAccountActive } from "../../shared/utils/publicCourt.js";
 import { toDbDate, timeToDate } from "../../shared/utils/time.js";
 import type { CourtListQuery } from "./court.types.js";
 
@@ -57,60 +58,19 @@ function textSearchCondition(fields: Array<"name" | "description" | "address" | 
   };
 }
 
-let surfacesSeeded = false;
-
-export async function ensureCourtSurfacesSeeded() {
-  if (surfacesSeeded) return;
-  surfacesSeeded = true;
-  try {
-    const courts = await prisma.court.findMany({
-      select: {
-        id: true,
-        name: true,
-        surfaces: { select: { id: true } }
-      }
-    });
-
-    for (const c of courts) {
-      if (c.surfaces.length < 3) {
-        const needed = 3 - c.surfaces.length;
-        const startIndex = c.surfaces.length + 1;
-        for (let i = 0; i < needed; i++) {
-          const num = startIndex + i;
-          const code = `S0${num}`;
-          const name = `${c.name} - Sân 0${num}`;
-          await prisma.$executeRawUnsafe(
-            `INSERT INTO court_surfaces (court_id, code, name, capacity, surface, size, status, sort_order, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', $7, NOW())
-             ON CONFLICT DO NOTHING;`,
-            c.id,
-            code,
-            name,
-            "7 người / Đôi",
-            "Cỏ nhân tạo / Thảm cao cấp",
-            "Tiêu chuẩn",
-            num
-          );
-        }
-      }
-    }
-  } catch (err) {
-    console.error("[CourtRepository] Seeding surfaces warning:", err);
-  }
-}
-
 export const courtRepository = {
   async list(query: CourtListQuery, page: number, limit: number) {
     const categoryFilter: Prisma.CourtCategoryWhereInput = {};
     const andConditions: Prisma.CourtWhereInput[] = [];
     const where: Prisma.CourtWhereInput = {
       approvalStatus: "APPROVED",
-      activeStatus: "ACTIVE"
+      activeStatus: "ACTIVE",
+      ...partnerAccountActive
     };
 
     const keyword = query.keyword ?? query.q;
     if (keyword) {
-      andConditions.push(textSearchCondition(["name", "description", "address", "city", "district"], keyword));
+      andConditions.push(textSearchCondition(["name", "description", "address", "city", "district", "ward"], keyword));
     }
     const city = query.province ?? query.city;
     if (city) andConditions.push(textSearchCondition(["city"], city));
@@ -197,14 +157,9 @@ export const courtRepository = {
     return { items, total };
   },
 
-  async findPublicById(idOrSlug: string) {
-    await ensureCourtSurfacesSeeded();
+  async findPublicById(id: string) {
     return prisma.court.findFirst({
-      where: {
-        OR: [{ id: idOrSlug }, { slug: idOrSlug }],
-        approvalStatus: "APPROVED",
-        activeStatus: "ACTIVE"
-      },
+      where: { id, approvalStatus: "APPROVED", activeStatus: "ACTIVE", ...partnerAccountActive },
       include: courtDetailInclude
     });
   },
@@ -225,7 +180,8 @@ export const courtRepository = {
         district: district ? { contains: district, mode: "insensitive" } : undefined,
         approvalStatus: "APPROVED",
         activeStatus: "ACTIVE",
-        category: { status: "ACTIVE" }
+        category: { status: "ACTIVE" },
+        ...partnerAccountActive
       },
       include: courtInclude,
       orderBy: { createdAt: "desc" },

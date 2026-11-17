@@ -11,6 +11,8 @@ export type SettlementListQuery = {
   limit?: string;
   status?: SettlementStatus;
   partnerId?: string;
+  collectedBy?: "PLATFORM" | "PARTNER";
+  search?: string;
   fromDate?: string;
   toDate?: string;
 };

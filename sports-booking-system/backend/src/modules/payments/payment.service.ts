@@ -29,25 +29,19 @@ function notifyPaymentResult(result: Awaited<ReturnType<typeof paymentRepository
   }
 }
 
-// Money arrived after the booking expired; the booking stays cancelled, so the customer and the admins
-// who issue refunds (PATCH /admin/bookings/:id/admin -> REFUNDED) both need to know.
+// Money arrived after the booking expired; the booking stays cancelled and the customer is told the money
+// comes back. The admins who issue the refund (PATCH /admin/bookings/:id/admin -> REFUNDED) are notified
+// through the outbox inside applyWebhook's transaction, so their notice cannot be lost here.
 async function notifyLatePaymentRefund(result: { payment: { id: string; userId: string }; bookings: Array<{ id: string; bookingCode: string }>; lateRefund: { amount: number } }) {
   const amount = `${new Intl.NumberFormat("vi-VN").format(result.lateRefund.amount)}đ`;
   const codes = result.bookings.map((booking) => booking.bookingCode).join(", ");
-  const metadata = { paymentId: result.payment.id, bookingIds: result.bookings.map((booking) => booking.id), amount: result.lateRefund.amount };
   try {
     await notificationService.create({
       userId: result.payment.userId,
       title: "Thanh toán đến sau khi đơn đã hết hạn",
       content: `Đơn ${codes} đã bị hủy vì quá thời gian thanh toán, nên khoản ${amount} bạn vừa chuyển sẽ được hoàn lại.`,
       type: "PAYMENT_LATE_REFUND",
-      metadata
-    });
-    await notificationService.notifyAdmins({
-      title: "Cần hoàn tiền một khoản thanh toán trễ",
-      content: `Khách đã chuyển ${amount} cho đơn ${codes} sau khi đơn hết hạn và đã bị hủy. Hãy hoàn tiền rồi cập nhật đơn sang Đã hoàn tiền.`,
-      type: "PAYMENT_LATE_REFUND",
-      metadata
+      metadata: { paymentId: result.payment.id, bookingIds: result.bookings.map((booking) => booking.id), amount: result.lateRefund.amount }
     });
   } catch (error) {
     // The payment itself is already recorded; a failed notice must not fail the provider's webhook call.
@@ -95,14 +89,33 @@ export const paymentService = {
     return { ok: true, idempotent: result.idempotent };
   },
 
+  /** Manual completion is a dev/QA shortcut only; in production money is confirmed by the provider. */
+  manualCompletionAllowed() {
+    return env.NODE_ENV !== "production";
+  },
+
   // Dev-only shortcut so QA/testers can complete a booking payment without scanning a real QR
   // code. Disabled outside development so it can never be used to fake a payment in production.
   async devMarkPaid(userId: string, paymentId: string) {
-    if (env.NODE_ENV === "production") {
+    if (!this.manualCompletionAllowed()) {
       throw new ForbiddenError("Chuc nang nay khong kha dung o moi truong production");
     }
     const payment = await paymentRepository.findForUser(paymentId, userId);
     if (!payment) throw new NotFoundError("Khong tim thay thanh toan");
+    return this.devCompletePayment(payment, userId);
+  },
+
+  /**
+   * Completes a pending payment through applyWebhook, the same path a provider confirmation takes,
+   * so settlements, the partner wallet and realtime updates stay consistent. Callers check access.
+   */
+  async devCompletePayment(
+    payment: { status: string; externalOrderId: string; paymentReference: string; amount: unknown },
+    markedBy: string
+  ) {
+    if (!this.manualCompletionAllowed()) {
+      throw new ForbiddenError("Chuc nang nay khong kha dung o moi truong production");
+    }
     if (payment.status !== "PENDING" && payment.status !== "UNPAID") {
       return { ok: true, idempotent: true };
     }
@@ -113,7 +126,7 @@ export const paymentService = {
       externalTransactionId: `DEV_${Date.now()}`,
       status: "PAID",
       amount: Number(payment.amount),
-      rawPayload: { dev: true, markedBy: userId } as any,
+      rawPayload: { dev: true, markedBy } as any,
       paymentReference: payment.paymentReference
     });
     if (!result) throw new NotFoundError("Khong tim thay giao dich thanh toan");

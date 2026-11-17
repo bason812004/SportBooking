@@ -13,13 +13,18 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+/** Fired when a 401 survives a refresh attempt: the session is over (expired, revoked, or the account was locked). */
+export const SESSION_EXPIRED_EVENT = "auth:session-expired";
+
 let refreshPromise: Promise<string | null> | null = null;
 
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const original = error.config;
-    if (error.response?.status === 401 && original && !(original as { __isRetryRequest?: boolean }).__isRetryRequest) {
+    // The refresh call itself must not try to refresh: it would wait on its own refreshPromise forever.
+    const isRefreshCall = original?.url?.includes("/auth/refresh-token");
+    if (error.response?.status === 401 && original && !isRefreshCall && !(original as { __isRetryRequest?: boolean }).__isRetryRequest) {
       const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
       if (refreshToken) {
         refreshPromise ??= api
@@ -43,12 +48,15 @@ api.interceptors.response.use(
           original.headers.Authorization = `Bearer ${accessToken}`;
           return api(original);
         }
+        window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
       }
     }
 
     const message = error.response?.data?.message ?? error.response?.data?.error?.message ?? "Không thể kết nối máy chủ";
-    const rejected = new Error(message) as Error & { code?: string };
+    const rejected = new Error(message) as Error & { code?: string; fieldErrors?: Record<string, string[]> };
     rejected.code = error.response?.data?.error?.code ?? error.response?.data?.code;
+    // A validation error says only "Dữ liệu gửi lên không hợp lệ"; the reason per field is here.
+    rejected.fieldErrors = error.response?.data?.errors ?? error.response?.data?.error?.fieldErrors;
     return Promise.reject(rejected);
   }
 );

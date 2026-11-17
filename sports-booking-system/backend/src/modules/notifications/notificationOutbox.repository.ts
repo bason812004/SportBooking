@@ -24,6 +24,20 @@ export const notificationOutboxRepository = {
   }
 };
 
+/**
+ * Queues an admin notification from application code inside the caller's transaction, like the
+ * database triggers do: it exists exactly when the business change commits, and the worker delivers it.
+ */
+export function enqueueAdminEvent(
+  tx: Prisma.TransactionClient,
+  event: { title: string; content: string; type: string; metadata: Record<string, unknown> }
+) {
+  return tx.$executeRaw`
+    INSERT INTO admin_notification_outbox(title, content, type, metadata)
+    VALUES (${event.title}, ${event.content}, ${event.type}, ${JSON.stringify(event.metadata)}::jsonb)
+  `;
+}
+
 // Shared transactional operation, also exercised with isolated PostgreSQL fixtures.
 export async function deliverAdminEvent(tx: Prisma.TransactionClient, id: bigint) {
   const [event] = await tx.$queryRaw<Event[]>`

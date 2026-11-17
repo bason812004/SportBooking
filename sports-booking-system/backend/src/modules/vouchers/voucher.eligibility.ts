@@ -30,6 +30,10 @@ export type VoucherLike = {
   holidayDates?: string[] | null;
   applicableStartDate?: Date | string | null;
   applicableEndDate?: Date | string | null;
+  /** Owner of a partner voucher (null for an admin/platform voucher). */
+  partnerId?: string | null;
+  /** The one court the voucher is limited to, if any. */
+  courtId?: string | null;
 };
 
 export type EligibilityContext = {
@@ -41,6 +45,8 @@ export type EligibilityContext = {
   endTime: string;
   /** Court id used in the booking. */
   courtId: string;
+  /** Partner owning that court; when given, a partner voucher only applies to that partner's courts. */
+  courtPartnerId?: string | null;
   /** Subtotal after dynamic pricing (court + services). */
   subtotal: number;
   /** Holidays already resolved by the caller (YYYY-MM-DD list). */
@@ -59,7 +65,8 @@ export type EligibilityReasonCode =
   | "VOUCHER_WRONG_DAY"
   | "VOUCHER_WRONG_TIME"
   | "VOUCHER_NOT_HOLIDAY"
-  | "VOUCHER_WRONG_COURT";
+  | "VOUCHER_WRONG_COURT"
+  | "VOUCHER_ALREADY_USED";
 
 export type EligibilityResult =
   | { eligible: true; discountAmount: number; finalAmount: number; platformShare: number; partnerShare: number }
@@ -117,7 +124,8 @@ function resolveReasons(): Record<EligibilityReasonCode, { vi: string; en: strin
     VOUCHER_WRONG_DAY:            { vi: "Voucher không áp dụng cho ngày đã chọn.",                     en: "Voucher is not valid on the selected day." },
     VOUCHER_WRONG_TIME:           { vi: "Voucher không áp dụng cho khung giờ đã chọn.",                 en: "Voucher is not valid for the selected time slot." },
     VOUCHER_NOT_HOLIDAY:          { vi: "Voucher chỉ áp dụng vào các ngày lễ.",                         en: "Voucher is only valid on holidays." },
-    VOUCHER_WRONG_COURT:          { vi: "Voucher không áp dụng cho sân này.",                            en: "Voucher is not valid for this court." }
+    VOUCHER_WRONG_COURT:          { vi: "Voucher không áp dụng cho sân này.",                            en: "Voucher is not valid for this court." },
+    VOUCHER_ALREADY_USED:         { vi: "Bạn đã dùng voucher này rồi. Mỗi khách chỉ dùng một lần.",      en: "You have already used this voucher. Each customer can use it once." }
   };
 }
 
@@ -139,6 +147,10 @@ export function evaluateVoucherEligibility(
   if (new Date(voucher.startDate) > now) return m("VOUCHER_NOT_STARTED");
   if (new Date(voucher.endDate) < now) return m("VOUCHER_EXPIRED");
   if (voucher.usageLimit != null && voucher.usedCount >= voucher.usageLimit) return m("VOUCHER_USAGE_LIMIT_REACHED");
+
+  // Scope: a court voucher only on that court, a partner voucher only on that partner's courts (whoever funds it).
+  if (voucher.courtId && voucher.courtId !== ctx.courtId) return m("VOUCHER_WRONG_COURT");
+  if (voucher.partnerId && ctx.courtPartnerId !== undefined && voucher.partnerId !== ctx.courtPartnerId) return m("VOUCHER_WRONG_COURT");
 
   if (voucher.applicableStartDate && parseYmd(ctx.bookingDate) < new Date(voucher.applicableStartDate)) return m("VOUCHER_APPLICABLE_START_DATE");
   if (voucher.applicableEndDate && parseYmd(ctx.bookingDate) > new Date(voucher.applicableEndDate)) return m("VOUCHER_APPLICABLE_END_DATE");

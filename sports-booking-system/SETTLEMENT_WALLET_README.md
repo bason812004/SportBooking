@@ -20,7 +20,7 @@
 - `payment_id` (uuid, FK payments)
 - `gross_amount` (decimal) - tổng doanh thu gốc (slots + services)
 - `voucher_discount` (decimal) - tổng giảm giá voucher
-- `platform_discount` (decimal) - giảm giá từ Platform Voucher (=0, sẽ tích hợp sau)
+- `platform_discount` (decimal) - phần giảm giá nền tảng chịu (voucher admin), nền tảng trả lại cho Partner trên settlement `collected_by = PARTNER` khi booking COMPLETED
 - `partner_discount` (decimal) - giảm giá từ Partner Voucher
 - `commission_amount` (decimal) - hoa hồng hệ thống
 - `service_fee` (decimal)
@@ -62,7 +62,7 @@ net_amount       = gross_amount - commission_amount
 
 Trong đó:
 - partner_discount = voucher_discount (voucher Partner → trừ vào doanh thu Partner)
-- platform_discount = 0 (chưa có Platform Voucher)
+- platform_discount = phần nền tảng chịu của voucher admin, trả ở bước COMPLETED (xem "Quy tắc xử lý Voucher")
 ```
 
 ### Ví dụ (theo yêu cầu)
@@ -83,7 +83,8 @@ Tính toán:
 ### Quy tắc xử lý Voucher
 - **Partner Voucher**: Trừ vào `gross_amount` trước khi tính commission → Partner chịu phần giảm giá này
 - **Platform Voucher**: Tính là `platform_discount`, là chi phí marketing của hệ thống, KHÔNG ảnh hưởng commission
-- Hiện tại schema đã track `platform_discount` và `partner_discount` riêng biệt để sẵn sàng tích hợp Platform Voucher sau
+- Voucher do admin phát hành luôn là Platform Voucher 100% (`funded_by = PLATFORM`, xem `database/25_platform_voucher_funding.sql`); voucher của Partner do Partner chịu 100%. Tỉ lệ được ghi vào `booking_vouchers.platform_share / partner_share` lúc đặt.
+- Nền tảng trả phần mình chịu khi booking COMPLETED (`settlementService.chargePartnerCollected`): phần đó cộng vào `available_balance` và được tính là tiền sân của Partner, nên hoa hồng tính như khi không có voucher. Booking bị hủy (lượt voucher được trả lại) hoặc NO_SHOW thì không trả. Admin hủy settlement PARTNER thì hoàn hoa hồng và thu lại phần nền tảng đã trả (thiếu ví thì ghi vào `commission_debt`).
 
 ### Commission rate
 - Đọc từ `partner_profiles.commission_rate` (override riêng)
@@ -114,6 +115,15 @@ Nếu booking bị CANCELLED trong khi settlement vẫn PENDING:
 - Settlement status: `CANCELLED`
 - Realtime emit
 
+### Tiền khách trả thẳng cho Partner (tiền mặt, QR của partner, chuyển khoản)
+Khi booking chuyển COMPLETED (mọi đường: checkout, partner, nhân viên, admin):
+- Hoa hồng chỉ tính trên **tiền sân** (giá sân + phụ thu check-in sớm/gia hạn − phần voucher Partner chịu), không tính dịch vụ bán tại quầy.
+- Phần đã trả online đã bị trừ hoa hồng qua settlement PLATFORM; phần còn lại tạo settlement `collected_by = PARTNER` (SETTLED).
+- Partner đang giữ số tiền đó, nên hoa hồng bị trừ vào `available_balance`; phần ví không đủ thành `commission_debt`.
+- Thu nhập online về sau (quyết toán, hoàn tiền rút bị từ chối) tự trả nợ trước. Còn nợ thì không tạo được yêu cầu rút tiền.
+- Partner có thể chuyển khoản vào tài khoản nền tảng (nội dung `HH <partnerId>`); admin ghi nhận để giảm nợ.
+- Admin huỷ settlement PARTNER = miễn hoa hồng đó (giảm nợ trước, phần còn lại trả về ví).
+
 ### Bước 8-9: Withdrawal
 1. Partner gọi `POST /api/partner/withdrawals` với amount + bank info
 2. Backend validate: `amount ≤ available_balance`
@@ -121,11 +131,12 @@ Nếu booking bị CANCELLED trong khi settlement vẫn PENDING:
 4. Realtime emit `withdrawal:created`
 
 ### Bước 10-12: Admin xử lý Withdrawal
-- `PUT /api/admin/withdrawals/:id/approve` → status `APPROVED`
-- `PUT /api/admin/withdrawals/:id/reject` → status `REJECTED`, **hoàn lại** `available_balance`
-- `PUT /api/admin/withdrawals/:id/paid` → status `PAID`:
+- `PUT /api/admin/withdrawals/:id/approve` → status `APPROVED` (giao diện hỏi xác nhận, hiện số dư và công nợ hoa hồng của đối tác)
+- `PUT /api/admin/withdrawals/:id/reject` `{ note }` (bắt buộc, ≥ 3 ký tự) → status `REJECTED`, **hoàn lại** `available_balance`, bù trừ công nợ hoa hồng trước
+- `PUT /api/admin/withdrawals/:id/paid` `{ note }` (bắt buộc: mã giao dịch / nội dung chuyển khoản, lưu vào yêu cầu và audit) → status `PAID`:
   - `available_balance -= amount`
   - `total_withdrawn += amount`
+- Chỉ thao tác tay từ `APPROVED`; `PROCESSING` thuộc cổng chuyển khoản tự động (khi bật).
 - Realtime emit `withdrawal:updated` mỗi bước
 
 ## 4. API endpoints
@@ -142,14 +153,15 @@ GET    /api/partner/withdrawals                        - Lịch sử rút tiền
 
 ### Admin (`requireRole(ADMIN)`)
 ```
-GET    /api/admin/wallets/partner-wallets              - Danh sách tất cả ví Partner
-GET    /api/admin/wallets/partner-wallets/:partnerId   - Chi tiết 1 ví Partner
-GET    /api/admin/wallets/partner-wallets/summary      - Tổng quan ví toàn hệ thống
+GET    /api/admin/wallets/partner-wallets              - Danh sách tất cả ví Partner (?hasDebt=true: chỉ ví đang nợ hoa hồng)
+GET    /api/admin/wallets/partner-wallets/:partnerId   - Chi tiết 1 ví Partner (kèm lịch sử trả nợ)
+GET    /api/admin/wallets/partner-wallets/summary      - Tổng quan ví toàn hệ thống (kèm tổng công nợ hoa hồng)
+POST   /api/admin/wallets/partner-wallets/:partnerId/debt-payments - Ghi nhận đối tác đã chuyển khoản trả công nợ { amount, note }
 
-GET    /api/admin/settlements                          - Danh sách tất cả settlement (filter theo partner, status, date range)
-GET    /api/admin/settlements/summary                  - Tổng quan settlement
-PUT    /api/admin/settlements/:id/settle               - Force settle 1 settlement
-PUT    /api/admin/settlements/:id/cancel               - Hủy settlement (refund)
+GET    /api/admin/settlements                          - Danh sách settlement (?status, partnerId, collectedBy, search = mã booking/tên đối tác, fromDate, toDate theo ngày VN)
+GET    /api/admin/settlements/summary                  - Tổng quan theo trạng thái, cùng bộ lọc (bỏ qua status)
+PUT    /api/admin/settlements/:id/settle               - Quyết toán tay: chỉ khi booking COMPLETED hoặc NO_SHOW
+PUT    /api/admin/settlements/:id/cancel               - Hủy / thu hồi { reason } (bắt buộc); đối tác nhận thông báo SETTLEMENT_CANCELLED
 
 GET    /api/admin/withdrawals                          - Tất cả yêu cầu rút tiền
 GET    /api/admin/withdrawals/summary                  - Thống kê withdrawal
@@ -181,17 +193,21 @@ Rooms:
 - Modal rút tiền: amount + bank info
 
 ### `/admin/settlements` - Admin Settlement Management
-- 4 summary cards: Gross, Commission, Net, Pending
-- Filter theo status
-- Bảng tất cả settlements: booking, partner, breakdown, status
+- 4 summary cards theo bộ lọc (không tính khoản đã hủy): Gross, Commission, Net, Pending
+- Lọc: mã booking/đối tác, đối tác, nguồn thu, trạng thái, khoảng ngày
+- Bảng settlements có cột trạng thái đơn; nút "Quyết toán" khoá khi đơn chưa hoàn tất/không đến; hủy/thu hồi bắt nhập lý do
 
 ### `/admin/withdrawals` - Admin Withdrawal Management
-- 3 summary cards: Total, Pending, Paid
-- Filter theo status
+- 4 summary cards: Chờ duyệt, Chờ chuyển khoản (APPROVED + PROCESSING), Đã chuyển khoản, Tổng
+- Filter theo khoảng ngày (mặc định tháng hiện tại theo giờ máy) và status
 - Bảng với action buttons:
-  - PENDING → Duyệt / Từ chối
-  - APPROVED → Xác nhận thanh toán
-  - REJECTED / PAID → Hiển thị trạng thái cuối
+  - PENDING → Duyệt (hộp xác nhận kèm công nợ hoa hồng) / Từ chối (lý do bắt buộc)
+  - APPROVED → Đã chuyển khoản (nhập mã giao dịch) / Từ chối
+  - REJECTED / PAID → Hiển thị trạng thái cuối và ghi chú
+
+### `/admin/finance` - Đối soát
+- Chỉ đối soát, không còn chi trả tay (đã bỏ `PATCH /admin/finance/payouts/:partnerId`; bảng `partner_payouts` để nguyên, không dùng). Tiền trả cho đối tác chỉ đi qua rút tiền.
+- `GET /admin/finance/reconciliation?month=YYYY-MM`: mỗi đối tác có sổ hoa hồng trong tháng (doanh thu, hoa hồng, thực nhận gồm cả tiền tự thu), hoàn tiền trong tháng (theo `cancelled_at`), rút tiền đã trả trong tháng (`paidOutAmount`, `paidOutCount`) và ví hiện tại (`walletPending`, `walletAvailable`, `commissionDebt`).
 
 ## 7. Security & Data Integrity
 

@@ -124,7 +124,10 @@ function UserMenu({ role, onLogout }: { role?: string; onLogout: () => void }) {
     { label: t("user.myVouchers"), to: "/user/vouchers", icon: Gift },
     { label: t("user.joinedGroups"), to: "/user/team-groups", icon: MessageCircle },
     { label: t("user.myTeammatePosts"), to: "/user/teammates", icon: UsersRound },
-    { label: t("user.myPosts"), to: "/user/blogs", icon: FileText }
+    // Only users and partners write blog posts, each from their own area; staff and admins have none.
+    ...(role === "USER" || role === "PARTNER"
+      ? [{ label: t("user.myPosts"), to: role === "PARTNER" ? "/partner/blogs" : "/user/blogs", icon: FileText }]
+      : [])
   ];
 
   useEffect(() => {

@@ -11,7 +11,8 @@ let sequence = 0;
 const matching = (where: any) => rows.filter((row) => row.userId === where.userId && (!where.id || row.id === where.id) && (where.isRead === undefined || row.isRead === where.isRead));
 mock.module("../../config/db.js", { namedExports: { prisma: {
   $transaction: (operations: Promise<unknown>[]) => Promise.all(operations),
-  user: { findMany: async () => [{ id: "admin1" }] },
+  // findUnique: the socket handshake checks that the account is still active.
+  user: { findMany: async () => [{ id: "admin1" }], findUnique: async () => ({ status: "ACTIVE" }) },
   notification: {
     create: async ({ data }: any) => {
       const row = { ...data, id: `notice${++sequence}`, isRead: false, createdAt: new Date(sequence * 1000).toISOString() };

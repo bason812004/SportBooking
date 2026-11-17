@@ -26,7 +26,8 @@ import {
   MapPin,
   CalendarDays
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { toast as notify } from "sonner";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Modal } from "../../components/ui/Modal";
@@ -45,6 +46,19 @@ import { formatMoney } from "../../utils/formatters";
 
 type BookingFilterType = "ALL" | "IN_USE" | "UPCOMING" | "UNPAID" | "PAID" | "COMPLETED";
 
+/** A booking loaded on its own (opened by link) in the shape of a counter list row. */
+function bookingFromDetail(detail: CashierBookingDetail): CashierBooking {
+  return {
+    ...detail.booking,
+    services: detail.activeServices,
+    courtSubtotal: detail.courtSubtotal,
+    serviceSubtotal: detail.serviceSubtotal,
+    totalAmount: detail.grandTotal,
+    depositPaid: detail.depositPaid,
+    remainingAmount: detail.remainingAmount
+  };
+}
+
 export function PartnerCashierPage() {
   const { t } = useTranslation("booking");
   const navigate = useNavigate();
@@ -53,6 +67,15 @@ export function PartnerCashierPage() {
   // Booking list & selection
   const [activeBookings, setActiveBookings] = useState<CashierBooking[]>([]);
   const [selectedBooking, setSelectedBooking] = useState<CashierBooking | null>(null);
+
+  // ?bookingId= (the "Dịch vụ (POS)" button of the bookings pages) opens that booking. One the counter list does not
+  // hold (another day's) is loaded on its own and pinned at the top, also across the periodic refreshes.
+  const [searchParams] = useSearchParams();
+  const requestedBookingId = searchParams.get("bookingId");
+  const [pinnedBookingId, setPinnedBookingId] = useState<string | null>(null);
+  const pinnedIdRef = useRef<string | null>(requestedBookingId);
+  const selectOnLoadRef = useRef<string | null>(requestedBookingId);
+  const firstRequestRef = useRef(true);
   const [categories, setCategories] = useState<ServiceCategory[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
 
@@ -63,40 +86,29 @@ export function PartnerCashierPage() {
   const [searchService, setSearchService] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("");
 
-  // Toast feedback state
-  const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
+  // The app-wide toasts (sonner), like every other page.
   const showToast = (message: string, type: "success" | "error" | "info" = "success") => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    if (type === "error") notify.error(message);
+    else if (type === "info") notify.info(message);
+    else notify.success(message);
   };
 
-  // Locked Invoices persistent map
-  const [lockedInvoices, setLockedInvoices] = useState<Record<string, boolean>>(() => {
+  // The lock is kept on the booking, so every device and staff member sees it and the server enforces it.
+  const isCurrentBookingLocked = Boolean(selectedBooking?.invoiceLockedAt);
+  const [lockPending, setLockPending] = useState(false);
+
+  const toggleLockInvoice = async (bookingId: string, lockState: boolean) => {
+    setLockPending(true);
     try {
-      const saved = localStorage.getItem("cashier_locked_invoices");
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
-    }
-  });
-
-  const isCurrentBookingLocked = Boolean(selectedBooking && lockedInvoices[selectedBooking.id]);
-
-  const toggleLockInvoice = (bookingId: string, lockState: boolean) => {
-    setLockedInvoices((prev) => {
-      const updated = { ...prev, [bookingId]: lockState };
-      try {
-        localStorage.setItem("cashier_locked_invoices", JSON.stringify(updated));
-      } catch (e) {
-        console.error("Failed to save locked invoices:", e);
-      }
-      return updated;
-    });
-
-    if (lockState) {
-      showToast("Hóa đơn đã được lưu và khóa chỉnh sửa!", "success");
-    } else {
-      showToast("Đã mở khóa hóa đơn. Bạn có thể chỉnh sửa lại!", "info");
+      const result = await cashierApi.setInvoiceLock(bookingId, lockState);
+      const patchLock = (booking: CashierBooking) => (booking.id === bookingId ? { ...booking, invoiceLockedAt: result.invoiceLockedAt } : booking);
+      setSelectedBooking((prev) => (prev ? patchLock(prev) : prev));
+      setActiveBookings((prev) => prev.map(patchLock));
+      showToast(lockState ? "Đã khoá hoá đơn: không thêm, sửa hay bớt dịch vụ được nữa" : "Đã mở khoá hoá đơn", lockState ? "success" : "info");
+    } catch (err: any) {
+      showToast(err.message || "Không thể đổi trạng thái khoá hoá đơn", "error");
+    } finally {
+      setLockPending(false);
     }
   };
 
@@ -131,12 +143,16 @@ export function PartnerCashierPage() {
         cashierApi.getActiveBookings(undefined, searchBooking, bookingFilter),
         serviceApi.getCategories()
       ]);
-      setActiveBookings(bookings);
+      const listed = await withPinnedBooking(bookings);
+      setActiveBookings(listed);
+      const wanted = selectOnLoadRef.current;
+      selectOnLoadRef.current = null;
       setSelectedBooking((prev) => {
-        if (!prev) return bookings.length > 0 ? bookings[0] : null;
+        if (wanted) return listed.find((b) => b.id === wanted || b.bookingCode === wanted) ?? prev ?? listed[0] ?? null;
+        if (!prev) return listed.length > 0 ? listed[0] : null;
         if (hasAnyPendingWork()) return prev;
-        const found = bookings.find((b) => b.id === prev.id);
-        return found || (bookings.length > 0 ? bookings[0] : null);
+        const found = listed.find((b) => b.id === prev.id);
+        return found || (listed.length > 0 ? listed[0] : null);
       });
       setCategories(cats);
     } catch (err) {
@@ -146,6 +162,40 @@ export function PartnerCashierPage() {
       if (!silent) setLoading(false);
     }
   };
+
+  // The booking opened by link, put in front of the list when the list does not hold it.
+  async function withPinnedBooking(bookings: CashierBooking[]) {
+    const id = pinnedIdRef.current;
+    if (!id || bookings.some((b) => b.id === id || b.bookingCode === id)) {
+      setPinnedBookingId(null);
+      return bookings;
+    }
+    const detail = await cashierApi.getBookingDetail(id).catch((err: Error) => {
+      showToast(err.message || "Không mở được đơn này ở quầy thu ngân", "error");
+      return null;
+    });
+    if (!detail) {
+      pinnedIdRef.current = null;
+      setPinnedBookingId(null);
+      return bookings;
+    }
+    const pinned = bookingFromDetail(detail);
+    pinnedIdRef.current = pinned.id;
+    setPinnedBookingId(pinned.id);
+    return [pinned, ...bookings];
+  }
+
+  // A link to another booking while the counter is open: select it (the first one is handled by the first load).
+  useEffect(() => {
+    if (firstRequestRef.current) {
+      firstRequestRef.current = false;
+      return;
+    }
+    if (!requestedBookingId) return;
+    pinnedIdRef.current = requestedBookingId;
+    selectOnLoadRef.current = requestedBookingId;
+    fetchData();
+  }, [requestedBookingId]);
 
   // Re-fetch when booking filter or search changes (debounced search)
   useEffect(() => {
@@ -454,16 +504,31 @@ export function PartnerCashierPage() {
     }
   };
 
-  // Check-in action handler
+  // Check-in action handler. Same rule as the staff counter screen: arriving before the booked time follows the
+  // court's early check-in policy, which may add a charge to the bill.
   const handleCheckIn = async () => {
     if (!selectedBooking) return;
+    const bookingId = selectedBooking.id;
     try {
-      await cashierApi.checkInBooking(selectedBooking.id);
-      showToast(`Khách đã check-in vào ${selectedBooking.courtSurface?.name || selectedBooking.court.name} thành công!`, "success");
+      const result = await cashierApi.checkInBooking(bookingId);
+      const extra = Number(result?.extraChargeAmount ?? 0);
+      showToast(
+        extra > 0
+          ? `Đã check-in sớm, hoá đơn tính thêm ${formatMoney(extra)} theo chính sách vào sớm của sân.`
+          : `Khách đã check-in vào ${selectedBooking.courtSurface?.name || selectedBooking.court.name} thành công!`,
+        "success"
+      );
       setSelectedBooking((prev) => (prev ? { ...prev, checkedInAt: new Date().toISOString(), bookingStatus: "IN_PROGRESS" } : prev));
       setActiveBookings((prev) =>
-        prev.map((b) => (b.id === selectedBooking.id ? { ...b, checkedInAt: new Date().toISOString(), bookingStatus: "IN_PROGRESS" } : b))
+        prev.map((b) => (b.id === bookingId ? { ...b, checkedInAt: new Date().toISOString(), bookingStatus: "IN_PROGRESS" } : b))
       );
+      if (extra > 0) {
+        const detail = await cashierApi.getBookingDetail(bookingId).catch(() => null);
+        if (detail) {
+          lastAppliedAtRef.current = Date.now();
+          applyTotals(bookingId, detail);
+        }
+      }
     } catch (err: any) {
       showToast(err.message || "Lỗi check-in", "error");
     }
@@ -483,14 +548,26 @@ export function PartnerCashierPage() {
     setIsProcessingPayment(true);
 
     try {
-      // 1. Fetch or create checkout record
+      // 1. Fetch or create checkout record: the amount due is the server's, never the screen's
       const checkoutData = await checkoutApi.getCheckoutByBooking(selectedBooking.id);
       const checkoutId = checkoutData.checkout.id;
-      const amountToPay = selectedBooking.remainingAmount;
+      const amountToPay = Number(checkoutData.checkout.remainingAmount);
 
       if (amountToPay <= 0) {
         showToast("Đơn hàng này đã thanh toán đủ 100%!", "info");
         setIsPaymentModalOpen(false);
+        return;
+      }
+      // The invoice changed since the screen loaded it (another device, a service added): show the new amount
+      // and let the cashier collect it, rather than charging a figure they did not see.
+      if (Math.round(amountToPay) !== Math.round(selectedBooking.remainingAmount)) {
+        const detail = await cashierApi.getBookingDetail(selectedBooking.id).catch(() => null);
+        if (detail) {
+          lastAppliedAtRef.current = Date.now();
+          applyTotals(selectedBooking.id, detail);
+        }
+        setCashGiven(amountToPay);
+        showToast(`Số tiền cần thu đã đổi thành ${formatMoney(amountToPay)}. Kiểm tra lại rồi bấm thanh toán.`, "error");
         return;
       }
 
@@ -505,19 +582,20 @@ export function PartnerCashierPage() {
           ? transactionRef.trim()
           : `POS_${Date.now()}`;
 
-      await checkoutApi.processPayment({
+      const paid = await checkoutApi.processPayment({
         checkoutId,
         amount: amountToPay,
         paymentMethod: paymentMethodCode,
         transactionId: txId
       });
+      const stillDue = Number(paid.checkout.remainingAmount ?? 0);
 
-      // 3. Update local state
+      // 3. Update local state from what the server recorded
       const updatedBooking: CashierBooking = {
         ...selectedBooking,
-        remainingAmount: 0,
-        paymentStatus: "PAID",
-        bookingStatus: "COMPLETED"
+        remainingAmount: stillDue,
+        paymentStatus: paid.isCompleted ? "PAID" : selectedBooking.paymentStatus,
+        bookingStatus: paid.isCompleted ? "COMPLETED" : selectedBooking.bookingStatus
       };
 
       setSelectedBooking(updatedBooking);
@@ -534,7 +612,10 @@ export function PartnerCashierPage() {
       });
 
       setIsPaymentModalOpen(false);
-      showToast("Thanh toán thành công! Đơn hàng đã hoàn tất.", "success");
+      showToast(
+        paid.isCompleted ? "Thanh toán thành công! Đơn hàng đã hoàn tất." : `Đã ghi nhận thanh toán. Còn phải thu ${formatMoney(stillDue)}.`,
+        paid.isCompleted ? "success" : "info"
+      );
     } catch (err: any) {
       console.error("Payment error:", err);
       showToast(err.response?.data?.message || err.message || "Lỗi xử lý thanh toán", "error");
@@ -554,18 +635,6 @@ export function PartnerCashierPage() {
   return (
     <div className="space-y-5 relative">
       {/* Toast Notification Banner */}
-      {toast && (
-        <div
-          className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-2xl px-5 py-3.5 shadow-2xl text-sm font-extrabold text-white transition-all duration-300 transform translate-y-0 ${
-            toast.type === "success" ? "bg-[#02712a]" : toast.type === "error" ? "bg-rose-600" : "bg-slate-800"
-          }`}
-        >
-          {toast.type === "success" && <CheckCircle2 className="h-5 w-5" />}
-          {toast.type === "error" && <AlertCircle className="h-5 w-5" />}
-          <span>{toast.message}</span>
-        </div>
-      )}
-
       {/* Top Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
         <div>
@@ -654,8 +723,9 @@ export function PartnerCashierPage() {
             <div className="space-y-2 max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
               {activeBookings.map((b) => {
                 const isSelected = selectedBooking?.id === b.id;
-                const isLocked = Boolean(lockedInvoices[b.id]);
+                const isLocked = Boolean(b.invoiceLockedAt);
                 const isPaid = b.paymentStatus === "PAID" || b.remainingAmount === 0;
+                const isPinned = b.id === pinnedBookingId;
 
                 return (
                   <div
@@ -681,6 +751,11 @@ export function PartnerCashierPage() {
                         {isLocked && (
                           <span className="inline-flex items-center gap-0.5 rounded-md bg-green-100 px-1.5 py-0.5 text-[9px] font-black text-[#02712a]">
                             <Lock className="h-2.5 w-2.5" /> Khóa
+                          </span>
+                        )}
+                        {isPinned && (
+                          <span className="rounded-md bg-sky-100 px-1.5 py-0.5 text-[9px] font-black text-sky-800" title="Mở từ trang Đơn đặt, không thuộc danh sách hôm nay">
+                            Mở từ Đơn đặt
                           </span>
                         )}
                         <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-extrabold text-emerald-800 uppercase">

@@ -2,8 +2,10 @@ import type { Server as HttpServer } from "node:http";
 import { Server } from "socket.io";
 import { env } from "../../config/env.js";
 import { prisma } from "../../config/db.js";
+import { sessionRefusal } from "../auth/accountStatus.js";
 import { verifyAccessToken } from "../auth/auth.security.js";
 import { invalidateWeeklyScheduleCache } from "../weekly-schedule/weeklySchedule.service.js";
+import { canWatchBooking, type SocketUser } from "./realtime.access.js";
 import { registerRealtimeServer, registerWeeklyScheduleCacheInvalidator } from "./realtime.service.js";
 
 export function initRealtime(httpServer: HttpServer) {
@@ -14,31 +16,30 @@ export function initRealtime(httpServer: HttpServer) {
     }
   });
 
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token || socket.handshake.auth?.accessToken;
-    if (token && typeof token === "string") {
-      try {
-        const payload = verifyAccessToken(token);
-        socket.data.user = { id: payload.sub, role: payload.role };
-      } catch {
-        // Invalid or expired token — proceed as guest so public realtime works
-      }
+    if (!token || typeof token !== "string") return next(new Error("UNAUTHORIZED"));
+
+    try {
+      const payload = verifyAccessToken(token);
+      // Same rule as the HTTP auth middleware: a locked account's still-valid token does not connect.
+      // Locked accounts and sessions ended by a password change cannot (re)connect either.
+      if (await sessionRefusal(payload.sub, (payload as { iat?: number }).iat)) return next(new Error("UNAUTHORIZED"));
+      socket.data.user = { id: payload.sub, role: payload.role };
+      return next();
+    } catch {
+      return next(new Error("UNAUTHORIZED"));
     }
-    return next();
   });
 
   io.on("connection", async (socket) => {
-    socket.join("public");
+    const user = socket.data.user as SocketUser;
+    socket.join(`user:${user.id}`);
+    if (user.role === "ADMIN") socket.join("admin");
 
-    const user = socket.data.user as { id: string; role: "USER" | "PARTNER" | "ADMIN" } | undefined;
-    if (user) {
-      socket.join(`user:${user.id}`);
-      if (user.role === "ADMIN") socket.join("admin");
-
-      if (user.role === "PARTNER") {
-        const partner = await prisma.partnerProfile.findUnique({ where: { userId: user.id }, select: { id: true } });
-        if (partner) socket.join(`partner:${partner.id}`);
-      }
+    if (user.role === "PARTNER") {
+      const partner = await prisma.partnerProfile.findUnique({ where: { userId: user.id }, select: { id: true } });
+      if (partner) socket.join(`partner:${partner.id}`);
     }
 
     socket.on("court:subscribe", (courtId: string) => {
@@ -47,18 +48,20 @@ export function initRealtime(httpServer: HttpServer) {
     socket.on("court:unsubscribe", (courtId: string) => {
       if (courtId) socket.leave(`court:${courtId}`);
     });
-    socket.on("booking:subscribe", (bookingId: string) => {
-      if (bookingId) socket.join(`booking:${bookingId}`);
+    // Court rooms only carry availability, which every court page shows anyway; booking rooms are checked.
+    socket.on("booking:subscribe", async (bookingId: string) => {
+      try {
+        if (await canWatchBooking(user, bookingId)) socket.join(`booking:${bookingId}`);
+        else socket.emit("booking:subscribe-error", { bookingId, reason: "FORBIDDEN" });
+      } catch {
+        socket.emit("booking:subscribe-error", { bookingId });
+      }
     });
     socket.on("booking:unsubscribe", (bookingId: string) => {
       if (bookingId) socket.leave(`booking:${bookingId}`);
     });
     socket.on("team-post:subscribe", async (postId: string) => {
       if (!postId) return;
-      if (!user) {
-        socket.emit("team-post:subscribe-error", { postId, reason: "UNAUTHORIZED" });
-        return;
-      }
       try {
         const [member] = await prisma.$queryRaw<Array<{ exists: boolean }>>`
           select exists (

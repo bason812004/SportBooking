@@ -1,21 +1,7 @@
 import "dotenv/config";
 import nodemailer from "nodemailer";
 
-const required = [
-  "SMTP_HOST",
-  "SMTP_PORT",
-  "SMTP_USER",
-  "SMTP_PASS",
-  "MAIL_FROM_ADDRESS",
-  "PAYMENT_API_KEY",
-  "PAYMENT_SECRET_KEY",
-  "PAYMENT_WEBHOOK_SECRET",
-  "PAYMENT_RETURN_URL",
-  "PAYMENT_WEBHOOK_URL",
-  "CLOUDINARY_CLOUD_NAME",
-  "CLOUDINARY_API_KEY",
-  "CLOUDINARY_API_SECRET"
-];
+const required = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "MAIL_FROM_ADDRESS", "PAYMENT_API_KEY", "PAYMENT_SECRET_KEY", "PAYMENT_WEBHOOK_SECRET", "PAYMENT_RETURN_URL", "PAYMENT_WEBHOOK_URL"];
 let valid = true;
 for (const key of required) {
   const value = process.env[key]?.trim();

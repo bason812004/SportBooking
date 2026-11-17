@@ -5,6 +5,9 @@ import { withdrawalService } from "./withdrawal.service.js";
 export const withdrawalController = {
   create: asyncHandler(async (req, res) => sendSuccess(res, await withdrawalService.create(req.user!.id, req.body), 201)),
   listMine: asyncHandler(async (req, res) => sendSuccess(res, await withdrawalService.listMine(req.user!.id, req.query))),
+  cancelMine: asyncHandler(async (req, res) =>
+    sendSuccess(res, await withdrawalService.cancelMine(req.user!.id, req.params.id), 200, "Đã huỷ yêu cầu rút tiền, số tiền đã về lại số dư khả dụng")
+  ),
   adminList: asyncHandler(async (req, res) => sendSuccess(res, await withdrawalService.adminList(req.query))),
   adminSummary: asyncHandler(async (_req, res) => sendSuccess(res, await withdrawalService.adminSummary())),
   approve: asyncHandler(async (req, res) => sendSuccess(res, await withdrawalService.approve(req.user!.id, req.params.id, req.body?.forceResult))),

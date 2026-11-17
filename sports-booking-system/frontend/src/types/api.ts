@@ -22,6 +22,14 @@ export type User = {
   };
 };
 
+/** A row of the admin users list. */
+export type AdminUser = Pick<User, "id" | "fullName" | "email" | "phone" | "avatarUrl" | "role" | "status"> & {
+  createdAt: string;
+  partnerProfile?: { businessName: string } | null;
+  /** Staff accounts: the court they run the counter of. */
+  managedCourt?: { name: string } | null;
+};
+
 export type Category = {
   id: string;
   name: string;
@@ -30,6 +38,9 @@ export type Category = {
   status: "ACTIVE" | "INACTIVE";
 };
 
+/** A category as the admin list returns it, with how many courts use it. */
+export type AdminCategory = Category & { _count: { courts: number } };
+
 export type Court = {
   id: string;
   name: string;
@@ -37,8 +48,9 @@ export type Court = {
   description?: string;
   address: string;
   city: string;
-  district: string;
-  ward?: string;
+  /** Only on courts registered before the 2025 reform (no district level any more). */
+  district?: string | null;
+  ward?: string | null;
   latitude?: number;
   longitude?: number;
   approvalStatus: "PENDING" | "APPROVED" | "REJECTED";
@@ -59,10 +71,17 @@ export type Court = {
   articleContent?: string;
   directions?: string;
   surfaceInfo?: string;
-  minPrice?: number;
+  minPrice?: number | null;
   distanceKm?: number | null;
-  averageRating?: number;
+  averageRating?: number | null;
   reviewCount?: number;
+  /** Partner pages: what an admin said about the court. */
+  rejectionReason?: string | null;
+  updateRequestNote?: string | null;
+  updateRequestedAt?: string | null;
+  /** Locked by an admin: the partner cannot reopen it. */
+  adminLockedAt?: string | null;
+  adminLockReason?: string | null;
   category: Category;
   partner?: {
     id: string;
@@ -76,7 +95,17 @@ export type Court = {
   amenities: Array<{ id: string; name: string }>;
   prices: Array<{ id: string; dayType: string; startTime: string; endTime: string; price: string; note?: string }>;
   services: Array<{ id: string; name: string; description?: string; price: string; status: string }>;
-  reviews?: Array<{ id: string; rating: number; comment?: string | null; createdAt: string; updatedAt?: string; user: { id: string; fullName: string; avatarUrl?: string | null } }>;
+  reviews?: Array<{
+    id: string;
+    rating: number;
+    comment?: string | null;
+    createdAt: string;
+    updatedAt?: string;
+    isEdited?: boolean;
+    user: { id: string; fullName: string; avatarUrl?: string | null };
+    /** The court owner's public reply. */
+    reply?: { content: string; repliedAt: string; businessName: string | null } | null;
+  }>;
   ratingBreakdown?: Array<{ rating: number; count: number; percent: number }>;
   nearbyCourts?: Court[];
 };
@@ -115,9 +144,39 @@ export type BookingVoucherInfo = {
   };
 };
 
+/** Live bill of a booking, computed by the backend (same numbers as its checkout). */
+export type BookingBill = {
+  subtotalCourt: number;
+  subtotalService: number;
+  discount: number;
+  depositPaid: number;
+  totalPaid: number;
+  remainingAmount: number;
+  totalAmount: number;
+  isFullyPaid: boolean;
+  /** Active services on the booking; their lineTotal values add up to subtotalService. */
+  services: Array<{ id: string; name: string; quantity: number; lineTotal: number }>;
+};
+
+/** A booking over but still open (not checked in, or never checked out), and when the system finishes it. */
+export type OverdueBooking = {
+  id: string;
+  courtId: string;
+  courtName: string;
+  bookingCode: string;
+  bookingDate: string;
+  startTime: string;
+  endTime: string;
+  bookingStatus: string;
+  customerName: string | null;
+  finishesAt: string;
+};
+
 export type Booking = {
   id: string;
   bookingCode: string;
+  /** The system finished it after it stayed open too long; an automatic no-show can be corrected for 7 days. */
+  autoFinishedAt?: string | null;
   bookingOrderId?: string | null;
   bookingDate: string;
   startTime: string;
@@ -182,8 +241,12 @@ export type PartnerProfile = {
   bankName?: string | null;
   bankAccountNumber?: string | null;
   bankAccountHolder?: string | null;
+  /** When the payout account was last set or changed: withdrawals open 24 hours later. */
+  bankAccountChangedAt?: string | null;
   taxCode?: string | null;
-  user: { fullName: string; email: string; phone?: string; avatarUrl?: string };
+  user: { fullName: string; email: string; phone?: string | null; avatarUrl?: string | null };
+  /** The partner's own profile only: the latest admin decision, so a rejected partner sees why. */
+  latestReview?: { action: string; reason?: string | null; createdAt: string } | null;
 };
 
 export type PartnerDashboard = {
@@ -215,6 +278,8 @@ export type PartnerBlog = {
   updatedAt: string;
   publishedAt?: string | null;
   rejectionReason?: string | null;
+  /** Why an admin hid the post, while it is hidden. */
+  hiddenReason?: string | null;
 };
 
 export type PartnerTournament = {
@@ -249,10 +314,22 @@ export type AdminDashboard = {
   pendingItems: Court[];
 };
 
-export type AdminPartner = PartnerProfile & {
-  commissionRate?: string | null;
+/** A row of the admin partner list: no tax code or bank details, only how many review items are missing. */
+export type AdminPartnerListItem = Pick<PartnerProfile, "id" | "businessName" | "approvalStatus" | "verificationDocumentUrl"> & {
+  createdAt: string;
+  user: { id: string; fullName: string; email: string; phone?: string | null; status: "ACTIVE" | "LOCKED" };
+  courtCount: number;
+  missingChecks: number;
+};
+
+export type AdminPartner = Omit<PartnerProfile, "user"> & {
+  createdAt: string;
+  /** A partner-specific rate; null means the system default applies. */
+  commissionRate?: number | null;
+  user: { id: string; fullName: string; email: string; phone?: string | null; status: "ACTIVE" | "LOCKED"; createdAt: string };
   courts?: Array<{ id: string; name: string; approvalStatus: string; activeStatus: string }>;
   history?: Array<{ id: string; action: string; reason?: string; createdAt: string }>;
+  checks?: CourtReviewCheck[];
 };
 
 export type BookingAdminAction = {
@@ -278,8 +355,16 @@ export type AdminBooking = Omit<Booking, "court"> & {
     district?: string;
     partner?: { id: string; businessName: string; address?: string; user?: { id: string; fullName: string; email: string; phone?: string } };
   };
-  bookingServices?: Array<{ id: string; quantity: number; price: number; service: { id: string; name: string; price: number } }>;
+  /** List rows only: the booking's bill total (court + services - voucher). */
+  billTotal?: number;
+  /** Detail only. */
+  bill?: BookingBill;
   adminActions?: BookingAdminAction[];
+};
+
+export type AdminBookingFilterOptions = {
+  partners: Array<{ id: string; businessName: string }>;
+  courts: Array<{ id: string; name: string; partnerId: string }>;
 };
 
 export type AdminCourt = Omit<Court, "category" | "images" | "prices" | "services" | "amenities"> & {
@@ -300,17 +385,124 @@ export type AdminCourt = Omit<Court, "category" | "images" | "prices" | "service
   services?: Array<{ id: string; name: string; description?: string | null; price: number | string; status: string }>;
 };
 
-export type AdminVoucher = {
-  id: string; code: string; title: string; discountType: string; discountValue: number;
-  minBookingAmount: number;
-  usedCount: number; usageLimit?: number | null; startDate: string; endDate: string;
-  status: string; businessName: string | null; courtName?: string | null; createdAt: string;
+export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+/** A court waiting for approval, as listed on /admin/courts/pending. */
+export type AdminPendingCourt = Court & {
+  partner: { id: string; businessName: string; approvalStatus: ApprovalStatus; user: { fullName: string; email: string } };
+  imageRequests: Array<{ imageUrl: string }>;
+  _count: { images: number; imageRequests: number };
 };
 
-export type AdminVoucherInput = {
+export type CourtReviewCheck = { key: string; status: "ok" | "warning" | "missing"; label: string };
+
+/** GET /admin/courts/:id/review: what an admin needs to judge whether a submitted court is real. */
+export type AdminCourtReview = {
+  id: string;
+  name: string;
+  description?: string | null;
+  address: string;
+  ward?: string | null;
+  district?: string | null;
+  city: string;
+  latitude: number | null;
+  longitude: number | null;
+  mapUrl?: string | null;
+  contactPhone?: string | null;
+  contactEmail?: string | null;
+  openingTime: string;
+  closingTime: string;
+  courtCount: number;
+  approvalStatus: ApprovalStatus;
+  activeStatus: string;
+  rejectionReason?: string | null;
+  updateRequestNote?: string | null;
+  createdAt: string;
+  depositPercent: number | null;
+  category: { id: string; name: string };
+  surfaces: Array<{ id: string; code: string; name: string; surface?: string | null; size?: string | null; status: string }>;
+  images: Array<{ id: string; imageUrl: string; sortOrder: number }>;
+  imageRequests: Array<{
+    id: string;
+    imageUrl: string;
+    previousImageUrl: string | null;
+    replaceImageId: string | null;
+    status: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+    reason: string | null;
+    createdAt: string;
+  }>;
+  prices: Array<{ id: string; dayType: string; startTime: string; endTime: string; price: number; note?: string | null }>;
+  partner: {
+    id: string;
+    businessName: string;
+    address: string;
+    approvalStatus: ApprovalStatus;
+    taxCode?: string | null;
+    verificationDocumentUrl?: string | null;
+    bankName?: string | null;
+    bankAccountNumber?: string | null;
+    bankAccountHolder?: string | null;
+    user: { id: string; fullName: string; email: string; phone?: string | null; emailVerified: boolean; status: string; createdAt: string };
+  };
+  partnerCourts: Record<ApprovalStatus, number>;
+  duplicateAddressCourts: Array<{ id: string; name: string; approvalStatus: ApprovalStatus; partner: { businessName: string } }>;
+  history: Array<{ id: string; action: string; reason?: string | null; createdAt: string; actor?: { fullName?: string | null; email?: string | null } | null }>;
+  review: { canApprove: boolean; blockers: string[]; checks: CourtReviewCheck[] };
+};
+
+export type VoucherDayKey = "MONDAY" | "TUESDAY" | "WEDNESDAY" | "THURSDAY" | "FRIDAY" | "SATURDAY" | "SUNDAY";
+
+/** When a voucher applies, beyond its validity period: play days, a time window, holidays, a range of play dates. */
+export type VoucherConditionsInput = {
+  applicableDays?: VoucherDayKey[] | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  holidayOnly?: boolean;
+  holidayDates?: string[] | null;
+  applicableStartDate?: string | null;
+  applicableEndDate?: string | null;
+};
+
+/** The only changes a voucher accepts once it has been activated. */
+export type VoucherRunningInput = {
+  title?: string;
+  description?: string | null;
+  endDate?: string;
+  usageLimit?: number | null;
+};
+
+export type AdminVoucher = {
+  id: string; code: string; title: string; discountType: string; discountValue: number;
+  maxDiscountAmount?: number | null; minBookingAmount: number;
+  usedCount: number; usageLimit?: number | null; startDate: string; endDate: string;
+  status: string; partnerId: string | null; businessName: string | null; courtName?: string | null;
+  /** An admin disabled this partner voucher; only an admin can turn it back on. */
+  lockedByAdmin: boolean;
+  /** The reason the admin gave, while the voucher is locked. */
+  lockReason: string | null;
+  /** Who pays the discount: the platform for admin vouchers, the partner for its own. */
+  fundedBy: "PARTNER" | "PLATFORM" | "SHARED";
+  createdAt: string;
+  applicableDays: string | null; startTime: string | null; endTime: string | null;
+  holidayOnly: boolean; holidayDates: string[]; applicableStartDate: string | null; applicableEndDate: string | null;
+};
+
+export type AdminVoucherDetail = {
+  id: string; code: string; title: string; description?: string | null;
+  discountType: "PERCENTAGE" | "FIXED_AMOUNT"; discountValue: number; maxDiscountAmount?: number | null;
+  minBookingAmount: number; usedCount: number; usageLimit?: number | null; startDate: string; endDate: string;
+  status: string; partnerId: string | null; businessName: string | null; lockedByAdmin: boolean;
+  lockReason: string | null; fundedBy: "PARTNER" | "PLATFORM" | "SHARED";
+  courtId: string | null; courtName: string | null;
+  applicableDays: string | null; startTime: string | null; endTime: string | null;
+  holidayOnly: boolean; holidayDates: string[]; applicableStartDate: string | null; applicableEndDate: string | null;
+};
+
+export type AdminVoucherInput = VoucherConditionsInput & {
+  courtId?: string | null;
   code: string;
   title: string;
-  description?: string;
+  description?: string | null;
   discountType: "PERCENTAGE" | "FIXED_AMOUNT";
   discountValue: number;
   maxDiscountAmount?: number | null;
@@ -320,16 +512,73 @@ export type AdminVoucherInput = {
   endDate: string;
 };
 
-export type AuditLog = {
-  id: string; action: string; entityType: string; entityId: string;
-  previousHash?: string | null; currentHash: string; createdAt: string;
-  actor: { fullName: string; email: string; role: string };
+/** A review as the admin moderation list and the partner's reviews page show it (partners do not get the email). */
+export type ModeratedReview = {
+  id: string;
+  rating: number;
+  comment: string | null;
+  displayStatus: "VISIBLE" | "HIDDEN";
+  isEdited: boolean;
+  createdAt: string;
+  updatedAt: string;
+  user: { id: string; fullName: string; email?: string };
+  court: { id: string; name: string; partner: { id: string; businessName: string } | null };
+  booking: { id: string; bookingCode: string; bookingDate: string; bookingStatus: string } | null;
+  /** Attached to a booking of the reviewer that was completed: they played there. */
+  verified: boolean;
+  /** The court owner's public reply; repliedAt is when it was last written. */
+  reply: { content: string; repliedAt: string } | null;
+  /** The last admin decision (hidden, shown again) and its reason. */
+  moderation: { action: string; reason: string | null; createdAt: string } | null;
+  /** An admin took the court owner's reply down; it cannot be posted again. */
+  replyRemoval?: { reason: string | null; removedAt: string } | null;
 };
 
+/** Average of the visible reviews, how many are hidden, and how many got each star. */
+export type ReviewSummary = {
+  total: number;
+  averageRating: number;
+  hiddenCount: number;
+  distribution: Array<{ rating: number; count: number }>;
+};
+
+/** Whether the signed-in user may review the court now, and the booking the review would go with. */
+export type ReviewEligibility = {
+  canReview: boolean;
+  reason: string | null;
+  booking?: { id: string; bookingCode: string; bookingDate: string };
+};
+
+export type AuditLog = {
+  id: string; action: string; entityType: string; entityId: string;
+  metadata: Record<string, unknown> | null;
+  previousHash?: string | null; currentHash: string; createdAt: string;
+  /** Null for actions the system took on its own. */
+  actor: { id: string; fullName: string; email: string; role: Role } | null;
+};
+
+/** An audit entry queued for anchoring on a blockchain; nothing anchors it while no provider is configured. */
 export type BlockchainLog = {
-  id: string; entityType: string; entityId: string; payloadHash: string;
+  id: string; auditLogId?: string | null; entityType: string; entityId: string; payloadHash: string;
   network: string; txHash?: string | null; status: string; error?: string | null;
   attempts: number; confirmedAt?: string | null; createdAt: string;
+  audit?: { id: string; action: string; createdAt: string; actor: { fullName: string } | null } | null;
+};
+
+export type AdminReport = {
+  id: string;
+  courtId: string;
+  reason: string;
+  description?: string | null;
+  status: "PENDING" | "RESOLVED" | "REJECTED";
+  createdAt: string;
+  resolvedAt?: string | null;
+  adminNote?: string | null;
+  user: { id: string; fullName: string; email: string };
+  court: { id: string; name: string; approvalStatus: string; activeStatus: string; partner?: { id: string; businessName: string } | null };
+  resolver?: { id: string; fullName: string } | null;
+  /** Reports still waiting on the same court, this one included when it waits. */
+  courtPendingCount: number;
 };
 
 export type CommissionRateConfig = {
@@ -338,6 +587,23 @@ export type CommissionRateConfig = {
   overrideRate: number | null;
   defaultRate: number;
   effectiveRate: number;
+};
+
+/** The default rate and who it reaches: partners without a rate of their own use it, the overrides do not. */
+export type CommissionDefault = {
+  rate: number;
+  partnersUsingDefault: number;
+  overrides: Array<{ partnerId: string; businessName: string; rate: number }>;
+};
+
+export type CommissionRateChange = {
+  id: string;
+  action: "COMMISSION_DEFAULT_UPDATED" | "PARTNER_COMMISSION_UPDATED";
+  entityId: string;
+  metadata: { previousRate?: number | null; rate?: number | null; partnersUsingDefault?: number } | null;
+  createdAt: string;
+  actorName: string | null;
+  businessName: string | null;
 };
 
 export type CommissionSummary = {
@@ -367,13 +633,12 @@ export type AdminFinanceTransaction = {
   courtName: string;
   partnerId: string;
   businessName: string;
-  transactionType: "EARNING" | "REVERSAL";
+  transactionType: "EARNING" | "ADJUSTMENT" | "REVERSAL";
   eventType: "COMPLETED" | "NO_SHOW" | "REFUND";
   grossAmount: number;
   commissionRate: number;
   commissionAmount: number;
   netAmount: number;
-  payoutStatus: string;
   createdAt: string;
 };
 
@@ -398,20 +663,18 @@ export type AdminFinancePartner = CommissionSummary & {
   refundAmount: number;
   platformRetainedAmount: number;
   refundCount: number;
-  payoutId?: string | null;
-  payoutStatus: "PENDING" | "PROCESSING" | "PAID" | "FAILED" | "CANCELLED";
-  payoutNote?: string | null;
-  paidAt?: string | null;
-  payoutUpdatedAt?: string | null;
+  /** Withdrawals transferred to the partner during the month. */
+  paidOutAmount: number;
+  paidOutCount: number;
+  /** The wallet as it stands now (not at the month's end). */
+  walletPending: number;
+  walletAvailable: number;
+  commissionDebt: number;
 };
 
 export type AdminFinanceReport = {
   month: string;
-  summary: CommissionSummary & {
-    refundAmount: number;
-    platformRetainedAmount: number;
-    refundCount: number;
-  };
+  summary: Omit<AdminFinancePartner, "partnerId" | "businessName">;
   partners: AdminFinancePartner[];
 };
 
@@ -427,34 +690,53 @@ export type AdminNotificationCampaign = {
   targetUserId?: string | null;
   targetPartnerId?: string | null;
   targetUserEmail?: string | null;
+  targetUserName?: string | null;
   targetPartnerName?: string | null;
   recipientCount: number;
+  /** Counted over every recipient. */
+  readCount: number;
+  /** Detail only. */
+  unreadCount?: number;
   metadata?: Record<string, unknown> | null;
   createdAt: string;
   sender?: { id: string; fullName: string; email: string } | null;
-  recipients?: Array<{
-    id: string;
-    isRead: boolean;
-    createdAt: string;
-    user: { id: string; fullName: string; email: string; role: Role };
-  }>;
+  /** Recalled: its notifications were removed from every inbox. */
+  recalledAt?: string | null;
+  recallReason?: string | null;
+  recalledByName?: string | null;
 };
 
+/** One recipient of a campaign, with whether and when they read it (readAt is null for reads before it was kept). */
+export type AdminCampaignRecipient = {
+  id: string;
+  isRead: boolean;
+  readAt: string | null;
+  createdAt: string;
+  user: { id: string; fullName: string; email: string; role: Role };
+};
+
+type RevenueTotals = { grossAmount: number; commissionAmount: number; netAmount: number; count: number };
+
+/**
+ * One month of play from the settlement ledger (the wallet's): settled money is revenue, money waiting for its
+ * booking to finish is apart, cancelled settlements are left out.
+ */
 export type PartnerRevenueReport = {
   month: string;
-  summary: CommissionSummary;
+  settled: RevenueTotals;
+  pending: RevenueTotals;
   items: Array<{
     id: string;
     bookingId: string;
-    bookingCode: string;
-    bookingDate: string;
-    court: { id: string; name: string };
-    eventType: "COMPLETED" | "NO_SHOW";
-    transactionType: "EARNING" | "REVERSAL";
+    status: "PENDING" | "PROCESSING" | "SETTLED";
+    /** PLATFORM: paid online through the app; PARTNER: collected at the counter (commission is taken from the wallet). */
+    collectedBy: "PLATFORM" | "PARTNER";
+    booking: { id: string; bookingCode: string; bookingDate: string; bookingStatus: string; court: { id: string; name: string } };
     grossAmount: number;
     commissionRate: number;
     commissionAmount: number;
     netAmount: number;
+    settledAt: string | null;
     createdAt: string;
   }>;
 };
@@ -506,7 +788,8 @@ export type VoucherEligibilityReasonCode =
   | "VOUCHER_WRONG_DAY"
   | "VOUCHER_WRONG_TIME"
   | "VOUCHER_NOT_HOLIDAY"
-  | "VOUCHER_WRONG_COURT";
+  | "VOUCHER_WRONG_COURT"
+  | "VOUCHER_ALREADY_USED";
 
 export type VoucherEligibilityResult = {
   voucher: Voucher;
@@ -524,6 +807,10 @@ export type VoucherEligibilityResponse = {
 };
 
 export type PartnerVoucher = Omit<Voucher, "partner"> & {
+  /** An admin disabled it; the partner cannot turn it back on. */
+  lockedByAdmin?: boolean;
+  /** The reason the admin gave, while the voucher is locked. */
+  lockReason?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -623,18 +910,19 @@ export type DynamicPricingRule = {
   court?: { id: string; name: string } | null;
 };
 
+/** Null clears an optional field (every day, all day, no limit). A negative value lowers the price. */
 export type DynamicPricingRuleInput = {
   courtId: string;
   name: string;
-  description?: string;
+  description?: string | null;
   ruleType: DynamicPricingRuleType;
-  dayType?: "WEEKDAY" | "WEEKEND" | "HOLIDAY";
-  startTime?: string;
-  endTime?: string;
+  dayType?: "WEEKDAY" | "WEEKEND" | "HOLIDAY" | null;
+  startTime?: string | null;
+  endTime?: string | null;
   priceAdjustmentType: "PERCENTAGE" | "FIXED_AMOUNT";
   priceAdjustmentValue: number;
-  minPrice?: number;
-  maxPrice?: number;
+  minPrice?: number | null;
+  maxPrice?: number | null;
   priority?: number;
   status?: "ACTIVE" | "INACTIVE";
 };
@@ -688,6 +976,50 @@ export type BlogPost = {
   author: { id: string; fullName: string; avatarUrl?: string | null };
   viewCount?: number;
   rejectionReason?: string | null;
+  /** Why an admin hid the post, while it is hidden. */
+  hiddenReason?: string | null;
+};
+
+/** A public post as the admin moderation queue lists it. */
+export type AdminBlog = {
+  id: string;
+  title: string;
+  slug: string;
+  excerpt?: string | null;
+  content: string;
+  coverImageUrl?: string | null;
+  status: "PENDING" | "PUBLISHED" | "REJECTED" | "HIDDEN";
+  allowComments: boolean;
+  createdAt: string;
+  /** For a waiting post: when its author last sent it. */
+  updatedAt: string;
+  /** Set once the post was first published; a waiting post with it is an edit of a published post. */
+  publishedAt?: string | null;
+  authorName: string;
+  authorEmail: string;
+  authorRole: "USER" | "PARTNER";
+  categoryName?: string | null;
+  commentCount: number;
+  lastDecisionAction?: string | null;
+  lastDecisionReason?: string | null;
+  lastDecisionAt?: string | null;
+};
+
+export type AdminBlogComment = {
+  id: string;
+  content: string;
+  isEdited: boolean;
+  createdAt: string;
+  user: { id: string; fullName: string; email: string; role: Role };
+};
+
+/** One moderation decision (publish, reject, hide...) with who made it and why. */
+export type ModerationHistoryEntry = {
+  id: string;
+  action: string;
+  reason?: string | null;
+  createdAt: string;
+  actor?: { id: string; fullName: string; email: string } | null;
 };
 
 export type BlogComment = {
@@ -908,7 +1240,7 @@ export type WeeklyScheduleResponse = {
 };
 
 export type SettlementStatus = "PENDING" | "PROCESSING" | "SETTLED" | "FAILED" | "CANCELLED";
-export type WithdrawalStatus = "PENDING" | "APPROVED" | "PROCESSING" | "REJECTED" | "FAILED" | "PAID";
+export type WithdrawalStatus = "PENDING" | "APPROVED" | "PROCESSING" | "REJECTED" | "FAILED" | "PAID" | "CANCELLED";
 
 export type PartnerWallet = {
   id: string;
@@ -917,11 +1249,19 @@ export type PartnerWallet = {
   pendingBalance: number;
   totalEarned: number;
   totalWithdrawn: number;
+  /** Commission owed on money the partner collected itself that the wallet could not cover. */
+  commissionDebt: number;
   currency: string;
   updatedAt: string;
   bankName?: string | null;
   bankAccountNumber?: string | null;
   bankAccountHolder?: string | null;
+  /** Partner's own wallet only: withdrawals open 24 hours after the payout account was set or changed. */
+  bankAccountChangedAt?: string | null;
+  /** Partner's own wallet only. */
+  commissionRate?: number;
+  debtTransfer?: { bankName: string; accountNumber: string; accountHolder: string; transferContent: string; qrCodeUrl: string } | null;
+  debtPayments?: CommissionDebtPayment[];
   partner?: {
     id: string;
     businessName: string;
@@ -976,7 +1316,11 @@ export type WithdrawalRequest = {
   partner?: {
     id: string;
     businessName: string;
+    /** When the partner last set or changed the payout account. */
+    bankAccountChangedAt?: string | null;
     user?: { id: string; fullName: string; email: string };
+    /** Admin list only: decimals arrive as strings. */
+    wallet?: { availableBalance: number | string; commissionDebt: number | string } | null;
   };
   processor?: { id: string; fullName: string } | null;
 };
@@ -991,10 +1335,14 @@ export type WithdrawalSummary = {
   byStatus: Record<string, { count: number; amount: number }>;
 };
 
+export type CommissionDebtPayment = { id: string; amount: number; note: string | null; createdAt: string };
+
 export type WalletAdminSummary = {
   walletCount: number;
   totalAvailable: number;
   totalPending: number;
   totalEarned: number;
   totalWithdrawn: number;
+  totalCommissionDebt: number;
+  debtorCount: number;
 };

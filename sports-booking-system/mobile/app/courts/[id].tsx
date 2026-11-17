@@ -186,6 +186,12 @@ export default function CourtDetailScreen() {
                   </View>
                 </View>
                 <Text style={styles.body}>{review.comment ?? "Đánh giá tốt"}</Text>
+                {review.reply ? (
+                  <View style={styles.reply}>
+                    <Text style={styles.replyTitle}>Phản hồi từ {review.reply.businessName || "chủ sân"}</Text>
+                    <Text style={styles.body}>{review.reply.content}</Text>
+                  </View>
+                ) : null}
               </Card>
             ))}
           </>
@@ -284,6 +290,20 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: typography.body,
     lineHeight: 22
+  },
+  reply: {
+    marginTop: spacing.xs,
+    padding: spacing.sm,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surfaceAlt,
+    gap: 2
+  },
+  replyTitle: {
+    color: colors.primaryDark,
+    fontSize: typography.small,
+    fontWeight: "800"
   },
   actions: {
     flexDirection: "row",

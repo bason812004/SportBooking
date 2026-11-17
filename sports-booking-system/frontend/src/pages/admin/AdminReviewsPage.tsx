@@ -1,127 +1,181 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, MessageSquare, Star, Trash2 } from "lucide-react";
+import { Eye, EyeOff, MessageSquareX, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
 import { Button } from "../../components/ui/Button";
-import { ErrorState, LoadingState } from "../../components/common/States";
+import { Input } from "../../components/ui/Input";
+import { Select } from "../../components/ui/Select";
+import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
+import { TablePagination } from "../../components/common/TablePagination";
 import { PageHero } from "../../components/common/PageHero";
+import { ModeratedReviewCard } from "../../components/review/ModeratedReviewCard";
+import { useDebounce } from "../../hooks/useDebounce";
+import type { ModeratedReview } from "../../types/api";
+import { ReasonModal } from "../../components/common/ReasonModal";
 
-const displayLabel: Record<string, { label: string; className: string }> = {
-  VISIBLE: { label: "Hiển thị", className: "bg-emerald-100 text-emerald-800" },
-  HIDDEN: { label: "Đã ẩn", className: "bg-slate-200 text-slate-700" }
+type ReviewAction = "hide" | "show" | "delete" | "removeReply";
+type PendingAction = { review: ModeratedReview; action: ReviewAction };
+
+const statusOptions = [
+  { value: "", label: "Tất cả trạng thái" },
+  { value: "VISIBLE", label: "Đang hiển thị" },
+  { value: "HIDDEN", label: "Đã ẩn" }
+];
+
+const ratingOptions = [{ value: "", label: "Mọi số sao" }, ...[5, 4, 3, 2, 1].map((rating) => ({ value: String(rating), label: `${rating} sao` }))];
+
+const actionCopy: Record<ReviewAction, { title: (name: string) => string; done: string }> = {
+  hide: { title: (name) => `Ẩn đánh giá của ${name}`, done: "Đã ẩn đánh giá, người viết đã được thông báo" },
+  show: { title: (name) => `Hiển thị lại đánh giá của ${name}`, done: "Đã hiển thị lại đánh giá" },
+  delete: { title: (name) => `Xóa vĩnh viễn đánh giá của ${name}`, done: "Đã xóa đánh giá, người viết đã được thông báo" },
+  removeReply: { title: (name) => `Gỡ phản hồi của chủ sân cho đánh giá của ${name}`, done: "Đã gỡ phản hồi, đối tác đã được thông báo" }
 };
-
-function StarRating({ rating }: { rating: number }) {
-  return (
-    <div className="flex items-center gap-0.5">
-      {[1, 2, 3, 4, 5].map((i) => (
-        <Star
-          key={i}
-          className={`h-4 w-4 ${i <= rating ? "fill-amber-400 text-amber-400" : "text-slate-200"}`}
-        />
-      ))}
-      <span className="ml-1 text-sm font-bold text-slate-700">{rating}/5</span>
-    </div>
-  );
-}
 
 export function AdminReviewsPage() {
   const qc = useQueryClient();
+  const [search, setSearch] = useState("");
+  // The search box only queries once the admin pauses typing.
+  const debouncedSearch = useDebounce(search, 300);
+  const [status, setStatus] = useState("");
+  const [rating, setRating] = useState("");
+  const [partnerId, setPartnerId] = useState("");
   const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(10);
+  const [pending, setPending] = useState<PendingAction | null>(null);
 
   const q = useQuery({
-    queryKey: ["admin-reviews", page],
-    queryFn: () => adminApi.reviews({ page, limit: 10 }),
+    queryKey: ["admin-reviews", debouncedSearch, status, rating, partnerId, page, limit],
+    queryFn: () => adminApi.reviews({ search: debouncedSearch, status, rating, partnerId, page, limit }),
     placeholderData: keepPreviousData
   });
+  // Same list (and cache) as the bookings page filters.
+  const filterOptions = useQuery({
+    queryKey: ["admin-booking-filter-options"],
+    queryFn: adminApi.bookingFilterOptions,
+    staleTime: 5 * 60_000
+  });
+  const partnerOptions = useMemo(
+    () => [{ value: "", label: "Tất cả đối tác" }, ...(filterOptions.data?.partners ?? []).map((partner) => ({ value: partner.id, label: partner.businessName }))],
+    [filterOptions.data]
+  );
+
+  // Hiding or deleting the last review of a filtered last page can leave the current page empty.
+  const totalPages = q.data?.meta?.totalPages;
+  useEffect(() => {
+    if (totalPages && page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
 
   const action = useMutation({
-    mutationFn: ({ id, type }: { id: string; type: "hide" | "show" | "delete" }) =>
-      type === "delete" ? adminApi.deleteReview(id) : adminApi.setReviewStatus(id, type),
-    onSuccess: async () => {
-      toast.success("Đã cập nhật đánh giá");
+    mutationFn: ({ review, action, reason }: PendingAction & { reason: string }) =>
+      action === "delete"
+        ? adminApi.deleteReview(review.id, reason)
+        : action === "removeReply"
+          ? adminApi.removeReviewReply(review.id, reason)
+          : adminApi.setReviewStatus(review.id, action, reason || undefined),
+    onSuccess: async (_result, { action }) => {
+      toast.success(actionCopy[action].done);
+      setPending(null);
       await qc.invalidateQueries({ queryKey: ["admin-reviews"] });
     },
-    onError: (e) => toast.error(e.message)
+    // A conflict means the review changed meanwhile: show what it is now.
+    onError: (e) => {
+      toast.error(e.message);
+      void qc.invalidateQueries({ queryKey: ["admin-reviews"] });
+    }
   });
 
-  if (q.isLoading) return <LoadingState />;
-  if (q.isError) return <ErrorState message={q.error.message} />;
-
   const items = q.data?.items ?? [];
+  const filter = <T,>(set: (value: T) => void) => (value: T) => {
+    setPage(1);
+    set(value);
+  };
 
   return (
-    <div className="space-y-6">
-      <PageHero eyebrow="Nội dung" title="Đánh giá" subtitle="Quản lý đánh giá của người dùng về các sân thể thao." />
+    <div className="space-y-5">
+      <PageHero eyebrow="Nội dung" title="Đánh giá" subtitle="Kiểm duyệt đánh giá của khách hàng về các sân: ẩn, hiển thị lại hoặc xóa kèm lý do." />
 
-      {!items.length ? (
-        <div className="rounded-2xl border border-dashed bg-white p-8 text-center">
-          <MessageSquare className="mx-auto h-12 w-12 text-slate-300" />
-          <p className="mt-3 font-semibold text-slate-500">Chưa có đánh giá nào.</p>
-        </div>
+      <div className="grid gap-3 rounded-2xl border bg-white p-4 md:grid-cols-2 xl:grid-cols-4">
+        <Input label="Tìm nội dung, người viết, email, sân" value={search} onChange={(e) => filter(setSearch)(e.target.value)} />
+        <Select label="Trạng thái" value={status} onChange={(e) => filter(setStatus)(e.target.value)} options={statusOptions} />
+        <Select label="Số sao" value={rating} onChange={(e) => filter(setRating)(e.target.value)} options={ratingOptions} />
+        <Select
+          label="Đối tác"
+          className="w-full min-w-0"
+          value={partnerId}
+          disabled={filterOptions.isLoading}
+          onChange={(e) => filter(setPartnerId)(e.target.value)}
+          options={partnerOptions}
+        />
+      </div>
+
+      {/* Loading and errors replace only the list, so the filters above always stay usable. */}
+      {q.isLoading ? (
+        <LoadingState />
+      ) : q.isError ? (
+        <ErrorState message={q.error.message} onRetry={() => q.refetch()} />
+      ) : !items.length ? (
+        <EmptyState title="Không có đánh giá phù hợp." description="Thử đổi bộ lọc hoặc từ khóa tìm kiếm." />
       ) : (
-        <div className="grid gap-4">
-          {items.map((r: any) => {
-            const ds = displayLabel[r.displayStatus] ?? { label: r.displayStatus, className: "bg-slate-100 text-slate-700" };
-            return (
-              <article key={r.id} className="rounded-2xl border bg-white p-5">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${ds.className}`}>{ds.label}</span>
-                      <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-bold text-sky-800">{r.court?.name}</span>
-                    </div>
-                    <div className="mt-2 flex items-center gap-3">
-                      <p className="font-bold">{r.user?.fullName}</p>
-                      <StarRating rating={r.rating} />
-                    </div>
-                    <p className="mt-2 text-sm leading-6 text-slate-600">
-                      {r.comment || <span className="italic text-slate-400">Không có nội dung đánh giá</span>}
-                    </p>
-                    {r.createdAt && (
-                      <p className="mt-2 text-xs text-slate-400">{new Date(r.createdAt).toLocaleString("vi-VN")}</p>
+        <>
+          <div className="grid gap-4">
+            {items.map((review) => (
+              <ModeratedReviewCard
+                key={review.id}
+                review={review}
+                showEmail
+                showPartner
+                actions={
+                  <>
+                    {review.displayStatus === "VISIBLE" ? (
+                      <Button variant="secondary" disabled={action.isPending} onClick={() => setPending({ review, action: "hide" })}>
+                        <EyeOff className="h-4 w-4" /> Ẩn
+                      </Button>
+                    ) : (
+                      <Button variant="secondary" disabled={action.isPending} onClick={() => setPending({ review, action: "show" })}>
+                        <Eye className="h-4 w-4" /> Hiện lại
+                      </Button>
                     )}
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="secondary"
-                      disabled={action.isPending}
-                      onClick={() => action.mutate({ id: r.id, type: r.displayStatus === "VISIBLE" ? "hide" : "show" })}
-                    >
-                      {r.displayStatus === "VISIBLE" ? (
-                        <><EyeOff className="h-4 w-4" /> Ẩn</>
-                      ) : (
-                        <><Eye className="h-4 w-4" /> Hiện</>
-                      )}
-                    </Button>
-                    <Button
-                      variant="danger"
-                      disabled={action.isPending}
-                      onClick={() => action.mutate({ id: r.id, type: "delete" })}
-                    >
+                    {review.reply && (
+                      <Button variant="secondary" disabled={action.isPending} onClick={() => setPending({ review, action: "removeReply" })}>
+                        <MessageSquareX className="h-4 w-4" /> Gỡ phản hồi
+                      </Button>
+                    )}
+                    <Button variant="danger" disabled={action.isPending} onClick={() => setPending({ review, action: "delete" })}>
                       <Trash2 className="h-4 w-4" /> Xóa
                     </Button>
-                  </div>
-                </div>
-              </article>
-            );
-          })}
-        </div>
+                  </>
+                }
+              />
+            ))}
+          </div>
+
+          <TablePagination
+            page={page}
+            totalPages={q.data?.meta?.totalPages ?? 1}
+            total={q.data?.meta?.total ?? 0}
+            limit={limit}
+            itemLabel="đánh giá"
+            pageSizeOptions={[10, 20, 50]}
+            onPageChange={setPage}
+            onLimitChange={(value) => {
+              setPage(1);
+              setLimit(value);
+            }}
+          />
+        </>
       )}
 
-      <Pager page={page} total={q.data?.meta?.totalPages ?? 1} setPage={setPage} />
-    </div>
-  );
-}
-
-function Pager({ page, total, setPage }: { page: number; total: number; setPage: (v: number) => void }) {
-  if (total <= 1) return null;
-  return (
-    <div className="flex justify-end gap-3">
-      <Button variant="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>Trước</Button>
-      <span className="py-2 text-sm font-semibold">{page}/{Math.max(total, 1)}</span>
-      <Button variant="secondary" disabled={page >= total} onClick={() => setPage(page + 1)}>Sau</Button>
+      <ReasonModal
+        // A new key per review and action starts each confirmation with an empty reason.
+        key={pending ? `${pending.review.id}-${pending.action}` : "closed"}
+        open={Boolean(pending)}
+        title={pending ? actionCopy[pending.action].title(pending.review.user.fullName) : ""}
+        // The author (or the partner, for a reply) is told why it was hidden or removed, so those need a reason.
+        required={pending?.action !== "show"}
+        onClose={() => setPending(null)}
+        onConfirm={(reason) => pending && !action.isPending && action.mutate({ ...pending, reason })}
+      />
     </div>
   );
 }

@@ -29,7 +29,7 @@ export function useSurfaceWeeklySchedule(courtSurfaceId: string, weekStart: Date
   let response: WeeklyScheduleResponse | undefined;
   if (loaded) {
     const first = queries[0].data!;
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const todayStr = formatYmd(new Date());
     const nowTime = new Date().toTimeString().slice(0, 5);
     const days = queries.map((q, index) => {
       const day = q.data!;

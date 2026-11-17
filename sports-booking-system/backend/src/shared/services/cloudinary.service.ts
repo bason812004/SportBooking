@@ -8,6 +8,7 @@ const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const ALLOWED_VIDEO_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
 const MAX_VIDEO_SIZE = 25 * 1024 * 1024; // 25MB
+const MAX_DOCUMENT_SIZE = 10 * 1024 * 1024; // 10MB
 
 export type UploadedImage = {
   imageUrl: string;
@@ -187,6 +188,38 @@ export const cloudinaryService = {
       format: result.format,
       bytes: result.bytes
     };
+  },
+
+  /**
+   * A partner's verification document (business licence, operating permit): a photo or a PDF. PDFs go up as raw
+   * files so they are served as they are; Cloudinary accounts that block PDF delivery must allow it in Settings >
+   * Security.
+   */
+  async uploadPartnerDocument(file: Express.Multer.File, partnerId: string): Promise<{ url: string; publicId: string; bytes: number }> {
+    const isPdf = file.mimetype === "application/pdf";
+    if (!isPdf && !ALLOWED_IMAGE_TYPES.has(file.mimetype)) {
+      throw new ValidationError("Chỉ chấp nhận ảnh JPEG, PNG, WebP hoặc file PDF");
+    }
+    if (file.size > MAX_DOCUMENT_SIZE) throw new ValidationError("Giấy tờ tối đa 10MB");
+    let result: UploadApiResponse;
+    try {
+      result = await uploadStream(
+        isPdf
+          ? { folder: `${env.CLOUDINARY_FOLDER}/partner-documents/${partnerId}`, resource_type: "raw", use_filename: true, unique_filename: true }
+          : {
+              folder: `${env.CLOUDINARY_FOLDER}/partner-documents/${partnerId}`,
+              resource_type: "image",
+              allowed_formats: ["jpg", "jpeg", "png", "webp"],
+              unique_filename: true,
+              transformation: [{ width: 2400, height: 2400, crop: "limit", quality: "auto:good" }]
+            },
+        file.buffer
+      );
+    } catch (error) {
+      console.error("Cloudinary partner document upload failed", error);
+      throw new ValidationError(withCause("Không tải được giấy tờ lên Cloudinary", error));
+    }
+    return { url: result.secure_url, publicId: result.public_id, bytes: result.bytes };
   },
 
   async uploadAvatar(file: Express.Multer.File, userId: string): Promise<UploadedImage> {

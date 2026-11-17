@@ -1,5 +1,6 @@
 import { BookingStatus } from "@prisma/client";
 import { prisma } from "../../config/db.js";
+import { partnerAccountActive } from "../../shared/utils/publicCourt.js";
 import { toDbDate } from "../../shared/utils/time.js";
 import {
   WEEKLY_DEFAULT_CLOSE,
@@ -84,15 +85,12 @@ function isPendingButExpired(booking: {
 }
 
 export const weeklyScheduleRepository = {
-  async court(courtIdOrSlug: string) {
+  async court(courtId: string) {
     const court = await prisma.court.findFirst({
-      where: {
-        OR: [{ id: courtIdOrSlug }, { slug: courtIdOrSlug }],
-        approvalStatus: "APPROVED",
-        activeStatus: "ACTIVE"
-      },
+      where: { id: courtId, approvalStatus: "APPROVED", activeStatus: "ACTIVE", ...partnerAccountActive },
       select: {
         id: true,
+        partnerId: true,
         name: true,
         address: true,
         district: true,

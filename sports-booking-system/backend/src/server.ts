@@ -5,6 +5,7 @@ import { prisma } from "./config/db.js";
 import { initRealtime } from "./modules/realtime/realtime.server.js";
 import { startPaymentExpirySweep, startPaymentPoller } from "./modules/payments/payment.poller.js";
 import { startBookingReminderScheduler } from "./modules/booking-reminders/bookingReminder.scheduler.js";
+import { startBookingOverdueScheduler } from "./modules/booking-overdue/bookingOverdue.scheduler.js";
 import { ensureTeamChatTables } from "./modules/team-posts/teamPost.repository.js";
 import { ensureReviewTables } from "./modules/reviews/review.repository.js";
 import { ensureBookingTables } from "./modules/bookings/booking.repository.js";
@@ -28,6 +29,7 @@ server.listen(env.PORT, "0.0.0.0", async () => {
     startPaymentPoller();
     startPaymentExpirySweep();
     startBookingReminderScheduler();
+    startBookingOverdueScheduler();
     startAdminNotificationWorker();
   }
 });
@@ -37,8 +39,8 @@ process.on("SIGINT", async () => {
   server.close(() => process.exit(0));
 });
 
-// Trigger reload for realtime court and schedule enhancements + slug resolution
-// Reloaded at 2026-10-22 12:20:00
+// Trigger reload for resilient raw SQL getActiveBookings implementation
+// Reloaded at 2026-09-24 14:41:00
 
 
 

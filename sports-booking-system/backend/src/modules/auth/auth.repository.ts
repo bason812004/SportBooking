@@ -304,6 +304,11 @@ export const authRepository = {
     return rows[0] ?? null;
   },
 
+  /** Only the account status, for the per-request lock check (see accountStatus.ts); null if the user is gone. */
+  async accountStatus(id: string) {
+    return prisma.user.findUnique({ where: { id }, select: { status: true, sessionsRevokedAt: true } });
+  },
+
   async createUser(data: { fullName: string; email: string; phone?: string | null; passwordHash: string; role: "USER"; provider?: "LOCAL" }) {
     await ensureAuthSchema();
     const rows = await prisma.$queryRaw<UserRow[]>`
@@ -453,6 +458,15 @@ export const authRepository = {
       limit 1
     `;
     return rows[0] ?? null;
+  },
+
+  /** Ends every session of the account: refresh tokens stop working and access tokens issued before now are refused. */
+  async revokeAllSessions(userId: string) {
+    await ensureAuthSchema();
+    await prisma.$transaction([
+      prisma.$executeRaw`update refresh_tokens set revoked_at = now() where user_id = ${userId} and revoked_at is null`,
+      prisma.$executeRaw`update users set sessions_revoked_at = now() where id = ${userId}`
+    ]);
   },
 
   async revokeRefreshToken(tokenHash: string) {

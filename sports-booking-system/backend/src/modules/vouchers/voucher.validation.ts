@@ -1,6 +1,7 @@
 import { z } from "zod";
+import { VOUCHER_DAY_KEYS } from "./voucher.terms.js";
 
-const fullHourTime = z.string().regex(/^(?:[01]\d|2[0-3]):00$/, "Gio dat san phai la gio chan, vi du 06:00");
+const fullHourTime = z.string().regex(/^(?:[01]\d|2[0-3]):00$/, "Giờ đặt sân phải là giờ chẵn, ví dụ 06:00");
 // IDs in this app are custom prefixed varchar (e.g. "c0001"), not real UUIDs.
 const id = z.string().trim().min(1).max(40);
 
@@ -32,25 +33,38 @@ export const validateVoucherSchema = z.object({
   }).refine((value) => value.voucherId || value.code, { message: "voucherId hoặc code là bắt buộc" })
 });
 
-const partnerVoucherBodySchema = z.object({
-    courtId: id.optional().nullable(),
-    code: z.string().min(2).max(40),
-    title: z.string().min(2).max(160),
-    description: z.string().optional(),
-    discountType: z.enum(["PERCENTAGE", "FIXED_AMOUNT"]),
-    discountValue: z.number().positive(),
-    maxDiscountAmount: z.number().nonnegative().optional().nullable(),
-    minBookingAmount: z.number().nonnegative().default(0),
-    usageLimit: z.number().int().positive().optional().nullable(),
-    startDate: z.string().datetime(),
-    endDate: z.string().datetime(),
-    status: z.enum(["DRAFT", "ACTIVE", "EXPIRED", "DISABLED"]).default("DRAFT")
+const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày phải có dạng YYYY-MM-DD");
+const clockTime = z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, "Giờ phải có dạng HH:mm");
+const nullable = <T extends z.ZodTypeAny>(schema: T) => z.union([schema, z.null()]).optional();
+
+/** Voucher terms as admins and partners send them; rules across fields are checked in normalizeVoucherTerms. */
+const voucherTermsBody = z.object({
+  courtId: nullable(id),
+  code: z.string().trim().min(3).max(40).regex(/^[A-Za-z0-9_-]+$/, "Mã voucher chỉ gồm chữ không dấu, số, dấu - hoặc _"),
+  title: z.string().trim().min(3).max(160),
+  description: nullable(z.string().trim().max(1000)),
+  discountType: z.enum(["PERCENTAGE", "FIXED_AMOUNT"]),
+  discountValue: z.number().positive(),
+  maxDiscountAmount: nullable(z.number().positive()),
+  minBookingAmount: z.number().nonnegative().optional(),
+  usageLimit: nullable(z.number().int().positive()),
+  startDate: z.string().datetime({ offset: true }),
+  endDate: z.string().datetime({ offset: true }),
+  applicableDays: nullable(z.array(z.enum(VOUCHER_DAY_KEYS)).max(7)),
+  startTime: nullable(clockTime),
+  endTime: nullable(clockTime),
+  holidayOnly: z.boolean().optional(),
+  holidayDates: nullable(z.array(ymd).max(100)),
+  applicableStartDate: nullable(ymd),
+  applicableEndDate: nullable(ymd)
 });
 
-export const partnerVoucherWriteSchema = z.object({
-  body: partnerVoucherBodySchema
+export const voucherWriteSchema = z.object({
+  body: voucherTermsBody
 });
 
-export const partnerVoucherUpdateSchema = z.object({
-  body: partnerVoucherBodySchema.partial()
+/** A draft resends every term (the service checks they are all there); a running voucher only what may still change. */
+export const voucherUpdateSchema = z.object({
+  params: z.object({ id }),
+  body: voucherTermsBody.partial()
 });
