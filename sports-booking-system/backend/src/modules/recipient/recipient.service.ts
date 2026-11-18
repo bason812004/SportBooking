@@ -38,6 +38,8 @@ import { paymentProvider } from "../payments/providers/index.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { settlementService } from "../settlements/settlement.service.js";
+import { releaseBookingStock, type StockAlert } from "../inventory/inventory.stock.js";
+import { notifyStockAlerts } from "../inventory/inventory.alerts.js";
 import { cashierRepository } from "../cashier/cashier.repository.js";
 import { voucherRepository } from "../vouchers/voucher.repository.js";
 import { bookingOverdueService } from "../booking-overdue/bookingOverdue.service.js";
@@ -387,7 +389,7 @@ async function createWalkInRows(
   courtId: string,
   plan: WalkInPlan,
   entries: WalkInPlan["entries"],
-  options: { customerId: string; bookingIds: string[]; bookingOrderId?: string; seriesIds?: string[]; note?: string }
+  options: { customerId: string; bookingIds: string[]; bookingOrderId?: string; seriesIds?: string[]; note?: string; alerts?: StockAlert[] }
 ) {
   const rows: Booking[] = [];
   for (const [index, entry] of entries.entries()) {
@@ -430,7 +432,7 @@ async function createWalkInRows(
     });
     rows.push(booking);
   }
-  if (plan.serviceLines.length && rows.length) await bookingRepository.attachServicesToBooking(tx, rows[0].id, plan.serviceLines);
+  if (plan.serviceLines.length && rows.length) await bookingRepository.attachServicesToBooking(tx, rows[0].id, plan.serviceLines, options.alerts);
   return rows;
 }
 
@@ -761,14 +763,18 @@ export const recipientService = {
         await voucherRepository.releaseVoucherUses([booking.id], tx);
         updatedSettlement = await settlementService.cancelForBooking(booking.id, tx);
       }
+      // A booking that will not be served gives its services back with the status change, never after it (a failure
+      // there undoes both): inventory/inventory.stock.ts releaseBookingStock.
+      if (status === BookingStatus.CANCELLED || status === BookingStatus.NO_SHOW) {
+        await releaseBookingStock(
+          tx,
+          booking.id,
+          status === BookingStatus.CANCELLED ? "Tự động trả do đơn bị huỷ" : "Tự động trả do khách không đến",
+          status === BookingStatus.CANCELLED ? "BOOKING_CANCELLED" : "BOOKING_NO_SHOW"
+        );
+      }
       return { updated: updatedBooking, settlement: updatedSettlement };
     }, SERIALIZABLE);
-
-    if (status === BookingStatus.CANCELLED || status === BookingStatus.NO_SHOW) {
-      await cashierRepository
-        .releaseBookingServices(booking.id, status === BookingStatus.CANCELLED ? "Tự động trả do đơn bị huỷ" : "Tự động trả do khách không đến")
-        .catch(() => {});
-    }
 
     if (settlement) {
       realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
@@ -1262,16 +1268,20 @@ export const recipientService = {
     // The QR is made before the transaction (the provider is slow); the slot is checked again inside it.
     const qr = plan.needsQr ? await createWalkInQr(plan.collectNow, plan.wantsDeposit ? "Dat coc san tai quay" : "Thanh toan dat san tai quay") : null;
 
-    return prisma.$transaction(async (tx) => {
+    // Products this booking's services take to their reorder level: the partner hears once it has committed.
+    const alerts: StockAlert[] = [];
+    const result = await prisma.$transaction(async (tx) => {
       assertNoWalkInSlotProblems(await walkInSlotProblems(tx, courtId, plan.entries), plan.entries);
       // Inside the transaction: a booking that fails leaves no empty walk-in account behind.
       const { customer, summary } = await resolveWalkInCustomer(tx, input.customerName, input.customerPhone);
-      const [booking] = await createWalkInRows(tx, courtId, plan, plan.entries, { customerId: customer.id, bookingIds: [bookingId], note: input.note });
+      const [booking] = await createWalkInRows(tx, courtId, plan, plan.entries, { customerId: customer.id, bookingIds: [bookingId], note: input.note, alerts });
       const payment = qr
         ? await tx.payment.create({ data: walkInPaymentData(qr, { bookingId: booking.id, userId: customer.id, amount: plan.collectNow, deposit: plan.wantsDeposit }) })
         : null;
       return { booking, payment, customer: summary };
     }, SERIALIZABLE).catch(walkInSerializationConflict);
+    void notifyStockAlerts(alerts);
+    return result;
   },
 
   /**
@@ -1288,6 +1298,7 @@ export const recipientService = {
     const totalAmount = plan.courtTotal + plan.servicesSubtotal;
     const qr = plan.needsQr ? await createWalkInQr(plan.collectNow, plan.wantsDeposit ? "Dat coc san tai quay" : "Thanh toan dat san tai quay") : null;
 
+    const alerts: StockAlert[] = [];
     const { bookings, payment, customer } = await prisma.$transaction(async (tx) => {
       assertNoWalkInSlotProblems(await walkInSlotProblems(tx, courtId, plan.entries), plan.entries);
       const { customer, summary } = await resolveWalkInCustomer(tx, input.customerName, input.customerPhone);
@@ -1303,7 +1314,7 @@ export const recipientService = {
           note: input.note
         }
       });
-      const bookings = await createWalkInRows(tx, courtId, plan, plan.entries, { customerId: customer.id, bookingIds, bookingOrderId: orderId, note: input.note });
+      const bookings = await createWalkInRows(tx, courtId, plan, plan.entries, { customerId: customer.id, bookingIds, bookingOrderId: orderId, note: input.note, alerts });
       const payment = qr
         ? await tx.payment.create({
             data: walkInPaymentData(qr, { bookingId: bookings[0].id, bookingOrderId: orderId, userId: customer.id, amount: plan.collectNow, deposit: plan.wantsDeposit })
@@ -1311,6 +1322,7 @@ export const recipientService = {
         : null;
       return { bookings, payment, customer: summary };
     }, SERIALIZABLE).catch(walkInSerializationConflict);
+    void notifyStockAlerts(alerts);
 
     return { orderId, bookings, payment, customer };
   },
@@ -1329,6 +1341,7 @@ export const recipientService = {
     const orderId = plan.needsQr ? await nextPrefixedId("bo", "seq_booking_orders") : null;
     const skipped = [...plan.skipped];
 
+    const alerts: StockAlert[] = [];
     const { created, customer, series } = await prisma.$transaction(async (tx) => {
       // Checked again inside the transaction: an occurrence booked since is skipped too, unless its cash was counted.
       const late = await walkInSlotProblems(tx, courtId, plan.entries);
@@ -1374,10 +1387,12 @@ export const recipientService = {
         bookingIds: kept.map((entry) => bookingIds[plan.entries.indexOf(entry)]),
         bookingOrderId: orderId ?? undefined,
         seriesIds,
-        note: input.note
+        note: input.note,
+        alerts
       });
       return { created, customer: summary, series: templates.map((templateIndex) => ({ id: seriesIds[templateIndex] })) };
     }, SERIALIZABLE).catch(walkInSerializationConflict);
+    void notifyStockAlerts(alerts);
 
     let payment = null;
     if (orderId) {

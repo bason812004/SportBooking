@@ -1,13 +1,30 @@
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { paginationMeta } from "../../shared/utils/response.js";
-import { parseLimit, parsePage } from "../../shared/utils/time.js";
+import { maskAccountNumber } from "../../shared/utils/bankAccount.js";
+import { buildExcelReport, buildPdfReport, type ReportExportColumn } from "../../shared/utils/reportExport.js";
+import { parseLimit, parsePage, vietnamDateTimeText, vietnamNow } from "../../shared/utils/time.js";
 import { slugify } from "../../shared/utils/slug.js";
 import { forgetAccountStatus } from "../auth/accountStatus.js";
 import { checkoutBreakdown, withBookingBill } from "../checkout/checkout.calculations.js";
 import { commissionService, monthRange } from "../commission/commission.service.js";
+import { courtImageRepository } from "../court-images/courtImage.repository.js";
+import { notifyCourtChange } from "../bookings/bookingNotices.js";
+import { partnerRepository } from "../partner/partner.repository.js";
 import { notificationService } from "../notifications/notification.service.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
+import { reportRepository } from "../business-report/report.repository.js";
+import {
+  REPORT_MEASURE_OPTIONS,
+  REPORT_NOTICES,
+  buildThread,
+  decisionMeasures,
+  decisionNoticeText,
+  detectedMeasures,
+  messageNoticeText,
+  type ReportMeasure
+} from "../reports/report.thread.js";
+import { rankCourts, rankPartners, reviewTrend, summarizeRatings } from "../reviews/review.calculations.js";
 import { reviewRepository } from "../reviews/review.repository.js";
 import { bookingOverdueService } from "../booking-overdue/bookingOverdue.service.js";
 import { voucherRepository } from "../vouchers/voucher.repository.js";
@@ -15,8 +32,11 @@ import { assertVoucherCodeFree, requireFullTerms, voucherService, withVoucherCod
 import { activationProblem, normalizeVoucherTerms, runningVoucherChanges, type VoucherTermsInput } from "../vouchers/voucher.terms.js";
 import { recordAdminAction, verifyAuditChain } from "./admin.audit.js";
 import { adminBookingChanges, type AdminBookingUpdate } from "./admin.bookingUpdate.js";
-import { courtReviewChecks, partnerProfileChecks } from "./admin.courtReview.js";
+import { APPROVAL_REVOKE_HOURS, COURT_DECISION_ACTIONS, approvalRevocableUntil, courtReviewChecks, partnerProfileChecks } from "./admin.courtReview.js";
 import { adminRepository, type AdminVoucherTerms, type CampaignAudience } from "./admin.repository.js";
+import { recipientGroups, type RecipientGrouping } from "./admin.campaignRecipients.js";
+import { commissionPdf, commissionSheets } from "./admin.commissionExport.js";
+import { reviewStatsPdf, reviewStatsPeriodText, reviewStatsSheets } from "./admin.reviewStatsExport.js";
 
 function billTotalsById(rows: Awaited<ReturnType<typeof adminRepository.bookingBillRows>>) {
   return new Map(rows.map((row) => [row.id, checkoutBreakdown(row, row.bookingServices).totalAmount]));
@@ -159,7 +179,9 @@ function campaignAudience(input: CampaignAudience): CampaignAudience {
     targetType: input.targetType,
     targetRole: input.targetType === "ROLE" ? input.targetRole : undefined,
     targetUserId: input.targetType === "USER" ? input.targetUserId : undefined,
-    targetPartnerId: input.targetType === "PARTNER" ? input.targetPartnerId : undefined
+    targetPartnerId: input.targetType === "PARTNER" ? input.targetPartnerId : undefined,
+    // An account ticked in two groups of the picker is still one recipient.
+    targetUserIds: input.targetType === "USERS" ? [...new Set(input.targetUserIds ?? [])] : undefined
   };
 }
 
@@ -190,32 +212,20 @@ async function notifyReviewAuthor(
   }
 }
 
-const reportNotices = {
-  RESOLVED: {
-    title: "Báo cáo của bạn đã được xử lý",
-    type: "REPORT_RESOLVED",
-    body: (court: string) => `Cảm ơn bạn đã báo cáo sân "${court}". Quản trị viên đã xem xét và xử lý báo cáo.`
-  },
-  REJECTED: {
-    title: "Báo cáo của bạn không được chấp nhận",
-    type: "REPORT_REJECTED",
-    body: (court: string) => `Quản trị viên đã xem xét báo cáo về sân "${court}" và không ghi nhận vi phạm.`
-  }
-} as const;
-
-/** Tells the customer what came of their report; the decision is saved, so a failed notice only logs. */
+/**
+ * Tells the customer about their report (an admin's message, or the decision with what was done); the change is
+ * saved first, so a failed notice only logs. The notice opens the report's conversation.
+ */
 async function notifyReporter(
-  report: { id: string; userId: string; courtId: string; court: { name: string } },
-  outcome: keyof typeof reportNotices,
-  note: string | null
+  report: { id: string; userId: string; courtId: string },
+  notice: { title: string; type: string },
+  content: string
 ) {
-  const notice = reportNotices[outcome];
-  const why = note?.replace(/[.\s]+$/, "");
   try {
     await notificationService.create({
       userId: report.userId,
       title: notice.title,
-      content: `${notice.body(report.court.name)}${why ? ` Ghi chú: ${why}.` : ""}`,
+      content,
       type: notice.type,
       metadata: { reportId: report.id, courtId: report.courtId }
     });
@@ -224,9 +234,23 @@ async function notifyReporter(
   }
 }
 
+export type ReportDecisionInput = { note?: string; measures?: string[]; auditIds?: string[]; applyToCourtPending?: boolean };
+
+const REPORT_CLOSED = "Báo cáo đã đóng nên không gửi thêm tin nhắn được, hãy tải lại trang";
+
 /** Days are Vietnam days: an entry at 01:00 on the 5th belongs to the 5th, not the 4th as in UTC. */
 const vietnamDayStart = (day: string) => new Date(`${day}T00:00:00+07:00`);
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The review list's and statistics' shared scope; toDate counts its whole day. */
+function reviewScope(query: { partnerId?: string; courtId?: string; fromDate?: string; toDate?: string }) {
+  return {
+    partnerId: query.partnerId || undefined,
+    courtId: query.courtId || undefined,
+    from: query.fromDate ? vietnamDayStart(query.fromDate) : undefined,
+    to: query.toDate ? new Date(vietnamDayStart(query.toDate).getTime() + DAY_MS) : undefined
+  };
+}
 
 /** Tells the court's partner that an admin locked (with the reason) or reopened it; the change is saved first. */
 async function notifyCourtLock(partnerId: string, court: { id: string; name: string }, lockReason?: string) {
@@ -245,6 +269,61 @@ async function notifyCourtLock(partnerId: string, court: { id: string; name: str
   } catch (error) {
     console.error("[CourtLock] Partner notification failed:", error);
   }
+}
+
+/** Tells the partner an admin took a court's approval back, and why; the court waits for review again. */
+async function notifyApprovalRevoked(court: { id: string; name: string; partnerId: string }, reason: string) {
+  try {
+    const partner = await adminRepository.partnerApprovalState(court.partnerId);
+    if (!partner) return;
+    await notificationService.create({
+      userId: partner.userId,
+      title: "Sân bị thu hồi duyệt",
+      content: `Quản trị viên đã thu hồi quyết định duyệt sân ${court.name}: ${reason.replace(/[.\s]+$/, "")}. Sân tạm ẩn, không nhận đặt mới và chờ duyệt lại; các đơn đã đặt vẫn giữ.`,
+      type: "COURT_APPROVAL_REVOKED",
+      metadata: { courtId: court.id }
+    });
+  } catch (error) {
+    console.error("[CourtApprovalRevoked] Partner notification failed:", error);
+  }
+}
+
+/** Longest list an admin can export at once: a PDF of more rows gets slow and nobody reads it. */
+export const MAX_EXPORT_ROWS = 5000;
+
+const accountStatusText: Record<string, string> = { ACTIVE: "Hoạt động", LOCKED: "Đã khóa", INACTIVE: "Ngừng hoạt động", BLOCKED: "Bị chặn" };
+const approvalStatusText: Record<string, string> = { PENDING: "Chờ duyệt", APPROVED: "Đã duyệt", REJECTED: "Bị từ chối" };
+const vndText = (value: number) => `${Math.round(value).toLocaleString("vi-VN")} đ`;
+const dateTimeText = vietnamDateTimeText;
+/** Every rate change ever made fits one export (they are rare); the page itself shows the latest 20. */
+const COMMISSION_HISTORY_EXPORT_LIMIT = 1000;
+// Booking dates are calendar days stored at UTC midnight.
+const dayText = (value: Date | null) => (value ? value.toISOString().slice(0, 10).split("-").reverse().join("/") : "");
+
+type ListExportQuery = { search?: string; status?: string; format: "excel" | "pdf" };
+
+/** "tìm “abc” · Đã khóa", or "không lọc": what the export was narrowed to, for its title and the audit entry. */
+function exportFilterText(query: ListExportQuery, statusText: Record<string, string>) {
+  const parts = [query.search ? `tìm “${query.search}”` : null, query.status ? statusText[query.status] ?? query.status : null].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "không lọc";
+}
+
+/**
+ * One list as Excel (numbers stay numbers, so the sheet can sum them) or as a landscape PDF (money written out).
+ * `pdfRows` overrides the rows shown in the PDF.
+ */
+function listFile(
+  format: "excel" | "pdf",
+  input: { title: string; subtitle: string; sheet: string; columns: ReportExportColumn[]; rows: Array<Record<string, unknown>>; pdfRows: Array<Record<string, unknown>> }
+) {
+  if (format === "excel") return buildExcelReport({ title: input.title, sheets: [{ name: input.sheet, columns: input.columns, rows: input.rows }] });
+  return buildPdfReport({
+    title: input.title,
+    subtitle: input.subtitle,
+    sections: [{ heading: input.sheet, table: { columns: input.columns, rows: input.pdfRows } }],
+    orientation: "landscape",
+    fontSize: 8
+  });
 }
 
 type AdminVoucherInput = VoucherTermsInput & { courtId?: string | null };
@@ -296,7 +375,7 @@ async function notifyVoucherPartner(
 
 export const adminService = {
   async dashboard() {
-    const [users, partners, courts, bookings, money, commission, pendingCourts, pendingPartners, trend, pendingItems] =
+    const [users, partners, courts, approvedCourts, bookings, money, commission, pendingCourts, pendingPartners, trend, pendingItems] =
       await adminRepository.dashboard();
     const gmv = Number(money._sum.totalPrice ?? 0);
     const refunds = Number(money._sum.refundAmount ?? 0);
@@ -304,6 +383,7 @@ export const adminService = {
       users,
       partners,
       courts,
+      approvedCourts,
       bookings,
       pendingCourts,
       pendingPartners,
@@ -333,6 +413,99 @@ export const adminService = {
       sortOrder: query.sortOrder || undefined
     });
     return { items, meta: paginationMeta(page, limit, total) };
+  },
+
+  /**
+   * Customers (role USER only) matching the user list's search and status, every page of it, with their bookings and
+   * spending. The file holds personal data: each export is written to the audit log.
+   */
+  async exportCustomers(actorId: string, query: ListExportQuery) {
+    const filters = { search: query.search || undefined, status: query.status || undefined };
+    const total = await adminRepository.countCustomersForExport(filters);
+    if (total > MAX_EXPORT_ROWS) throw new ValidationError(`Danh sách có ${total} khách hàng, quá ${MAX_EXPORT_ROWS} dòng. Hãy lọc bớt rồi xuất lại.`);
+    const customers = await adminRepository.customersForExport(filters, MAX_EXPORT_ROWS);
+    const rows = customers.map((customer) => ({
+      fullName: customer.fullName,
+      email: customer.email,
+      phone: customer.phone ?? "",
+      status: accountStatusText[customer.status] ?? customer.status,
+      emailVerified: customer.emailVerified ? "Đã xác minh" : "Chưa",
+      createdAt: dateTimeText(customer.createdAt),
+      bookings: customer.bookings,
+      totalSpent: customer.totalSpent,
+      totalRefund: customer.totalRefund,
+      lastBookingDate: dayText(customer.lastBookingDate)
+    }));
+    const filterText = exportFilterText(query, accountStatusText);
+    const file = await listFile(query.format, {
+      title: "Danh sách khách hàng",
+      subtitle: `${rows.length} khách hàng · ${filterText} · xuất lúc ${dateTimeText(new Date())}`,
+      sheet: "Khách hàng",
+      columns: [
+        { header: "Họ tên", key: "fullName", width: 26 },
+        { header: "Email", key: "email", width: 30 },
+        { header: "Số điện thoại", key: "phone", width: 15 },
+        { header: "Trạng thái", key: "status", width: 14 },
+        { header: "Xác minh email", key: "emailVerified", width: 15 },
+        { header: "Ngày tạo", key: "createdAt", width: 18 },
+        { header: "Số booking", key: "bookings", width: 11 },
+        { header: "Tổng chi tiêu", key: "totalSpent", width: 16 },
+        { header: "Đã hoàn", key: "totalRefund", width: 14 },
+        { header: "Đặt gần nhất", key: "lastBookingDate", width: 14 }
+      ],
+      rows,
+      pdfRows: rows.map((row) => ({ ...row, totalSpent: vndText(row.totalSpent), totalRefund: vndText(row.totalRefund) }))
+    });
+    await recordAdminAction(actorId, "CUSTOMERS_EXPORTED", "USER", "export", { filters: filterText, rows: rows.length, format: query.format });
+    return file;
+  },
+
+  /** Partners matching the partner list's search and status, every page of it; account numbers keep their last 4 digits. */
+  async exportPartners(actorId: string, query: ListExportQuery) {
+    const filters = { search: query.search || undefined, status: query.status || undefined };
+    const total = await adminRepository.countPartnersForExport(filters);
+    if (total > MAX_EXPORT_ROWS) throw new ValidationError(`Danh sách có ${total} đối tác, quá ${MAX_EXPORT_ROWS} dòng. Hãy lọc bớt rồi xuất lại.`);
+    const partners = await adminRepository.partnersForExport(filters, MAX_EXPORT_ROWS);
+    const rows = partners.map((partner) => ({
+      businessName: partner.businessName,
+      ownerName: partner.user.fullName,
+      email: partner.user.email,
+      phone: partner.user.phone ?? "",
+      address: partner.address,
+      taxCode: partner.taxCode ?? "",
+      approvalStatus: approvalStatusText[partner.approvalStatus] ?? partner.approvalStatus,
+      accountStatus: accountStatusText[partner.user.status] ?? partner.user.status,
+      courts: partner._count.courts,
+      bankName: partner.bankName ?? "",
+      bankAccountHolder: partner.bankAccountHolder ?? "",
+      bankAccountNumber: maskAccountNumber(partner.bankAccountNumber) ?? "",
+      createdAt: dateTimeText(partner.createdAt)
+    }));
+    const filterText = exportFilterText(query, approvalStatusText);
+    const file = await listFile(query.format, {
+      title: "Danh sách đối tác",
+      subtitle: `${rows.length} đối tác · ${filterText} · xuất lúc ${dateTimeText(new Date())}`,
+      sheet: "Đối tác",
+      columns: [
+        { header: "Doanh nghiệp", key: "businessName", width: 28 },
+        { header: "Chủ tài khoản", key: "ownerName", width: 22 },
+        { header: "Email", key: "email", width: 28 },
+        { header: "Số điện thoại", key: "phone", width: 15 },
+        { header: "Địa chỉ kinh doanh", key: "address", width: 34 },
+        { header: "Mã số thuế", key: "taxCode", width: 15 },
+        { header: "Hồ sơ", key: "approvalStatus", width: 12 },
+        { header: "Tài khoản", key: "accountStatus", width: 12 },
+        { header: "Số sân", key: "courts", width: 8 },
+        { header: "Ngân hàng", key: "bankName", width: 16 },
+        { header: "Chủ TK ngân hàng", key: "bankAccountHolder", width: 22 },
+        { header: "Số TK", key: "bankAccountNumber", width: 16 },
+        { header: "Ngày đăng ký", key: "createdAt", width: 18 }
+      ],
+      rows,
+      pdfRows: rows
+    });
+    await recordAdminAction(actorId, "PARTNERS_EXPORTED", "PARTNER", "export", { filters: filterText, rows: rows.length, format: query.format });
+    return file;
   },
 
   async bookings(query: any) {
@@ -555,6 +728,12 @@ export const adminService = {
     });
   },
   commissionHistory() { return commissionService.rateHistory(); },
+  /** Every partner's rate with the day it took effect, and the whole change history, as Excel or PDF. */
+  async exportCommission(format: "excel" | "pdf") {
+    const [overview, history] = await Promise.all([commissionService.defaultRate(), commissionService.rateHistory(COMMISSION_HISTORY_EXPORT_LIMIT)]);
+    if (format === "excel") return buildExcelReport({ title: "Tỷ lệ hoa hồng", sheets: commissionSheets(overview, history) });
+    return buildPdfReport(commissionPdf(overview, history, new Date()));
+  },
   commissionReport(month?: string) { return commissionService.adminReport(month); },
 
   async financeTransactions(query: any) {
@@ -603,6 +782,14 @@ export const adminService = {
 
   async financeExport(month?: string) {
     const report = await this.financeReconciliation(month);
+    const range = monthRange(report.month);
+    // The rates the month's earnings were booked at (from the ledger), and each partner's rate now with since when.
+    const [monthRates, rates] = await Promise.all([adminRepository.monthCommissionRates(range.from, range.to), commissionService.defaultRate()]);
+    const currentRates = new Map(rates.partners.map((partner) => [partner.partnerId, partner]));
+    const instantText = (value: Date) => {
+      const { date, time } = vietnamNow(value);
+      return `${date} ${time}`;
+    };
     const header = [
       "month",
       "partner_id",
@@ -618,7 +805,11 @@ export const adminService = {
       "paid_out_count",
       "wallet_pending",
       "wallet_available",
-      "commission_debt"
+      "commission_debt",
+      "commission_rates_in_month",
+      "current_commission_rate",
+      "current_rate_source",
+      "current_rate_applied_from"
     ];
     const lines = [
       header.join(","),
@@ -637,7 +828,11 @@ export const adminService = {
         item.paidOutCount,
         item.walletPending,
         item.walletAvailable,
-        item.commissionDebt
+        item.commissionDebt,
+        monthRates.get(item.partnerId) ?? "",
+        currentRates.get(item.partnerId)?.rate ?? "",
+        currentRates.get(item.partnerId)?.source ?? "",
+        currentRates.has(item.partnerId) ? instantText(currentRates.get(item.partnerId)!.since) : ""
       ].map(csvCell).join(","))
     ];
     return {
@@ -681,6 +876,11 @@ export const adminService = {
     return { count: recipients.length };
   },
 
+  /** The recipient picker's tree for one grouping: groups with their active accounts, the sending admin left out. */
+  async notificationRecipientGroups(actorId: string, by: RecipientGrouping) {
+    return recipientGroups(await adminRepository.campaignRecipientRows(by, actorId), by);
+  },
+
   async createNotificationCampaign(actorId: string, input: any) {
     Object.assign(input, campaignAudience(input));
     const result = await adminRepository.transaction(async (tx) => {
@@ -691,6 +891,7 @@ export const adminService = {
         targetRole: input.targetRole,
         targetUserId: input.targetUserId,
         targetPartnerId: input.targetPartnerId,
+        targetUserIds: input.targetUserIds,
         recipientCount: created.campaign.recipientCount
       }, tx);
       return created;
@@ -699,7 +900,9 @@ export const adminService = {
       throw new ValidationError(
         input.targetType === "USER" || input.targetType === "PARTNER"
           ? "Không gửi được: tài khoản nhận không tồn tại hoặc đang bị khóa"
-          : "Không có tài khoản nào thuộc nhóm nhận đã chọn"
+          : input.targetType === "USERS"
+            ? "Không gửi được: các tài khoản đã chọn không còn tồn tại hoặc đang bị khóa"
+            : "Không có tài khoản nào thuộc nhóm nhận đã chọn"
       );
     }
     const { campaign, recipientIds } = result;
@@ -812,6 +1015,8 @@ export const adminService = {
       partnerCourts,
       duplicateAddressCourts,
       history,
+      // history is newest first: the first decision in it is the latest.
+      revocableUntil: approvalRevocableUntil(court.approvalStatus, history.find((entry) => COURT_DECISION_ACTIONS.includes(entry.action))),
       review: courtReviewChecks({
         courtStatus: court.approvalStatus,
         partnerStatus: court.partner.approvalStatus,
@@ -828,15 +1033,47 @@ export const adminService = {
       })
     };
   },
+  /** The photos still waiting are approved with the court: the admin judged them on the same page. */
   async approveCourt(actorId: string, id: string) {
-    const decided = await adminRepository.transaction(async (tx) => {
-      if (!(await adminRepository.approvePendingCourt(id, tx))) return false;
+    const approvedImages = await adminRepository.transaction(async (tx) => {
+      if (!(await adminRepository.approvePendingCourt(id, tx))) return null;
+      const images = await courtImageRepository.approvePendingForCourt(id, actorId, tx);
       await adminRepository.addModerationHistory({ entityType: "COURT", entityId: id, action: "APPROVED", actorId }, tx);
-      await recordAdminAction(actorId, "COURT_APPROVED", "COURT", id, undefined, tx);
-      return true;
+      await recordAdminAction(actorId, "COURT_APPROVED", "COURT", id, images ? { approvedImages: images } : undefined, tx);
+      return images;
     });
-    if (!decided) throw await courtDecisionError(id);
-    return { id, approvalStatus: "APPROVED" as const };
+    if (approvedImages === null) throw await courtDecisionError(id);
+    return { id, approvalStatus: "APPROVED" as const, approvedImages };
+  },
+  /** For the confirmation dialog: until when the approval can be taken back, and the upcoming bookings it leaves standing. */
+  async approvalRevocation(id: string) {
+    const court = await adminRepository.courtApprovalState(id);
+    if (!court) throw new NotFoundError("Khong tim thay san");
+    const revocableUntil = approvalRevocableUntil(court.approvalStatus, await adminRepository.latestCourtDecision(id));
+    return { revocableUntil, bookings: revocableUntil ? await partnerRepository.upcomingBookings(id) : [] };
+  },
+
+  /**
+   * Takes an approval back within APPROVAL_REVOKE_HOURS of it: the court returns to PENDING (hidden, no new bookings),
+   * its upcoming bookings stand and their customers are told, the partner gets the reason. Later, admins lock the court.
+   */
+  async revokeCourtApproval(actorId: string, id: string, reason: string) {
+    const court = await adminRepository.transaction(async (tx) => {
+      const current = await adminRepository.lockCourtForDecision(id, tx);
+      if (!current) throw new NotFoundError("Khong tim thay san");
+      if (current.approvalStatus !== "APPROVED") throw new ConflictError("Sân không còn ở trạng thái đã duyệt, hãy tải lại trang");
+      if (!approvalRevocableUntil(current.approvalStatus, await adminRepository.latestCourtDecision(id, tx))) {
+        throw new ConflictError(`Chỉ hủy duyệt được trong ${APPROVAL_REVOKE_HOURS} giờ sau khi duyệt. Hãy dùng Khoá sân để ngừng nhận đặt.`);
+      }
+      await adminRepository.revokeCourtApproval(id, reason, tx);
+      await adminRepository.addModerationHistory({ entityType: "COURT", entityId: id, action: "APPROVAL_REVOKED", reason, actorId }, tx);
+      await recordAdminAction(actorId, "COURT_APPROVAL_REVOKED", "COURT", id, { reason }, tx);
+      return current;
+    });
+    const upcoming = await partnerRepository.upcomingBookings(id);
+    await notifyCourtChange(upcoming, court, "đang được quản trị viên xem xét lại nên tạm ngừng nhận đặt mới");
+    await notifyApprovalRevoked(court, reason);
+    return { id, approvalStatus: "PENDING" as const, notifiedBookings: upcoming.length };
   },
   async rejectCourt(actorId: string, id: string, reason: string) {
     const decided = await adminRepository.transaction(async (tx) => {
@@ -886,16 +1123,51 @@ export const adminService = {
     const limit = parseLimit(query.limit);
     const { items, total } = await reviewRepository.list(
       {
+        ...reviewScope(query),
         search: query.search || undefined,
         status: query.status || undefined,
-        rating: query.rating ? Number(query.rating) : undefined,
-        partnerId: query.partnerId || undefined,
-        courtId: query.courtId || undefined
+        rating: query.rating ? Number(query.rating) : undefined
       },
       page,
       limit
     );
     return { items, meta: paginationMeta(page, limit, total) };
+  },
+  /**
+   * Statistics shown above the review list, for one partner, court and period: the average and star spread customers
+   * see (hidden reviews apart), the reply and 1–2 star counts, the trend, and courts and partners lowest rated first.
+   */
+  async reviewStats(query: { partnerId?: string; courtId?: string; fromDate?: string; toDate?: string }) {
+    const scope = reviewScope(query);
+    const [counts, courts, days] = await Promise.all([
+      reviewRepository.ratingCounts(scope),
+      reviewRepository.statsByCourt(scope),
+      reviewRepository.statsByDay(scope)
+    ]);
+    return {
+      summary: summarizeRatings(counts),
+      repliedCount: courts.reduce((sum, court) => sum + court.repliedCount, 0),
+      lowCount: courts.reduce((sum, court) => sum + court.lowCount, 0),
+      trend: reviewTrend(days, query.fromDate, query.toDate ?? vietnamNow().date),
+      courts: rankCourts(courts),
+      partners: rankPartners(courts)
+    };
+  },
+  /** The statistics above as an Excel workbook (one sheet per table) or a PDF; only figures, so no audit entry. */
+  async exportReviewStats(query: { partnerId?: string; courtId?: string; fromDate?: string; toDate?: string; format: "excel" | "pdf" }) {
+    const scope = reviewScope(query);
+    const [stats, scopeName] = await Promise.all([
+      this.reviewStats(query),
+      reportRepository.scopeName({ partnerId: scope.partnerId, courtId: scope.courtId })
+    ]);
+    const meta = {
+      scopeText: scope.courtId ? `Sân: ${scopeName ?? scope.courtId}` : scope.partnerId ? `Đối tác: ${scopeName ?? scope.partnerId}` : "Toàn hệ thống",
+      periodText: reviewStatsPeriodText(query.fromDate, query.toDate, vietnamNow().date),
+      exportedAt: dateTimeText(new Date()),
+      scoped: Boolean(scope.partnerId || scope.courtId)
+    };
+    if (query.format === "excel") return buildExcelReport({ title: "Thống kê đánh giá", sheets: reviewStatsSheets(stats, meta) });
+    return buildPdfReport(reviewStatsPdf(stats, meta));
   },
   /** Hides or shows a review again; the decision and its reason go to the moderation history and to the author. */
   async setReviewDisplay(actorId: string, id: string, status: "VISIBLE" | "HIDDEN", reason?: string) {
@@ -966,36 +1238,122 @@ export const adminService = {
   async reports(query: any) {
     const page = parsePage(query.page);
     const limit = parseLimit(query.limit);
-    const { items, total, counts, pendingByCourt } = await adminRepository.reports(page, limit, {
+    const { items, total, counts, pendingByCourt, messageStats } = await adminRepository.reports(page, limit, {
       status: query.status || undefined,
       search: query.search || undefined
     });
     return {
-      items: items.map((item) => ({ ...item, courtPendingCount: pendingByCourt.get(item.courtId) ?? 0 })),
+      items: items.map((item) => {
+        const stats = messageStats.get(item.id);
+        return {
+          ...item,
+          courtPendingCount: pendingByCourt.get(item.courtId) ?? 0,
+          messageCount: stats?.messageCount ?? 0,
+          lastMessage: stats ? { authorRole: stats.authorRole, createdAt: stats.createdAt } : null
+        };
+      }),
       meta: paginationMeta(page, limit, total),
       counts
     };
   },
 
-  /** Closes a waiting report with the admin's note (required to reject) and tells the reporter. */
-  async decideReport(actorId: string, id: string, status: "RESOLVED" | "REJECTED", note?: string) {
+  /**
+   * A report with its conversation. While it waits, also what the audit log shows was done about the court since it
+   * came in (offered as measures to confirm when closing) and the court's other waiting reports.
+   */
+  async reportThread(id: string) {
+    const report = await adminRepository.reportThread(id);
+    if (!report) throw new NotFoundError("Không tìm thấy báo cáo");
+    const open = report.status === "PENDING";
+    const [audit, otherPending] = await Promise.all([
+      open ? adminRepository.courtMeasureAudit(report.courtId, report.court.partner?.userId ?? null, report.createdAt) : [],
+      open ? adminRepository.otherPendingReports(report.courtId, report.id) : []
+    ]);
+    const { messages, ...rest } = report;
+    return {
+      report: rest,
+      entries: buildThread(report, messages, "ADMIN"),
+      detectedMeasures: detectedMeasures(audit),
+      measureOptions: REPORT_MEASURE_OPTIONS,
+      otherPending: otherPending.map((item) => ({ id: item.id, reason: item.reason, createdAt: item.createdAt, reporterName: item.user.fullName }))
+    };
+  },
+
+  /** An admin writes to the reporter while the report waits (to ask for details, or say what is being done). */
+  async sendReportMessage(actorId: string, id: string, content: string) {
+    const report = await adminRepository.reportById(id);
+    if (!report) throw new NotFoundError("Không tìm thấy báo cáo");
+    if (report.status !== "PENDING") throw new ConflictError(REPORT_CLOSED, "REPORT_CLOSED");
+    const message = await adminRepository.transaction(async (tx) => {
+      if (!(await adminRepository.lockPendingReport(id, tx))) throw new ConflictError(REPORT_CLOSED, "REPORT_CLOSED");
+      const created = await adminRepository.createReportMessage({ reportId: id, authorId: actorId, kind: "MESSAGE", content }, tx);
+      await recordAdminAction(actorId, "REPORT_MESSAGE_SENT", "REPORT", id, { courtId: report.courtId, messageId: created.id }, tx);
+      return created;
+    });
+    await notifyReporter(report, REPORT_NOTICES.MESSAGE, messageNoticeText(report.court.name, content));
+    return {
+      id: message.id,
+      kind: "MESSAGE" as const,
+      authorRole: "ADMIN" as const,
+      authorName: message.author?.fullName ?? null,
+      content: message.content,
+      measures: [],
+      createdAt: message.createdAt
+    };
+  },
+
+  /**
+   * Closes a waiting report with the admin's words to the reporter (required) and, to resolve it, what was done:
+   * audit entries the system found on the court (checked again here) and measures taken outside the system. With
+   * applyToCourtPending the court's other waiting reports close the same way; one closed meanwhile is left out.
+   * Each reporter gets the decision in their conversation and a notice.
+   */
+  async decideReport(actorId: string, id: string, status: "RESOLVED" | "REJECTED", input: ReportDecisionInput = {}) {
     const report = await adminRepository.reportById(id);
     if (!report) throw new NotFoundError("Không tìm thấy báo cáo");
     if (report.status !== "PENDING") throw new ConflictError("Báo cáo này đã được xử lý");
-    const adminNote = note?.trim() || null;
-    if (status === "REJECTED" && !adminNote) throw new ValidationError("Nhập lý do bác bỏ báo cáo");
-    const decided = await adminRepository.transaction(async (tx) => {
-      if (!(await adminRepository.decideReport(id, { status, resolvedBy: actorId, adminNote }, tx))) return false;
-      await recordAdminAction(actorId, status === "RESOLVED" ? "REPORT_RESOLVED" : "REPORT_REJECTED", "REPORT", id, {
-        courtId: report.courtId,
-        reason: report.reason,
-        note: adminNote
-      }, tx);
-      return true;
+    const adminNote = input.note?.trim() || null;
+    if (!adminNote) throw new ValidationError(status === "REJECTED" ? "Nhập lý do bác bỏ báo cáo" : "Nhập phản hồi gửi người báo cáo");
+    let measures: ReportMeasure[] = [];
+    if (status === "RESOLVED") {
+      const auditIds = input.auditIds ?? [];
+      const detected = auditIds.length
+        ? detectedMeasures(await adminRepository.courtMeasureAudit(report.courtId, report.court.partner?.userId ?? null, report.createdAt))
+        : [];
+      const chosen = decisionMeasures(detected, auditIds, input.measures ?? []);
+      if (!chosen) throw new ValidationError("Thao tác đã chọn không còn khớp với nhật ký của sân, hãy tải lại");
+      if (!chosen.length) throw new ValidationError("Chọn ít nhất một biện pháp đã áp dụng");
+      measures = chosen;
+    }
+    const closed = await adminRepository.transaction(async (tx) => {
+      const others = input.applyToCourtPending ? await adminRepository.otherPendingReports(report.courtId, id, tx) : [];
+      const targets = [{ id, userId: report.userId, reason: report.reason }, ...others];
+      const done: Array<{ id: string; userId: string }> = [];
+      for (const target of targets) {
+        if (!(await adminRepository.decideReport(target.id, { status, resolvedBy: actorId, adminNote }, tx))) {
+          if (target.id === id) return null;
+          continue;
+        }
+        await adminRepository.createReportMessage({ reportId: target.id, authorId: actorId, kind: status, content: adminNote, measures }, tx);
+        await recordAdminAction(actorId, status === "RESOLVED" ? "REPORT_RESOLVED" : "REPORT_REJECTED", "REPORT", target.id, {
+          courtId: report.courtId,
+          reason: target.reason,
+          note: adminNote,
+          ...(measures.length
+            ? { measures: measures.map((measure) => (measure.auditId ? { code: measure.code, auditId: measure.auditId } : { code: measure.code })) }
+            : {}),
+          ...(target.id === id ? {} : { appliedFrom: id })
+        }, tx);
+        done.push({ id: target.id, userId: target.userId });
+      }
+      return done;
     });
-    if (!decided) throw new ConflictError("Báo cáo vừa được quản trị viên khác xử lý, hãy tải lại trang");
-    await notifyReporter(report, status, adminNote);
-    return { id, status, adminNote };
+    if (!closed) throw new ConflictError("Báo cáo vừa được quản trị viên khác xử lý, hãy tải lại trang");
+    const content = decisionNoticeText(report.court.name, status, measures, adminNote);
+    for (const target of closed) {
+      await notifyReporter({ id: target.id, userId: target.userId, courtId: report.courtId }, REPORT_NOTICES[status], content);
+    }
+    return { id, status, adminNote, measures, closed: closed.map((target) => target.id) };
   },
 
   async statistics() {

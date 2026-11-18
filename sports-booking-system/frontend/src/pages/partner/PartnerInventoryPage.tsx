@@ -14,13 +14,16 @@ import {
   type InventoryPagination,
   type InventorySummary,
   type InventoryTransaction,
-  type ReorderSuggestion
+  type ReorderSuggestion,
+  type TransactionQuery
 } from "../../features/inventory/api/inventoryApi";
 import { serviceApi, type ServiceCategory } from "../../features/services/api/serviceApi";
 import { partnerApi } from "../../features/partner/api/partnerApi";
 import { useAuth } from "../../features/auth/hooks/useAuth";
 import type { Court } from "../../types/api";
 import { formatMoney } from "../../utils/formatters";
+import { useDebounce } from "../../hooks/useDebounce";
+import { StaffSalesRentalHistory } from "../../features/inventory/components/StaffSalesRentalHistory";
 
 const PAGE_SIZE = 10;
 
@@ -55,7 +58,8 @@ export function PartnerInventoryPage() {
   const [categoryId, setCategoryId] = useState("");
   const [courtId, setCourtId] = useState("");
   const [page, setPage] = useState(1);
-  const [activeTab, setActiveTab] = useState<"STOCK" | "TRANSACTIONS" | "SUGGESTIONS">("STOCK");
+  // Partner: stock, the stock ledger, reorder suggestions. Staff: stock, and what their court sold and rented out.
+  const [activeTab, setActiveTab] = useState<"STOCK" | "TRANSACTIONS" | "SUGGESTIONS" | "SALES_RENTALS">("STOCK");
 
   const { sortField, sortOrder, handleSort: sortBy } = useUrlSort<SortField>({
     fields: SORT_FIELDS,
@@ -117,14 +121,34 @@ export function PartnerInventoryPage() {
   // Each court (cụm sân) restocks on its own: the court filter narrows history and suggestions too.
   // The server pins a receptionist to their court, so only a partner's choice is sent.
   const scopedCourtId = isPartner ? courtId || undefined : undefined;
+  // The partner's stock ledger, a page at a time, by kind of line, product and days (and the court filter).
+  const [txType, setTxType] = useState<NonNullable<TransactionQuery["type"]>>("");
+  const [txSearchText, setTxSearchText] = useState("");
+  const txSearch = useDebounce(txSearchText.trim(), 300);
+  const [txFrom, setTxFrom] = useState("");
+  const [txTo, setTxTo] = useState("");
+  const [txPage, setTxPage] = useState(1);
+  useEffect(() => setTxPage(1), [txType, txSearch, txFrom, txTo, scopedCourtId]);
   const transactionsQuery = useQuery({
-    queryKey: ["inventory-transactions", { courtId: scopedCourtId }],
-    queryFn: () => inventoryApi.getTransactions(50, scopedCourtId)
+    queryKey: ["inventory-transactions", { courtId: scopedCourtId, type: txType, search: txSearch, from: txFrom, to: txTo, page: txPage }],
+    queryFn: () =>
+      inventoryApi.getTransactions({
+        courtId: scopedCourtId,
+        type: txType,
+        search: txSearch,
+        from: txFrom || undefined,
+        to: txTo || undefined,
+        page: txPage
+      }),
+    enabled: isPartner,
+    placeholderData: keepPreviousData
   });
   // Heavier consumption-velocity query, kept separate so it never holds up the stock table.
+  // Reorder suggestions lead to buying stock in, which is the partner's: staff only look at stock.
   const suggestionsQuery = useQuery({
     queryKey: ["inventory-suggestions", { courtId: scopedCourtId }],
-    queryFn: () => inventoryApi.getReorderSuggestions(scopedCourtId)
+    queryFn: () => inventoryApi.getReorderSuggestions(scopedCourtId),
+    enabled: isPartner
   });
   const categoriesQuery = useQuery({ queryKey: ["service-categories"], queryFn: serviceApi.getCategories });
   // /api/partner/* is PARTNER-only, and this page is also mounted at /recipient/inventory.
@@ -137,7 +161,8 @@ export function PartnerInventoryPage() {
   const summary = stockQuery.data?.summary ?? null;
   const items = stockQuery.data?.items ?? [];
   const pagination = stockQuery.data?.pagination ?? null;
-  const transactions = transactionsQuery.data ?? [];
+  const transactions = transactionsQuery.data?.items ?? [];
+  const txPagination = transactionsQuery.data?.pagination;
   const suggestions = suggestionsQuery.data ?? [];
   const categories = categoriesQuery.data ?? [];
   const courts = courtsQuery.data ?? [];
@@ -261,7 +286,9 @@ export function PartnerInventoryPage() {
         <div>
           <h1 className="text-2xl font-black text-slate-900">Quản Lý Tồn Kho & Hàng Hóa</h1>
           <p className="text-sm font-medium text-slate-600">
-            Theo dõi số lượng tồn kho, cảnh báo sắp hết hàng, giá vốn và lịch sử xuất nhập kho.
+            {isPartner
+              ? "Theo dõi số lượng tồn kho, cảnh báo sắp hết hàng, giá vốn và lịch sử xuất nhập kho."
+              : "Số tồn của sân bạn quản lý. Hàng bán cho khách được trừ khỏi kho tự động; việc nhập hàng do đối tác thực hiện."}
           </p>
         </div>
         <Button
@@ -270,6 +297,8 @@ export function PartnerInventoryPage() {
             queryClient.invalidateQueries({ queryKey: ["partner-inventory"] });
             queryClient.invalidateQueries({ queryKey: ["inventory-transactions"] });
             queryClient.invalidateQueries({ queryKey: ["inventory-suggestions"] });
+            queryClient.invalidateQueries({ queryKey: ["inventory-sales"] });
+            queryClient.invalidateQueries({ queryKey: ["inventory-rentals"] });
           }}
         >
           <RefreshCw className={`h-4 w-4 ${stockQuery.isFetching ? "animate-spin" : ""}`} /> Làm mới dữ liệu
@@ -337,6 +366,7 @@ export function PartnerInventoryPage() {
         >
           <Boxes className="h-4 w-4" /> Danh sách tồn kho
         </button>
+        {isPartner ? (
         <button
           onClick={() => setActiveTab("TRANSACTIONS")}
           className={`flex items-center gap-2 border-b-2 px-6 py-3 text-sm font-bold transition ${
@@ -347,6 +377,19 @@ export function PartnerInventoryPage() {
         >
           <History className="h-4 w-4" /> Lịch sử xuất/nhập
         </button>
+        ) : (
+        <button
+          onClick={() => setActiveTab("SALES_RENTALS")}
+          className={`flex items-center gap-2 border-b-2 px-6 py-3 text-sm font-bold transition ${
+            activeTab === "SALES_RENTALS"
+              ? "border-[#02712a] text-[#02712a]"
+              : "border-transparent text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          <History className="h-4 w-4" /> Lịch sử bán &amp; cho thuê
+        </button>
+        )}
+        {isPartner ? (
         <button
           onClick={() => setActiveTab("SUGGESTIONS")}
           className={`flex items-center gap-2 border-b-2 px-6 py-3 text-sm font-bold transition ${
@@ -357,6 +400,7 @@ export function PartnerInventoryPage() {
         >
           <Sparkles className="h-4 w-4" /> Gợi ý nhập hàng{suggestions.length > 0 ? ` (${suggestions.length})` : ""}
         </button>
+        ) : null}
       </div>
 
       {activeTab === "STOCK" && (
@@ -452,7 +496,7 @@ export function PartnerInventoryPage() {
                   <SortableTh label="Giá bán" field="price" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
                   <SortableTh label="Tổng giá trị tồn" field="stockValue" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} />
                   <th className="p-4">Trạng thái</th>
-                  <th className="p-4 text-right">Thao tác</th>
+                  {isPartner ? <th className="p-4 text-right">Thao tác</th> : null}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-semibold">
@@ -508,6 +552,7 @@ export function PartnerInventoryPage() {
                           </span>
                         )}
                       </td>
+                      {isPartner ? (
                       <td className="p-4 text-right">
                         <button
                           onClick={() => handleOpenModalAdjust(item)}
@@ -516,6 +561,7 @@ export function PartnerInventoryPage() {
                           <Edit3 className="h-3.5 w-3.5" /> Điều chỉnh kho
                         </button>
                       </td>
+                      ) : null}
                     </tr>
                   ))
                 )}
@@ -532,8 +578,72 @@ export function PartnerInventoryPage() {
         </div>
       )}
 
-      {activeTab === "TRANSACTIONS" && (
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      {isPartner && activeTab === "TRANSACTIONS" && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+            <label className="block">
+              <span className="mb-1 block text-xs font-bold uppercase text-slate-700">Loại</span>
+              <select
+                value={txType}
+                onChange={(e) => setTxType(e.target.value as NonNullable<TransactionQuery["type"]>)}
+                className="h-10 rounded-xl border border-slate-300 px-3 text-sm font-semibold focus:border-green-600 focus:outline-none"
+              >
+                <option value="">Tất cả</option>
+                {Object.entries(TX_TYPE_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="block min-w-[12rem] flex-1">
+              <span className="mb-1 block text-xs font-bold uppercase text-slate-700">Sản phẩm</span>
+              <input
+                value={txSearchText}
+                onChange={(e) => setTxSearchText(e.target.value)}
+                placeholder="Tên sản phẩm"
+                className="h-10 w-full rounded-xl border border-slate-300 px-3 text-sm focus:border-green-600 focus:outline-none"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-bold uppercase text-slate-700">Từ ngày</span>
+              <input type="date" value={txFrom} max={txTo || undefined} onChange={(e) => setTxFrom(e.target.value)} className="h-10 rounded-xl border border-slate-300 px-3 text-sm font-semibold focus:border-green-600 focus:outline-none" />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-bold uppercase text-slate-700">Đến ngày</span>
+              <input type="date" value={txTo} min={txFrom || undefined} onChange={(e) => setTxTo(e.target.value)} className="h-10 rounded-xl border border-slate-300 px-3 text-sm font-semibold focus:border-green-600 focus:outline-none" />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-bold uppercase text-slate-700">Cụm sân</span>
+              <select
+                value={courtId}
+                onChange={(e) => {
+                  setPage(1);
+                  setCourtId(e.target.value);
+                }}
+                className="h-10 rounded-xl border border-slate-300 px-3 text-sm font-semibold focus:border-green-600 focus:outline-none"
+              >
+                <option value="">Tất cả cụm sân</option>
+                {courts.map((court) => (
+                  <option key={court.id} value={court.id}>{court.name}</option>
+                ))}
+              </select>
+            </label>
+            {txType || txSearchText || txFrom || txTo ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setTxType("");
+                  setTxSearchText("");
+                  setTxFrom("");
+                  setTxTo("");
+                }}
+                className="h-10 rounded-xl px-3 text-sm font-semibold text-slate-600 hover:bg-slate-100"
+              >
+                Xoá lọc
+              </button>
+            ) : null}
+            {txPagination ? <span className="ml-auto self-center text-xs font-semibold text-slate-500">{txPagination.total} dòng</span> : null}
+          </div>
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
           <table className="w-full text-left text-sm text-slate-700">
             <thead className="bg-slate-50 text-xs uppercase font-extrabold text-slate-600 border-b border-slate-200">
               <tr>
@@ -583,9 +693,19 @@ export function PartnerInventoryPage() {
             </tbody>
           </table>
         </div>
+          {txPagination && txPagination.totalPages > 1 ? (
+            <div className="flex items-center justify-end gap-2 text-sm">
+              <Button variant="secondary" disabled={txPage <= 1} onClick={() => setTxPage(txPage - 1)}>Trang trước</Button>
+              <span className="font-semibold text-slate-600">Trang {txPage}/{txPagination.totalPages}</span>
+              <Button variant="secondary" disabled={txPage >= txPagination.totalPages} onClick={() => setTxPage(txPage + 1)}>Trang sau</Button>
+            </div>
+          ) : null}
+        </div>
       )}
 
-      {activeTab === "SUGGESTIONS" && (
+      {!isPartner && activeTab === "SALES_RENTALS" && <StaffSalesRentalHistory />}
+
+      {isPartner && activeTab === "SUGGESTIONS" && (
         <div className="space-y-3">
           {isPartner ? (
             <div className="flex flex-wrap items-center gap-3">

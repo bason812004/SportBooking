@@ -10,7 +10,30 @@ export type ReviewListFilters = {
   search?: string;
   /** true: only reviews the court owner replied to; false: only those still waiting for a reply. */
   replied?: boolean;
+  /** Written at or after this instant. */
+  from?: Date;
+  /** Written before this instant. */
+  to?: Date;
 };
+
+/** What the review statistics cover: the list's star, status and text filters only narrow the list. */
+export type ReviewStatsScope = Pick<ReviewListFilters, "partnerId" | "courtId" | "from" | "to">;
+
+/** Per court: visible reviews (count and star total, for exact averages), hidden ones, replies and 1–2 star reviews. */
+export type CourtReviewStatsRow = {
+  id: string;
+  name: string;
+  partnerId: string | null;
+  partnerName: string | null;
+  visibleCount: number;
+  ratingSum: number;
+  hiddenCount: number;
+  repliedCount: number;
+  lowCount: number;
+};
+
+/** Visible reviews written on one Vietnam day. */
+export type ReviewDayRow = { day: string; count: number; ratingSum: number };
 
 function listWhere(filters: ReviewListFilters): Prisma.ReviewWhereInput {
   const contains = filters.search ? { contains: filters.search, mode: "insensitive" as const } : undefined;
@@ -18,12 +41,23 @@ function listWhere(filters: ReviewListFilters): Prisma.ReviewWhereInput {
     displayStatus: filters.status,
     rating: filters.rating,
     courtId: filters.courtId,
+    createdAt: filters.from || filters.to ? { gte: filters.from, lt: filters.to } : undefined,
     reply: filters.replied === undefined ? undefined : filters.replied ? { isNot: null } : { is: null },
     court: filters.partnerId ? { partnerId: filters.partnerId } : undefined,
     OR: contains
       ? [{ comment: contains }, { user: { fullName: contains } }, { user: { email: contains } }, { court: { name: contains } }]
       : undefined
   };
+}
+
+/** The same scope as listWhere, for the raw statistics queries (reviews r joined to courts c). */
+function statsWhere(scope: ReviewStatsScope) {
+  const conditions = [Prisma.sql`true`];
+  if (scope.partnerId) conditions.push(Prisma.sql`c.partner_id = ${scope.partnerId}`);
+  if (scope.courtId) conditions.push(Prisma.sql`r.court_id = ${scope.courtId}`);
+  if (scope.from) conditions.push(Prisma.sql`r.created_at >= ${scope.from}`);
+  if (scope.to) conditions.push(Prisma.sql`r.created_at < ${scope.to}`);
+  return Prisma.join(conditions, " and ");
 }
 
 const listInclude = {
@@ -276,7 +310,38 @@ export const reviewRepository = {
   },
 
   /** Review counts by rating and display status, for the averages a page shows next to its list. */
-  ratingCounts(filters: Pick<ReviewListFilters, "partnerId" | "courtId">) {
+  ratingCounts(filters: ReviewStatsScope) {
     return prisma.review.groupBy({ by: ["rating", "displayStatus"], where: listWhere(filters), _count: { _all: true } });
+  },
+
+  /** One row per court that has reviews in the scope. */
+  statsByCourt(scope: ReviewStatsScope) {
+    return prisma.$queryRaw<CourtReviewStatsRow[]>`
+      select c.id, c.name, p.id as "partnerId", p.business_name as "partnerName",
+             count(*) filter (where r.display_status = 'VISIBLE')::int as "visibleCount",
+             coalesce(sum(r.rating) filter (where r.display_status = 'VISIBLE'), 0)::int as "ratingSum",
+             count(*) filter (where r.display_status = 'HIDDEN')::int as "hiddenCount",
+             count(rr.review_id) filter (where r.display_status = 'VISIBLE')::int as "repliedCount",
+             count(*) filter (where r.display_status = 'VISIBLE' and r.rating <= 2)::int as "lowCount"
+      from reviews r
+      join courts c on c.id = r.court_id
+      left join partner_profiles p on p.id = c.partner_id
+      left join review_replies rr on rr.review_id = r.id
+      where ${statsWhere(scope)}
+      group by c.id, c.name, p.id, p.business_name
+    `;
+  },
+
+  /** Visible reviews per Vietnam day, oldest first; the service rolls them up into months when the span is long. */
+  statsByDay(scope: ReviewStatsScope) {
+    return prisma.$queryRaw<ReviewDayRow[]>`
+      select to_char(r.created_at at time zone 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') as day,
+             count(*)::int as count, sum(r.rating)::int as "ratingSum"
+      from reviews r
+      join courts c on c.id = r.court_id
+      where ${statsWhere(scope)} and r.display_status = 'VISIBLE'
+      group by 1
+      order by 1
+    `;
   }
 };

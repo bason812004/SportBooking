@@ -28,6 +28,7 @@ mock.module("../realtime/realtime.service.js", { namedExports: { realtimeService
   toPublic: () => {}, toAdmin: () => {}, toPartner: () => {}, toUser: () => {}
 } } });
 const { adminService } = await import("./admin.service.js");
+const { notificationCampaignCreateSchema } = await import("./admin.validation.js");
 
 beforeEach(() => {
   campaign = { id: "nc1", recalledAt: null, readCount: 3 };
@@ -40,7 +41,44 @@ describe("admin notification campaigns", () => {
   it("counts the audience from the target fields that apply only", async () => {
     const result = await adminService.notificationAudience("admin1", { targetType: "ROLE", targetRole: "RECIPIENT", targetUserId: "u7" });
     assert.deepEqual(result, { count: 2 });
-    assert.deepEqual(calls[0], ["audience", { targetType: "ROLE", targetRole: "RECIPIENT", targetUserId: undefined, targetPartnerId: undefined }, "admin1"]);
+    assert.deepEqual(calls[0], [
+      "audience",
+      { targetType: "ROLE", targetRole: "RECIPIENT", targetUserId: undefined, targetPartnerId: undefined, targetUserIds: undefined },
+      "admin1"
+    ]);
+  });
+
+  it("sends to accounts picked one by one once each, and keeps who they were in the audit entry", async () => {
+    const campaignSent = await adminService.createNotificationCampaign("admin1", {
+      title: "Sân tạm đóng",
+      content: "Sân A bảo trì sáng mai",
+      type: "MAINTENANCE",
+      targetType: "USERS",
+      targetUserIds: ["u1", "u2", "u1"],
+      targetRole: "USER"
+    });
+    assert.equal(campaignSent.recipientCount, 2);
+    const created = calls.find((call) => call[0] === "create")![1] as any;
+    assert.deepEqual(created.targetUserIds, ["u1", "u2"]);
+    assert.equal(created.targetRole, undefined);
+    const audit = calls.find((call) => call[0] === "audit")!;
+    assert.equal(audit[1], "NOTIFICATION_CAMPAIGN_SENT");
+    assert.deepEqual((audit[2] as any).targetUserIds, ["u1", "u2"]);
+    assert.deepEqual(calls.find((call) => call[0] === "realtime")![1], ["u1", "u2"]);
+
+    recipients = [];
+    await assert.rejects(
+      adminService.createNotificationCampaign("admin1", { title: "Sân tạm đóng", content: "Mai", type: "MAINTENANCE", targetType: "USERS", targetUserIds: ["u9"] }),
+      /các tài khoản đã chọn/
+    );
+  });
+
+  it("accepts picked accounts and court staff as audiences, and wants the accounts when USERS is picked", async () => {
+    const base = { title: "Bảo trì", content: "Tối nay", type: "MAINTENANCE" };
+    assert.equal(notificationCampaignCreateSchema.safeParse({ body: { ...base, targetType: "USERS", targetUserIds: ["u1", "u2"] } }).success, true);
+    assert.equal(notificationCampaignCreateSchema.safeParse({ body: { ...base, targetType: "ROLE", targetRole: "RECIPIENT" } }).success, true);
+    assert.equal(notificationCampaignCreateSchema.safeParse({ body: { ...base, targetType: "USERS" } }).success, false);
+    assert.equal(notificationCampaignCreateSchema.safeParse({ body: { ...base, targetType: "USERS", targetUserIds: [] } }).success, false);
   });
 
   it("explains an empty audience: a locked or missing account, or a group with nobody in it", async () => {

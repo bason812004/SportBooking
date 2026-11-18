@@ -229,15 +229,32 @@ function useWalkInBooking({ courtSurfaceId, courtId, bookingDate, initialSlot, o
       byDate.set(date, list);
       bySurface.set(surface, byDate);
     }
-    for (const byDate of bySurface.values()) {
-      for (const list of byDate.values()) list.sort((a, b) => a.startTime.localeCompare(b.startTime));
-    }
+    // Back-to-back slots read as one range (06:00 – 07:00 + 07:00 – 08:00 → 06:00 – 08:00, prices added), the way
+    // they are booked (`clusterSlots`). `parts` keeps the slots, so removing the range removes each of them.
+    type PickedRange = { startTime: string; endTime: string; price: number; parts: Array<{ startTime: string; endTime: string }> };
+    const mergeRanges = (list: { startTime: string; endTime: string; price: number }[]) =>
+      [...list]
+        .sort((a, b) => a.startTime.localeCompare(b.startTime))
+        .reduce<PickedRange[]>((ranges, slot) => {
+          const last = ranges[ranges.length - 1];
+          if (last && last.endTime === slot.startTime) {
+            last.endTime = slot.endTime;
+            last.price += slot.price;
+            last.parts.push({ startTime: slot.startTime, endTime: slot.endTime });
+          } else {
+            ranges.push({ ...slot, parts: [{ startTime: slot.startTime, endTime: slot.endTime }] });
+          }
+          return ranges;
+        }, []);
     return Array.from(bySurface.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([surfaceId, byDate]) => {
         const days = Array.from(byDate.entries())
           .sort(([a], [b]) => a.localeCompare(b))
-          .map(([date, slots]) => ({ date, slots, daySubtotal: slots.reduce((sum, s) => sum + s.price, 0) }));
+          .map(([date, list]) => {
+            const slots = mergeRanges(list);
+            return { date, slots, daySubtotal: slots.reduce((sum, s) => sum + s.price, 0) };
+          });
         return {
           courtSurfaceId: surfaceId,
           surfaceName: surfaceNames?.[surfaceId] ?? "Sân đang chọn",
@@ -903,7 +920,8 @@ function CustomerHistoryOverlay({ walkIn }: { walkIn: WalkInBooking }) {
 }
 
 /** The fill-in fields (customer/payment/note + submit), or the QR payment panel once a booking has been created. */
-export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
+/** `fill`: the form stretches to the height it is given, with the confirm button at its bottom. */
+export function WalkInDetailsFields({ walkIn, fill = false }: { walkIn: WalkInBooking; fill?: boolean }) {
   const { t } = useTranslation("booking");
   const {
     activeWalkInPayment,
@@ -944,7 +962,7 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
   return (
     <>
     <form
-      className="space-y-2 rounded-xl border border-emerald-100 bg-emerald-50/60 p-2"
+      className={`space-y-2 rounded-xl border border-emerald-100 bg-emerald-50/60 p-2 ${fill ? "flex flex-1 flex-col" : ""}`}
       onSubmit={(event) => {
         event.preventDefault();
         submit();
@@ -990,14 +1008,16 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
                               <button
                                 type="button"
                                 className="text-rose-500 hover:text-rose-700"
+                                title={`Bỏ chọn ${slot.startTime} – ${slot.endTime}`}
+                                aria-label={`Bỏ chọn ${slot.startTime} – ${slot.endTime}`}
                                 onClick={() =>
+                                  // The whole range: every slot it was merged from.
                                   setWalkInSlots((current) =>
                                     current.filter(
                                       (s) =>
                                         (s.courtSurfaceId ?? courtSurfaceId) !== surface.courtSurfaceId ||
                                         (s.date ?? effectiveDate) !== day.date ||
-                                        s.startTime !== slot.startTime ||
-                                        s.endTime !== slot.endTime
+                                        !slot.parts.some((part) => part.startTime === s.startTime && part.endTime === s.endTime)
                                     )
                                   )
                                 }
@@ -1184,6 +1204,8 @@ export function WalkInDetailsFields({ walkIn }: { walkIn: WalkInBooking }) {
       )}
 
       <Input dense label="Ghi chú" value={walkInForm.note} onChange={(event) => setWalkInForm({ ...walkInForm, note: event.target.value })} />
+      {/* Takes the spare height, so the confirm button sits at the bottom of a stretched form. */}
+      {fill ? <div className="!mt-0 flex-1" aria-hidden="true" /> : null}
       <Button
         className="w-full"
         disabled={submitting || (repeatWeekly ? slotClusters.length === 0 : mode === "now" ? !customStart : slotClusters.length === 0)}

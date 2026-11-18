@@ -3,7 +3,7 @@ import { prisma } from "../../config/db.js";
 import { bookingBillInclude, bookingBillSelect, normalizeBookingServices } from "../../shared/utils/bookingServices.js";
 import { withBookingBill } from "../checkout/checkout.calculations.js";
 import { ConflictError, NotFoundError } from "../../shared/errors/AppError.js";
-import { surfaceCode, surfaceName, normalizedSurfaceCode } from "../../shared/utils/courtSurface.js";
+import { surfaceCode, surfaceName } from "../../shared/utils/courtSurface.js";
 
 const columnExistsCache = new Map<string, boolean>([
   ["courts.deposit_percent", true]
@@ -88,31 +88,9 @@ async function attachCourtDeposits<T extends { id: string }>(courts: T[]) {
   return courts.map((court) => ({ ...court, depositPercent: deposits.get(court.id) ?? null }));
 }
 
-async function ensureCourtSurfaces<T extends { id: string; courtCount: number; surfaces: Array<{ code: string; sortOrder: number }> }>(court: T): Promise<T> {
-  // Serialize legacy auto-fill with explicit add/delete operations. Re-read the
-  // count after locking so a stale detail request cannot recreate a deleted row.
-  return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT id FROM courts WHERE id = ${court.id} FOR UPDATE`;
-    const current = await tx.court.findUniqueOrThrow({ where: { id: court.id } });
-    const existing = await tx.courtSurface.findMany({ where: { courtId: court.id }, orderBy: [{ sortOrder: "asc" }, { code: "asc" }] });
-    const target = current.courtCount;
-    const codes = new Set(existing.map((row) => normalizedSurfaceCode(row.code)));
-    let candidate = 1;
-    let sortOrder = existing.reduce((max, row) => Math.max(max, row.sortOrder), -1) + 1;
-    while (existing.length < target) {
-      const number = candidate++;
-      const code = surfaceCode(number);
-      if (codes.has(code)) continue;
-      existing.push(await tx.courtSurface.create({ data: {
-        courtId: court.id, code, name: surfaceName(current.name, number), sortOrder: sortOrder++
-      } }));
-      codes.add(code);
-    }
-    return { ...court, courtCount: target, surfaces: existing };
-  });
-}
-
 export type NewCourtSurface = { name: string; surface?: string | null; size?: string | null };
+/** A price row typed at registration (the expected prices the admin sees while reviewing). */
+export type NewCourtPrice = { dayType: Prisma.CourtPriceCreateManyInput["dayType"]; startTime: Date; endTime: Date; price: number };
 
 function normalizeDeposit(depositPercent?: number | null) {
   return depositPercent && depositPercent > 0 ? depositPercent : null;
@@ -120,14 +98,15 @@ function normalizeDeposit(depositPercent?: number | null) {
 
 /**
  * Creates a court and its sub-courts (codes S01..SNN in the given order) inside the caller's transaction.
- * courtCount matches the sub-courts so ensureCourtSurfaces never pads them; one createManyAndReturn keeps a
+ * courtCount matches the sub-courts (saveCourtSurface/deleteCourtSurface keep it so); one createManyAndReturn keeps a
  * 30-sub-court court to a couple of round-trips, well inside the 20s Supabase transaction budget.
  */
 async function createCourtTx(
   tx: Prisma.TransactionClient,
   data: Prisma.CourtUncheckedCreateInput,
   depositPercent: number | null,
-  surfaces: NewCourtSurface[]
+  surfaces: NewCourtSurface[],
+  prices: NewCourtPrice[] = []
 ) {
   const court = await tx.court.create({
     data: { ...data, courtCount: surfaces.length, deposit_percent: depositPercent },
@@ -144,6 +123,7 @@ async function createCourtTx(
       status: "ACTIVE" as const
     }))
   });
+  if (prices.length) await tx.courtPrice.createMany({ data: prices.map((price) => ({ ...price, courtId: court.id })) });
   return { ...court, surfaces: [...rows].sort((a, b) => a.sortOrder - b.sortOrder), depositPercent };
 }
 
@@ -330,8 +310,9 @@ export const partnerRepository = {
       where: { id: courtId, partnerId },
       include: { category: true, images: true, prices: true, services: true, surfaces: { orderBy: [{ sortOrder: "asc" }, { code: "asc" }] } }
     });
+    // Read only: sub-courts are created by registration or the partner's sub-court page, never by opening a court.
     if (!court) return null;
-    return attachCourtDeposit(await ensureCourtSurfaces(court));
+    return attachCourtDeposit(court);
   },
 
   async createCourt(data: Prisma.CourtUncheckedCreateInput, depositPercent?: number | null) {
@@ -340,13 +321,13 @@ export const partnerRepository = {
   },
 
   /** A venue registered with several sports: one court per sport plus its sub-courts, all or nothing. */
-  async createCourts(entries: Array<{ data: Prisma.CourtUncheckedCreateInput; surfaces: NewCourtSurface[] }>, depositPercent?: number | null) {
+  async createCourts(entries: Array<{ data: Prisma.CourtUncheckedCreateInput; surfaces: NewCourtSurface[]; prices?: NewCourtPrice[] }>, depositPercent?: number | null) {
     await ensureCourtDepositColumn();
     const deposit = normalizeDeposit(depositPercent);
     return prisma.$transaction(
       async (tx) => {
         const courts = [];
-        for (const entry of entries) courts.push(await createCourtTx(tx, entry.data, deposit, entry.surfaces));
+        for (const entry of entries) courts.push(await createCourtTx(tx, entry.data, deposit, entry.surfaces, entry.prices));
         return courts;
       },
       { maxWait: 10000, timeout: 20000 }

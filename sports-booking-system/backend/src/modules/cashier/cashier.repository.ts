@@ -1,4 +1,4 @@
-import { nowWithinPlayWindow, playHasStarted } from "./cashier.calculations.js";
+import { nowWithinPlayWindow, playHasStarted, prepaidKind } from "./cashier.calculations.js";
 import { checkoutRepository } from "../checkout/checkout.repository.js";
 import { serviceLineTotal, courtAmount } from "../checkout/checkout.calculations.js";
 import { BookingStatus, Prisma } from "@prisma/client";
@@ -6,59 +6,12 @@ import { prisma } from "../../config/db.js";
 import { ConflictError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { ensureServiceTables } from "../services/service.repository.js";
 import type { AddServiceToBookingInput, ReturnRentalItemInput } from "./cashier.types.js";
+import { releaseRentalStock, returnStock, takeStock, type StockAlert, type StockServiceInfo } from "../inventory/inventory.stock.js";
 
 function dbTime(value: any) {
   if (value instanceof Date) return value.toISOString().slice(11, 16);
   if (typeof value === "string") return value.slice(0, 5);
   return value;
-}
-
-async function ensureInventoryRowLocked(tx: Prisma.TransactionClient, serviceId: string, unit: string) {
-  await tx.$executeRawUnsafe(
-    `INSERT INTO service_inventories (id, service_id, quantity, minimum_stock, unit)
-     VALUES (gen_random_uuid(), $1, 0, 5, $2)
-     ON CONFLICT (service_id) DO NOTHING;`,
-    serviceId, unit || "cái"
-  );
-  const rows: any = await tx.$queryRawUnsafe(
-    `SELECT quantity, reserved_quantity as "reservedQuantity" FROM service_inventories WHERE service_id::text = $1::text FOR UPDATE;`,
-    serviceId
-  );
-  return rows[0];
-}
-
-/** The stock row of a rental service, locked; null when the service has none (its rentals are not limited). */
-async function rentalStockLocked(tx: Prisma.TransactionClient, serviceId: string) {
-  const rows: any = await tx.$queryRawUnsafe(
-    `SELECT quantity, reserved_quantity as "reservedQuantity" FROM service_inventories WHERE service_id::text = $1::text FOR UPDATE;`,
-    serviceId
-  );
-  return Array.isArray(rows) && rows.length ? rows[0] : null;
-}
-
-/** Gear out with a customer holds stock; `count` pieces come back, `lost` of them for good. */
-async function releaseRentalStock(tx: Prisma.TransactionClient, serviceId: string, count: number, lost = 0) {
-  if (count <= 0) return;
-  await tx.$executeRawUnsafe(
-    `UPDATE service_inventories SET reserved_quantity = GREATEST(reserved_quantity - $1, 0), quantity = quantity - $2, updated_at = NOW()
-     WHERE service_id::text = $3::text;`,
-    count, lost, serviceId
-  );
-}
-
-/** Puts back the most recent `count` pieces of a rental line still out, releasing the stock they held. */
-async function returnRentedPieces(tx: Prisma.TransactionClient, bookingServiceId: string, serviceId: string, count: number, note: string) {
-  if (count <= 0) return 0;
-  const returned = await tx.$executeRawUnsafe(
-    `UPDATE rental_items SET status = 'RETURNED', returned_at = NOW(), notes = $3, updated_at = NOW()
-     WHERE id IN (
-       SELECT id FROM rental_items WHERE booking_service_id::text = $1::text AND status = 'RENTED'
-       ORDER BY created_at DESC LIMIT $2
-     );`,
-    bookingServiceId, count, note
-  );
-  await releaseRentalStock(tx, serviceId, Number(returned));
-  return Number(returned);
 }
 
 /** Services can no longer change on an invoice locked at the counter. */
@@ -82,6 +35,21 @@ export const cashierRepository = {
     }
     if (role === "ADMIN") return { partnerId: null, all: true };
     return { partnerId: null };
+  },
+
+  transaction<T>(work: (tx: Prisma.TransactionClient) => Promise<T>) {
+    return prisma.$transaction(work, { timeout: 15_000 });
+  },
+
+  /** A session with its court's partner (what settling a finished booking needs). */
+  sessionBooking(bookingId: string, db: Prisma.TransactionClient | typeof prisma = prisma) {
+    return db.booking.findUnique({ where: { id: bookingId }, include: { court: { include: { partner: true } } } });
+  },
+
+  /** Finishes a session from the status it was read with; false when staff, another tab or a job moved it meanwhile. */
+  async completeSession(bookingId: string, fromStatus: BookingStatus, tx: Prisma.TransactionClient) {
+    const { count } = await tx.booking.updateMany({ where: { id: bookingId, bookingStatus: fromStatus }, data: { bookingStatus: BookingStatus.COMPLETED } });
+    return count > 0;
   },
 
   async setInvoiceLock(bookingId: string, lockedBy: string | null) {
@@ -236,9 +204,11 @@ export const cashierRepository = {
       const courtSubtotal = courtAmount(b);
       const activeServices = bsGrouped.get(b.id) || [];
       const serviceSubtotal = activeServices.reduce((sum, item) => sum + Number(item.totalPrice || item.price || 0), 0);
-      const totalAmount = Math.max(0, courtSubtotal + serviceSubtotal - Number(b.voucherDiscountAmount || 0));
+      const voucherDiscount = Number(b.voucherDiscountAmount || 0);
+      const totalAmount = Math.max(0, courtSubtotal + serviceSubtotal - voucherDiscount);
       const depositPaid = ["UNPAID", "FAILED", "REFUNDED"].includes(b.paymentStatus) ? 0 : Number(b.depositAmount) || 0;
-      const remainingAmount = Math.max(0, totalAmount - depositPaid - (paidByBooking.get(b.id) ?? 0));
+      const paidAtCounter = paidByBooking.get(b.id) ?? 0;
+      const remainingAmount = Math.max(0, totalAmount - depositPaid - paidAtCounter);
 
       const courtObj = courtMap.get(b.courtId) || { id: b.courtId, name: b.courtName || "Sân thể thao" };
 
@@ -275,8 +245,11 @@ export const cashierRepository = {
         bookingServices: activeServices,
         courtSubtotal,
         serviceSubtotal,
+        voucherDiscount,
         totalAmount,
         depositPaid,
+        paidAtCounter,
+        prepaidKind: prepaidKind(depositPaid, courtSubtotal, voucherDiscount),
         remainingAmount,
         services: activeServices
       };
@@ -397,12 +370,16 @@ export const cashierRepository = {
       voucherDiscount,
       grandTotal,
       depositPaid,
+      // Collected at the counter so far (the checkout's PAID payments), on top of what was paid before the session.
+      paidAtCounter: additionalPaid,
+      prepaidKind: prepaidKind(depositPaid, courtSubtotal, voucherDiscount),
       remainingAmount,
       activeServices
     };
   },
 
-  async addServiceToBooking(bookingId: string, input: AddServiceToBookingInput, addedBy: string) {
+  /** `alerts` collects the products this sale took to their reorder level (sent to the partner after commit). */
+  async addServiceToBooking(bookingId: string, input: AddServiceToBookingInput, addedBy: string, alerts?: StockAlert[]) {
     await ensureServiceTables();
 
     const result = await prisma.$transaction(async (tx) => {
@@ -417,7 +394,8 @@ export const cashierRepository = {
 
       // 2. Get service
       const sRows: any = await tx.$queryRawUnsafe(
-        `SELECT s.id, s.name, s.type, s.price, s.cost_price as "costPrice", s.unit, s.status, s.track_inventory as "trackInventory"
+        `SELECT s.id, s.name, s.type, s.price, s.cost_price as "costPrice", s.unit, s.status, s.track_inventory as "trackInventory",
+                s.court_id as "courtId", s.partner_id as "partnerId"
          FROM services s JOIN courts c ON c.partner_id = s.partner_id WHERE s.id::text = $1::text AND c.id::text = $2::text LIMIT 1;`,
         input.serviceId, booking.courtId
       );
@@ -446,41 +424,6 @@ export const cashierRepository = {
            WHERE id::text = $1::text AND checked_in_at IS NULL;`,
           bookingId
         );
-      }
-
-      // 3. Check inventory if PRODUCT (locked row, atomic with the deduction below)
-      if (service.trackInventory && service.type === "PRODUCT") {
-        const inv = await ensureInventoryRowLocked(tx, service.id, service.unit);
-        const available = Number(inv.quantity) - Number(inv.reservedQuantity);
-        if (available < input.quantity) {
-          throw new ValidationError(`Sản phẩm "${service.name}" không đủ tồn kho (Còn lại: ${Math.max(0, available)})`);
-        }
-
-        await tx.$executeRawUnsafe(
-          `UPDATE service_inventories SET quantity = quantity - $1, updated_at = NOW() WHERE service_id::text = $2::text;`,
-          input.quantity, service.id
-        );
-
-        await tx.$executeRawUnsafe(
-          `INSERT INTO inventory_transactions (id, service_id, type, quantity, unit_cost, reference_type, reference_id, note, created_at)
-           VALUES (gen_random_uuid(), $1, 'SALE', $2, $3, 'BOOKING_SERVICE', $4, $5, NOW());`,
-          service.id, input.quantity, Number(service.costPrice || 0), bookingId, `Bán dịch vụ cho booking ${booking.bookingCode}`
-        );
-      }
-
-      // 3b. Rental gear: pieces out are held in stock until they come back (services without stock row: no limit)
-      if (service.type === "RENTAL_SERVICE") {
-        const stock = await rentalStockLocked(tx, service.id);
-        if (stock) {
-          const available = Number(stock.quantity) - Number(stock.reservedQuantity);
-          if (available < input.quantity) {
-            throw new ValidationError(`"${service.name}" chỉ còn ${Math.max(0, available)} để cho thuê`);
-          }
-          await tx.$executeRawUnsafe(
-            `UPDATE service_inventories SET reserved_quantity = reserved_quantity + $1, updated_at = NOW() WHERE service_id::text = $2::text;`,
-            input.quantity, service.id
-          );
-        }
       }
 
       // 4. Calculate pricing
@@ -524,16 +467,14 @@ export const cashierRepository = {
         bookingServiceRecord = { id: newBsId, bookingId, serviceId: input.serviceId, quantity: input.quantity, totalPrice };
       }
 
-      // 6. Handle Rental Item creation if RENTAL_SERVICE
-      if (service.type === "RENTAL_SERVICE") {
-        for (let i = 0; i < input.quantity; i++) {
-          await tx.$executeRawUnsafe(
-            `INSERT INTO rental_items (id, booking_service_id, service_id, status, rental_start_time, created_at, updated_at)
-             VALUES (gen_random_uuid(), $1::text, $2, 'RENTED', NOW(), NOW(), NOW());`,
-            bookingServiceRecord.id, service.id
-          );
-        }
-      }
+      // 6. Stock (inventory/inventory.stock.ts): a counted product is taken off stock, rental gear held piece by piece
+      //    on this line; too little free stock refuses the sale and rolls all of it back.
+      await takeStock(
+        tx,
+        [{ serviceId: service.id, quantity: input.quantity, bookingServiceId: bookingServiceRecord.id }],
+        { referenceType: "BOOKING_SERVICE", referenceId: bookingId, note: `Bán dịch vụ cho booking ${booking.bookingCode}` },
+        { services: [service as StockServiceInfo], alerts }
+      );
 
       return bookingServiceRecord;
     }, { maxWait: 10_000, timeout: 20_000 });
@@ -542,7 +483,7 @@ export const cashierRepository = {
     return result;
   },
 
-  async updateBookingServiceQuantity(bookingId: string, serviceId: string, quantity: number) {
+  async updateBookingServiceQuantity(bookingId: string, serviceId: string, quantity: number, alerts?: StockAlert[]) {
     await ensureServiceTables();
 
     const result = await prisma.$transaction(async (tx) => {
@@ -552,7 +493,8 @@ export const cashierRepository = {
       );
       if (Array.isArray(lockRows) && lockRows.length) assertInvoiceOpen(lockRows[0]);
       const bsRows: any = await tx.$queryRawUnsafe(
-        `SELECT bs.id, bs.booking_id as "bookingId", bs.service_id as "serviceId", bs.quantity, bs.price, bs.unit_price as "unitPrice", s.unit, s.track_inventory as "trackInventory", s.type, s.name
+        `SELECT bs.id, bs.booking_id as "bookingId", bs.service_id as "serviceId", bs.quantity, bs.price, bs.unit_price as "unitPrice", s.unit, s.track_inventory as "trackInventory", s.type, s.name,
+                s.cost_price as "costPrice", s.court_id as "courtId", s.partner_id as "partnerId"
          FROM booking_services bs
          LEFT JOIN services s ON bs.service_id::text = s.id::text
          WHERE bs.booking_id::text = $1::text AND (bs.service_id::text = $2::text OR bs.id::text = $2::text OR bs.court_service_id::text = $2::text)
@@ -570,58 +512,25 @@ export const cashierRepository = {
       const diff = quantity - currentQty;
       if (diff === 0) return item;
 
-      const tracksInventory = Boolean(item.serviceId && item.trackInventory && item.type === "PRODUCT");
-      const isRental = Boolean(item.serviceId && item.type === "RENTAL_SERVICE");
-
-      // Rental gear: fewer pieces put the latest ones back; more pieces need free stock and new rental items.
-      if (isRental && diff < 0) {
-        await returnRentedPieces(tx, item.id, item.serviceId, quantity <= 0 ? currentQty : Math.abs(diff), "Bớt khỏi hoá đơn");
-      } else if (isRental && diff > 0) {
-        const stock = await rentalStockLocked(tx, item.serviceId);
-        if (stock) {
-          const available = Number(stock.quantity) - Number(stock.reservedQuantity);
-          if (available < diff) throw new ValidationError(`"${item.name}" chỉ còn ${Math.max(0, available)} để cho thuê`);
-          await tx.$executeRawUnsafe(
-            `UPDATE service_inventories SET reserved_quantity = reserved_quantity + $1, updated_at = NOW() WHERE service_id::text = $2::text;`,
-            diff, item.serviceId
-          );
-        }
-        for (let piece = 0; piece < diff; piece += 1) {
-          await tx.$executeRawUnsafe(
-            `INSERT INTO rental_items (id, booking_service_id, service_id, status, rental_start_time, created_at, updated_at)
-             VALUES (gen_random_uuid(), $1::text, $2, 'RENTED', NOW(), NOW(), NOW());`,
-            item.id, item.serviceId
-          );
-        }
-      }
+      // Stock follows the line (inventory/inventory.stock.ts): more takes stock (or refuses), less or none gives it back.
+      const services: StockServiceInfo[] = item.serviceId && item.type
+        ? [{ id: item.serviceId, name: item.name, type: item.type, trackInventory: Boolean(item.trackInventory), unit: item.unit, costPrice: item.costPrice, courtId: item.courtId, partnerId: item.partnerId }]
+        : [];
+      const reference = (note: string) => ({ referenceType: "BOOKING_SERVICE", referenceId: bookingId, note });
 
       if (quantity <= 0) {
         await tx.$executeRawUnsafe(
           `UPDATE booking_services SET status = 'CANCELLED', updated_at = NOW() WHERE id::text = $1::text;`,
           item.id
         );
-
-        if (tracksInventory) {
-          await ensureInventoryRowLocked(tx, item.serviceId, item.unit);
-          await tx.$executeRawUnsafe(
-            `UPDATE service_inventories SET quantity = quantity + $1, updated_at = NOW() WHERE service_id::text = $2::text;`,
-            currentQty, item.serviceId
-          );
-          await tx.$executeRawUnsafe(
-            `INSERT INTO inventory_transactions (id, service_id, type, quantity, unit_cost, reference_type, reference_id, note, created_at)
-             VALUES (gen_random_uuid(), $1, 'ADJUSTMENT', $2, 0, 'BOOKING_SERVICE', $3, $4, NOW());`,
-            item.serviceId, currentQty, bookingId, `Hủy dịch vụ khỏi booking ${bookingId}`
-          );
-        }
+        await returnStock(tx, [{ serviceId: item.serviceId, quantity: currentQty, bookingServiceId: item.id }], reference(`Bỏ khỏi hoá đơn booking ${bookingId}`), { services });
         return null;
       }
 
-      if (tracksInventory && diff > 0) {
-        const inv = await ensureInventoryRowLocked(tx, item.serviceId, item.unit);
-        const available = Number(inv.quantity) - Number(inv.reservedQuantity);
-        if (available < diff) {
-          throw new ValidationError(`Tồn kho không đủ (Còn ${available})`);
-        }
+      if (diff > 0) {
+        await takeStock(tx, [{ serviceId: item.serviceId, quantity: diff, bookingServiceId: item.id }], reference(`Tăng số lượng trong booking ${bookingId}`), { services, alerts });
+      } else {
+        await returnStock(tx, [{ serviceId: item.serviceId, quantity: -diff, bookingServiceId: item.id }], reference(`Giảm số lượng trong booking ${bookingId}`), { services });
       }
 
       const unitPrice = Number(item.unitPrice || item.price || 0);
@@ -631,31 +540,6 @@ export const cashierRepository = {
         `UPDATE booking_services SET quantity = $1, price = $2, total_price = $2, updated_at = NOW() WHERE id::text = $3::text;`,
         quantity, totalPrice, item.id
       );
-
-      if (tracksInventory) {
-        if (diff > 0) {
-          await tx.$executeRawUnsafe(
-            `UPDATE service_inventories SET quantity = quantity - $1, updated_at = NOW() WHERE service_id::text = $2::text;`,
-            diff, item.serviceId
-          );
-          await tx.$executeRawUnsafe(
-            `INSERT INTO inventory_transactions (id, service_id, type, quantity, unit_cost, reference_type, reference_id, note, created_at)
-             VALUES (gen_random_uuid(), $1, 'SALE', $2, 0, 'BOOKING_SERVICE', $3, $4, NOW());`,
-            item.serviceId, diff, bookingId, `Tăng số lượng dịch vụ trong booking ${bookingId}`
-          );
-        } else if (diff < 0) {
-          await ensureInventoryRowLocked(tx, item.serviceId, item.unit);
-          await tx.$executeRawUnsafe(
-            `UPDATE service_inventories SET quantity = quantity + $1, updated_at = NOW() WHERE service_id::text = $2::text;`,
-            Math.abs(diff), item.serviceId
-          );
-          await tx.$executeRawUnsafe(
-            `INSERT INTO inventory_transactions (id, service_id, type, quantity, unit_cost, reference_type, reference_id, note, created_at)
-             VALUES (gen_random_uuid(), $1, 'ADJUSTMENT', $2, 0, 'BOOKING_SERVICE', $3, $4, NOW());`,
-            item.serviceId, Math.abs(diff), bookingId, `Giảm số lượng dịch vụ trong booking ${bookingId}`
-          );
-        }
-      }
 
       return { id: item.id, bookingId, serviceId, quantity, totalPrice };
     }, { maxWait: 10_000, timeout: 20_000 });
@@ -703,71 +587,4 @@ export const cashierRepository = {
       return updated;
     });
   },
-
-  async releaseBookingServices(bookingId: string, reason: string) {
-    await ensureServiceTables();
-
-    const bsRows = await prisma.bookingService
-      .findMany({
-        where: { bookingId, OR: [{ status: "ACTIVE" }, { status: null as any }] },
-        select: {
-          id: true,
-          serviceId: true,
-          quantity: true,
-          service: { select: { type: true, trackInventory: true } }
-        }
-      })
-      .catch(() => []);
-
-    if (!bsRows.length) return;
-
-    await prisma.bookingService
-      .updateMany({
-        where: { id: { in: bsRows.map((bs) => bs.id) } },
-        data: { status: "CANCELLED", updatedAt: new Date() }
-      })
-      .catch(() => {});
-
-    const productRows = bsRows.filter(
-      (bs) => bs.serviceId && bs.service?.trackInventory && bs.service?.type === "PRODUCT"
-    );
-
-    if (productRows.length) {
-      const qtyByService = new Map<string, number>();
-      for (const bs of productRows) {
-        qtyByService.set(bs.serviceId!, (qtyByService.get(bs.serviceId!) ?? 0) + bs.quantity);
-      }
-      await Promise.all(
-        [...qtyByService.entries()].map(([serviceId, qty]) =>
-          prisma.serviceInventory
-            .updateMany({
-              where: { serviceId },
-              data: { quantity: { increment: qty }, updatedAt: new Date() }
-            })
-            .catch(() => {})
-        )
-      );
-
-      await prisma.inventoryTransaction
-        .createMany({
-          data: productRows.map((bs) => ({
-            serviceId: bs.serviceId!,
-            type: "ADJUSTMENT",
-            quantity: bs.quantity,
-            unitCost: 0,
-            referenceType: "BOOKING_SERVICE",
-            referenceId: bookingId,
-            note: reason
-          }))
-        })
-        .catch(() => {});
-    }
-
-    const rentalRows = bsRows.filter((bs) => bs.service?.type === "RENTAL_SERVICE" && bs.serviceId);
-    for (const bs of rentalRows) {
-      await prisma
-        .$transaction((tx) => returnRentedPieces(tx, bs.id, bs.serviceId!, Number(bs.quantity) || 1_000, reason))
-        .catch((error) => console.error("[Cashier] Releasing rental pieces failed:", error));
-    }
-  }
 };

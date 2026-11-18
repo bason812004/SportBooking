@@ -57,6 +57,10 @@ export const cashierController = {
     return sendSuccess(res, data, 200, "Xử lý trả thiết bị cho thuê thành công");
   },
 
+  async finishSession(req: Request, res: Response) {
+    return sendSuccess(res, await cashierService.finishSession(req.params.bookingId, req.user!), 200, "Đã hoàn tất phiên sân");
+  },
+
   async lockInvoice(req: Request, res: Response) {
     return sendSuccess(res, await cashierService.setInvoiceLock(req.params.bookingId, req.user!, true), 200, "Đã khoá hoá đơn");
   },

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, Search, Edit3, Trash2, Box, Check, X, AlertTriangle, Image as ImageIcon } from "lucide-react";
+import { Plus, Search, Edit3, Trash2, Box, Check, X, AlertTriangle, History, Image as ImageIcon } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Modal } from "../../components/ui/Modal";
@@ -9,6 +9,7 @@ import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { ErrorState } from "../../components/common/States";
 import { ServiceImage } from "../../components/common/ServiceImage";
 import { serviceApi, type ServiceCategory, type ServiceItem } from "../../features/services/api/serviceApi";
+import { lastPriceChangeText, ServicePriceHistoryModal } from "../../features/services/components/ServicePriceHistoryModal";
 import { partnerApi } from "../../features/partner/api/partnerApi";
 import { useAuth } from "../../features/auth/hooks/useAuth";
 import type { Court } from "../../types/api";
@@ -34,6 +35,8 @@ export function PartnerServicesPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingService, setEditingService] = useState<ServiceItem | null>(null);
   const [deleting, setDeleting] = useState<ServiceItem | null>(null);
+  // The service whose "Lịch sử giá" is open.
+  const [historyFor, setHistoryFor] = useState<ServiceItem | null>(null);
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
@@ -230,6 +233,10 @@ export function PartnerServicesPage() {
         });
         const imageChanged = (editingService.imageUrl || "") !== (formData.imageUrl || "");
         patchServices((items) => mergeSavedService(items, saved, imageChanged));
+        if (Number(formData.price) !== Number(editingService.price) || Number(formData.costPrice) !== Number(editingService.costPrice)) {
+          queryClient.invalidateQueries({ queryKey: ["partner-services"] });
+          queryClient.invalidateQueries({ queryKey: ["service-price-history", editingService.id] });
+        }
         toast.success("Đã lưu thay đổi.");
       } else {
         const stockText = formData.initialStock.trim();
@@ -461,6 +468,20 @@ export function PartnerServicesPage() {
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-slate-500">Giá vốn nhập:</span>
                     <span className="font-semibold text-slate-700">{formatMoney(service.costPrice)}</span>
+                  </div>
+                  {/* When the prices were last set, and every time they were. */}
+                  <div className="flex items-center justify-between gap-2 text-[11px]">
+                    <span className="flex min-w-0 items-center gap-1 text-slate-500" title={lastPriceChangeText(service.lastPriceChange)}>
+                      <History className="h-3 w-3 shrink-0" aria-hidden="true" />
+                      <span className="truncate">{lastPriceChangeText(service.lastPriceChange)}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setHistoryFor(service)}
+                      className="shrink-0 rounded font-bold text-emerald-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                    >
+                      Lịch sử giá
+                    </button>
                   </div>
                   {service.type === "RENTAL_SERVICE" && (
                     <div className="flex items-center justify-between text-xs">
@@ -785,6 +806,8 @@ export function PartnerServicesPage() {
           </div>
         </form>
       </Modal>
+
+      <ServicePriceHistoryModal service={historyFor} onClose={() => setHistoryFor(null)} />
 
       <ConfirmModal
         open={Boolean(deleting)}

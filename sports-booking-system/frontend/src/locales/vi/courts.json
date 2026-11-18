@@ -86,7 +86,37 @@
       "success": "Đã gửi báo cáo. Cảm ơn bạn đã phản hồi!",
       "failed": "Không thể gửi báo cáo.",
       "alreadyReported": "Bạn đã báo cáo sân này, quản trị viên đang xem xét.",
-      "loginRequired": "Vui lòng đăng nhập để báo cáo sân."
+      "loginRequired": "Vui lòng đăng nhập để báo cáo sân.",
+      "thread": {
+        "title": "Báo cáo của bạn",
+        "reportLabel": "Báo cáo",
+        "you": "Bạn",
+        "admin": "Quản trị viên",
+        "status": {
+          "PENDING": "Chờ xử lý",
+          "RESOLVED": "Đã xử lý",
+          "REJECTED": "Bác bỏ"
+        },
+        "decision": {
+          "RESOLVED": "Đã xử lý báo cáo",
+          "REJECTED": "Bác bỏ báo cáo"
+        },
+        "measures": "Biện pháp đã áp dụng",
+        "systemRecorded": "Hệ thống ghi nhận",
+        "replyLabel": "Trả lời quản trị viên",
+        "replyPlaceholder": "Bổ sung thông tin, thời gian hoặc chi tiết cho quản trị viên...",
+        "send": "Gửi",
+        "sending": "Đang gửi...",
+        "sent": "Đã gửi cho quản trị viên.",
+        "repliesLeft": "Bạn còn gửi được {{count}} tin trước khi quản trị viên phản hồi.",
+        "limitReached": "Bạn đã gửi nhiều tin liên tiếp. Hãy chờ quản trị viên phản hồi rồi gửi tiếp.",
+        "closed": "Báo cáo đã đóng nên không trả lời thêm được. Nếu sân vẫn còn vấn đề, hãy gửi báo cáo mới từ trang sân.",
+        "viewCourt": "Xem trang sân",
+        "loading": "Đang tải báo cáo...",
+        "failed": "Không tải được báo cáo.",
+        "retry": "Thử lại",
+        "sentAt": "Gửi lúc {{time}}"
+      }
     }
   }
 }

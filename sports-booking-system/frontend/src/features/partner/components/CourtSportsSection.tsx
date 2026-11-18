@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useFieldArray, useFormContext, useFormState, useWatch } from "react-hook-form";
-import { Copy, Minus, Plus, Trash2, X } from "lucide-react";
+import { Copy, Minus, Plus, Tag, Trash2, X } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
 import { Select } from "../../../components/ui/Select";
@@ -9,16 +9,31 @@ import type { Category } from "../../../types/api";
 
 export const MAX_SPORTS = 5;
 export const MAX_SURFACES = 30;
+export const MAX_PRICES = 24;
 
 export type SportSurfaceValues = { name: string; surface: string };
-export type SportValues = { categoryId: string; surfaces: SportSurfaceValues[] };
+export type PriceDayType = "WEEKDAY" | "WEEKEND" | "HOLIDAY";
+/** An expected price per hour; the server saves it as one of the court's price rows. */
+export type SportPriceValues = { dayType: PriceDayType; startTime: string; endTime: string; price: number };
+export type SportValues = { categoryId: string; surfaces: SportSurfaceValues[]; prices: SportPriceValues[] };
 /** The part of the registration form this section edits; render it inside the form's FormProvider. */
-export type CourtSportsFormValues = { name: string; sports: SportValues[] };
+export type CourtSportsFormValues = { name: string; openingTime: string; closingTime: string; sports: SportValues[] };
+
+const DAY_TYPE_OPTIONS: Array<{ value: PriceDayType; label: string }> = [
+  { value: "WEEKDAY", label: "Ngày thường" },
+  { value: "WEEKEND", label: "Cuối tuần" },
+  { value: "HOLIDAY", label: "Ngày lễ" }
+];
 
 // Same comparison the server uses for duplicate sub-court names: trimmed, single spaces, case-insensitive.
 const nameKey = (name: string) => name.trim().replace(/\s+/g, " ").toLocaleLowerCase("vi");
 
-export const newSport = (): SportValues => ({ categoryId: "", surfaces: [{ name: "Sân 1", surface: "" }] });
+export const newSport = (): SportValues => ({ categoryId: "", surfaces: [{ name: "Sân 1", surface: "" }], prices: [] });
+
+const minutesOf = (time: string) => {
+  const [hours, minutes] = time.split(":").map(Number);
+  return hours * 60 + minutes;
+};
 
 /** Default "Sân N" names for added rows, numbered after the existing rows and skipping names already used. */
 function nextSurfaceNames(existing: SportSurfaceValues[], count: number) {
@@ -175,6 +190,121 @@ function SportRow({ index, categories, onRemove }: { index: number; categories: 
           </button>
         )}
       </div>
+
+      <SportPrices index={index} />
+    </div>
+  );
+}
+
+/**
+ * Expected prices of one sport, optional. They are saved as the court's price rows, so the admin sees them while
+ * reviewing and the court can take bookings as soon as it is approved. The server checks the rows for clashes.
+ */
+function SportPrices({ index }: { index: number }) {
+  const { control, register, getValues } = useFormContext<CourtSportsFormValues>();
+  const { errors } = useFormState({ control, name: `sports.${index}.prices` });
+  const { fields, append, remove, replace } = useFieldArray({ control, name: `sports.${index}.prices` });
+  const firstSportPrices = useWatch({ control, name: "sports.0.prices" });
+  const rowErrors = errors.sports?.[index]?.prices;
+
+  // A new row spans the opening hours, for the first day type not priced yet.
+  const addRow = () => {
+    const used = new Set(getValues(`sports.${index}.prices`).map((row) => row.dayType));
+    const dayType = DAY_TYPE_OPTIONS.find((option) => !used.has(option.value))?.value ?? "WEEKDAY";
+    append({ dayType, startTime: getValues("openingTime") || "06:00", endTime: getValues("closingTime") || "22:00", price: Number.NaN });
+  };
+  const fullHour = (value: string) => value.endsWith(":00") || "Giờ chẵn";
+
+  return (
+    <div className="mt-4 border-t border-dashed border-slate-200 pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-700">
+          <Tag className="h-4 w-4 text-emerald-600" />
+          Giá dự kiến <span className="font-normal text-slate-500">(không bắt buộc)</span>
+        </p>
+        {index > 0 && fields.length === 0 && (firstSportPrices?.length ?? 0) > 0 && (
+          <button type="button" onClick={() => replace(getValues("sports.0.prices").map((row) => ({ ...row })))} className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:underline">
+            <Copy className="h-3.5 w-3.5" />
+            Dùng giá của môn 1
+          </button>
+        )}
+      </div>
+      <p className="mt-1 text-xs text-slate-500">
+        Giá mỗi giờ theo khung giờ chẵn. Khung nằm trong khung khác thì giờ đó lấy giá khung hẹp hơn, ví dụ 06:00-22:00 giá thường và 17:00-21:00 giá cao điểm.
+        Admin xem giá này khi duyệt; giờ chưa có giá sẽ không nhận đặt.
+      </p>
+      {fields.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {fields.map((field, row) => {
+            const errorsOfRow = rowErrors?.[row];
+            return (
+              <div key={field.id} className="flex items-start gap-2">
+                <div className="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-[1.1fr_0.9fr_0.9fr_1.2fr]">
+                  <Select dense aria-label={`Loại ngày của khung giá ${row + 1}`} options={DAY_TYPE_OPTIONS} {...register(`sports.${index}.prices.${row}.dayType`)} />
+                  <Input
+                    dense
+                    type="time"
+                    step={3600}
+                    aria-label={`Giờ bắt đầu khung giá ${row + 1}`}
+                    {...register(`sports.${index}.prices.${row}.startTime`, { required: "Chọn giờ", validate: fullHour })}
+                    error={errorsOfRow?.startTime?.message}
+                  />
+                  <Input
+                    dense
+                    type="time"
+                    step={3600}
+                    aria-label={`Giờ kết thúc khung giá ${row + 1}`}
+                    {...register(`sports.${index}.prices.${row}.endTime`, {
+                      required: "Chọn giờ",
+                      validate: (value) => {
+                        const hour = fullHour(value);
+                        if (hour !== true) return hour;
+                        // 00:00 ends the row at midnight.
+                        const start = getValues(`sports.${index}.prices.${row}.startTime`);
+                        return (minutesOf(value) || 24 * 60) > minutesOf(start) || "Phải sau giờ bắt đầu";
+                      }
+                    })}
+                    error={errorsOfRow?.endTime?.message}
+                  />
+                  <Input
+                    dense
+                    type="number"
+                    min={1000}
+                    step={1000}
+                    placeholder="Giá/giờ (đ)"
+                    aria-label={`Giá mỗi giờ của khung ${row + 1}`}
+                    {...register(`sports.${index}.prices.${row}.price`, {
+                      valueAsNumber: true,
+                      validate: (value) => {
+                        if (!Number.isFinite(value) || value <= 0) return "Nhập giá lớn hơn 0";
+                        return value <= 100_000_000 || "Tối đa 100.000.000đ";
+                      }
+                    })}
+                    error={errorsOfRow?.price?.message}
+                  />
+                </div>
+                <button
+                  type="button"
+                  aria-label={`Xóa khung giá ${row + 1}`}
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600"
+                  onClick={() => remove(row)}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={addRow}
+        disabled={fields.length >= MAX_PRICES}
+        className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 hover:underline disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <Plus className="h-3.5 w-3.5" />
+        Thêm khung giá
+      </button>
     </div>
   );
 }
@@ -209,7 +339,8 @@ export function CourtSportsSection({ categories }: { categories: Category[] }) {
             return (
               <li key={fields[index]?.id ?? index}>
                 • <span className="font-medium text-slate-800">{courtName}</span>
-                {sports.length === 1 && ` · ${sportName ?? "chưa chọn môn"}`} · {sport.surfaces.length} sân con
+                {sports.length === 1 && ` · ${sportName ?? "chưa chọn môn"}`} · {sport.surfaces.length} sân con ·{" "}
+                {sport.prices?.length ? `${sport.prices.length} khung giá dự kiến` : "chưa có giá dự kiến"}
               </li>
             );
           })}

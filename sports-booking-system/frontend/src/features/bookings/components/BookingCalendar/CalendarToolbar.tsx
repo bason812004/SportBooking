@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { DayPicker } from "react-day-picker";
-import { CalendarDays, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+import { Calendar as CalendarIcon, CalendarDays, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 import clsx from "clsx";
 import { format, startOfWeek as startOfWeekFns, addDays, isSameWeek } from "date-fns";
 import { vi, enUS } from "date-fns/locale";
@@ -12,6 +12,8 @@ export type CalendarToolbarProps = {
   weekEnd: Date;
   language: Language;
   courtName: string;
+  /** No title block: the navigation and the view toggle only. */
+  hideTitle?: boolean;
   view: "WEEK" | "DAY";
   onPrev: () => void;
   onNext: () => void;
@@ -26,6 +28,7 @@ export function CalendarToolbar(props: CalendarToolbarProps) {
     weekEnd,
     language,
     courtName,
+    hideTitle,
     view,
     onPrev,
     onNext,
@@ -70,17 +73,19 @@ export function CalendarToolbar(props: CalendarToolbarProps) {
   return (
     <div className="relative flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:flex-row md:items-center md:justify-between">
       {/* Left: title */}
-      <div className="flex items-center gap-3">
-        <span className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-100 text-emerald-700">
-          <Sparkles className="h-5 w-5" />
-        </span>
-        <div>
-          <p className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
-            {language === "en" ? "Weekly booking" : "Lịch đặt sân theo tuần"}
-          </p>
-          <h2 className="text-lg font-black text-slate-950">{courtName}</h2>
+      {!hideTitle && (
+        <div className="flex items-center gap-3">
+          <span className="grid h-11 w-11 place-items-center rounded-2xl bg-emerald-100 text-emerald-700">
+            <Sparkles className="h-5 w-5" />
+          </span>
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-700">
+              {language === "en" ? "Weekly booking" : "Lịch đặt sân theo tuần"}
+            </p>
+            <h2 className="text-lg font-black text-slate-950">{courtName}</h2>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Center: navigation */}
       <div className="flex flex-wrap items-center gap-2">
@@ -208,28 +213,36 @@ export function CalendarToolbar(props: CalendarToolbarProps) {
         </button>
       </div>
 
-      {/* Right: view toggle */}
-      <div className="flex items-center gap-1 self-end rounded-xl bg-slate-100 p-1 md:self-auto">
-        <button
-          type="button"
-          onClick={() => onSwitchView("WEEK")}
-          className={clsx(
-            "rounded-lg px-3 py-1.5 text-xs font-black transition",
-            view === "WEEK" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-700"
-          )}
-        >
-          {language === "en" ? "Week" : "Tuần"}
-        </button>
-        <button
-          type="button"
-          onClick={() => onSwitchView("DAY")}
-          className={clsx(
-            "rounded-lg px-3 py-1.5 text-xs font-black transition",
-            view === "DAY" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-700"
-          )}
-        >
-          {language === "en" ? "Day" : "Ngày"}
-        </button>
+      {/* Right: view toggle. The active view is a white segment with green text and icon. */}
+      <div
+        role="radiogroup"
+        aria-label={language === "en" ? "Calendar view" : "Kiểu xem lịch"}
+        className="flex items-center gap-1 self-end rounded-xl border border-slate-200 bg-slate-100 p-1 md:self-auto"
+      >
+        {([
+          { value: "WEEK", label: language === "en" ? "Week" : "Tuần", icon: CalendarDays },
+          { value: "DAY", label: language === "en" ? "Day" : "Ngày", icon: CalendarIcon }
+        ] as const).map(({ value, label, icon: Icon }) => {
+          const active = view === value;
+          return (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => onSwitchView(value)}
+              className={clsx(
+                "inline-flex items-center gap-1.5 rounded-lg border px-3.5 py-2 text-sm font-bold transition",
+                active
+                  ? "border-emerald-200 bg-white text-emerald-700 shadow-sm"
+                  : "border-transparent text-slate-500 hover:bg-white/60 hover:text-slate-700"
+              )}
+            >
+              <Icon className={clsx("h-4 w-4", active ? "text-emerald-600" : "text-slate-400")} aria-hidden="true" />
+              {label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

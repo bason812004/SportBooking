@@ -129,6 +129,66 @@ export interface InventoryPagination {
   totalPages: number;
 }
 
+/** The stock ledger's filters (partner). */
+export interface TransactionQuery {
+  courtId?: string;
+  type?: InventoryTransaction["type"] | "";
+  search?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  limit?: number;
+}
+
+/** Who a sold or rented line belongs to. */
+export interface HistoryBooking {
+  id: string;
+  code: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  status: string;
+  paymentStatus?: string;
+  surfaceName: string | null;
+  customerName: string | null;
+  customerPhone: string | null;
+}
+
+/** A counted product sold on a booking (staff's sales history). */
+export interface SaleHistoryItem {
+  id: string;
+  addedAt: string;
+  /** WITH_BOOKING: ordered with the booking; COUNTER: added at the counter. */
+  source: "WITH_BOOKING" | "COUNTER";
+  service: { id: string; name: string; unit: string };
+  quantity: number;
+  unitPrice: number;
+  total: number;
+  booking: HistoryBooking;
+}
+
+export type RentalHistoryStatus = "OUT" | "RETURNED" | "DAMAGED" | "LOST" | "ALL";
+
+/** One piece of rental gear (staff's rental history). */
+export interface RentalHistoryItem {
+  id: string;
+  status: "RENTED" | "RETURNED" | "DAMAGED" | "LOST" | "AVAILABLE";
+  startedAt: string;
+  returnedAt: string | null;
+  notes: string | null;
+  unitPrice: number;
+  service: { id: string; name: string; unit: string };
+  booking: HistoryBooking;
+}
+
+export interface HistoryQuery {
+  from?: string;
+  to?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+}
+
 export interface LowStockAlert {
   serviceId: string;
   serviceName: string;
@@ -178,8 +238,33 @@ export const inventoryApi = {
     return res.data.data;
   },
 
-  async getTransactions(limit = 50, courtId?: string) {
-    const res = await api.get<ApiResponse<InventoryTransaction[]>>("/partner/inventory/transactions", { params: { limit, courtId } });
+  /** One page of the partner's stock ledger. */
+  async getTransactions(query: TransactionQuery = {}) {
+    const res = await api.get<ApiResponse<{ items: InventoryTransaction[]; pagination: InventoryPagination }>>("/partner/inventory/transactions", {
+      params: { ...query, type: query.type || undefined, search: query.search || undefined, courtId: query.courtId || undefined }
+    });
+    return res.data.data;
+  },
+
+  /** Staff: what their court sold, by the day bookings are played (today by default). */
+  async getSales(query: HistoryQuery = {}) {
+    const res = await api.get<
+      ApiResponse<{ range: { from: string; to: string }; summary: { lines: number; quantity: number; amount: number }; items: SaleHistoryItem[]; pagination: InventoryPagination }>
+    >("/partner/inventory/sales", { params: { ...query, search: query.search || undefined } });
+    return res.data.data;
+  },
+
+  /** Staff: their court's rental pieces (out with customers now by default). */
+  async getRentals(query: HistoryQuery & { status?: RentalHistoryStatus } = {}) {
+    const res = await api.get<
+      ApiResponse<{
+        status: RentalHistoryStatus;
+        range: { from: string; to: string };
+        summary: { out: number; returned: number; damaged: number; lost: number };
+        items: RentalHistoryItem[];
+        pagination: InventoryPagination;
+      }>
+    >("/partner/inventory/rentals", { params: { ...query, search: query.search || undefined } });
     return res.data.data;
   },
 

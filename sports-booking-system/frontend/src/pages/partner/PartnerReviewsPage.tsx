@@ -6,6 +6,7 @@ import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { TablePagination } from "../../components/common/TablePagination";
 import { ModeratedReviewCard } from "../../components/review/ModeratedReviewCard";
+import { RatingDistribution } from "../../components/review/RatingDistribution";
 import { ReviewReplyBlock } from "../../components/review/ReviewReplyBlock";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
@@ -222,7 +223,6 @@ function ReplyEditor({ review }: { review: ModeratedReview }) {
 
 /** The average customers see on the court pages (hidden reviews left out) and how the stars spread, drawn like there. */
 function SummaryPanel({ summary }: { summary: ReviewSummary }) {
-  const percent = (count: number) => (summary.total ? Math.round((count / summary.total) * 100) : 0);
   return (
     <section className="grid gap-4 rounded-2xl border border-line bg-white p-5 md:grid-cols-[220px_minmax(0,1fr)]">
       <div className="flex flex-col justify-center">
@@ -235,19 +235,7 @@ function SummaryPanel({ summary }: { summary: ReviewSummary }) {
           {summary.total} đánh giá đang hiển thị{summary.hiddenCount ? ` · ${summary.hiddenCount} đã bị ẩn` : ""}
         </p>
       </div>
-      <div className="space-y-2">
-        {summary.distribution.map((row) => (
-          <div key={row.rating} className="grid grid-cols-[56px_1fr_88px] items-center gap-3 text-sm">
-            <span className="font-bold">{row.rating} sao</span>
-            <div className="h-3 overflow-hidden rounded-full bg-slate-100">
-              <div className="h-full rounded-full bg-amber-400" style={{ width: `${percent(row.count)}%` }} />
-            </div>
-            <span className="text-right font-bold">
-              {percent(row.count)}% ({row.count})
-            </span>
-          </div>
-        ))}
-      </div>
+      <RatingDistribution summary={summary} />
     </section>
   );
 }

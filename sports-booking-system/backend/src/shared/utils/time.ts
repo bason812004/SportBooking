@@ -56,6 +56,23 @@ export function vietnamNow(now = new Date()) {
   return { date: shifted.slice(0, 10), time: shifted.slice(11, 16) };
 }
 
+/** "21/10/2026 10:11": an instant as a Vietnam date and clock time, whatever the server's time zone. */
+export function vietnamDateTimeText(value: Date) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+    })
+      .formatToParts(value)
+      .map((part) => [part.type, part.value])
+  );
+  return `${parts.day}/${parts.month}/${parts.year} ${parts.hour}:${parts.minute}`;
+}
+
+/** "21/10/2026": the Vietnam day an instant falls on. */
+export function vietnamDayText(value: Date) {
+  return vietnamDateTimeText(value).slice(0, 10);
+}
+
 /** The instant a booking's DATE + TIME columns refer to. Also used with endTime for "after the booking ended". */
 export function bookingStartsAt(date: Date, time: Date) {
   return vietnamWallClock(date.toISOString().slice(0, 10), time.toISOString().slice(11, 16));

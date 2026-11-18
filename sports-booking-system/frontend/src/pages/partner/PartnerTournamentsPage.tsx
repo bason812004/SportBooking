@@ -63,7 +63,7 @@ export function PartnerTournamentsPage() {
         subtitle="Tổ chức giải tại các sân thuộc hệ thống của bạn. Giải mới tạo sẽ được gửi cho Admin duyệt ngay."
         actions={
           <Link to="/partner/tournaments/create">
-            <Button className="bg-white/20 text-white ring-1 ring-white/30 hover:bg-white/30">
+            <Button>
               <Plus className="h-4 w-4" /> Tạo giải
             </Button>
           </Link>

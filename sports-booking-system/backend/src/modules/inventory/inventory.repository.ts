@@ -636,72 +636,214 @@ export const inventoryRepository = {
     });
   },
 
-  async getTransactions(partnerId: string, limit = 50, courtId?: string) {
+  /**
+   * One page of the partner's stock ledger, newest first. Always limited to the partner's own products (a partner
+   * with none gets nothing; before 2026-11-07 it got every partner's ledger), optionally to one court, one kind of
+   * line, a product name and a range of Vietnam days.
+   */
+  async transactionsPage(
+    partnerId: string,
+    filter: { courtId?: string; type?: string; search: string | null; from?: string; to?: string; limit: number; offset: number }
+  ) {
     await ensureServiceTables();
-    const courtWhere = courtId ? { courtId } : {};
-    try {
-      let services = await prisma.service.findMany({
-        where: { partnerId, ...courtWhere },
-        select: { id: true }
-      });
-      let serviceIds = services.map((s) => s.id);
-
-      if (serviceIds.length === 0 && !courtId) {
-        services = await prisma.service.findMany({ select: { id: true } });
-        serviceIds = services.map((s) => s.id);
-      }
-      // A court with no products has no history; an empty `in` would otherwise mean "no filter".
-      if (serviceIds.length === 0 && courtId) return [];
-
-      return await prisma.inventoryTransaction.findMany({
-        where: serviceIds.length > 0 ? { serviceId: { in: serviceIds } } : {},
-        include: {
-          service: {
-            select: { id: true, name: true, unit: true, category: { select: { name: true } } }
-          }
-        },
-        orderBy: { createdAt: "desc" },
-        take: limit
-      });
-    } catch (err) {
-      console.error("getTransactions error:", err);
-      const rawTxs: any = await prisma.$queryRawUnsafe(`
-        SELECT 
-          t.id,
-          t.service_id as "serviceId",
-          t.type,
-          t.quantity,
-          t.unit_cost as "unitCost",
-          t.reference_type as "referenceType",
-          t.reference_id as "referenceId",
-          t.note,
-          t.created_at as "createdAt",
-          s.name as "serviceName",
-          s.unit as "serviceUnit"
-        FROM inventory_transactions t
-        LEFT JOIN services s ON t.service_id = s.id
-        WHERE ($2::text IS NULL OR s.court_id = $2::text)
-        ORDER BY t.created_at DESC
-        LIMIT $1;
-      `, limit, courtId ?? null).catch(() => []);
-
-      return (Array.isArray(rawTxs) ? rawTxs : []).map((t: any) => ({
+    const params = [partnerId, filter.courtId ?? null, filter.type ?? null, filter.search, filter.from ?? null, filter.to ?? null];
+    const where = `
+      FROM inventory_transactions t
+      JOIN services s ON s.id = t.service_id
+      LEFT JOIN service_categories cat ON cat.id = s.category_id
+      WHERE s.partner_id = $1
+        AND ($2::text IS NULL OR s.court_id = $2::text)
+        AND ($3::text IS NULL OR t.type::text = $3::text)
+        AND ($4::text IS NULL OR s.name ILIKE $4::text)
+        AND ($5::date IS NULL OR (t.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date >= $5::date)
+        AND ($6::date IS NULL OR (t.created_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= $6::date)`;
+    const [rows, counted] = await Promise.all([
+      prisma.$queryRawUnsafe<any[]>(
+        `SELECT t.id, t.service_id AS "serviceId", t.type::text AS type, t.quantity, t.unit_cost AS "unitCost",
+                t.reference_type AS "referenceType", t.reference_id AS "referenceId", t.note, t.created_at AS "createdAt",
+                s.name AS "serviceName", s.unit AS "serviceUnit", cat.name AS "categoryName"
+         ${where}
+         ORDER BY t.created_at DESC, t.id DESC
+         LIMIT $7 OFFSET $8;`,
+        ...params,
+        filter.limit,
+        filter.offset
+      ),
+      prisma.$queryRawUnsafe<Array<{ total: number }>>(`SELECT count(*)::int AS total ${where};`, ...params)
+    ]);
+    return {
+      total: Number(counted[0]?.total ?? 0),
+      items: rows.map((t) => ({
         id: t.id,
         serviceId: t.serviceId,
         type: t.type,
         quantity: Number(t.quantity),
-        unitCost: Number(t.unitCost || 0),
+        unitCost: Number(t.unitCost ?? 0),
         referenceType: t.referenceType,
         referenceId: t.referenceId,
         note: t.note,
         createdAt: t.createdAt,
-        service: {
-          id: t.serviceId,
-          name: t.serviceName || "Sản phẩm",
-          unit: t.serviceUnit || "cái"
+        service: { id: t.serviceId, name: t.serviceName, unit: t.serviceUnit || "cái", category: t.categoryName ? { name: t.categoryName } : null }
+      }))
+    };
+  },
+
+  /**
+   * What one court sold (counted products, not rental gear) on bookings played within a range of days, newest first:
+   * the open lines of bookings not cancelled or rejected. A line ordered with its booking says so (added_by 'BOOKING',
+   * since 2026-11-07); an older one was written in the booking's own transaction, within seconds of it (online: the
+   * same instant, at the counter: 1-4 s), while counter sales come minutes or hours later: under 30 s means "ordered
+   * with the booking", anything else "added at the counter".
+   */
+  async salesPage(courtId: string, filter: { from: string; to: string; search: string | null; limit: number; offset: number }) {
+    await ensureServiceTables();
+    const params = [courtId, filter.from, filter.to, filter.search];
+    const where = `
+      FROM booking_services bs
+      JOIN bookings b ON b.id = bs.booking_id
+      JOIN services s ON s.id = bs.service_id
+      LEFT JOIN users u ON u.id = b.user_id
+      LEFT JOIN court_surfaces cs ON cs.id = b.court_surface_id
+      WHERE b.court_id = $1
+        AND s.type::text = 'PRODUCT'
+        AND (bs.status = 'ACTIVE' OR bs.status IS NULL)
+        AND b.booking_status::text NOT IN ('CANCELLED', 'REJECTED')
+        AND b.booking_date BETWEEN $2::date AND $3::date
+        AND ($4::text IS NULL OR s.name ILIKE $4::text OR u.full_name ILIKE $4::text OR u.phone ILIKE $4::text OR b.booking_code ILIKE $4::text)`;
+    const [rows, totals] = await Promise.all([
+      prisma.$queryRawUnsafe<any[]>(
+        `SELECT bs.id, bs.quantity,
+                COALESCE(NULLIF(bs.unit_price, 0), bs.price / NULLIF(bs.quantity, 0), 0) AS "unitPrice",
+                COALESCE(bs.total_price, bs.price, 0) AS total,
+                bs.created_at AS "addedAt",
+                (bs.added_by = 'BOOKING' OR abs(extract(epoch FROM bs.created_at - b.created_at)) < 30) AS "withBooking",
+                s.id AS "serviceId", s.name AS "serviceName", s.unit,
+                b.id AS "bookingId", b.booking_code AS "bookingCode", to_char(b.booking_date, 'YYYY-MM-DD') AS "bookingDate",
+                to_char(b.start_time, 'HH24:MI') AS "startTime", to_char(b.end_time, 'HH24:MI') AS "endTime",
+                b.payment_status::text AS "paymentStatus", b.booking_status::text AS "bookingStatus",
+                u.full_name AS "customerName", u.phone AS "customerPhone",
+                COALESCE(cs.name, (SELECT cs2.name FROM booking_slots sl JOIN court_surfaces cs2 ON cs2.id = sl.court_surface_id
+                                    WHERE sl.booking_id = b.id LIMIT 1)) AS "surfaceName"
+         ${where}
+         ORDER BY b.booking_date DESC, bs.created_at DESC, bs.id DESC
+         LIMIT $5 OFFSET $6;`,
+        ...params,
+        filter.limit,
+        filter.offset
+      ),
+      prisma.$queryRawUnsafe<Array<{ lines: number; quantity: number; amount: number }>>(
+        `SELECT count(*)::int AS lines, COALESCE(sum(bs.quantity), 0)::int AS quantity,
+                COALESCE(sum(COALESCE(bs.total_price, bs.price, 0)), 0)::float AS amount
+         ${where};`,
+        ...params
+      )
+    ]);
+    return {
+      summary: { lines: Number(totals[0]?.lines ?? 0), quantity: Number(totals[0]?.quantity ?? 0), amount: Number(totals[0]?.amount ?? 0) },
+      items: rows.map((row) => ({
+        id: row.id,
+        addedAt: row.addedAt,
+        source: row.withBooking ? ("WITH_BOOKING" as const) : ("COUNTER" as const),
+        service: { id: row.serviceId, name: row.serviceName, unit: row.unit || "cái" },
+        quantity: Number(row.quantity),
+        unitPrice: Number(row.unitPrice ?? 0),
+        total: Number(row.total ?? 0),
+        booking: {
+          id: row.bookingId,
+          code: row.bookingCode,
+          date: row.bookingDate,
+          startTime: row.startTime,
+          endTime: row.endTime,
+          status: row.bookingStatus,
+          paymentStatus: row.paymentStatus,
+          surfaceName: row.surfaceName ?? null,
+          customerName: row.customerName ?? null,
+          customerPhone: row.customerPhone ?? null
         }
-      }));
-    }
+      }))
+    };
+  },
+
+  /**
+   * One court's rental pieces, newest first. OUT lists every piece with a customer now, whatever day it went out;
+   * RETURNED / DAMAGED / LOST / ALL list the pieces that went out within the range of days. The counts: pieces out now
+   * (the whole court) and, within the range, pieces returned, damaged and lost.
+   */
+  async rentalsPage(
+    courtId: string,
+    filter: { status: string; from: string; to: string; search: string | null; limit: number; offset: number }
+  ) {
+    await ensureServiceTables();
+    const params = [courtId, filter.status, filter.from, filter.to, filter.search];
+    const joins = `
+      FROM rental_items ri
+      JOIN booking_services bs ON bs.id = ri.booking_service_id
+      JOIN bookings b ON b.id = bs.booking_id
+      JOIN services s ON s.id = ri.service_id
+      LEFT JOIN users u ON u.id = b.user_id
+      LEFT JOIN court_surfaces cs ON cs.id = b.court_surface_id`;
+    const inRange = `(ri.rental_start_time AT TIME ZONE 'Asia/Ho_Chi_Minh')::date BETWEEN $3::date AND $4::date`;
+    const where = `${joins}
+      WHERE b.court_id = $1
+        AND (($2::text = 'OUT' AND ri.status::text = 'RENTED')
+             OR ($2::text <> 'OUT' AND ($2::text = 'ALL' OR ri.status::text = $2::text) AND ${inRange}))
+        AND ($5::text IS NULL OR s.name ILIKE $5::text OR u.full_name ILIKE $5::text OR u.phone ILIKE $5::text OR b.booking_code ILIKE $5::text)`;
+    const [rows, counted, totals] = await Promise.all([
+      prisma.$queryRawUnsafe<any[]>(
+        `SELECT ri.id, ri.status::text AS status, ri.rental_start_time AS "startedAt", ri.returned_at AS "returnedAt", ri.notes,
+                COALESCE(NULLIF(bs.unit_price, 0), bs.price / NULLIF(bs.quantity, 0), 0) AS "unitPrice",
+                s.id AS "serviceId", s.name AS "serviceName", s.unit,
+                b.id AS "bookingId", b.booking_code AS "bookingCode", to_char(b.booking_date, 'YYYY-MM-DD') AS "bookingDate",
+                to_char(b.start_time, 'HH24:MI') AS "startTime", to_char(b.end_time, 'HH24:MI') AS "endTime",
+                b.booking_status::text AS "bookingStatus",
+                u.full_name AS "customerName", u.phone AS "customerPhone",
+                COALESCE(cs.name, (SELECT cs2.name FROM booking_slots sl JOIN court_surfaces cs2 ON cs2.id = sl.court_surface_id
+                                    WHERE sl.booking_id = b.id LIMIT 1)) AS "surfaceName"
+         ${where}
+         ORDER BY ri.rental_start_time DESC, ri.id DESC
+         LIMIT $6 OFFSET $7;`,
+        ...params,
+        filter.limit,
+        filter.offset
+      ),
+      prisma.$queryRawUnsafe<Array<{ total: number }>>(`SELECT count(*)::int AS total ${where};`, ...params),
+      prisma.$queryRawUnsafe<Array<{ out: number; returned: number; damaged: number; lost: number }>>(
+        `SELECT count(*) FILTER (WHERE ri.status::text = 'RENTED')::int AS out,
+                count(*) FILTER (WHERE ri.status::text = 'RETURNED' AND ${inRange.replace("$3", "$2").replace("$4", "$3")})::int AS returned,
+                count(*) FILTER (WHERE ri.status::text = 'DAMAGED' AND ${inRange.replace("$3", "$2").replace("$4", "$3")})::int AS damaged,
+                count(*) FILTER (WHERE ri.status::text = 'LOST' AND ${inRange.replace("$3", "$2").replace("$4", "$3")})::int AS lost
+         ${joins}
+         WHERE b.court_id = $1;`,
+        courtId,
+        filter.from,
+        filter.to
+      )
+    ]);
+    const counts = totals[0] ?? { out: 0, returned: 0, damaged: 0, lost: 0 };
+    return {
+      total: Number(counted[0]?.total ?? 0),
+      summary: { out: Number(counts.out ?? 0), returned: Number(counts.returned ?? 0), damaged: Number(counts.damaged ?? 0), lost: Number(counts.lost ?? 0) },
+      items: rows.map((row) => ({
+        id: row.id,
+        status: row.status,
+        startedAt: row.startedAt,
+        returnedAt: row.returnedAt ?? null,
+        notes: row.notes ?? null,
+        unitPrice: Number(row.unitPrice ?? 0),
+        service: { id: row.serviceId, name: row.serviceName, unit: row.unit || "cái" },
+        booking: {
+          id: row.bookingId,
+          code: row.bookingCode,
+          date: row.bookingDate,
+          startTime: row.startTime,
+          endTime: row.endTime,
+          status: row.bookingStatus,
+          surfaceName: row.surfaceName ?? null,
+          customerName: row.customerName ?? null,
+          customerPhone: row.customerPhone ?? null
+        }
+      }))
+    };
   },
 
   // Supplier & Purchase Order Management

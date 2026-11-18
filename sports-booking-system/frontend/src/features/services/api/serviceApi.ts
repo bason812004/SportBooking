@@ -41,6 +41,31 @@ export interface ServiceItem {
   categorySlug?: string;
   categoryName?: string;
   inventory?: ServiceInventory | null;
+  /** Latest line of the price history (the partner's catalog only): what it was and when. */
+  lastPriceChange?: { kind: ServicePriceHistoryKind; changedAt: string } | null;
+}
+
+/** INITIAL: the price when recording started; CREATED: the price at creation; CHANGED: a later change. */
+export type ServicePriceHistoryKind = "INITIAL" | "CREATED" | "CHANGED";
+
+export interface ServicePriceHistoryEntry {
+  id: string;
+  kind: ServicePriceHistoryKind;
+  oldPrice: number | null;
+  newPrice: number;
+  oldCostPrice: number | null;
+  newCostPrice: number;
+  /** Which of the two prices this change moved. */
+  priceChanged: boolean;
+  costPriceChanged: boolean;
+  changedAt: string;
+  changedBy: { id: string; fullName: string } | null;
+}
+
+export interface ServicePriceHistory {
+  service: { id: string; name: string; court: { id: string; name: string } | null };
+  /** Newest first. */
+  entries: ServicePriceHistoryEntry[];
 }
 
 export interface CreateServiceInput {
@@ -133,6 +158,12 @@ export const serviceApi = {
 
   async deleteService(id: string) {
     const res = await api.delete<ApiResponse<DeleteServiceResult>>(`/services/partner/${id}`);
+    return res.data.data;
+  },
+
+  /** When the service's sale and cost prices were set, from what and by whom (partner and their staff). */
+  async priceHistory(id: string) {
+    const res = await api.get<ApiResponse<ServicePriceHistory>>(`/services/partner/${id}/price-history`);
     return res.data.data;
   }
 };

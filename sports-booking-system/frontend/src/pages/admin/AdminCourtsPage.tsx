@@ -1,6 +1,6 @@
 import { useEffect, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { BadgeCheck, Eye, Lock, Megaphone, Star, Unlock } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
@@ -94,7 +94,7 @@ export function AdminCourtsPage() {
         title="Tất cả sân"
         subtitle="Quản lý sân đã duyệt, khóa/mở hoạt động, verified, featured và yêu cầu đối tác cập nhật."
         actions={
-          <Button className="bg-white/20 text-white ring-1 ring-white/30 hover:bg-white/30" onClick={() => { setPage(1); setFilters(emptyFilters); }}>
+          <Button variant="secondary" onClick={() => { setPage(1); setFilters(emptyFilters); }}>
             Xóa lọc
           </Button>
         }
@@ -294,6 +294,10 @@ function CourtDetail({ court, onUpdated }: { court: AdminCourt; onUpdated: () =>
             {court.verified && <SmallBadge>Verified</SmallBadge>}
             {court.featured && <SmallBadge>Featured</SmallBadge>}
           </div>
+          {/* The review page holds the partner, photos, history and, shortly after approval, "Hủy duyệt". */}
+          <Link to={`/admin/courts/pending/${court.id}`} className="mt-3 inline-flex text-sm font-semibold text-emerald-700 hover:underline">
+            Xem hồ sơ duyệt →
+          </Link>
         </div>
 
         <div className="grid gap-2">

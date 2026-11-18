@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 import { activeBookingServiceWhere } from "../../shared/utils/bookingServices.js";
 import { timeToMinutes } from "../../shared/utils/time.js";
-import { occupiedSurfaceHours, servicesOutsideLedger } from "./report.calculations.js";
+import { occupiedSurfaceHours, servicesOutsideLedger, type BreakdownCourt, type CourtLedger } from "./report.calculations.js";
 
 export interface ReportScope {
   partnerId?: string;
@@ -67,6 +67,57 @@ export const reportRepository = {
       _count: { _all: true }
     });
     return { grossAmount: Number(totals._sum.grossAmount ?? 0), netAmount: Number(totals._sum.netAmount ?? 0), count: totals._count._all };
+  },
+
+  /**
+   * The ledger of bookings played in the range, per court: settled money (revenueRows) and money still waiting
+   * (pendingSettlements), by the same statuses, so the per-court rows add up to the whole-system figures.
+   */
+  async ledgerByCourt(from: string, to: string): Promise<CourtLedger[]> {
+    const rows = await prisma.$queryRaw<Array<{ courtId: string; gross: unknown; commission: unknown; net: unknown; pending: unknown }>>`
+      select b.court_id as "courtId",
+        coalesce(sum(s.gross_amount) filter (where s.status = 'SETTLED'), 0) as gross,
+        coalesce(sum(s.commission_amount) filter (where s.status = 'SETTLED'), 0) as commission,
+        coalesce(sum(s.net_amount) filter (where s.status = 'SETTLED'), 0) as net,
+        coalesce(sum(s.gross_amount) filter (where s.status = any(${waitingSettlementStatuses}::text[])), 0) as pending
+      from settlements s
+      join bookings b on b.id = s.booking_id
+      where b.booking_date >= ${from}::date and b.booking_date <= ${to}::date
+      group by b.court_id
+    `;
+    return rows.map((row) => ({
+      courtId: row.courtId,
+      grossAmount: Number(row.gross),
+      commissionAmount: Number(row.commission),
+      netAmount: Number(row.net),
+      pendingAmount: Number(row.pending)
+    }));
+  },
+
+  /** Bookings played in the range per court, counted like the overview's total. */
+  async bookingCountsByCourt(from: Date, to: Date) {
+    const rows = await prisma.booking.groupBy({ by: ["courtId"], where: { bookingDate: { gte: from, lte: to } }, _count: { _all: true } });
+    return rows.map((row) => ({ courtId: row.courtId, bookings: row._count._all }));
+  },
+
+  async reportCourts(): Promise<BreakdownCourt[]> {
+    const courts = await prisma.court.findMany({
+      select: { id: true, name: true, partnerId: true, approvalStatus: true, partner: { select: { businessName: true } } }
+    });
+    return courts.map((court) => ({
+      id: court.id,
+      name: court.name,
+      partnerId: court.partnerId,
+      partnerName: court.partner.businessName,
+      approvalStatus: court.approvalStatus
+    }));
+  },
+
+  /** Names for the title of an exported report narrowed to one partner or one court. */
+  async scopeName(scope: ReportScope) {
+    if (scope.courtId) return (await prisma.court.findUnique({ where: { id: scope.courtId }, select: { name: true } }))?.name ?? null;
+    if (scope.partnerId) return (await prisma.partnerProfile.findUnique({ where: { id: scope.partnerId }, select: { businessName: true } }))?.businessName ?? null;
+    return null;
   },
 
   async bookingBreakdown(scope: ReportScope, from: Date, to: Date) {

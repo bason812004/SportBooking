@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 import type { CreateServiceCategoryInput, CreateServiceInput, UpdateServiceInput } from "./service.types.js";
+import { pricesChanged, type PriceHistoryKind, type PriceHistoryRow } from "./service.priceHistory.js";
 
 type SportFlags = {
   isBadminton: boolean;
@@ -128,6 +129,42 @@ async function runServiceTableInit() {
          END IF;
        END $$;`,
       `ALTER TABLE booking_services DROP CONSTRAINT IF EXISTS booking_services_service_id_fkey;`,
+      // When a service's sale or cost price was set, from what and by whom (service.priceHistory.ts). Append-only:
+      // a row is never edited, except that the person who made the change is cleared if their account is deleted.
+      // database/39_service_price_history.sql adds the same and records each existing service's starting price.
+      `CREATE SEQUENCE IF NOT EXISTS seq_service_price_history;`,
+      `CREATE TABLE IF NOT EXISTS service_price_history (
+        id VARCHAR(20) PRIMARY KEY DEFAULT ('sph' || lpad(nextval('seq_service_price_history')::text, 5, '0')),
+        service_id VARCHAR(20) NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+        kind VARCHAR(10) NOT NULL CHECK (kind IN ('INITIAL', 'CREATED', 'CHANGED')),
+        old_price DECIMAL(12, 2),
+        new_price DECIMAL(12, 2) NOT NULL CHECK (new_price >= 0),
+        old_cost_price DECIMAL(12, 2),
+        new_cost_price DECIMAL(12, 2) NOT NULL CHECK (new_cost_price >= 0),
+        changed_by VARCHAR(20) REFERENCES users(id) ON DELETE SET NULL,
+        changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT service_price_history_change_has_old CHECK (kind <> 'CHANGED' OR (old_price IS NOT NULL AND old_cost_price IS NOT NULL))
+      );`,
+      `CREATE INDEX IF NOT EXISTS idx_service_price_history_service ON service_price_history(service_id, changed_at DESC);`,
+      `CREATE OR REPLACE FUNCTION prevent_service_price_history_mutation()
+       RETURNS trigger AS $$
+       BEGIN
+         IF NEW.changed_by IS NULL AND OLD.changed_by IS NOT NULL
+            AND (NEW.id, NEW.service_id, NEW.kind, NEW.old_price, NEW.new_price, NEW.old_cost_price, NEW.new_cost_price, NEW.changed_at)
+                IS NOT DISTINCT FROM (OLD.id, OLD.service_id, OLD.kind, OLD.old_price, OLD.new_price, OLD.old_cost_price, OLD.new_cost_price, OLD.changed_at) THEN
+           RETURN NEW;
+         END IF;
+         RAISE EXCEPTION 'service_price_history is append-only; UPDATE is not allowed';
+       END;
+       $$ LANGUAGE plpgsql;`,
+      `DO $$
+       BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_service_price_history_immutable') THEN
+           CREATE TRIGGER trg_service_price_history_immutable
+           BEFORE UPDATE ON service_price_history
+           FOR EACH ROW EXECUTE FUNCTION prevent_service_price_history_mutation();
+         END IF;
+       END $$;`,
       `CREATE INDEX IF NOT EXISTS idx_services_court_id ON services(court_id);`,
       `CREATE INDEX IF NOT EXISTS idx_court_services_court_id ON court_services(court_id);`
     ];
@@ -163,6 +200,25 @@ async function serviceUsed(tx: Prisma.TransactionClient, id: string) {
     ) AS used
   `;
   return Boolean(rows[0]?.used);
+}
+
+/** One line of a service's price history, in the transaction that set the price. */
+async function recordPrice(
+  tx: Prisma.TransactionClient,
+  entry: {
+    serviceId: string;
+    kind: PriceHistoryKind;
+    oldPrice: number | null;
+    newPrice: number;
+    oldCostPrice: number | null;
+    newCostPrice: number;
+    changedBy: string | null;
+  }
+) {
+  await tx.$executeRaw`
+    INSERT INTO service_price_history (service_id, kind, old_price, new_price, old_cost_price, new_cost_price, changed_by)
+    VALUES (${entry.serviceId}, ${entry.kind}, ${entry.oldPrice}, ${entry.newPrice}, ${entry.oldCostPrice}, ${entry.newCostPrice}, ${entry.changedBy})
+  `;
 }
 
 export const serviceRepository = {
@@ -460,7 +516,7 @@ export const serviceRepository = {
   },
 
   /** Creates the product at each court: its own row, stock and opening stock entry. */
-  async createService(partnerId: string, data: CreateServiceInput) {
+  async createService(partnerId: string, data: CreateServiceInput, actorId: string | null = null) {
     await ensureServiceTables();
     const cleanCategoryId = data.categoryId && data.categoryId.trim() !== "" && data.categoryId !== "ALL" ? data.categoryId.trim() : null;
     const cleanImageUrl = data.imageUrl && data.imageUrl.trim() !== "" ? data.imageUrl.trim() : null;
@@ -507,6 +563,16 @@ export const serviceRepository = {
           }
         }
 
+        await recordPrice(tx, {
+          serviceId: service.id,
+          kind: "CREATED",
+          oldPrice: null,
+          newPrice: Number(service.price),
+          oldCostPrice: null,
+          newCostPrice: Number(service.costPrice),
+          changedBy: actorId
+        });
+
         // The court link the admin court page lists (and where a per-court price override would live).
         await tx.$executeRaw`
           INSERT INTO court_services (id, court_id, service_id, name, price, is_available, status, created_at, updated_at)
@@ -525,9 +591,19 @@ export const serviceRepository = {
     });
   },
 
-  async updateService(id: string, data: UpdateServiceInput) {
+  async updateService(id: string, data: UpdateServiceInput, actorId: string | null = null) {
     await ensureServiceTables();
     return prisma.$transaction(async (tx) => {
+      // The prices before this edit, with the row locked so two edits at once each log what they really replaced.
+      const before =
+        data.price !== undefined || data.costPrice !== undefined
+          ? (
+              await tx.$queryRaw<Array<{ price: Prisma.Decimal; costPrice: Prisma.Decimal | null }>>`
+                SELECT price, cost_price AS "costPrice" FROM services WHERE id = ${id} FOR UPDATE
+              `
+            )[0]
+          : undefined;
+
       const updated = await tx.service.update({
         where: { id },
         data: {
@@ -545,6 +621,18 @@ export const serviceRepository = {
           ...(data.courtId !== undefined ? { courtId: data.courtId } : {})
         }
       });
+
+      if (before && pricesChanged(before, updated)) {
+        await recordPrice(tx, {
+          serviceId: id,
+          kind: "CHANGED",
+          oldPrice: Number(before.price),
+          newPrice: Number(updated.price),
+          oldCostPrice: Number(before.costPrice ?? 0),
+          newCostPrice: Number(updated.costPrice),
+          changedBy: actorId
+        });
+      }
 
       if (data.courtId !== undefined) {
         await tx.$executeRaw`
@@ -572,6 +660,34 @@ export const serviceRepository = {
         include: { category: true, inventory: true, court: { select: { id: true, name: true } } }
       });
     });
+  },
+
+  /** A service's price history, newest first, with the name of whoever set each price. */
+  async priceHistory(serviceId: string) {
+    await ensureServiceTables();
+    return prisma.$queryRaw<PriceHistoryRow[]>`
+      SELECT h.id, h.kind,
+             h.old_price AS "oldPrice", h.new_price AS "newPrice",
+             h.old_cost_price AS "oldCostPrice", h.new_cost_price AS "newCostPrice",
+             h.changed_at AS "changedAt", h.changed_by AS "changedById", u.full_name AS "changedByName"
+      FROM service_price_history h
+      LEFT JOIN users u ON u.id = h.changed_by
+      WHERE h.service_id = ${serviceId}
+      ORDER BY h.changed_at DESC, h.id DESC
+      LIMIT 200
+    `;
+  },
+
+  /** The latest price history line of each service (what kind, when), for the catalog cards. */
+  async lastPriceChanges(serviceIds: string[]) {
+    if (!serviceIds.length) return [];
+    await ensureServiceTables();
+    return prisma.$queryRaw<Array<{ serviceId: string; kind: PriceHistoryKind; changedAt: Date }>>`
+      SELECT DISTINCT ON (service_id) service_id AS "serviceId", kind, changed_at AS "changedAt"
+      FROM service_price_history
+      WHERE service_id = ANY(${serviceIds}::text[])
+      ORDER BY service_id, changed_at DESC, id DESC
+    `;
   },
 
   /**

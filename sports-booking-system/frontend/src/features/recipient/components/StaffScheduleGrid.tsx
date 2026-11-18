@@ -149,8 +149,8 @@ export function StaffScheduleGrid({
 
   return (
     <div>
-      <div className="mb-1.5 flex items-center justify-between gap-2">
-        <span className="text-xs font-black uppercase tracking-wide text-slate-500">Chọn khung giờ</span>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-base font-bold text-slate-900">Chọn khung giờ</h2>
         <div className="flex items-center gap-1.5">
           {isToday && !repeatWeekly ? (
             <div className="flex overflow-hidden rounded-lg border border-emerald-200 text-xs font-bold">
@@ -209,6 +209,7 @@ export function StaffScheduleGrid({
           selected={selected}
           onSelectedChange={handleSelectedChange}
           language="vi"
+          hideTitle
           forceDayOnCompact
           selectionMode="multi-day"
           manageable

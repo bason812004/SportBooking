@@ -3,6 +3,7 @@ import { prisma } from "../../config/db.js";
 import { ForbiddenError, NotFoundError, ValidationError, ConflictError } from "../../shared/errors/AppError.js";
 import { cloudinaryService } from "../../shared/services/cloudinary.service.js";
 import { paginationMeta } from "../../shared/utils/response.js";
+import { maskAccountNumber } from "../../shared/utils/bankAccount.js";
 import { bookingStartsAt, parseLimit, parsePage, timeToDate, timeToMinutes, toDbDate, vietnamNow } from "../../shared/utils/time.js";
 import { buildSlotGrid } from "../../shared/utils/slotGrid.js";
 import { uniqueSlug } from "../../shared/utils/slug.js";
@@ -10,6 +11,7 @@ import { commissionService } from "../commission/commission.service.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { settlementService } from "../settlements/settlement.service.js";
+import { releaseBookingStock } from "../inventory/inventory.stock.js";
 import { voucherRepository } from "../vouchers/voucher.repository.js";
 import { userRepository } from "../users/user.repository.js";
 import { partnerRepository } from "./partner.repository.js";
@@ -37,26 +39,41 @@ import { canCorrectAutoNoShow } from "../booking-overdue/bookingOverdue.calculat
 import { summarizeRatings } from "../reviews/review.calculations.js";
 import { holidayRepository } from "../holidays/holiday.repository.js";
 import { describeBooking, notifyBookingDecision, notifyCourtChange } from "../bookings/bookingNotices.js";
-import { conflictingBand, minutesClock, priceBands } from "../../shared/utils/courtPricing.js";
+import { conflictingBand, minutesClock, priceBands, type PriceBand } from "../../shared/utils/courtPricing.js";
 
 /** What identifies a court to customers: changing it sends the court back to the admin. */
 const REVIEWED_COURT_FIELDS = ["name", "address", "ward", "city", "categoryId"] as const;
 const sameText = (a: unknown, b: unknown) => String(a ?? "").trim().replace(/\s+/g, " ") === String(b ?? "").trim().replace(/\s+/g, " ");
 const dayTypeNames: Record<string, string> = { WEEKDAY: "Ngày thường", WEEKEND: "Cuối tuần", HOLIDAY: "Ngày lễ" };
 
-/** A price row must end after it starts and must not partly overlap another row of the same day type. */
-async function assertPriceRow(courtId: string, input: { dayType: string; startTime: string; endTime: string }, excludeId?: string) {
+type PriceRowInput = { dayType: string; startTime: string; endTime: string };
+
+/** A price row must end after it starts and must not partly overlap another row of the same day type; null when it fits. */
+function priceRowProblem(input: PriceRowInput, others: PriceBand[]) {
   const start = timeToMinutes(input.startTime);
   const end = timeToMinutes(input.endTime) || 24 * 60;
-  if (start >= end) throw new ValidationError("Giờ kết thúc phải sau giờ bắt đầu");
+  if (start >= end) return "Giờ kết thúc phải sau giờ bắt đầu";
+  const conflict = conflictingBand({ dayType: input.dayType, start, end }, others);
+  if (!conflict) return null;
+  return (
+    `Khung ${input.startTime}-${input.endTime} trùng hoặc chồng một phần lên khung ${minutesClock(conflict.start)}-${minutesClock(conflict.end)} (${dayTypeNames[conflict.dayType] ?? conflict.dayType}). ` +
+    "Một khung nằm trọn trong khung khác thì được: giờ đó lấy giá của khung hẹp hơn."
+  );
+}
+
+async function assertPriceRow(courtId: string, input: PriceRowInput, excludeId?: string) {
   const others = (await partnerRepository.courtPrices(courtId)).filter((row) => row.id !== excludeId);
-  const bands = priceBands(others).map((band, index) => ({ ...band, id: others[index].id }));
-  const conflict = conflictingBand({ dayType: input.dayType, start, end }, bands);
-  if (conflict) {
-    throw new ValidationError(
-      `Khung ${input.startTime}-${input.endTime} trùng hoặc chồng một phần lên khung ${minutesClock(conflict.start)}-${minutesClock(conflict.end)} (${dayTypeNames[conflict.dayType] ?? conflict.dayType}). ` +
-        "Một khung nằm trọn trong khung khác thì được: giờ đó lấy giá của khung hẹp hơn."
-    );
+  const problem = priceRowProblem(input, priceBands(others));
+  if (problem) throw new ValidationError(problem);
+}
+
+/** The expected prices of one sport at registration, checked against each other by the price page's rule. */
+function assertRegistrationPrices(sportName: string, rows: Array<PriceRowInput & { price: number }>) {
+  const accepted: PriceBand[] = [];
+  for (const row of rows) {
+    const problem = priceRowProblem(row, accepted);
+    if (problem) throw new ValidationError(`Giá dự kiến môn ${sportName}: ${problem}`);
+    accepted.push(...priceBands([row]));
   }
 }
 
@@ -67,12 +84,6 @@ const partnerSave = { submit: false };
 
 const BANK_FIELDS = ["bankName", "bankAccountNumber", "bankAccountHolder"] as const;
 
-/** Only the last 4 digits of an account number, for notices. */
-function maskAccount(value: string | null) {
-  if (!value) return null;
-  return value.length <= 4 ? value : `${"*".repeat(Math.min(6, value.length - 4))}${value.slice(-4)}`;
-}
-
 /** How a bank account holder is written for transfers: upper case, single spaces. */
 function holderName(value: string | null | undefined) {
   const name = value?.trim().replace(/\s+/g, " ");
@@ -81,7 +92,7 @@ function holderName(value: string | null | undefined) {
 
 /** In the app and by email: if the partner did not make the change, they learn of it before money moves. */
 async function noticeBankChange(userId: string, profile: { businessName: string; user: { email: string; fullName: string } }, next: { bankName: string | null; bankAccountNumber: string | null }) {
-  const masked = maskAccount(next.bankAccountNumber);
+  const masked = maskAccountNumber(next.bankAccountNumber);
   const account = next.bankName || masked ? `${next.bankName ?? ""} ${masked ?? ""}`.trim() : "đã xoá";
   try {
     await notificationService.create({
@@ -249,6 +260,7 @@ export const partnerService = {
     const categoryIds = input.sports.map((sport) => sport.categoryId);
     const categories = new Map((await partnerRepository.activeCategoriesByIds(categoryIds)).map((category) => [category.id, category]));
     if (categoryIds.some((id) => !categories.has(id))) throw new ValidationError("Môn thể thao không tồn tại hoặc đã ngừng hoạt động");
+    for (const sport of input.sports) assertRegistrationPrices(categories.get(sport.categoryId)!.name, sport.prices);
 
     const multiSport = input.sports.length > 1;
     const slugs = new Set<string>();
@@ -275,7 +287,13 @@ export const partnerService = {
           approvalStatus: "PENDING" as const,
           activeStatus: "ACTIVE" as const
         },
-        surfaces: sport.surfaces.map((surface) => ({ name: surface.name, surface: surface.surface, size: surface.size }))
+        surfaces: sport.surfaces.map((surface) => ({ name: surface.name, surface: surface.surface, size: surface.size })),
+        prices: sport.prices.map((row) => ({
+          dayType: row.dayType,
+          startTime: timeToDate(row.startTime),
+          endTime: timeToDate(row.endTime),
+          price: row.price
+        }))
       };
     });
     return { courts: await partnerRepository.createCourts(entries, input.depositPercent ?? null) };
@@ -609,14 +627,18 @@ export const partnerService = {
         await voucherRepository.releaseVoucherUses([booking.id], tx);
         updatedSettlement = await settlementService.cancelForBooking(booking.id, tx);
       }
+      // A booking that will not be served gives its services back with the status change, never after it (a failure
+      // there undoes both): inventory/inventory.stock.ts releaseBookingStock.
+      if (status === BookingStatus.CANCELLED || status === BookingStatus.NO_SHOW) {
+        await releaseBookingStock(
+          tx,
+          booking.id,
+          status === BookingStatus.CANCELLED ? "Tự động trả do đơn bị huỷ" : "Tự động trả do khách không đến",
+          status === BookingStatus.CANCELLED ? "BOOKING_CANCELLED" : "BOOKING_NO_SHOW"
+        );
+      }
       return { updated: updatedBooking, settlement: updatedSettlement };
     });
-
-    if (status === BookingStatus.CANCELLED || status === BookingStatus.NO_SHOW) {
-      await cashierRepository
-        .releaseBookingServices(booking.id, status === BookingStatus.CANCELLED ? "Tự động trả do đơn bị huỷ" : "Tự động trả do khách không đến")
-        .catch(() => {});
-    }
 
     if (settlement) {
       realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);

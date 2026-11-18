@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { INVENTORY_TX_TYPES, PURCHASE_ORDER_INITIAL_STATUSES, PURCHASE_ORDER_STATUSES } from "./inventory.types.js";
+import { RENTAL_HISTORY_STATUSES } from "./inventory.history.js";
 
 // Service and court ids are custom prefixed varchar (e.g. "sv0001", "c0001"); suppliers and purchase orders use real uuids.
 const id = z.string().trim().min(1).max(40);
@@ -47,6 +48,38 @@ export const createPurchaseOrderSchema = z.object({
   body: purchaseOrderBody.extend({
     courtId: optionalId,
     status: z.enum(PURCHASE_ORDER_INITIAL_STATUSES).default("DRAFT")
+  })
+});
+
+// History lists: a Vietnam day (YYYY-MM-DD), a page and a page size (at most 100 rows).
+const day = z.preprocess(blankToUndefined, z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày không hợp lệ (YYYY-MM-DD)").optional());
+const pageNumber = z.preprocess(blankToUndefined, z.coerce.number().int().min(1).optional());
+const pageSize = z.preprocess(blankToUndefined, z.coerce.number().int().min(1).max(100).optional());
+
+export const listTransactionsSchema = z.object({
+  query: z.object({
+    courtId: optionalId,
+    type: z.preprocess(blankToUndefined, z.enum(INVENTORY_TX_TYPES).optional()),
+    search: optionalText(100),
+    from: day,
+    to: day,
+    page: pageNumber,
+    limit: pageSize
+  })
+});
+
+export const salesHistorySchema = z.object({
+  query: z.object({ from: day, to: day, search: optionalText(100), page: pageNumber, limit: pageSize })
+});
+
+export const rentalHistorySchema = z.object({
+  query: z.object({
+    status: z.preprocess(blankToUndefined, z.enum(RENTAL_HISTORY_STATUSES).optional()),
+    from: day,
+    to: day,
+    search: optionalText(100),
+    page: pageNumber,
+    limit: pageSize
   })
 });
 

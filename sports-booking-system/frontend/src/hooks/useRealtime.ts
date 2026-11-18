@@ -47,6 +47,13 @@ export function useRealtime() {
     socket.on("booking:cancelled", invalidateBookings);
     socket.on("court:availability-updated", invalidateAvailability);
     socket.on("notification:new", invalidateNotifications);
+    // A message or decision on a violation report arrives as a notification: refresh the open conversations.
+    const invalidateReportThreads = () => {
+      void queryClient.invalidateQueries({ queryKey: ["report-thread"] });
+      void queryClient.invalidateQueries({ queryKey: ["admin-report-thread"] });
+      void queryClient.invalidateQueries({ queryKey: ["admin-reports"] });
+    };
+    socket.on("notification:new", invalidateReportThreads);
     socket.on("blog:updated", invalidateBlogs);
     socket.on("connect", invalidateBlogs);
     if (socket.connected) invalidateBlogs();
@@ -63,6 +70,7 @@ export function useRealtime() {
       socket.off("booking:cancelled", invalidateBookings);
       socket.off("court:availability-updated", invalidateAvailability);
       socket.off("notification:new", invalidateNotifications);
+      socket.off("notification:new", invalidateReportThreads);
       socket.off("blog:updated", invalidateBlogs);
       socket.off("connect", invalidateBlogs);
       socket.off("connect", invalidateNotifications);

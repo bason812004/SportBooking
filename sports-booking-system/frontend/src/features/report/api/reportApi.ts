@@ -64,33 +64,51 @@ export interface CustomerReport {
 }
 
 export type ReportRange = { from: string; to: string };
+/** Admin only: the partner or court a report is narrowed to (partner and staff reports ignore it). */
+export type ReportScopeParams = { partnerId?: string; courtId?: string };
+type ReportQuery = ReportRange & ReportScopeParams;
+
+type BreakdownFigures = { grossAmount: number; commissionAmount: number; netAmount: number; pendingAmount: number; bookings: number };
+export type PartnerRevenueRow = BreakdownFigures & { partnerId: string; name: string; courtCount: number };
+export type CourtRevenueRow = BreakdownFigures & { courtId: string; name: string; partnerId: string; partnerName: string; approvalStatus: string };
+/** Revenue per partner and per court of a range, from the same settlement ledger as the overview. */
+export interface ReportBreakdown {
+  partners: PartnerRevenueRow[];
+  courts: CourtRevenueRow[];
+}
 
 function createReportApi(basePath: string) {
   return {
-    async overview(range: ReportRange) {
+    async overview(range: ReportQuery) {
       const { data } = await api.get<ApiResponse<ReportOverview>>(`${basePath}/overview`, { params: range });
       return data.data;
     },
-    async revenue(range: ReportRange) {
+    async revenue(range: ReportQuery) {
       const { data } = await api.get<ApiResponse<{ bucket: string; series: ReportRevenuePoint[] }>>(`${basePath}/revenue`, { params: range });
       return data.data;
     },
-    async bookings(range: ReportRange) {
+    async bookings(range: ReportQuery) {
       const { data } = await api.get<ApiResponse<ReportBookingRow[]>>(`${basePath}/bookings`, { params: range });
       return data.data;
     },
-    async services(range: ReportRange) {
+    async services(range: ReportQuery) {
       const { data } = await api.get<ApiResponse<ReportServiceRow[]>>(`${basePath}/services`, { params: range });
       return data.data;
     },
-    async exportReport(range: ReportRange, format: "excel" | "pdf") {
+    async exportReport(range: ReportQuery, format: "excel" | "pdf") {
       const { data } = await api.get<Blob>(`${basePath}/export`, { params: { ...range, format }, responseType: "blob" });
       return data;
     }
   };
 }
 
-export const adminReportApi = createReportApi("/admin/report");
+export const adminReportApi = {
+  ...createReportApi("/admin/report"),
+  async breakdown(range: ReportRange) {
+    const { data } = await api.get<ApiResponse<ReportBreakdown>>("/admin/report/breakdown", { params: range });
+    return data.data;
+  }
+};
 export const partnerReportApi = createReportApi("/partner/report");
 export const recipientReportApi = createReportApi("/recipient/report");
 

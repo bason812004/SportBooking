@@ -344,6 +344,8 @@ model User {
   refreshTokens                                                       RefreshToken[]
   reports                                                             Report[]                 @relation("ReportAuthor")
   resolvedReports                                                     Report[]                 @relation("ReportResolver")
+  reportMessages                                                      ReportMessage[]          @relation("ReportMessageAuthor")
+  servicePriceChanges                                                 ServicePriceHistory[]    @relation("ServicePriceChangedBy")
   reviews                                                             Review[]
   team_post_members                                                   team_post_members[]
   team_post_messages                                                  team_post_messages[]
@@ -1306,9 +1308,27 @@ model Report {
   court       Court        @relation(fields: [courtId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   user        User         @relation("ReportAuthor", fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   resolver    User?        @relation("ReportResolver", fields: [resolvedBy], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  messages    ReportMessage[]
 
   @@index([status], map: "idx_reports_status")
   @@map("reports")
+}
+
+/// The conversation about a report (database/38_report_messages.sql). Append-only: a trigger refuses updates and deletes.
+model ReportMessage {
+  id         String   @id @default(dbgenerated("('rm'::text || lpad((nextval('seq_report_messages'::regclass))::text, 4, '0'::text))")) @db.VarChar(20)
+  reportId   String   @map("report_id") @db.VarChar(20)
+  authorId   String?  @map("author_id") @db.VarChar(20)
+  authorRole String   @map("author_role") @db.VarChar(20)
+  kind       String   @default("MESSAGE") @db.VarChar(20)
+  content    String
+  measures   Json?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  report     Report   @relation(fields: [reportId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  author     User?    @relation("ReportMessageAuthor", fields: [authorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([reportId, createdAt], map: "idx_report_messages_report")
+  @@map("report_messages")
 }
 
 model AdminNotificationOutbox {
@@ -1703,11 +1723,31 @@ model Service {
   bookingServices BookingService[]
   purchaseItems  PurchaseOrderItem[]
   rentalItems    RentalItem[]
+  priceHistory   ServicePriceHistory[]
 
   @@unique([courtId, name], map: "services_court_id_name_key")
   @@index([partnerId], map: "idx_services_partner_id")
   @@index([categoryId], map: "idx_services_category_id")
   @@map("services")
+}
+
+/// When a service's sale and cost prices were set (database/39_service_price_history.sql). Append-only.
+/// kind: INITIAL (price when recording started), CREATED (price at creation) or CHANGED (old and new kept).
+model ServicePriceHistory {
+  id           String   @id @default(dbgenerated("('sph'::text || lpad((nextval('seq_service_price_history'::regclass))::text, 5, '0'::text))")) @db.VarChar(20)
+  serviceId    String   @map("service_id") @db.VarChar(20)
+  kind         String   @db.VarChar(10)
+  oldPrice     Decimal? @map("old_price") @db.Decimal(12, 2)
+  newPrice     Decimal  @map("new_price") @db.Decimal(12, 2)
+  oldCostPrice Decimal? @map("old_cost_price") @db.Decimal(12, 2)
+  newCostPrice Decimal  @map("new_cost_price") @db.Decimal(12, 2)
+  changedById  String?  @map("changed_by") @db.VarChar(20)
+  changedAt    DateTime @default(now()) @map("changed_at") @db.Timestamptz(6)
+  service      Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  changedBy    User?    @relation("ServicePriceChangedBy", fields: [changedById], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([serviceId, changedAt(sort: Desc)], map: "idx_service_price_history_service")
+  @@map("service_price_history")
 }
 
 model ServiceInventory {

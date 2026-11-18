@@ -17,9 +17,13 @@ mock.module("./bookingOverdue.repository.js", { namedExports: { bookingOverdueRe
   markAutoFinished: async (id: string, from: string, status: string) => { calls.push(["mark", id, from, status]); return moved; }
 } } });
 mock.module("../bookings/booking.repository.js", { namedExports: { bookingRepository: { onlineCollectedAmount: async () => onlinePaid } } });
-mock.module("../cashier/cashier.repository.js", { namedExports: { cashierRepository: {
-  releaseBookingServices: async (id: string) => { calls.push(["releaseServices", id]); }
-} } });
+// A no-show's services go back to stock inside the finishing transaction (inventory.stock.ts).
+mock.module("../inventory/inventory.stock.js", { namedExports: {
+  releaseBookingStock: async (db: unknown, id: string, _reason: string, referenceType: string) => {
+    calls.push(["releaseServices", id, referenceType, db === tx]);
+    return 1;
+  }
+} });
 mock.module("../notifications/notification.service.js", { namedExports: { notificationService: {
   notifyCourtStaff: async (courtId: string, notice: any) => { calls.push(["staff", courtId, notice.type, notice.content]); },
   create: async (notice: any) => { calls.push(["customer", notice.userId, notice.type]); }
@@ -73,6 +77,8 @@ describe("the overdue booking job", () => {
       ["overdue", 48, false],
       ["mark", "b1", "CONFIRMED", "NO_SHOW"],
       ["finish", "b1", "NO_SHOW"],
+      // Its pre-ordered services go back to stock in the same transaction.
+      ["releaseServices", "b1", "BOOKING_NO_SHOW", true],
       // Audited by the system (no actor) in the same transaction, with what the decision rested on.
       [
         "audit",
@@ -81,8 +87,7 @@ describe("the overdue booking job", () => {
         "b1",
         { bookingCode: "BK-b1", previousStatus: "CONFIRMED", status: "NO_SHOW", checkedIn: false, onlinePaid: 90000, courtDue: 300000 },
         true
-      ],
-      ["releaseServices", "b1"]
+      ]
     ]);
     assert.equal(calls.find((call) => call[0] === "staff")?.[2], "BOOKING_AUTO_FINISHED");
     assert.deepEqual(calls.find((call) => call[0] === "customer"), ["customer", "u1", "BOOKING_NO_SHOW"]);

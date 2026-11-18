@@ -7,3 +7,14 @@ export const createReportSchema = z.object({
     description: z.string().trim().max(1000, "Mô tả tối đa 1000 ký tự").optional()
   })
 });
+
+const reportIdParams = z.object({ id: z.string().trim().min(1).max(40) });
+
+export const reportThreadSchema = z.object({ params: reportIdParams });
+
+export const reportReplySchema = z.object({
+  params: reportIdParams,
+  body: z.object({
+    content: z.string().trim().min(1, "Nhập nội dung trả lời").max(1000, "Nội dung tối đa 1000 ký tự")
+  })
+});

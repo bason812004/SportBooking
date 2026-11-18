@@ -150,7 +150,7 @@ export function AdminBookingsPage() {
         subtitle="Theo dõi, lọc và xử lý booking toàn hệ thống."
         actions={
           <Button
-            className="bg-white/20 text-white ring-1 ring-white/30 hover:bg-white/30"
+            variant="secondary"
             onClick={() => { setPage(1); setFilters(defaultFilters); period.reset(); }}
           >
             Xóa lọc

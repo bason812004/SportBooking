@@ -1,33 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import {
-  AlertTriangle,
-  CalendarClock,
-  CheckCircle2,
-  Clock,
-  LogIn,
-  LogOut,
-  PhoneCall,
-  RefreshCcw,
-  ShoppingBag,
-  TimerReset,
-  Users
-} from "lucide-react";
+import { LogIn, LogOut, PhoneCall, RefreshCcw, ShoppingBag, TimerReset } from "lucide-react";
 import { recipientApi, type RecipientOperationItem } from "../../features/recipient/api/recipientApi";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
-import { PageHero } from "../../components/common/PageHero";
+import { TopBarActions } from "../../components/layout/TopBarActions";
 import { Button } from "../../components/ui/Button";
 import { Modal } from "../../components/ui/Modal";
 import { ConfirmModal } from "../../components/common/ConfirmModal";
 import { AffectedBookingsModal } from "../../features/partner/components/AffectedBookingsModal";
 import { useBalanceDueRedirect } from "../../features/cashier/hooks/useBalanceDueRedirect";
 import { useWalkInBooking, WalkInDetailsFields } from "../../features/recipient/components/WalkInBookingForm";
-import { StaffScheduleGrid, type ServiceTarget } from "../../features/recipient/components/StaffScheduleGrid";
+import type { ServiceTarget } from "../../features/recipient/components/StaffScheduleGrid";
+import { CourtTimelineBoard } from "../../features/recipient/components/CourtTimelineBoard";
 import { LiveBookingBillSummary, LiveBookingServicePanel } from "../../features/cashier/components/LiveBookingServicePanel";
 import { useLiveBookingServices } from "../../features/cashier/hooks/useLiveBookingServices";
 import { formatYmd } from "../../features/bookings/components/BookingCalendar/utils";
 import { formatMoney } from "../../utils/formatters";
+import { surfaceShortName } from "../../lib/courtNames";
 
 const statusMeta: Record<RecipientOperationItem["status"], { label: string; className: string; dotClassName: string }> = {
   AVAILABLE: { label: "Sân trống", className: "border-emerald-200 bg-emerald-50 text-emerald-700", dotClassName: "bg-emerald-500" },
@@ -41,120 +31,6 @@ const statusMeta: Record<RecipientOperationItem["status"], { label: string; clas
 const extendOptions = [15, 30, 60];
 // Local date, not toISOString() (UTC): before 07:00 in Vietnam that would still be yesterday.
 const todayValue = () => formatYmd(new Date());
-
-function SummaryStat({
-  label,
-  value,
-  tone,
-  iconBg,
-  icon: Icon
-}: {
-  label: string;
-  value: number;
-  tone: string;
-  iconBg: string;
-  icon: typeof Users;
-}) {
-  return (
-    <div className="flex flex-1 items-center gap-2.5 px-3 py-2.5 first:pl-0 last:pr-0">
-      <span className={`rounded-lg p-1.5 ${iconBg}`}>
-        <Icon className="h-4 w-4" />
-      </span>
-      <div>
-        <p className="text-xs font-semibold text-slate-500">{label}</p>
-        <p className={`text-lg font-black leading-tight ${tone}`}>{value}</p>
-      </div>
-    </div>
-  );
-}
-
-function SurfaceTile({
-  item,
-  selected,
-  onSelect
-}: {
-  item: RecipientOperationItem;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  const meta = statusMeta[item.status];
-  const surface = item.surface;
-  const preview = item.currentBooking
-    ? item.currentBooking.customerName
-    : item.status === "OVERDUE" && item.latestEndedBooking
-      ? item.latestEndedBooking.customerName
-      : item.nextBooking
-        ? `${item.nextBooking.startTime} · ${item.nextBooking.customerName}`
-        : surface.status === "ACTIVE"
-          ? "Sẵn sàng nhận khách"
-          : "Đang bảo trì";
-
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={`flex w-52 shrink-0 items-center gap-2.5 rounded-xl border bg-white px-3 py-2.5 text-left shadow-sm transition hover:shadow-md ${
-        selected ? "border-blue-500 bg-blue-50/60 ring-4 ring-blue-200" : "border-slate-200"
-      }`}
-    >
-      <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${meta.dotClassName}`} />
-      <div className="min-w-0 flex-1">
-        <h2 className="truncate text-sm font-black text-slate-800">{surface.name}</h2>
-        <p className="truncate text-xs font-semibold text-slate-500">{preview}</p>
-      </div>
-      {selected ? <CheckCircle2 className="h-4 w-4 shrink-0 text-blue-600" /> : null}
-    </button>
-  );
-}
-
-function SurfaceSchedule({ courtSurfaceId, surfaceStatus }: { courtSurfaceId: string; surfaceStatus: "ACTIVE" | "INACTIVE" }) {
-  const today = todayValue();
-  const availability = useQuery({
-    queryKey: ["recipient-surface-availability", courtSurfaceId, today],
-    queryFn: () => recipientApi.surfaceAvailability(courtSurfaceId, today),
-    enabled: surfaceStatus === "ACTIVE",
-    staleTime: 30_000
-  });
-
-  if (surfaceStatus !== "ACTIVE") {
-    return <p className="text-sm font-semibold text-slate-500">Sân đang tạm ngưng, không có khung giờ để hiển thị.</p>;
-  }
-
-  if (availability.isLoading) {
-    return (
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-        {Array.from({ length: 12 }).map((_, index) => (
-          <div key={index} className="h-12 animate-pulse rounded-lg bg-slate-100" />
-        ))}
-      </div>
-    );
-  }
-
-  const slots = availability.data?.slots ?? [];
-  if (!slots.length) {
-    return <p className="text-sm font-semibold text-slate-500">Chưa có khung giờ nào cho hôm nay.</p>;
-  }
-
-  return (
-    <div>
-      <p className="mb-2 text-xs text-slate-500">
-        Giờ hoạt động {availability.data?.openingTime} - {availability.data?.closingTime}
-      </p>
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-        {slots.map((slot) => (
-          <div
-            key={`${slot.startTime}-${slot.endTime}`}
-            className={`rounded-lg border px-2 py-1.5 text-center text-xs font-bold ${
-              slot.status === "BOOKED" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"
-            }`}
-          >
-            {slot.startTime} - {slot.endTime}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 export function RecipientCourtSurfacesPage() {
   const queryClient = useQueryClient();
@@ -206,9 +82,9 @@ export function RecipientCourtSurfacesPage() {
         ? `Sớm ${earlyQuote.earlyMinutes} phút — miễn phí.`
         : `Sớm ${earlyQuote.earlyMinutes} phút: miễn phí ${earlyQuote.freeMinutes} phút, tính ${earlyQuote.chargedMinutes} phút · ${formatMoney(earlyQuote.amount)}`;
 
+  // One day for every sub-court row: picking another sub-court keeps the day being looked at.
   const [walkInDate, setWalkInDate] = useState(todayValue());
   useEffect(() => {
-    setWalkInDate(todayValue());
     setServiceTarget("walkin");
   }, [selected?.surface.id]);
 
@@ -217,7 +93,12 @@ export function RecipientCourtSurfacesPage() {
     : null;
 
   const canBookAdvance = Boolean(selected && selected.surface.status === "ACTIVE");
-  const surfaceNames = useMemo(() => Object.fromEntries(items.map((item) => [item.surface.id, item.surface.name])), [items]);
+  // Short names ("Sân 04") in the booking form's list of picked slots: the page is about one venue.
+  const venueName = operations.data?.court.name ?? "";
+  const surfaceNames = useMemo(
+    () => Object.fromEntries(items.map((item) => [item.surface.id, surfaceShortName(item.surface.name, venueName)])),
+    [items, venueName]
+  );
   const walkIn = useWalkInBooking({
     courtSurfaceId: canBookAdvance ? selected!.surface.id : "",
     courtId: canBookAdvance ? operations.data?.court.id : undefined,
@@ -238,7 +119,7 @@ export function RecipientCourtSurfacesPage() {
 
   // The service panel sits below the surface tiles, so opening it would otherwise leave staff
   // looking at the tiles and having to scroll down on every single order.
-  const workAreaRef = useRef<HTMLElement | null>(null);
+  const workAreaRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (walkIn.showServices) workAreaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [walkIn.showServices]);
@@ -350,74 +231,56 @@ export function RecipientCourtSurfacesPage() {
 
   return (
     <div className="space-y-5">
-      <PageHero
-        eyebrow="Vận hành"
-        title="Đặt sân tại quầy"
-        subtitle={`Theo dõi khách đang sử dụng từng sân con của ${data.court.name} - cập nhật lúc ${data.nowTime} ngày ${new Date(data.date).toLocaleDateString("vi-VN")}.`}
-        actions={
-          <Button variant="secondary" onClick={() => refresh()}>
-            <RefreshCcw className="h-4 w-4" />
-            Làm mới
-          </Button>
-        }
-      />
+      {/* In the top bar, next to the bell, rather than in a row of its own. */}
+      <TopBarActions>
+        <button
+          type="button"
+          onClick={() => refresh()}
+          disabled={operations.isFetching}
+          title={`Dữ liệu cập nhật lúc ${data.nowTime} ngày ${new Date(data.date).toLocaleDateString("vi-VN")}`}
+          className="inline-flex h-[38px] items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 text-sm font-semibold text-slate-700 transition hover:border-teal-500 hover:bg-teal-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 disabled:cursor-wait sm:px-3.5"
+        >
+          <RefreshCcw className={`h-4 w-4 ${operations.isFetching ? "animate-spin" : ""}`} aria-hidden="true" />
+          <span className="hidden sm:inline">Làm mới</span>
+          <span className="sr-only sm:hidden">Làm mới</span>
+        </button>
+      </TopBarActions>
 
-      <div className="flex divide-x divide-slate-200 overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <SummaryStat label="Đang có khách" value={data.summary.occupied} tone="text-blue-700" iconBg="bg-blue-100 text-blue-700" icon={Users} />
-        <SummaryStat label="Sắp hết giờ" value={data.summary.endingSoon} tone="text-amber-700" iconBg="bg-amber-100 text-amber-700" icon={Clock} />
-        <SummaryStat label="Quá giờ" value={data.summary.overdue} tone="text-red-700" iconBg="bg-red-100 text-red-700" icon={AlertTriangle} />
-        <SummaryStat label="Sắp có khách" value={data.summary.reservedSoon} tone="text-indigo-700" iconBg="bg-indigo-100 text-indigo-700" icon={CalendarClock} />
-        <SummaryStat label="Đang trống" value={data.summary.available} tone="text-emerald-700" iconBg="bg-emerald-100 text-emerald-700" icon={CheckCircle2} />
-      </div>
-
-      {items.length === 0 ? (
-        <EmptyState title="Cơ sở chưa có sân con nào" />
-      ) : (
-        <div className="space-y-5">
-          <div className="flex gap-3 overflow-x-auto pb-2">
-            {items.map((item) => (
-              <SurfaceTile
-                key={item.surface.id}
-                item={item}
-                selected={selected?.surface.id === item.surface.id}
-                onSelect={() => setSelectedSurfaceId(item.surface.id)}
+      {/* One panel: picking the sub-court and the time together (one block: days, sub-courts × hours, legend),
+          the booking form and the selected sub-court's actions beside it. (Court status counts are on the dashboard.) */}
+      {/* On a wide screen the panel fills the screen's height: the booking form stretches to it, and a column longer
+          than that scrolls inside. The layout leaves 48px under the content (pb-12); this panel takes 32px of it
+          (taller by 32px, pulled up by -mb-8), so 16px stay below it and the page still does not scroll. */}
+      <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4 lg:-mb-8 lg:h-[calc(100dvh-5.75rem)] lg:min-h-[36rem]">
+        {items.length === 0 ? (
+          <EmptyState title="Cơ sở chưa có sân con nào" />
+        ) : selected ? (
+          <div className="grid grid-cols-1 gap-6 lg:h-full lg:grid-cols-7 lg:grid-rows-[minmax(0,1fr)]">
+            <div ref={workAreaRef} className="min-w-0 scroll-mt-16 lg:col-span-5 lg:flex lg:min-h-0 lg:flex-col lg:overflow-y-auto">
+              <CourtTimelineBoard
+                className="lg:min-h-[24rem] lg:flex-1"
+                items={items}
+                venueName={data.court.name}
+                selectedSurfaceId={selected.surface.id}
+                onSelectSurface={setSelectedSurfaceId}
+                bookingDate={walkInDate}
+                onDateChange={setWalkInDate}
+                walkIn={walkIn}
+                liveBooking={canBookAdvance ? liveBooking : null}
+                liveServices={liveServices}
+                serviceTarget={activeServiceTarget}
+                onServiceTargetChange={setServiceTarget}
               />
-            ))}
-          </div>
-
-          <section ref={workAreaRef} className="scroll-mt-4 rounded-2xl border border-slate-200 bg-white p-4">
-            {selected ? (
-              <div className="grid gap-6 lg:grid-cols-7">
-                <div className="lg:col-span-5">
-                  {canBookAdvance ? (
-                    <StaffScheduleGrid
-                      courtSurfaceId={selected.surface.id}
-                      surfaceName={selected.surface.name}
-                      bookingDate={walkInDate}
-                      onDateChange={setWalkInDate}
-                      walkIn={walkIn}
-                      liveBooking={liveBooking}
-                      liveServices={liveServices}
-                      serviceTarget={activeServiceTarget}
-                      onServiceTargetChange={setServiceTarget}
-                    />
-                  ) : (
-                    <>
-                      <p className="mb-3 text-sm font-black text-slate-700">
-                        Khung giờ ngày {new Date(walkInDate).toLocaleDateString("vi-VN")} - {selected.surface.name}
-                      </p>
-                      <SurfaceSchedule courtSurfaceId={selected.surface.id} surfaceStatus={selected.surface.status} />
-                      {/* Surface paused mid-session: the schedule grid is gone, so serve the guest from here. */}
-                      {liveBooking ? (
-                        <div className="mt-4">
-                          <LiveBookingServicePanel bookingId={liveBooking.id} onChanged={refresh} />
-                        </div>
-                      ) : null}
-                    </>
-                  )}
+              {/* Sub-court paused mid-session: it takes no bookings, but the guest on it can still be served. */}
+              {!canBookAdvance && liveBooking ? (
+                <div className="mt-4">
+                  <LiveBookingServicePanel bookingId={liveBooking.id} onChanged={refresh} />
                 </div>
+              ) : null}
+            </div>
 
-                <div className="space-y-2.5 lg:col-span-2">
+                {/* The booking form sits left of the schedule on wide screens; on a phone it stays below it. */}
+                <div className="min-w-0 space-y-2.5 lg:order-first lg:col-span-2 lg:flex lg:min-h-0 lg:flex-col lg:overflow-y-auto lg:pr-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar]:w-1.5">
                   {servingLiveGuest ? (
                     <LiveBookingBillSummary
                       bookingId={liveBooking!.id}
@@ -426,9 +289,19 @@ export function RecipientCourtSurfacesPage() {
                     />
                   ) : (
                     <>
-                      <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-black ${statusMeta[selected.status].className}`}>
-                        {statusMeta[selected.status].label}
-                      </span>
+                      {/* Which sub-court the actions below are for: the one picked in the timeline, large so staff see at
+                          a glance which court they are booking or serving. */}
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.04em] text-[#64748b]">Sân đang chọn</p>
+                          <h2 className="truncate text-[22px] font-extrabold leading-[1.3] text-[#064e3b]">
+                            {surfaceShortName(selected.surface.name, data.court.name)}
+                          </h2>
+                        </div>
+                        <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-black ${statusMeta[selected.status].className}`}>
+                          {statusMeta[selected.status].label}
+                        </span>
+                      </div>
 
                       <div className="space-y-2.5">
                         {selected.status === "OVERDUE" && selected.latestEndedBooking ? (
@@ -473,7 +346,7 @@ export function RecipientCourtSurfacesPage() {
                         ) : null}
                       </div>
 
-                      <div className="space-y-2.5">
+                      <div className="space-y-2.5 lg:flex lg:flex-1 lg:flex-col">
                         {selected.status === "OVERDUE" && selected.latestEndedBooking ? (
                           <>
                             <div>
@@ -571,9 +444,9 @@ export function RecipientCourtSurfacesPage() {
                         ) : null}
 
                         {canBookAdvance ? (
-                          <div className="space-y-2">
+                          <div className="space-y-2 lg:flex lg:flex-1 lg:flex-col">
                             <p className="text-sm font-black text-slate-500">Đặt sân cho khách</p>
-                            <WalkInDetailsFields walkIn={walkIn} />
+                            <WalkInDetailsFields walkIn={walkIn} fill />
                           </div>
                         ) : null}
 
@@ -604,13 +477,11 @@ export function RecipientCourtSurfacesPage() {
                     </>
                   )}
                 </div>
-              </div>
-            ) : (
-              <p className="py-6 text-center text-sm font-semibold text-slate-500">Chọn một sân con để xem chi tiết.</p>
-            )}
-          </section>
-        </div>
-      )}
+          </div>
+        ) : (
+          <p className="py-6 text-center text-sm font-semibold text-slate-500">Chọn một sân con để xem chi tiết.</p>
+        )}
+      </section>
 
       <Modal isOpen={extendConflict != null} onClose={() => setExtendConflict(null)} title="Sân đã có lịch, chọn sân trống để chuyển khách">
         {extendConflict ? (

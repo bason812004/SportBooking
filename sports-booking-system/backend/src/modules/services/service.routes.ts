@@ -24,6 +24,14 @@ serviceRoutes.get("/partner", authMiddleware, requireRole(UserRole.PARTNER, User
 serviceRoutes.post("/partner", authMiddleware, requireRole(UserRole.PARTNER), validate(createServiceSchema), asyncHandler(serviceController.createService));
 serviceRoutes.patch("/partner/:id", authMiddleware, requireRole(UserRole.PARTNER), validate(updateServiceSchema), asyncHandler(serviceController.updateService));
 serviceRoutes.delete("/partner/:id", authMiddleware, requireRole(UserRole.PARTNER), validate(serviceIdParamsSchema), asyncHandler(serviceController.deleteService));
+// When the sale and cost prices were set (read only; the partner and their staff).
+serviceRoutes.get(
+  "/partner/:id/price-history",
+  authMiddleware,
+  requireRole(UserRole.PARTNER, UserRole.RECIPIENT),
+  validate(serviceIdParamsSchema),
+  asyncHandler(serviceController.priceHistory)
+);
 serviceRoutes.post(
   "/partner/image",
   authMiddleware,

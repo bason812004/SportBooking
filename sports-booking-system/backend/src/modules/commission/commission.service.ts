@@ -1,6 +1,7 @@
 import type { Booking, PartnerProfile } from "@prisma/client";
 import { NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { vietnamNow } from "../../shared/utils/time.js";
+import { partnerRateSince } from "./commission.rateSince.js";
 import { commissionRepository } from "./commission.repository.js";
 import {
   BOOKING_DEPOSIT_KEY,
@@ -57,18 +58,49 @@ function summarize(
 }
 
 export const commissionService = {
-  /** The default rate with who it applies to: the partners without a rate of their own. */
+  /**
+   * The default rate with who it applies to (the partners without a rate of their own), since when it applies, and
+   * every partner's current rate with the day it took effect (see partnerRateSince).
+   */
   async defaultRate() {
-    const [setting, coverage] = await Promise.all([commissionRepository.setting(DEFAULT_COMMISSION_KEY), commissionRepository.rateCoverage()]);
+    const [setting, rows, defaultChange] = await Promise.all([
+      commissionRepository.setting(DEFAULT_COMMISSION_KEY),
+      commissionRepository.partnerRateRows(),
+      commissionRepository.latestDefaultChange()
+    ]);
+    const rate = asNumber(setting?.numericValue ?? 10);
+    // Every partner is in the rows, so who follows the default and who has a rate of its own is read from them.
+    const withOwnRate = rows.filter((row) => row.commissionRate !== null);
     return {
-      rate: asNumber(setting?.numericValue ?? 10),
-      partnersUsingDefault: coverage.usingDefault,
-      overrides: coverage.overrides.map((partner) => ({ partnerId: partner.id, businessName: partner.businessName, rate: asNumber(partner.commissionRate) }))
+      rate,
+      // No change in the audit log: the setting was last written then (e.g. when the database was seeded).
+      defaultSince: defaultChange?.at ?? setting?.updatedAt ?? null,
+      defaultChangedBy: defaultChange?.changedBy ?? null,
+      partnersUsingDefault: rows.length - withOwnRate.length,
+      overrides: withOwnRate.map((row) => ({ partnerId: row.id, businessName: row.businessName, rate: asNumber(row.commissionRate) })),
+      partners: rows.map((row) => {
+        const overrideRate = row.commissionRate === null ? null : asNumber(row.commissionRate);
+        const since = partnerRateSince({
+          overrideRate,
+          joinedAt: row.joinedAt,
+          partnerChange: row.partnerChangeAt ? { at: row.partnerChangeAt, changedBy: row.partnerChangeBy } : null,
+          defaultChange
+        });
+        return {
+          partnerId: row.id,
+          businessName: row.businessName,
+          rate: overrideRate ?? rate,
+          source: overrideRate === null ? ("DEFAULT" as const) : ("OVERRIDE" as const),
+          since: since.at,
+          sinceReason: since.reason,
+          changedBy: since.changedBy
+        };
+      })
     };
   },
 
-  rateHistory() {
-    return commissionRepository.rateHistory();
+  rateHistory(limit?: number) {
+    return commissionRepository.rateHistory(limit);
   },
 
   async updateDefaultRate(rate: number, db?: DbClient) {

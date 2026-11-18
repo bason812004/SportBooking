@@ -53,8 +53,9 @@ export function BookingCalendar({
   return (
     <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="min-w-[860px]">
-        <div className="grid grid-cols-[72px_repeat(7,minmax(0,1fr))] border-b border-slate-100 bg-slate-50">
-          <div className="px-3 py-3 text-[10px] font-black uppercase tracking-wide text-slate-500">
+        {/* Time column 64px wide; type sizes: hours and prices 13px, day titles 13px, dates 12px. */}
+        <div className="grid grid-cols-[64px_repeat(7,minmax(0,1fr))] border-b border-slate-100 bg-slate-50">
+          <div className="flex items-center justify-center px-2 py-3 text-[13px] font-semibold text-[#475569]">
             {language === "en" ? "Time" : "Giờ"}
           </div>
           {days.map((day, index) => {
@@ -69,7 +70,7 @@ export function BookingCalendar({
                   isToday ? "bg-emerald-50 text-emerald-700" : "text-slate-700"
                 }`}
               >
-                <span className="text-[10px] font-black uppercase tracking-wide">
+                <span className="text-[13px] font-bold">
                   {day.toLocaleDateString(language === "en" ? "en-US" : "vi-VN", {
                     weekday: "short"
                   })}
@@ -81,7 +82,7 @@ export function BookingCalendar({
                 >
                   {day.getDate()}
                 </span>
-                <span className="text-[10px] font-bold text-slate-400">
+                <span className="text-xs font-semibold text-slate-400">
                   {day.toLocaleDateString(language === "en" ? "en-US" : "vi-VN", {
                     month: "short"
                   })}
@@ -92,7 +93,7 @@ export function BookingCalendar({
           })}
         </div>
 
-        <div className="grid grid-cols-[72px_repeat(7,minmax(0,1fr))]">
+        <div className="grid grid-cols-[64px_repeat(7,minmax(0,1fr))]">
           <Timeline hours={hours} language={language} />
           {days.map((day) => {
             const dateKey = formatYmd(day);

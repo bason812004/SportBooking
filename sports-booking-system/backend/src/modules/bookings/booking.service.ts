@@ -77,8 +77,21 @@ export type BookingCheckoutInput = BookingQuoteInput & {
 };
 
 import { calculateBookingPrice } from "../pricing/bookingPricing.service.js";
+import { notifyStockAlerts } from "../inventory/inventory.alerts.js";
+import type { StockAlert } from "../inventory/inventory.stock.js";
 import { holidayRepository } from "../holidays/holiday.repository.js";
 import { piecesTotal, priceBands, priceOrThrow } from "../../shared/utils/courtPricing.js";
+
+/**
+ * Runs a booking write whose services take stock, then tells each partner which products it took to their reorder
+ * level or out (only once the booking has committed; a failed booking tells no one).
+ */
+async function withStockAlerts<T>(run: (alerts: StockAlert[]) => Promise<T>): Promise<T> {
+  const alerts: StockAlert[] = [];
+  const result = await run(alerts);
+  void notifyStockAlerts(alerts);
+  return result;
+}
 
 export const bookingService = {
   async quote(userId: string, input: BookingQuoteInput) {
@@ -184,7 +197,8 @@ export const bookingService = {
       const bCode = bookingCode();
 
       if (input.paymentType === "PAY_AT_COURT" || paymentAmount === 0) {
-        const result = await bookingRepository.createPayAtCourtCheckout({
+        const result = await withStockAlerts((alerts) => bookingRepository.createPayAtCourtCheckout({
+      alerts,
           bookingCode: bCode,
           userId,
           courtId: input.courtId,
@@ -197,7 +211,7 @@ export const bookingService = {
           totalAmount: quoteData.totalAmount,
           voucherId: quoteData.voucherId ?? undefined,
           note: input.note
-        });
+        }));
 
         if ("conflict" in result && result.conflict) {
           throw new ConflictError("Khung giờ này đã có người đặt.", "BOOKING_CONFLICT");
@@ -228,7 +242,10 @@ export const bookingService = {
         description: `Thanh toan booking ${bCode}`,
         expiresAt
       });
-      const result = await bookingRepository.createCheckout({
+      // Pay-at-court returned above: what is left is an online payment (kept narrowed inside the callback).
+      const onlinePaymentType = input.paymentType;
+      const result = await withStockAlerts((alerts) => bookingRepository.createCheckout({
+      alerts,
         bookingCode: bCode,
         userId,
         courtId: input.courtId,
@@ -240,7 +257,7 @@ export const bookingService = {
         voucherDiscountAmount: quoteData.voucherDiscountAmount,
         totalAmount: quoteData.totalAmount,
         depositAmount: minimumDepositAmount,
-        paymentType: input.paymentType,
+        paymentType: onlinePaymentType,
         paymentAmount,
         voucherId: quoteData.voucherId ?? undefined,
         note: input.note,
@@ -250,7 +267,7 @@ export const bookingService = {
         qrPayload: providerResult.qrPayload,
         paymentReference: ref,
         expiresAt
-      });
+      }));
 
       if ("conflict" in result && result.conflict) {
         throw new ConflictError("Khung giờ này đã có người đặt.", "BOOKING_CONFLICT");
@@ -291,13 +308,14 @@ export const bookingService = {
     });
 
     if (input.paymentType === "PAY_AT_COURT" || paymentAmount === 0) {
-      const result = await bookingRepository.createPayAtCourtOrderCheckout({
+      const result = await withStockAlerts((alerts) => bookingRepository.createPayAtCourtOrderCheckout({
+      alerts,
         userId,
         courtId: input.courtId,
         days: daysData,
         voucherId: quoteData.voucherId ?? undefined,
         note: input.note
-      });
+      }));
 
       if ("conflict" in result && result.conflict) {
         throw new ConflictError(`Khung giờ ngày ${result.conflictDate} đã có người đặt.`, "BOOKING_CONFLICT");
@@ -332,14 +350,17 @@ export const bookingService = {
       description: `Thanh toan booking order ${extOrderId}`,
       expiresAt
     });
-    const result = await bookingRepository.createOrderCheckout({
+    // Pay-at-court returned above: what is left is an online payment (kept narrowed inside the callback).
+    const onlinePaymentType = input.paymentType;
+    const result = await withStockAlerts((alerts) => bookingRepository.createOrderCheckout({
+      alerts,
       userId,
       courtId: input.courtId,
       days: daysData,
       subtotal: quoteData.subtotal,
       voucherDiscountAmount: quoteData.voucherDiscountAmount,
       totalAmount: quoteData.totalAmount,
-      paymentType: input.paymentType,
+      paymentType: onlinePaymentType,
       paymentAmount,
       voucherId: quoteData.voucherId ?? undefined,
       note: input.note,
@@ -349,7 +370,7 @@ export const bookingService = {
       qrPayload: providerResult.qrPayload,
       paymentReference: ref,
       expiresAt
-    });
+    }));
 
     if ("conflict" in result && result.conflict) {
       throw new ConflictError(`Khung giờ ngày ${result.conflictDate} đã có người đặt.`, "BOOKING_CONFLICT");
@@ -411,7 +432,8 @@ export const bookingService = {
     const courtTotal = Math.round(piecesTotal(pieces));
     const serviceTotal = serviceLines.reduce((sum, line) => sum + line.price * line.quantity, 0);
 
-    return bookingRepository.createWithServices({
+    return withStockAlerts((alerts) => bookingRepository.createWithServices({
+      alerts,
       bookingCode: bookingCode(),
       userId,
       courtId: input.courtId,
@@ -426,7 +448,7 @@ export const bookingService = {
       depositAmount: 0,
       paymentMethod: input.paymentMethod,
       services: serviceLines
-    });
+    }));
   },
 
   async getForUser(userId: string, bookingId: string) {

@@ -7,11 +7,20 @@ import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { adminApi } from "../../features/admin/api/adminApi";
 import { PageHero } from "../../components/common/PageHero";
+import { ReportExportButtons } from "../../components/common/ReportExportButtons";
 import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
-import { formatDateTime } from "../../lib/format";
-import type { CommissionRateChange } from "../../types/api";
+import { formatDate, formatDateTime } from "../../lib/format";
+import type { CommissionRateChange, CommissionRateSinceReason } from "../../types/api";
 
 const rateText = (rate: number | null | undefined) => (rate === null || rate === undefined ? "theo mặc định" : `${rate}%`);
+
+/** The same words as the exported file (backend commission.rateSince.ts). */
+const RATE_SINCE_REASON_TEXT: Record<CommissionRateSinceReason, string> = {
+  OVERRIDE_SET: "Đặt tỷ lệ riêng",
+  OVERRIDE_REMOVED: "Bỏ tỷ lệ riêng, về mặc định",
+  DEFAULT_CHANGED: "Đổi tỷ lệ mặc định",
+  JOINED: "Từ khi tham gia"
+};
 
 function describeChange(change: CommissionRateChange) {
   const meta = change.metadata ?? {};
@@ -66,8 +75,14 @@ export function AdminCommissionSettingsPage() {
         ) : (
           <>
             <p className="mt-1 text-sm text-slate-600">
-              Đang áp dụng <b>{config.data!.rate}%</b> cho <b>{config.data!.partnersUsingDefault}</b> đối tác;{" "}
-              <b>{config.data!.overrides.length}</b> đối tác có tỷ lệ riêng không bị ảnh hưởng.
+              Đang áp dụng <b>{config.data!.rate}%</b>
+              {config.data!.defaultSince && (
+                <>
+                  {" "}từ <b>{formatDateTime(config.data!.defaultSince)}</b>
+                  {config.data!.defaultChangedBy ? ` (${config.data!.defaultChangedBy} đổi)` : ""}
+                </>
+              )}{" "}
+              cho <b>{config.data!.partnersUsingDefault}</b> đối tác; <b>{config.data!.overrides.length}</b> đối tác có tỷ lệ riêng không bị ảnh hưởng.
             </p>
             <div className="mt-4 flex max-w-md items-end gap-3">
               <Input
@@ -89,33 +104,53 @@ export function AdminCommissionSettingsPage() {
       </section>
 
       <section className="rounded-2xl border border-line bg-white p-6">
-        <h2 className="text-lg font-bold">Đối tác có tỷ lệ riêng</h2>
-        <p className="mt-1 text-sm text-slate-600">Đổi hoặc bỏ tỷ lệ riêng trong trang hoa hồng của từng đối tác.</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold">Tỷ lệ của từng đối tác</h2>
+            <p className="mt-1 text-sm text-slate-600">Tỷ lệ đang áp dụng và từ khi nào. Đổi hoặc bỏ tỷ lệ riêng trong trang hoa hồng của từng đối tác.</p>
+          </div>
+          <ReportExportButtons filenameBase={`ty-le-hoa-hong-${new Date().toISOString().slice(0, 10)}`} onExport={adminApi.exportCommission} />
+        </div>
         <div className="mt-4">
           {config.isLoading ? (
             <LoadingState />
-          ) : config.isError ? null : config.data!.overrides.length === 0 ? (
-            <EmptyState title="Chưa có đối tác nào dùng tỷ lệ riêng." />
+          ) : config.isError ? null : config.data!.partners.length === 0 ? (
+            <EmptyState title="Chưa có đối tác nào." />
           ) : (
-            <Table minWidth="520px">
+            <Table minWidth="760px">
               <THead>
                 <tr>
                   <Th>Đối tác</Th>
-                  <Th className="text-right">Tỷ lệ riêng</Th>
-                  <Th className="text-right">So với mặc định</Th>
+                  <Th className="text-right">Tỷ lệ</Th>
+                  <Th>Loại</Th>
+                  <Th>Áp dụng từ</Th>
+                  <Th>Người đổi</Th>
                   <Th className="text-right">Thao tác</Th>
                 </tr>
               </THead>
               <TBody>
-                {config.data!.overrides.map((partner) => {
+                {config.data!.partners.map((partner) => {
                   const diff = Math.round((partner.rate - config.data!.rate) * 100) / 100;
                   return (
                     <Tr key={partner.partnerId}>
                       <Td className="font-medium">{partner.businessName}<br /><span className="text-xs text-slate-500">{partner.partnerId}</span></Td>
                       <Td className="text-right font-semibold">{partner.rate}%</Td>
-                      <Td className={`text-right ${diff < 0 ? "text-emerald-700" : diff > 0 ? "text-red-600" : "text-slate-500"}`}>
-                        {diff === 0 ? "bằng" : `${diff > 0 ? "+" : ""}${diff}%`}
+                      <Td>
+                        {partner.source === "DEFAULT" ? (
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">Mặc định</span>
+                        ) : (
+                          <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-bold text-sky-800">
+                            Riêng{diff === 0 ? "" : ` · ${diff > 0 ? "+" : ""}${diff}%`}
+                          </span>
+                        )}
                       </Td>
+                      <Td className="whitespace-nowrap">
+                        {/* Joining is a day; a change is a moment. */}
+                        <span className="font-semibold">{partner.sinceReason === "JOINED" ? formatDate(partner.since) : formatDateTime(partner.since)}</span>
+                        <br />
+                        <span className="text-xs text-slate-500">{RATE_SINCE_REASON_TEXT[partner.sinceReason]}</span>
+                      </Td>
+                      <Td className="text-sm text-slate-600">{partner.changedBy ?? "—"}</Td>
                       <Td className="text-right">
                         <Link className="font-semibold text-action hover:underline" to={`/admin/partners/${partner.partnerId}/commission`}>
                           Điều chỉnh

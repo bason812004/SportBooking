@@ -4,6 +4,8 @@ import { bookingBillInclude, bookingBillSelect } from "../../shared/utils/bookin
 import { settlementService } from "../settlements/settlement.service.js";
 import { voucherRepository } from "../vouchers/voucher.repository.js";
 import type { normalizeVoucherTerms } from "../vouchers/voucher.terms.js";
+import { COURT_DECISION_ACTIONS } from "./admin.courtReview.js";
+import { COURT_MEASURE_ACTIONS, PARTNER_ACCOUNT_MEASURE_ACTIONS, type ReportMeasure } from "../reports/report.thread.js";
 
 /** Where a write runs: the transaction a service opened (so it commits with its audit entry), or the pool. */
 type Db = Prisma.TransactionClient | typeof prisma;
@@ -17,6 +19,19 @@ export type CampaignAudience = {
   targetRole?: string;
   targetUserId?: string;
   targetPartnerId?: string;
+  /** USERS: the accounts the admin picked one by one. */
+  targetUserIds?: string[];
+};
+
+/** One account in one group of the recipient picker; an account in several groups comes once per group. */
+export type CampaignRecipientRow = {
+  groupId: string;
+  groupName: string;
+  groupDetail: string | null;
+  id: string;
+  fullName: string;
+  email: string;
+  role: string;
 };
 
 export type AdminVoucherRow = {
@@ -261,6 +276,37 @@ function adminCourtOrderBy(sortBy?: string, sortOrder?: string) {
 
 const USER_SORT_FIELDS = new Set(["fullName", "email", "role", "status", "createdAt"]);
 
+/** The admin user list's filters, shared by the list and the customer export so both show the same people. */
+function userListWhere(filters: { search?: string; role?: any; status?: any }): Prisma.UserWhereInput {
+  return {
+    role: filters.role,
+    status: filters.status,
+    OR: filters.search
+      ? [
+          { fullName: { contains: filters.search, mode: "insensitive" } },
+          { email: { contains: filters.search, mode: "insensitive" } },
+          { phone: { contains: filters.search, mode: "insensitive" } }
+        ]
+      : undefined
+  };
+}
+
+/** The admin partner list's filters, shared by the list and its export. */
+function partnerListWhere(filters: { search?: string; status?: any }): Prisma.PartnerProfileWhereInput {
+  return {
+    approvalStatus: filters.status,
+    OR: filters.search
+      ? [
+          { businessName: { contains: filters.search, mode: "insensitive" } },
+          { taxCode: { contains: filters.search, mode: "insensitive" } },
+          { user: { fullName: { contains: filters.search, mode: "insensitive" } } },
+          { user: { email: { contains: filters.search, mode: "insensitive" } } },
+          { user: { phone: { contains: filters.search, mode: "insensitive" } } }
+        ]
+      : undefined
+  };
+}
+
 function userOrderBy(sortBy?: string, sortOrder?: string): Prisma.UserOrderByWithRelationInput {
   const direction = sortOrder === "asc" ? "asc" : "desc";
   if (sortBy && USER_SORT_FIELDS.has(sortBy)) {
@@ -354,6 +400,7 @@ export const adminRepository = {
       prisma.user.count(),
       prisma.partnerProfile.count(),
       prisma.court.count(),
+      prisma.court.count({ where: { approvalStatus: "APPROVED" } }),
       prisma.booking.count(),
       prisma.booking.aggregate({ where: { paymentStatus: { in: ["PAID", "PARTIALLY_REFUNDED", "REFUNDED"] } }, _sum: { totalPrice: true, refundAmount: true } }),
       prisma.commissionTransaction.aggregate({ where: { createdAt: { gte: monthStart } }, _sum: { commissionAmount: true, netAmount: true } }),
@@ -376,17 +423,7 @@ export const adminRepository = {
   },
 
   users(page: number, limit: number, filters: { search?: string; role?: any; status?: any; sortBy?: string; sortOrder?: string }) {
-    const where: Prisma.UserWhereInput = {
-      role: filters.role,
-      status: filters.status,
-      OR: filters.search
-        ? [
-            { fullName: { contains: filters.search, mode: "insensitive" } },
-            { email: { contains: filters.search, mode: "insensitive" } },
-            { phone: { contains: filters.search, mode: "insensitive" } }
-          ]
-        : undefined
-    };
+    const where = userListWhere(filters);
     return Promise.all([
       prisma.user.findMany({
         where,
@@ -862,6 +899,17 @@ export const adminRepository = {
    * paid out through withdrawals that month, next to the wallet as it stands now. Read-only: partners are paid only
    * through their wallet (Quyết toán, Rút tiền), never from here.
    */
+  /** Per partner, the rates its earnings in the period were booked at, e.g. "10" or "10 | 12" when it changed. */
+  async monthCommissionRates(from: Date, to: Date) {
+    const rows = await prisma.$queryRaw<Array<{ partnerId: string; rates: string }>>`
+      select partner_id as "partnerId", string_agg(distinct (commission_rate::float)::text, ' | ') as rates
+      from commission_transactions
+      where transaction_type = 'EARNING' and created_at >= ${from} and created_at < ${to}
+      group by partner_id
+    `;
+    return new Map(rows.map((row) => [row.partnerId, row.rates]));
+  },
+
   async financeReconciliation(from: Date, to: Date) {
     return prisma.$queryRawUnsafe<any[]>(`
       with tx as (
@@ -930,9 +978,47 @@ export const adminRepository = {
     if (input.targetType === "USER") {
       return db.$queryRaw<Array<{ id: string }>>`select id from users where id = ${input.targetUserId ?? null} and status::text = 'ACTIVE'`;
     }
+    if (input.targetType === "USERS") {
+      return db.$queryRaw<Array<{ id: string }>>`
+        select id from users where id = any(${input.targetUserIds ?? []}::text[]) and status::text = 'ACTIVE' and id <> ${actorId}
+      `;
+    }
     return db.$queryRaw<Array<{ id: string }>>`
       select u.id from partner_profiles pp join users u on u.id = pp.user_id
       where pp.id = ${input.targetPartnerId ?? null} and u.status::text = 'ACTIVE'
+    `;
+  },
+
+  /**
+   * The active accounts (never the sending admin) the recipient picker groups: by role; per partner, its owner and
+   * its court staff; per court, the customers who booked it (once each).
+   */
+  campaignRecipientRows(by: "role" | "partner" | "court", actorId: string) {
+    if (by === "role") {
+      return prisma.$queryRaw<CampaignRecipientRow[]>`
+        select u.role::text as "groupId", u.role::text as "groupName", null as "groupDetail",
+               u.id, u.full_name as "fullName", u.email, u.role::text as role
+        from users u
+        where u.status::text = 'ACTIVE' and u.id <> ${actorId}
+      `;
+    }
+    if (by === "partner") {
+      return prisma.$queryRaw<CampaignRecipientRow[]>`
+        select pp.id as "groupId", pp.business_name as "groupName", null as "groupDetail",
+               u.id, u.full_name as "fullName", u.email, u.role::text as role
+        from partner_profiles pp
+        join users u on u.id = pp.user_id or (u.partner_id = pp.id and u.role::text = 'RECIPIENT')
+        where u.status::text = 'ACTIVE' and u.id <> ${actorId}
+      `;
+    }
+    return prisma.$queryRaw<CampaignRecipientRow[]>`
+      select distinct c.id as "groupId", c.name as "groupName", pp.business_name as "groupDetail",
+             u.id, u.full_name as "fullName", u.email, u.role::text as role
+      from bookings b
+      join courts c on c.id = b.court_id
+      left join partner_profiles pp on pp.id = c.partner_id
+      join users u on u.id = b.user_id
+      where u.status::text = 'ACTIVE' and u.role::text = 'USER' and u.id <> ${actorId}
     `;
   },
 
@@ -1079,6 +1165,7 @@ export const adminRepository = {
     targetRole?: string;
     targetUserId?: string;
     targetPartnerId?: string;
+    targetUserIds?: string[];
     metadata?: Record<string, unknown>;
   }, db?: Prisma.TransactionClient) {
     const run = async (tx: Prisma.TransactionClient) => {
@@ -1097,7 +1184,8 @@ export const adminRepository = {
           metadata_json as "metadata", created_at as "createdAt"
       `, input.title, input.content, input.type, input.targetType, input.targetRole ?? null,
         input.targetUserId ?? null, input.targetPartnerId ?? null, actorId,
-        recipientRows.length, JSON.stringify(input.metadata ?? {}));
+        // A recall deletes the notifications, so the campaign keeps which accounts were picked.
+        recipientRows.length, JSON.stringify({ ...(input.metadata ?? {}), ...(input.targetUserIds ? { targetUserIds: input.targetUserIds } : {}) }));
       const campaign = campaignRows[0];
 
       await tx.$executeRawUnsafe(`
@@ -1131,18 +1219,7 @@ export const adminRepository = {
   },
 
   partners(page: number, limit: number, filters: { search?: string; status?: any }) {
-    const where: Prisma.PartnerProfileWhereInput = {
-      approvalStatus: filters.status,
-      OR: filters.search
-        ? [
-            { businessName: { contains: filters.search, mode: "insensitive" } },
-            { taxCode: { contains: filters.search, mode: "insensitive" } },
-            { user: { fullName: { contains: filters.search, mode: "insensitive" } } },
-            { user: { email: { contains: filters.search, mode: "insensitive" } } },
-            { user: { phone: { contains: filters.search, mode: "insensitive" } } }
-          ]
-        : undefined
-    };
+    const where = partnerListWhere(filters);
     return Promise.all([
       prisma.partnerProfile.findMany({
         where,
@@ -1164,6 +1241,75 @@ export const adminRepository = {
       }),
       prisma.partnerProfile.count({ where })
     ]);
+  },
+
+  /**
+   * Customers (role USER) matching the user list's search and status, for the export, with their booking figures:
+   * spending counts paid and partly refunded bookings, as the customer report does; refunds are shown apart.
+   */
+  async customersForExport(filters: { search?: string; status?: any }, limit: number) {
+    const users = await prisma.user.findMany({
+      where: userListWhere({ ...filters, role: "USER" }),
+      select: { id: true, fullName: true, email: true, phone: true, status: true, emailVerified: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+      take: limit
+    });
+    const ids = users.map((user) => user.id);
+    const [all, paid] = ids.length
+      ? await Promise.all([
+          prisma.booking.groupBy({
+            by: ["userId"],
+            where: { userId: { in: ids } },
+            _count: { _all: true },
+            _sum: { refundAmount: true },
+            _max: { bookingDate: true }
+          }),
+          prisma.booking.groupBy({
+            by: ["userId"],
+            where: { userId: { in: ids }, paymentStatus: { in: ["PAID", "PARTIALLY_REFUNDED"] } },
+            _sum: { totalPrice: true }
+          })
+        ])
+      : [[], []];
+    const totals = new Map(all.map((row) => [row.userId, row]));
+    const spent = new Map(paid.map((row) => [row.userId, Number(row._sum.totalPrice ?? 0)]));
+    return users.map((user) => ({
+      ...user,
+      bookings: totals.get(user.id)?._count._all ?? 0,
+      totalSpent: spent.get(user.id) ?? 0,
+      totalRefund: Number(totals.get(user.id)?._sum.refundAmount ?? 0),
+      lastBookingDate: totals.get(user.id)?._max.bookingDate ?? null
+    }));
+  },
+
+  /** How many customers an export would hold, to refuse one too long before reading it. */
+  countCustomersForExport(filters: { search?: string; status?: any }) {
+    return prisma.user.count({ where: userListWhere({ ...filters, role: "USER" }) });
+  },
+
+  /** Partners matching the partner list's filters, for the export. The bank account number is masked by the service. */
+  partnersForExport(filters: { search?: string; status?: any }, limit: number) {
+    return prisma.partnerProfile.findMany({
+      where: partnerListWhere(filters),
+      select: {
+        businessName: true,
+        address: true,
+        taxCode: true,
+        approvalStatus: true,
+        bankName: true,
+        bankAccountNumber: true,
+        bankAccountHolder: true,
+        createdAt: true,
+        user: { select: { fullName: true, email: true, phone: true, status: true } },
+        _count: { select: { courts: true } }
+      },
+      orderBy: { createdAt: "desc" },
+      take: limit
+    });
+  },
+
+  countPartnersForExport(filters: { search?: string; status?: any }) {
+    return prisma.partnerProfile.count({ where: partnerListWhere(filters) });
   },
 
   partnerDetail(id: string) {
@@ -1197,7 +1343,8 @@ export const adminRepository = {
           images: { orderBy: { sortOrder: "asc" }, take: 1 },
           // A newly registered court only has image requests until an admin reviews them.
           imageRequests: { where: { status: "PENDING" }, orderBy: { sortOrder: "asc" }, take: 1, select: { imageUrl: true } },
-          _count: { select: { images: true, imageRequests: { where: { status: "PENDING" } } } }
+          // Sub-courts are counted, not read from court_count, which older code left out of date.
+          _count: { select: { images: true, imageRequests: { where: { status: "PENDING" } }, surfaces: true } }
         },
         orderBy: { createdAt: "desc" },
         skip: (page - 1) * limit,
@@ -1276,6 +1423,39 @@ export const adminRepository = {
     });
   },
 
+  /** The court row, locked for the caller's transaction so two admins cannot decide it at once. */
+  async lockCourtForDecision(id: string, db: Db) {
+    const rows = await db.$queryRaw<Array<{ id: string; name: string; partnerId: string; approvalStatus: string }>>`
+      select id, name, partner_id as "partnerId", approval_status::text as "approvalStatus" from courts where id = ${id} for update
+    `;
+    return rows[0] ?? null;
+  },
+
+  /** The latest approve / reject / revoke decision on a court (update requests are not decisions). */
+  async latestCourtDecision(courtId: string, db: Db = prisma) {
+    const rows = await db.$queryRaw<Array<{ action: string; createdAt: Date }>>`
+      select action, created_at as "createdAt" from moderation_history
+      where entity_type = 'COURT' and entity_id = ${courtId} and action = any(${COURT_DECISION_ACTIONS}::text[])
+      order by created_at desc
+      limit 1
+    `;
+    return rows[0] ?? null;
+  },
+
+  /**
+   * Sends an approved court back to PENDING; the reason becomes the update note the partner sees on the court form.
+   * Runs in the caller's transaction: the flag stops the admin review trigger (36_admin_review_notice_skip.sql) from
+   * announcing it to admins as a partner resubmission.
+   */
+  async revokeCourtApproval(id: string, reason: string, db: Db) {
+    await db.$queryRaw`select set_config('app.skip_admin_review_notice', 'on', true)`;
+    const { count } = await db.court.updateMany({
+      where: { id, approvalStatus: "APPROVED" },
+      data: { approvalStatus: "PENDING", updateRequestNote: reason, updateRequestedAt: new Date() }
+    });
+    return count > 0;
+  },
+
   categories() {
     return prisma.courtCategory.findMany({ include: { _count: { select: { courts: true } } }, orderBy: { createdAt: "desc" } });
   },
@@ -1345,23 +1525,102 @@ export const adminRepository = {
       prisma.report.groupBy({ by: ["status"], where: searchWhere, _count: { _all: true } })
     ]);
     const courtIds = [...new Set(items.map((item) => item.courtId))];
-    const pendingByCourt = courtIds.length
-      ? await prisma.report.groupBy({ by: ["courtId"], where: { courtId: { in: courtIds }, status: "PENDING" }, _count: { _all: true } })
-      : [];
+    const reportIds = items.map((item) => item.id);
+    const [pendingByCourt, messageStats] = await Promise.all([
+      courtIds.length
+        ? prisma.report.groupBy({ by: ["courtId"], where: { courtId: { in: courtIds }, status: "PENDING" }, _count: { _all: true } })
+        : [],
+      // Per report: how many messages, and who wrote the last one (an answer from the reporter waits for an admin).
+      reportIds.length
+        ? prisma.$queryRaw<Array<{ reportId: string; authorRole: string; createdAt: Date; messageCount: number }>>`
+            select distinct on (report_id) report_id as "reportId", author_role as "authorRole", created_at as "createdAt",
+              (count(*) over (partition by report_id))::int as "messageCount"
+            from report_messages
+            where report_id in (${Prisma.join(reportIds)})
+            order by report_id, created_at desc
+          `
+        : []
+    ]);
     return {
       items,
       total,
       counts: Object.fromEntries(counts.map((row) => [row.status, row._count._all])) as Record<string, number>,
-      pendingByCourt: new Map(pendingByCourt.map((row) => [row.courtId, row._count._all]))
+      pendingByCourt: new Map(pendingByCourt.map((row) => [row.courtId, row._count._all])),
+      messageStats: new Map(messageStats.map((row) => [row.reportId, row]))
     };
   },
   reportById(id: string) {
-    return prisma.report.findUnique({ where: { id }, include: { court: { select: { id: true, name: true } } } });
+    return prisma.report.findUnique({
+      where: { id },
+      include: { court: { select: { id: true, name: true, partner: { select: { userId: true } } } } }
+    });
   },
   /** Decides a report still waiting; false when someone decided it meanwhile. */
   async decideReport(id: string, data: { status: "RESOLVED" | "REJECTED"; resolvedBy: string; adminNote: string | null }, db: Db = prisma) {
     const { count } = await db.report.updateMany({ where: { id, status: "PENDING" }, data: { ...data, resolvedAt: new Date() } });
     return count > 0;
+  },
+
+  /** A report with its whole conversation and the court's partner account (whose locking counts as a measure). */
+  reportThread(id: string) {
+    return prisma.report.findUnique({
+      where: { id },
+      include: {
+        user: { select: { id: true, fullName: true, email: true } },
+        court: {
+          select: {
+            id: true,
+            name: true,
+            approvalStatus: true,
+            activeStatus: true,
+            partner: { select: { id: true, businessName: true, userId: true } }
+          }
+        },
+        resolver: { select: { id: true, fullName: true } },
+        messages: { orderBy: { createdAt: "asc" }, include: { author: { select: { fullName: true } } } }
+      }
+    });
+  },
+
+  /** The other reports still waiting on the court, oldest first. */
+  otherPendingReports(courtId: string, excludeId: string, db: Db = prisma) {
+    return db.report.findMany({
+      where: { courtId, status: "PENDING", id: { not: excludeId } },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, userId: true, reason: true, createdAt: true, user: { select: { fullName: true } } }
+    });
+  },
+
+  /** The audit entries on the court and on its partner's account since the report came in: what was done about it. */
+  courtMeasureAudit(courtId: string, partnerUserId: string | null, since: Date) {
+    return prisma.auditLog.findMany({
+      where: {
+        createdAt: { gte: since },
+        OR: [
+          { entityType: "COURT", entityId: courtId, action: { in: [...COURT_MEASURE_ACTIONS] } },
+          ...(partnerUserId ? [{ entityType: "USER", entityId: partnerUserId, action: { in: [...PARTNER_ACCOUNT_MEASURE_ACTIONS] } }] : [])
+        ]
+      },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, action: true, metadata: true, createdAt: true }
+    });
+  },
+
+  /** Locks a report still waiting until the transaction ends (a decision waits for it); false once it is closed. */
+  async lockPendingReport(id: string, db: Db) {
+    const rows = await db.$queryRaw<Array<{ id: string }>>`select id from reports where id = ${id} and status = 'PENDING' for update`;
+    return rows.length > 0;
+  },
+
+  createReportMessage(
+    data: { reportId: string; authorId: string; kind: "MESSAGE" | "RESOLVED" | "REJECTED"; content: string; measures?: ReportMeasure[] },
+    db: Db = prisma
+  ) {
+    const { measures, ...rest } = data;
+    return db.reportMessage.create({
+      data: { ...rest, authorRole: "ADMIN", ...(measures?.length ? { measures: measures as Prisma.InputJsonValue } : {}) },
+      include: { author: { select: { fullName: true } } }
+    });
   },
 
   statistics() {

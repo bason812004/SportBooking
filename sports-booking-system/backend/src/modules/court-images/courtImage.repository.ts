@@ -1,5 +1,24 @@
+import type { CourtImageRequest, Prisma } from "@prisma/client";
 import { prisma } from "../../config/db.js";
 import { ConflictError, NotFoundError } from "../../shared/errors/AppError.js";
+
+/** Puts an approved request in the published gallery, replacing the image it was sent for. */
+async function publish(tx: Prisma.TransactionClient, request: CourtImageRequest) {
+  if (request.replaceImageId) {
+    const replaced = await tx.courtImage.updateMany({
+      where: { id: request.replaceImageId, courtId: request.courtId, imageUrl: request.previousImageUrl ?? undefined },
+      data: { imageUrl: request.imageUrl, publicId: request.publicId }
+    });
+    if (!replaced.count) throw new ConflictError("Ảnh gốc đã thay đổi. Hãy từ chối và yêu cầu gửi lại.");
+    return;
+  }
+  // Append to the currently published gallery; the first approved image becomes the cover.
+  const last = await tx.courtImage.aggregate({ where: { courtId: request.courtId }, _max: { sortOrder: true } });
+  await tx.courtImage.create({ data: {
+    courtId: request.courtId, imageUrl: request.imageUrl, publicId: request.publicId,
+    sortOrder: (last._max.sortOrder ?? -1) + 1
+  } });
+}
 
 export const courtImageRepository = {
   ownedCourt(courtId: string, userId: string) {
@@ -48,23 +67,27 @@ export const courtImageRepository = {
         data: { status: decision, reason, reviewedAt: new Date(), reviewedBy: userId }
       });
       if (!claimed.count) throw new ConflictError("Yêu cầu đã được xử lý hoặc đã hủy");
-      if (decision === "APPROVED") {
-        if (request.replaceImageId) {
-          const replaced = await tx.courtImage.updateMany({
-            where: { id: request.replaceImageId, courtId: request.courtId, imageUrl: request.previousImageUrl ?? undefined },
-            data: { imageUrl: request.imageUrl, publicId: request.publicId }
-          });
-          if (!replaced.count) throw new ConflictError("Ảnh gốc đã thay đổi. Hãy từ chối và yêu cầu gửi lại.");
-        } else {
-          // Append to the currently published gallery; the first approved image becomes the cover.
-          const last = await tx.courtImage.aggregate({ where: { courtId: request.courtId }, _max: { sortOrder: true } });
-          await tx.courtImage.create({ data: {
-            courtId: request.courtId, imageUrl: request.imageUrl, publicId: request.publicId,
-            sortOrder: (last._max.sortOrder ?? -1) + 1
-          } });
-        }
-      }
+      if (decision === "APPROVED") await publish(tx, request);
       return { id, status: decision };
     });
+  },
+
+  /**
+   * Approving a court publishes the photos still waiting with it, in the partner's order, inside the approval's
+   * transaction. An admin who finds a bad photo rejects it on its own before approving the court.
+   */
+  async approvePendingForCourt(courtId: string, userId: string, tx: Prisma.TransactionClient) {
+    await tx.$queryRaw`SELECT id FROM courts WHERE id = ${courtId} FOR UPDATE`;
+    const requests = await tx.courtImageRequest.findMany({
+      where: { courtId, status: "PENDING" },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }]
+    });
+    if (!requests.length) return 0;
+    await tx.courtImageRequest.updateMany({
+      where: { id: { in: requests.map((request) => request.id) }, status: "PENDING" },
+      data: { status: "APPROVED", reviewedAt: new Date(), reviewedBy: userId }
+    });
+    for (const request of requests) await publish(tx, request);
+    return requests.length;
   }
 };

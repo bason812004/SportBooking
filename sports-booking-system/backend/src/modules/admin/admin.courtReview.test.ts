@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { courtReviewChecks, type CourtReviewInput } from "./admin.courtReview.js";
+import { APPROVAL_REVOKE_HOURS, approvalRevocableUntil, courtReviewChecks, type CourtReviewInput } from "./admin.courtReview.js";
 
 const now = new Date("2026-10-22T10:00:00Z");
 const trusted: CourtReviewInput = {
@@ -42,17 +42,40 @@ describe("court review checks", () => {
     assert.equal(check({ ...trusted, phone: " " }, "phone")?.status, "missing");
   });
 
-  it("flags a venue without photos and photos still waiting for review", () => {
+  it("flags a venue without photos and counts pending photos, which are approved with the court", () => {
     assert.equal(check(trusted, "images")?.label, "Sân chưa có ảnh nào");
-    assert.equal(check(trusted, "pending_images"), undefined);
     const withPhotos = { ...trusted, publishedImages: 1, pendingImages: 2 };
     assert.deepEqual(check(withPhotos, "images"), { key: "images", status: "ok", label: "Có 3 ảnh sân" });
-    assert.deepEqual(check(withPhotos, "pending_images"), { key: "pending_images", status: "warning", label: "Còn 2 ảnh chưa xét duyệt" });
+    assert.equal(check(withPhotos, "pending_images"), undefined);
   });
 
   it("treats accounts younger than a week as new", () => {
     assert.equal(check({ ...trusted, accountCreatedAt: new Date("2026-10-22T01:00:00Z") }, "account_age")?.label, "Tài khoản mới tạo hôm nay");
     assert.equal(check({ ...trusted, accountCreatedAt: new Date("2026-10-17T09:00:00Z") }, "account_age")?.status, "warning");
     assert.equal(check({ ...trusted, accountCreatedAt: new Date("2026-10-15T09:00:00Z") }, "account_age")?.status, "ok");
+  });
+});
+
+describe("revoking a court approval", () => {
+  const hoursAgo = (hours: number) => new Date(now.getTime() - hours * 60 * 60 * 1000);
+  const approved = (hours: number) => ({ action: "APPROVED", createdAt: hoursAgo(hours) });
+
+  it("is open until APPROVAL_REVOKE_HOURS after the approval", () => {
+    assert.equal(APPROVAL_REVOKE_HOURS, 24);
+    assert.deepEqual(approvalRevocableUntil("APPROVED", approved(1), now), new Date("2026-10-23T09:00:00Z"));
+    // Dates read back from the database as strings work the same.
+    assert.deepEqual(approvalRevocableUntil("APPROVED", { action: "APPROVED", createdAt: hoursAgo(23).toISOString() }, now), new Date("2026-10-22T11:00:00Z"));
+    assert.equal(approvalRevocableUntil("APPROVED", approved(24), now), null);
+    assert.equal(approvalRevocableUntil("APPROVED", approved(30), now), null);
+  });
+
+  it("needs an approved court whose latest decision is that approval", () => {
+    // Sent back to PENDING since (partner edit or an earlier revocation), or rejected.
+    assert.equal(approvalRevocableUntil("PENDING", approved(1), now), null);
+    assert.equal(approvalRevocableUntil("REJECTED", approved(1), now), null);
+    assert.equal(approvalRevocableUntil("APPROVED", { action: "APPROVAL_REVOKED", createdAt: hoursAgo(1) }, now), null);
+    // Approved before decisions were recorded (sample data): no approval time, so no revocation.
+    assert.equal(approvalRevocableUntil("APPROVED", null, now), null);
+    assert.equal(approvalRevocableUntil("APPROVED", undefined, now), null);
   });
 });

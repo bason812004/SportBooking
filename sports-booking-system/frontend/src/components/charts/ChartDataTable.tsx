@@ -10,29 +10,33 @@ export function ChartDataTable({
   labels: string[];
   columns: Array<{ header: string; values: string[] }>;
 }) {
+  // sr-only sits on a wrapper: a table ignores the 1px size and overflow clip, so a hidden table would still take
+  // its full height below the chart and make the page scroll.
   return (
-    <table className="sr-only">
-      <caption>{caption}</caption>
-      <thead>
-        <tr>
-          <th scope="col">{categoryLabel}</th>
-          {columns.map((column) => (
-            <th key={column.header} scope="col">
-              {column.header}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {labels.map((label, index) => (
-          <tr key={`${label}-${index}`}>
-            <th scope="row">{label}</th>
+    <div className="sr-only">
+      <table>
+        <caption>{caption}</caption>
+        <thead>
+          <tr>
+            <th scope="col">{categoryLabel}</th>
             {columns.map((column) => (
-              <td key={column.header}>{column.values[index]}</td>
+              <th key={column.header} scope="col">
+                {column.header}
+              </th>
             ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {labels.map((label, index) => (
+            <tr key={`${label}-${index}`}>
+              <th scope="row">{label}</th>
+              {columns.map((column) => (
+                <td key={column.header}>{column.values[index]}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

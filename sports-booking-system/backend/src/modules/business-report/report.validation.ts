@@ -21,6 +21,23 @@ export const reportExportQuerySchema = z.object({
   )
 });
 
+// Admins may narrow a report to one partner or one court; partner and staff routes keep the schemas above, which drop
+// these fields, so their scope always comes from their own account.
+const scopeFields = {
+  partnerId: z.string().trim().min(1).max(40).optional(),
+  courtId: z.string().trim().min(1).max(40).optional()
+};
+
+export const adminReportRangeQuerySchema = z.object({
+  query: withRangeCheck(z.object({ from: dateField("Ngày bắt đầu"), to: dateField("Ngày kết thúc"), ...scopeFields }))
+});
+
+export const adminReportExportQuerySchema = z.object({
+  query: withRangeCheck(
+    z.object({ from: dateField("Ngày bắt đầu"), to: dateField("Ngày kết thúc"), format: z.enum(["excel", "pdf"]), ...scopeFields })
+  )
+});
+
 export const reportCustomerParamSchema = z.object({
   params: z.object({ userId: z.string().min(1) })
 });

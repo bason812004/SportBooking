@@ -20,3 +20,15 @@ export function nowWithinPlayWindow(booking: PlayTimes, now = new Date()) {
 export function playHasStarted(booking: PlayTimes, now = new Date()) {
   return now.getTime() >= playInstants(booking).start;
 }
+
+export type PrepaidKind = "NONE" | "DEPOSIT" | "COURT_FULL";
+
+/**
+ * What the money paid before the session (online, or the deposit) covered, for the counter's bill: nothing, part of
+ * the court (a deposit: the rest of the court is still due with the services) or the whole court (only the services
+ * are due). The amounts themselves come from the bill; this only names the case.
+ */
+export function prepaidKind(depositPaid: number, courtSubtotal: number, voucherDiscount = 0): PrepaidKind {
+  if (depositPaid <= 0) return "NONE";
+  return depositPaid >= Math.max(0, courtSubtotal - voucherDiscount) ? "COURT_FULL" : "DEPOSIT";
+}

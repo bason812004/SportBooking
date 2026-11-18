@@ -36,9 +36,15 @@ const db: any = {
       (typeof where.replaceImageId === "object" ? Boolean(request.replaceImageId) : request.replaceImageId === where.replaceImageId)
       && (!where.courtId || request.courtId === where.courtId) && request.status === where.status) ?? null,
     findUnique: async ({ where }: any) => requests.find((request) => request.id === where.id) ?? null,
+    findMany: async ({ where }: any) => requests.filter((request) => request.courtId === where.courtId && request.status === where.status),
     create: async ({ data }: any) => { const request = { id: `request${requests.length + 1}`, status: "PENDING", publicId: null, ...data }; requests.push(request); return request; },
     updateMany: async ({ where, data }: any) => {
       if (where.court && where.court.partner.userId !== "owner") return { count: 0 };
+      if (where.id?.in) {
+        const claimed = requests.filter((item) => where.id.in.includes(item.id) && item.status === where.status);
+        claimed.forEach((item) => Object.assign(item, data));
+        return { count: claimed.length };
+      }
       const request = requests.find((item) => item.id === where.id && item.status === where.status);
       if (!request) return { count: 0 };
       Object.assign(request, data);
@@ -52,6 +58,7 @@ mock.module("../../shared/services/cloudinary.service.js", { namedExports: { clo
   deleteImage: async () => undefined
 } } });
 const { courtImageService } = await import("./courtImage.service.js");
+const { courtImageRepository } = await import("./courtImage.repository.js");
 const { partnerRepository } = await import("../partner/partner.repository.js");
 const { imageReviewSchema } = await import("./courtImage.validation.js");
 
@@ -122,6 +129,27 @@ test("missing original image rolls back the approval decision", async () => {
   await assert.rejects(courtImageService.review("admin", request.id, "APPROVED"), { statusCode: 409 });
   assert.equal(requests[0].status, "PENDING");
   assert.equal(images.length, 0);
+});
+
+test("approving a court publishes every photo still pending and leaves decided ones alone", async () => {
+  const added = await submit();
+  const replacement = await submit("cover");
+  const rejected = await submit();
+  await courtImageService.review("admin", rejected.id, "REJECTED", "Ảnh lấy trên mạng");
+  assert.equal(await db.$transaction((tx: any) => courtImageRepository.approvePendingForCourt(court.id, "admin", tx)), 2);
+  assert.deepEqual([added.status, replacement.status, rejected.status], ["APPROVED", "APPROVED", "REJECTED"]);
+  assert.deepEqual(images.map((image) => [image.id, image.sortOrder]), [["cover", 0], ["new-image", 1]]);
+  assert.equal(images[0].imageUrl, "https://example.com/new.jpg");
+  assert.equal(await db.$transaction((tx: any) => courtImageRepository.approvePendingForCourt(court.id, "admin", tx)), 0);
+});
+
+test("a replacement whose original changed fails the court approval and changes nothing", async () => {
+  await submit();
+  await submit("cover");
+  images[0].imageUrl = "https://example.com/changed.jpg";
+  const before = structuredClone({ images, requests });
+  await assert.rejects(db.$transaction((tx: any) => courtImageRepository.approvePendingForCourt(court.id, "admin", tx)), { statusCode: 409 });
+  assert.deepEqual({ images, requests }, before);
 });
 
 test("duplicate replacement and an image from a different court are rejected", async () => {

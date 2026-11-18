@@ -10,7 +10,7 @@ mock.module("../services/service.repository.js", { namedExports: { ensureService
 const { inventoryService } = await import("./inventory.service.js");
 
 const PARTNER: InventoryActor = { userId: "u-owner", role: "PARTNER", partnerId: "p1", courtId: null };
-// Receptionist of court c1 of the same partner.
+// Receptionist of court c1 of the same partner: buying stock in is not theirs (2026-11-06), they only look at stock.
 const STAFF: InventoryActor = { userId: "u-staff", role: "RECIPIENT", partnerId: "p1", courtId: "c1" };
 
 type Order = {
@@ -161,9 +161,9 @@ it("receiving an ordered purchase order adds each line to stock exactly once and
     stock: { "sv-water": 3 }
   });
 
-  const received = await inventoryService.receivePurchaseOrder(STAFF, "po-1");
+  const received = await inventoryService.receivePurchaseOrder(PARTNER, "po-1");
   assert.equal(received?.status, "COMPLETED");
-  assert.equal(received?.receivedById, "u-staff");
+  assert.equal(received?.receivedById, "u-owner");
   assert.equal(received?.receivedAmount, 70000);
   assert.equal(store.stock.get("sv-water"), 13);
   // No stock row yet: the received quantity becomes the starting stock.
@@ -187,7 +187,7 @@ it("stock grows by the counted quantity when fewer goods arrive than were ordere
     stock: { "sv-water": 3, "sv-towel": 1 }
   });
 
-  const received = await inventoryService.receivePurchaseOrder(STAFF, "po-1", {
+  const received = await inventoryService.receivePurchaseOrder(PARTNER, "po-1", {
     items: [
       { itemId: "i1", receivedQuantity: 7 },
       { itemId: "i2", receivedQuantity: 0 }
@@ -270,44 +270,38 @@ it("each purchase order restocks exactly one court of the partner", async () => 
   assert.equal(c2?.courtId, "c2");
 });
 
-it("a receptionist can only propose drafts for their own court", async () => {
+it("staff cannot draft a purchase order, not even for their own court", async () => {
   const store = setup({ stock: { "sv-water": 3 } });
-
-  // Asking for an immediate receipt at another court still yields a draft at the receptionist's court.
-  const proposal = await inventoryService.createPurchaseOrder(STAFF, { courtId: "c2", items: [line("sv-water")], status: "COMPLETED" });
-  assert.equal(proposal?.status, "DRAFT");
-  assert.equal(proposal?.courtId, "c1");
-  assert.equal(proposal?.createdById, "u-staff");
+  await assert.rejects(inventoryService.createPurchaseOrder(STAFF, { courtId: "c1", items: [line("sv-water")] }), ForbiddenError);
+  await assert.rejects(inventoryService.createDraftFromSuggestions(STAFF, "c1"), ForbiddenError);
+  assert.equal(store.orders.length, 0);
   assert.equal(store.stock.get("sv-water"), 3);
-
-  await assert.rejects(inventoryService.createPurchaseOrder(STAFF, { items: [line("sv-water-c2")] }), ValidationError);
 });
 
-it("a receptionist counts goods in only after the partner has ordered them, and only at their court", async () => {
+it("staff cannot order, receive or cancel; the partner orders and counts the goods in", async () => {
   const store = setup({
-    orders: [order("po-draft", "DRAFT"), order("po-c1", "ORDERED"), order("po-c2", "ORDERED", "c2")],
-    items: [item("i1", "po-draft", "sv-water", 5), item("i2", "po-c1", "sv-water", 5), item("i3", "po-c2", "sv-water-c2", 5)]
+    orders: [order("po-draft", "DRAFT"), order("po-c1", "ORDERED")],
+    items: [item("i1", "po-draft", "sv-water", 5), item("i2", "po-c1", "sv-water", 5)]
   });
 
   await assert.rejects(inventoryService.orderPurchaseOrder(STAFF, "po-draft"), ForbiddenError);
-  await assert.rejects(inventoryService.receivePurchaseOrder(STAFF, "po-draft"), ConflictError);
-  await assert.rejects(inventoryService.receivePurchaseOrder(STAFF, "po-c2"), NotFoundError);
-  await assert.rejects(inventoryService.cancelPurchaseOrder(STAFF, "po-c1"), ConflictError);
+  await assert.rejects(inventoryService.receivePurchaseOrder(STAFF, "po-c1"), ForbiddenError);
+  await assert.rejects(inventoryService.cancelPurchaseOrder(STAFF, "po-c1"), ForbiddenError);
+  assert.equal(store.stock.get("sv-water"), undefined, "a refused receipt adds nothing");
 
   const ordered = await inventoryService.orderPurchaseOrder(PARTNER, "po-draft");
   assert.equal(ordered?.status, "ORDERED");
   assert.equal(ordered?.orderedById, "u-owner");
 
-  await inventoryService.receivePurchaseOrder(STAFF, "po-c1");
+  await inventoryService.receivePurchaseOrder(PARTNER, "po-c1");
   assert.equal(store.stock.get("sv-water"), 5);
-  assert.equal(store.stock.get("sv-water-c2"), undefined, "other courts' stock is untouched");
 });
 
-it("a receptionist may withdraw their own draft proposal", async () => {
-  setup({ orders: [order("po-draft", "DRAFT"), order("po-draft-c2", "DRAFT", "c2")] });
-  const withdrawn = await inventoryService.cancelPurchaseOrder(STAFF, "po-draft");
+it("staff cannot withdraw a draft either", async () => {
+  setup({ orders: [order("po-draft", "DRAFT")] });
+  await assert.rejects(inventoryService.cancelPurchaseOrder(STAFF, "po-draft"), ForbiddenError);
+  const withdrawn = await inventoryService.cancelPurchaseOrder(PARTNER, "po-draft");
   assert.equal(withdrawn?.status, "CANCELLED");
-  await assert.rejects(inventoryService.cancelPurchaseOrder(STAFF, "po-draft-c2"), NotFoundError);
 });
 
 it("a receptionist cannot edit or withdraw a draft the partner wrote; the partner can", async () => {
@@ -318,7 +312,7 @@ it("a receptionist cannot edit or withdraw a draft the partner wrote; the partne
   assert.equal(withdrawn?.status, "CANCELLED");
 });
 
-it("a receptionist only lists their own court's orders", async () => {
+it("only the partner lists purchase orders", async () => {
   const listed: any[] = [];
   fake.setModels({
     purchaseOrder: {
@@ -328,11 +322,10 @@ it("a receptionist only lists their own court's orders", async () => {
       }
     }
   });
-  await inventoryService.listPurchaseOrders(STAFF, { courtId: "c2" });
+  await assert.rejects(inventoryService.listPurchaseOrders(STAFF, { courtId: "c2" }), ForbiddenError);
   await inventoryService.listPurchaseOrders(PARTNER, { courtId: "c2", status: "ORDERED" });
   await inventoryService.listPurchaseOrders(PARTNER);
   assert.deepEqual(listed, [
-    { partnerId: "p1", courtId: "c1" },
     { partnerId: "p1", courtId: "c2", status: "ORDERED" },
     { partnerId: "p1" }
   ]);
@@ -347,7 +340,7 @@ it("only drafts can be edited, and editing replaces the item list", async () => 
   await assert.rejects(inventoryService.updatePurchaseOrder(PARTNER, "po-ordered", { items: [line("sv-towel", 2, 1000)] }), ConflictError);
   await assert.rejects(inventoryService.updatePurchaseOrder(PARTNER, "po-draft", { items: [line("sv-water-c2", 2, 1000)] }), ValidationError);
 
-  const updated = await inventoryService.updatePurchaseOrder(STAFF, "po-draft", {
+  const updated = await inventoryService.updatePurchaseOrder(PARTNER, "po-draft", {
     supplierId: "11111111-1111-4111-8111-111111111111",
     items: [line("sv-towel", 2, 1500)]
   });
@@ -373,8 +366,8 @@ it("builds one draft per court from that court's reorder suggestions", async () 
   };
   const store = setup({ suggestionRows: [lowWater] });
 
-  const draft = await inventoryService.createDraftFromSuggestions(STAFF, "c2");
-  assert.ok(store.rawQueries[0].includes("c1"), "suggestions are read for the receptionist's own court");
+  const draft = await inventoryService.createDraftFromSuggestions(PARTNER, "c1");
+  assert.ok(store.rawQueries[0].includes("c1"), "suggestions are read for the court asked for");
   assert.equal(draft?.status, "DRAFT");
   assert.equal(draft?.courtId, "c1");
   // Not enough sales history: restock to twice the minimum (2 * 5 - 2 on hand).

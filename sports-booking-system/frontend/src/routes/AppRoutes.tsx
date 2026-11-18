@@ -208,7 +208,8 @@ export function AppRoutes() {
             <Route path="recipient/pos/:bookingId" element={<LegacyPosRedirect base="/recipient/cashier" />} />
             <Route path="recipient/services" element={<PartnerServicesPage />} />
             <Route path="recipient/inventory" element={<PartnerInventoryPage />} />
-            <Route path="recipient/purchases" element={<PartnerPurchasesPage />} />
+            {/* Buying stock in is the partner's: staff only look at stock. */}
+            <Route path="recipient/purchases" element={<Navigate to="/recipient/inventory" replace />} />
             <Route path="recipient/bookings" element={<RecipientBookingsPage />} />
             <Route path="recipient/calendar" element={<Navigate to="/recipient/bookings?view=calendar" replace />} />
             <Route path="recipient/court-surfaces" element={<RecipientCourtSurfacesPage />} />

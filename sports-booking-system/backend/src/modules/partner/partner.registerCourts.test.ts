@@ -100,6 +100,46 @@ describe("venue registration service", () => {
     assert.equal(created.length, 0);
   });
 
+  it("saves each sport's expected prices as its price rows", async () => {
+    const prices = [
+      { dayType: "WEEKDAY", startTime: "06:00", endTime: "22:00", price: 80000 },
+      // Inside the all-day row: those hours take the narrower row's price.
+      { dayType: "WEEKDAY", startTime: "17:00", endTime: "21:00", price: 120000 },
+      { dayType: "WEEKEND", startTime: "06:00", endTime: "00:00", price: 100000 }
+    ];
+    await register({ ...venue, sports: [{ ...sport("cat-pb", "Sân 1"), prices }, sport("cat-bd", "Sân 1")] });
+    const [pickleball, badminton] = created[0].entries;
+    assert.deepEqual(
+      pickleball.prices.map((row: any) => [row.dayType, row.startTime.toISOString().slice(11, 16), row.endTime.toISOString().slice(11, 16), row.price]),
+      [["WEEKDAY", "06:00", "22:00", 80000], ["WEEKDAY", "17:00", "21:00", 120000], ["WEEKEND", "06:00", "00:00", 100000]]
+    );
+    // Prices are optional: a sport without them is set up on the price page later.
+    assert.deepEqual(badminton.prices, []);
+  });
+
+  it("rejects expected prices that partly overlap, naming the sport, without creating anything", async () => {
+    const prices = [
+      { dayType: "WEEKDAY", startTime: "06:00", endTime: "12:00", price: 80000 },
+      { dayType: "WEEKDAY", startTime: "10:00", endTime: "14:00", price: 90000 }
+    ];
+    await assert.rejects(register({ ...venue, sports: [{ ...sport("cat-pb", "Sân 1"), prices }] }), /Giá dự kiến môn Pickleball: Khung 10:00-14:00/);
+    await assert.rejects(
+      register({ ...venue, sports: [{ ...sport("cat-pb", "Sân 1"), prices: [{ dayType: "WEEKEND", startTime: "14:00", endTime: "08:00", price: 1 }] }] }),
+      /Giờ kết thúc phải sau giờ bắt đầu/
+    );
+    assert.equal(created.length, 0);
+  });
+
+  it("refuses expected prices that are zero, off the hour or too many", () => {
+    const withPrices = (prices: unknown[]) => parse({ ...venue, sports: [{ ...sport("cat-pb", "Sân 1"), prices }] }).success;
+    const row = { dayType: "WEEKDAY", startTime: "06:00", endTime: "22:00", price: 80000 };
+    assert.equal(withPrices([row]), true);
+    assert.equal(withPrices([{ ...row, price: 0 }]), false);
+    assert.equal(withPrices([{ ...row, startTime: "06:30" }]), false);
+    assert.equal(withPrices([{ ...row, dayType: "MONDAY" }]), false);
+    assert.equal(withPrices(Array.from({ length: 25 }, () => row)), false);
+  });
+
   it("rejects closing before opening", async () => {
     await assert.rejects(register({ ...venue, openingTime: "22:00", closingTime: "06:00", sports: [sport("cat-pb", "Sân 1")] }), /Gio mo cua/);
     assert.equal(created.length, 0);

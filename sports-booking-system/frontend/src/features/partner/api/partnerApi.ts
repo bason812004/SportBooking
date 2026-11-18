@@ -64,6 +64,8 @@ export type PartnerCourtRegistrationInput = {
   sports: Array<{
     categoryId: string;
     surfaces: Array<{ name: string; surface?: string | null; size?: string | null }>;
+    /** Expected prices: saved as the court's price rows so the admin sees them before approving. */
+    prices?: Array<{ dayType: "WEEKDAY" | "WEEKEND" | "HOLIDAY"; startTime: string; endTime: string; price: number }>;
   }>;
 };
 

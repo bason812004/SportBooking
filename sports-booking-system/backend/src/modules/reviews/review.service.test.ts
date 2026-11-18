@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { beforeEach, describe, it, mock } from "node:test";
 import { createDynamicFakePrisma } from "../../shared/testing/fakePrisma.js";
-import { summarizeRatings } from "./review.calculations.js";
+import { rankCourts, rankPartners, reviewTrend, summarizeRatings } from "./review.calculations.js";
 
 const fake = createDynamicFakePrisma();
 mock.module("../../config/db.js", { namedExports: { prisma: fake.client } });
@@ -90,5 +90,54 @@ describe("rating summary", () => {
     assert.equal(summary.averageRating, 4.3);
     assert.equal(summary.hiddenCount, 4);
     assert.deepEqual(summary.distribution.map((row) => row.count), [3, 0, 0, 1, 0]);
+  });
+});
+
+describe("review statistics", () => {
+  const court = (id: string, partnerId: string, visibleCount: number, ratingSum: number, extra: Partial<{ hiddenCount: number; repliedCount: number; lowCount: number }> = {}) => ({
+    id,
+    name: `San ${id}`,
+    partnerId,
+    partnerName: `Doi tac ${partnerId}`,
+    visibleCount,
+    ratingSum,
+    hiddenCount: 0,
+    repliedCount: 0,
+    lowCount: 0,
+    ...extra
+  });
+
+  it("fills months without reviews and goes day by day over a short span", () => {
+    const days = [
+      { day: "2026-05-20", count: 2, ratingSum: 9 },
+      { day: "2026-05-28", count: 1, ratingSum: 5 },
+      { day: "2026-07-03", count: 1, ratingSum: 4 }
+    ];
+    const months = reviewTrend(days, undefined, "2026-08-15");
+    assert.equal(months.unit, "month");
+    assert.deepEqual(months.points, [
+      { period: "2026-05", count: 3, averageRating: 4.7 },
+      { period: "2026-06", count: 0, averageRating: null },
+      { period: "2026-07", count: 1, averageRating: 4 },
+      { period: "2026-08", count: 0, averageRating: null }
+    ]);
+
+    const daily = reviewTrend([{ day: "2026-10-22", count: 1, ratingSum: 5 }], "2026-10-04", "2026-11-02");
+    assert.equal(daily.unit, "day");
+    assert.equal(daily.points.length, 30);
+    assert.deepEqual(daily.points[0], { period: "2026-10-04", count: 0, averageRating: null });
+    assert.deepEqual(daily.points.find((point) => point.count), { period: "2026-10-22", count: 1, averageRating: 5 });
+    assert.equal(daily.points.at(-1)?.period, "2026-11-02");
+  });
+
+  it("ranks courts lowest average first, more reviews first on a tie, and leaves out courts with only hidden reviews", () => {
+    const ranked = rankCourts([court("a", "p1", 2, 10), court("b", "p1", 1, 4), court("c", "p2", 3, 12), court("d", "p2", 0, 0, { hiddenCount: 2 })]);
+    assert.deepEqual(ranked.map((row) => [row.id, row.averageRating, row.count]), [["c", 4, 3], ["b", 4, 1], ["a", 5, 2]]);
+  });
+
+  it("weighs every review alike in a partner's average", () => {
+    const partners = rankPartners([court("a", "p1", 1, 1, { lowCount: 1 }), court("b", "p1", 9, 45, { repliedCount: 3 }), court("c", "p2", 0, 0, { hiddenCount: 1 })]);
+    // (1 + 45) / 10 reviews = 4.6, not the 3.0 an average of the two courts' averages would give.
+    assert.deepEqual(partners, [{ id: "p1", name: "Doi tac p1", courtCount: 2, count: 10, hiddenCount: 0, repliedCount: 3, lowCount: 1, averageRating: 4.6 }]);
   });
 });

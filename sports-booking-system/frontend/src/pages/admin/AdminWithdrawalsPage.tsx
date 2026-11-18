@@ -132,7 +132,7 @@ export function AdminWithdrawalsPage() {
         title="Yêu cầu rút tiền"
         subtitle="Duyệt yêu cầu, chuyển khoản cho đối tác từ tài khoản ngân hàng của nền tảng, rồi bấm “Đã chuyển khoản” và nhập mã giao dịch để hoàn tất."
       >
-        <div className="flex flex-wrap items-end gap-3 rounded-xl bg-white p-3 shadow-md">
+        <div className="flex flex-wrap items-end gap-3 rounded-xl border border-line bg-white p-3 shadow-sm">
           <DatePicker label="Từ ngày" value={fromDate} onChange={(value) => { setPage(1); setFromDate(value); }} />
           <DatePicker label="Đến ngày" value={toDate} onChange={(value) => { setPage(1); setToDate(value); }} />
           <Select label="Trạng thái" value={status} options={statusOptions} onChange={(event) => { setPage(1); setStatus(event.target.value); }} />

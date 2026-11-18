@@ -37,7 +37,15 @@ mock.module("../settlements/settlement.service.js", { namedExports: { settlement
   finishBooking: async (booking: any, status: string) => { finished.push(`${booking.id}:${status}`); return null; }
 } } });
 mock.module("../booking-overdue/bookingOverdue.service.js", { namedExports: { bookingOverdueService: {} } });
-mock.module("../cashier/cashier.repository.js", { namedExports: { cashierRepository: { releaseBookingServices: async () => {} } } });
+// Cancelling or no-show gives the booking's services back inside the status change's transaction.
+const released: unknown[][] = [];
+mock.module("../inventory/inventory.stock.js", { namedExports: {
+  releaseBookingStock: async (_tx: unknown, id: string, _reason: string, referenceType: string) => {
+    released.push([id, referenceType]);
+    return 0;
+  }
+} });
+mock.module("../inventory/inventory.alerts.js", { namedExports: { notifyStockAlerts: async () => undefined } });
 const voucherReleases: string[][] = [];
 mock.module("../vouchers/voucher.repository.js", { namedExports: { voucherRepository: {
   releaseVoucherUses: async (ids: string[]) => { voucherReleases.push(ids); return 0; }
@@ -685,11 +693,13 @@ describe("court cancellation of a paid booking", () => {
     const store = bookingStore(paid);
     setup({ bookingModel: store.model });
     onlineCollected = 300000;
+    released.length = 0;
     await recipientService.updateBookingStatus("staff", "b1", "CANCELLED", "Sân bảo trì đột xuất");
     const data = store.state.writes[0];
     assert.equal(data.bookingStatus, "CANCELLED");
     assert.equal(data.cancelReason, "Sân bảo trì đột xuất");
     assert.equal(data.paymentStatus, "PAID");
+    assert.deepEqual(released, [["b1", "BOOKING_CANCELLED"]]);
     assert.equal(data.refundAmount, 0);
     assert.deepEqual(adminEvents.map((event) => [event.type, event.metadata.amount]), [["REFUND_REQUIRED", 300000]]);
     assert.match(adminEvents[0].content, /Nhân viên sân Sân A đã huỷ đơn BK1 mà Khách A \(0900000000\) đã thanh toán online 300\.000đ/);

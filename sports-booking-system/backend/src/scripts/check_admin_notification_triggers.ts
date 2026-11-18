@@ -54,6 +54,13 @@ try {
     await tx.$executeRawUnsafe("UPDATE courts SET approval_status = 'PENDING', name = 'Sân A mới' WHERE id = 'c-test'");
     assert.equal(await count(), 3, "a court sent back to PENDING notifies again");
 
+    // An admin revoking the approval (adminRepository.revokeCourtApproval) sets the transaction-local flag.
+    await tx.$executeRawUnsafe("UPDATE courts SET approval_status = 'APPROVED' WHERE id = 'c-test'");
+    await tx.$executeRawUnsafe("SELECT set_config('app.skip_admin_review_notice', 'on', true)");
+    await tx.$executeRawUnsafe("UPDATE courts SET approval_status = 'PENDING' WHERE id = 'c-test'");
+    await tx.$executeRawUnsafe("SELECT set_config('app.skip_admin_review_notice', '', true)");
+    assert.equal(await count(), 3, "an admin revoking an approval does not notify admins");
+
     await tx.$executeRawUnsafe("UPDATE blog_posts SET status = 'PENDING' WHERE id = 'b-test'");
     await tx.$executeRawUnsafe("INSERT INTO reports(id, court_id, reason) VALUES ('r-test', 'c-test', 'Sân bẩn')");
     await tx.$executeRawUnsafe("INSERT INTO court_image_requests(id, court_id, status) VALUES ('i-test', 'c-test', 'PENDING')");
@@ -94,7 +101,7 @@ try {
     const recipients = await tx.$queryRaw<Array<{ user_id: string }>>`SELECT user_id FROM notifications ORDER BY user_id`;
     assert.deepEqual(recipients.map((row) => row.user_id), ["admin1", "admin2"]);
     console.log(`Function under test: ${candidateSql ? process.argv[2] : "live public.enqueue_admin_review_notification()"}`);
-    console.log("PASS: seven event types, drafts and writes to already-pending courts ignored, re-submission notified, detailed messages.");
+    console.log("PASS: seven event types, drafts and writes to already-pending courts ignored, re-submission notified, admin revocation silent, detailed messages.");
     console.log("PASS: transactional rollback, real SQL fan-out, active admins only, no duplicate delivery, delivery rollback and retry.");
     throw new RollBack();
   }, { timeout: 60000 });

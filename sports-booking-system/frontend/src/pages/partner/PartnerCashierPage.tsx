@@ -1,50 +1,37 @@
-import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState, useMemo } from "react";
-import {
-  Search,
-  Plus,
-  Minus,
-  Trash2,
-  CreditCard,
-  Clock,
-  User,
-  Phone,
-  RefreshCw,
-  Lock,
-  Unlock,
-  CheckCircle2,
-  AlertCircle,
-  QrCode,
-  Banknote,
-  Receipt,
-  Printer,
-  ChevronRight,
-  Filter,
-  Check,
-  Package,
-  Layers,
-  MapPin,
-  CalendarDays
-} from "lucide-react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { Layers, Printer, Receipt, RefreshCw, Search } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { toast as notify } from "sonner";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Modal } from "../../components/ui/Modal";
-import { ServiceImage } from "../../components/common/ServiceImage";
 import {
   cashierApi,
   type CashierBooking,
-  type CashierBookingDetail,
-  type ActiveBookingService
+  type CashierBookingDetail
 } from "../../features/cashier/api/cashierApi";
+import { phaseAllowsServices, sessionCourtLabel, sessionPhase } from "../../features/cashier/cashierSession";
+import { ServiceMenu } from "../../features/cashier/components/ServiceMenu";
+import { SessionBill } from "../../features/cashier/components/SessionBill";
+import { SessionCard } from "../../features/cashier/components/SessionCard";
+import type { SessionPaid } from "../../features/cashier/components/SessionPayment";
 import { serviceApi, type ServiceCategory, type ServiceItem } from "../../features/services/api/serviceApi";
-import { checkoutApi, type CheckoutData } from "../../features/checkout/api/checkoutApi";
+import { partnerApi } from "../../features/partner/api/partnerApi";
 import { getSocket } from "../../lib/socket";
 import { useAuth } from "../../features/auth/hooks/useAuth";
 import { formatMoney } from "../../utils/formatters";
 
 type BookingFilterType = "ALL" | "IN_USE" | "UPCOMING" | "UNPAID" | "PAID" | "COMPLETED";
+
+/** The views besides the sessions in play. */
+const OTHER_FILTERS: Array<{ key: Exclude<BookingFilterType, "IN_USE">; label: string }> = [
+  { key: "UPCOMING", label: "Sắp tới" },
+  { key: "UNPAID", label: "Chưa trả" },
+  { key: "PAID", label: "Đã trả" },
+  { key: "COMPLETED", label: "Hoàn tất" },
+  { key: "ALL", label: "Tất cả hôm nay" }
+];
 
 /** A booking loaded on its own (opened by link) in the shape of a counter list row. */
 function bookingFromDetail(detail: CashierBookingDetail): CashierBooking {
@@ -60,8 +47,6 @@ function bookingFromDetail(detail: CashierBookingDetail): CashierBooking {
 }
 
 export function PartnerCashierPage() {
-  const { t } = useTranslation("booking");
-  const navigate = useNavigate();
   const { token, user } = useAuth();
 
   // Booking list & selection
@@ -81,7 +66,14 @@ export function PartnerCashierPage() {
 
   // Filters & Search
   const [searchBooking, setSearchBooking] = useState("");
-  const [bookingFilter, setBookingFilter] = useState<BookingFilterType>("ALL");
+  // The counter sells to customers on court: it opens on the sessions in play, the rest are secondary filters.
+  const [bookingFilter, setBookingFilter] = useState<BookingFilterType>("IN_USE");
+  // A partner with several venues narrows the list to one ("" = all of them). Staff run one venue: the server
+  // pins their list to it, so they get no such filter.
+  const isPartner = user?.role === "PARTNER";
+  const [venueFilter, setVenueFilter] = useState("");
+  const venues = useQuery({ queryKey: ["partner-courts"], queryFn: partnerApi.courts, enabled: isPartner, staleTime: 5 * 60_000 });
+  const venueOptions = isPartner ? venues.data ?? [] : [];
   const [loading, setLoading] = useState(true);
   const [searchService, setSearchService] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("");
@@ -104,9 +96,9 @@ export function PartnerCashierPage() {
       const patchLock = (booking: CashierBooking) => (booking.id === bookingId ? { ...booking, invoiceLockedAt: result.invoiceLockedAt } : booking);
       setSelectedBooking((prev) => (prev ? patchLock(prev) : prev));
       setActiveBookings((prev) => prev.map(patchLock));
-      showToast(lockState ? "Đã khoá hoá đơn: không thêm, sửa hay bớt dịch vụ được nữa" : "Đã mở khoá hoá đơn", lockState ? "success" : "info");
+      showToast(lockState ? "Đã kết thúc phiên: dịch vụ được khoá, chuyển sang thu tiền" : "Đã mở lại phiên để thêm dịch vụ", lockState ? "success" : "info");
     } catch (err: any) {
-      showToast(err.message || "Không thể đổi trạng thái khoá hoá đơn", "error");
+      showToast(err.message || "Không đổi được trạng thái phiên", "error");
     } finally {
       setLockPending(false);
     }
@@ -118,13 +110,6 @@ export function PartnerCashierPage() {
   const [selectedRental, setSelectedRental] = useState<{ id: string; name: string } | null>(null);
   const [returnStatus, setReturnStatus] = useState<"RETURNED" | "DAMAGED" | "LOST">("RETURNED");
   const [returnNotes, setReturnNotes] = useState("");
-
-  // Checkout Payment Modal state
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<"CASH" | "BANK_TRANSFER" | "QR_TRANSFER">("CASH");
-  const [cashGiven, setCashGiven] = useState<number>(0);
-  const [transactionRef, setTransactionRef] = useState<string>("");
-  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
   // Success Receipt Modal state
   const [receiptData, setReceiptData] = useState<{
@@ -140,7 +125,7 @@ export function PartnerCashierPage() {
     if (!silent) setLoading(true);
     try {
       const [bookings, cats] = await Promise.all([
-        cashierApi.getActiveBookings(undefined, searchBooking, bookingFilter),
+        cashierApi.getActiveBookings(isPartner ? venueFilter || undefined : undefined, searchBooking, bookingFilter),
         serviceApi.getCategories()
       ]);
       const listed = await withPinnedBooking(bookings);
@@ -152,7 +137,10 @@ export function PartnerCashierPage() {
         if (!prev) return listed.length > 0 ? listed[0] : null;
         if (hasAnyPendingWork()) return prev;
         const found = listed.find((b) => b.id === prev.id);
-        return found || (listed.length > 0 ? listed[0] : null);
+        if (found) return found;
+        // A session just finished leaves the "Đang chơi" list but stays open (its receipt) until another is picked.
+        if (prev.bookingStatus === "COMPLETED") return prev;
+        return listed.length > 0 ? listed[0] : null;
       });
       setCategories(cats);
     } catch (err) {
@@ -203,13 +191,13 @@ export function PartnerCashierPage() {
       fetchData();
     }, 250);
     return () => clearTimeout(timer);
-  }, [bookingFilter, searchBooking]);
+  }, [bookingFilter, searchBooking, venueFilter]);
 
   // Periodic silent polling
   useEffect(() => {
     const interval = setInterval(() => fetchData(true), 25000);
     return () => clearInterval(interval);
-  }, [bookingFilter, searchBooking]);
+  }, [bookingFilter, searchBooking, venueFilter]);
 
   // Fetch services for selected court
   const refetchServices = async () => {
@@ -534,96 +522,6 @@ export function PartnerCashierPage() {
     }
   };
 
-  // Open Checkout Modal
-  const handleOpenCheckoutModal = () => {
-    if (!selectedBooking) return;
-    setCashGiven(selectedBooking.remainingAmount);
-    setTransactionRef("");
-    setIsPaymentModalOpen(true);
-  };
-
-  // Process In-POS Payment
-  const handleProcessPayment = async () => {
-    if (!selectedBooking) return;
-    setIsProcessingPayment(true);
-
-    try {
-      // 1. Fetch or create checkout record: the amount due is the server's, never the screen's
-      const checkoutData = await checkoutApi.getCheckoutByBooking(selectedBooking.id);
-      const checkoutId = checkoutData.checkout.id;
-      const amountToPay = Number(checkoutData.checkout.remainingAmount);
-
-      if (amountToPay <= 0) {
-        showToast("Đơn hàng này đã thanh toán đủ 100%!", "info");
-        setIsPaymentModalOpen(false);
-        return;
-      }
-      // The invoice changed since the screen loaded it (another device, a service added): show the new amount
-      // and let the cashier collect it, rather than charging a figure they did not see.
-      if (Math.round(amountToPay) !== Math.round(selectedBooking.remainingAmount)) {
-        const detail = await cashierApi.getBookingDetail(selectedBooking.id).catch(() => null);
-        if (detail) {
-          lastAppliedAtRef.current = Date.now();
-          applyTotals(selectedBooking.id, detail);
-        }
-        setCashGiven(amountToPay);
-        showToast(`Số tiền cần thu đã đổi thành ${formatMoney(amountToPay)}. Kiểm tra lại rồi bấm thanh toán.`, "error");
-        return;
-      }
-
-      // 2. Process checkout payment
-      const paymentMethodCode =
-        paymentMethod === "QR_TRANSFER" ? "QR_TRANSFER" : paymentMethod === "BANK_TRANSFER" ? "BANK_TRANSFER" : "CASH";
-
-      const txId =
-        paymentMethod === "CASH"
-          ? `CASH_${Date.now()}`
-          : transactionRef.trim()
-          ? transactionRef.trim()
-          : `POS_${Date.now()}`;
-
-      const paid = await checkoutApi.processPayment({
-        checkoutId,
-        amount: amountToPay,
-        paymentMethod: paymentMethodCode,
-        transactionId: txId
-      });
-      const stillDue = Number(paid.checkout.remainingAmount ?? 0);
-
-      // 3. Update local state from what the server recorded
-      const updatedBooking: CashierBooking = {
-        ...selectedBooking,
-        remainingAmount: stillDue,
-        paymentStatus: paid.isCompleted ? "PAID" : selectedBooking.paymentStatus,
-        bookingStatus: paid.isCompleted ? "COMPLETED" : selectedBooking.bookingStatus
-      };
-
-      setSelectedBooking(updatedBooking);
-      setActiveBookings((prev) => prev.map((b) => (b.id === selectedBooking.id ? updatedBooking : b)));
-
-      // 4. Save receipt data & show receipt modal
-      setReceiptData({
-        booking: selectedBooking,
-        paidAmount: amountToPay,
-        paymentMethod:
-          paymentMethod === "CASH" ? "Tiền mặt" : paymentMethod === "BANK_TRANSFER" ? "Chuyển khoản" : "VietQR",
-        paidAt: new Date().toLocaleString("vi-VN"),
-        transactionId: txId
-      });
-
-      setIsPaymentModalOpen(false);
-      showToast(
-        paid.isCompleted ? "Thanh toán thành công! Đơn hàng đã hoàn tất." : `Đã ghi nhận thanh toán. Còn phải thu ${formatMoney(stillDue)}.`,
-        paid.isCompleted ? "success" : "info"
-      );
-    } catch (err: any) {
-      console.error("Payment error:", err);
-      showToast(err.response?.data?.message || err.message || "Lỗi xử lý thanh toán", "error");
-    } finally {
-      setIsProcessingPayment(false);
-    }
-  };
-
   const filteredServices = useMemo(() => {
     return services.filter((svc) => {
       const matchesSearch = svc.name.toLowerCase().includes(searchService.toLowerCase());
@@ -632,773 +530,258 @@ export function PartnerCashierPage() {
     });
   }, [services, searchService, selectedCategory]);
 
+  // The clock the session states follow ("Đang chơi" turns "Hết giờ" by itself).
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const [actionPending, setActionPending] = useState(false);
+  const role = user?.role;
+  const selectedPhase = selectedBooking ? sessionPhase(selectedBooking, now) : null;
+
+  /** The selected session's bill as the server has it now. */
+  const refreshSelectedTotals = async () => {
+    if (!selectedBooking) return;
+    const bookingId = selectedBooking.id;
+    const detail = await cashierApi.getBookingDetail(bookingId).catch(() => null);
+    if (detail) {
+      lastAppliedAtRef.current = Date.now();
+      applyTotals(bookingId, detail);
+    }
+  };
+
+  // Ending a session locks its services (the server refuses changes on every device); the bill then asks for the
+  // money, or to finish the session when nothing is owed. Reopening unlocks it.
+  const handleEndSession = async () => {
+    if (!selectedBooking || hasAnyPendingWork()) {
+      if (selectedBooking) showToast("Đang lưu dịch vụ vừa thêm, thử lại sau giây lát", "info");
+      return;
+    }
+    await toggleLockInvoice(selectedBooking.id, true);
+    await refreshSelectedTotals();
+  };
+
+  /** Nothing owed: the session finishes here (with money owed, the payment finishes it). */
+  const handleFinish = async () => {
+    if (!selectedBooking) return;
+    const bookingId = selectedBooking.id;
+    setActionPending(true);
+    try {
+      await cashierApi.finishSession(bookingId);
+      const finish = (booking: CashierBooking) => (booking.id === bookingId ? { ...booking, bookingStatus: "COMPLETED" } : booking);
+      setSelectedBooking((prev) => (prev ? finish(prev) : prev));
+      setActiveBookings((prev) => prev.map(finish));
+      showToast("Đã hoàn tất phiên sân", "success");
+    } catch (err: any) {
+      showToast(err.message || "Không hoàn tất được phiên", "error");
+      await refreshSelectedTotals();
+    } finally {
+      setActionPending(false);
+    }
+  };
+
+  /** The payment step recorded a payment: show what the server kept, and the receipt. */
+  const handlePaid = (paid: SessionPaid) => {
+    if (!selectedBooking) return;
+    const updated: CashierBooking = {
+      ...selectedBooking,
+      remainingAmount: paid.stillDue,
+      paidAtCounter: Number(selectedBooking.paidAtCounter ?? 0) + paid.amount,
+      paymentStatus: paid.isCompleted ? "PAID" : selectedBooking.paymentStatus,
+      bookingStatus: paid.isCompleted ? "COMPLETED" : "CHECKOUT_PENDING"
+    };
+    setSelectedBooking(updated);
+    setActiveBookings((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
+    setReceiptData({
+      booking: updated,
+      paidAmount: paid.amount,
+      paymentMethod: paid.methodLabel,
+      paidAt: new Date().toLocaleString("vi-VN"),
+      transactionId: paid.transactionId
+    });
+    showToast(
+      paid.isCompleted ? "Đã thu tiền, phiên sân hoàn tất." : `Đã ghi nhận thanh toán. Còn phải thu ${formatMoney(paid.stillDue)}.`,
+      paid.isCompleted ? "success" : "info"
+    );
+  };
+
+  const otherFilter = bookingFilter === "IN_USE" ? "" : bookingFilter;
+  const blockedReason = !selectedBooking
+    ? "Chọn một phiên sân ở cột trái để thêm dịch vụ."
+    : selectedPhase && !phaseAllowsServices(selectedPhase)
+      ? selectedPhase === "COMPLETED"
+        ? "Phiên đã hoàn tất, không thêm dịch vụ được nữa."
+        : "Phiên đã kết thúc. Bấm “Mở lại phiên” ở hoá đơn để thêm dịch vụ."
+      : null;
+  const selectedCourt = selectedBooking ? sessionCourtLabel(selectedBooking, role) : null;
+
+  // Fills the screen's height; takes 32px of the layout's 48px bottom padding (taller by 32px, pulled up by -mb-8),
+  // so 16px stay below it and the page still does not scroll.
   return (
-    <div className="space-y-5 relative">
-      {/* Toast Notification Banner */}
-      {/* Top Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-        <div>
-          <h1 className="text-xl font-black text-slate-900 flex items-center gap-2">
-            <span className="p-2 rounded-xl bg-green-100 text-[#02712a]">
-              <Receipt className="h-5 w-5" />
+    <div className="flex flex-col gap-4 lg:-mb-8 lg:h-[calc(100dvh-5.75rem)] lg:min-h-[36rem]">
+      <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+        <div className="min-w-0">
+          <h1 className="flex items-center gap-2 text-lg font-black text-slate-900">
+            <span className="rounded-xl bg-green-100 p-1.5 text-[#02712a]">
+              <Receipt className="h-4 w-4" />
             </span>
-            Quản Lý Khách Đang Sử Dụng Sân & Thu Ngân (POS)
+            Thu ngân · Phiên sân đang chơi
           </h1>
-          <p className="text-xs font-medium text-slate-600 mt-1">
-            Theo dõi khách tại từng sân con cụ thể, thêm đồ ăn/nước uống/vợt, tính bill realtime và thanh toán tiền mặt/chuyển khoản/VietQR.
-          </p>
+          <p className="mt-0.5 hidden text-xs text-slate-500 sm:block">Chọn phiên, thêm dịch vụ khách dùng, kết thúc phiên rồi thu tiền.</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="secondary"
-            className="flex items-center gap-2 text-xs font-bold border-slate-300 hover:bg-slate-50"
-            onClick={() => fetchData()}
-          >
-            <RefreshCw className="h-3.5 w-3.5" /> Đồng bộ dữ liệu
-          </Button>
-        </div>
+        <Button variant="secondary" className="shrink-0 text-xs font-bold" onClick={() => fetchData()}>
+          <RefreshCw className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Đồng bộ</span>
+        </Button>
       </div>
 
-      {/* Main Grid: 3 Columns POS Architecture */}
-      <div className="grid gap-5 lg:grid-cols-12 items-start">
-        {/* =========================================================================
-            LEFT COLUMN: Danh Sách Khách & Sân Đang Hoạt Động (Filter & Search)
-           ========================================================================= */}
-        <div className="lg:col-span-4 space-y-3">
-          <div className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-                <Layers className="h-4 w-4 text-[#02712a]" /> Khách & Sân ({activeBookings.length})
-              </h2>
-            </div>
-
-            {/* Search Input */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-              <Input
-                placeholder="Tìm mã đơn, tên khách, SĐT, sân..."
-                value={searchBooking}
-                onChange={(e) => setSearchBooking(e.target.value)}
-                className="pl-8 text-xs py-2 h-9 rounded-xl"
-              />
-            </div>
-
-            {/* Status Filter Chips */}
-            <div className="flex flex-wrap gap-1">
-              {[
-                { key: "ALL", label: "Tất cả" },
-                { key: "IN_USE", label: "Đang sử dụng" },
-                { key: "UPCOMING", label: "Sắp tới" },
-                { key: "UNPAID", label: "Chưa trả" },
-                { key: "PAID", label: "Đã trả" },
-                { key: "COMPLETED", label: "Hoàn tất" }
-              ].map((f) => (
-                <button
-                  key={f.key}
-                  onClick={() => setBookingFilter(f.key as BookingFilterType)}
-                  className={`rounded-lg px-2.5 py-1 text-[11px] font-extrabold transition ${
-                    bookingFilter === f.key
-                      ? "bg-[#02712a] text-white shadow-xs"
-                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Bookings List Cards */}
-          {loading ? (
-            <div className="space-y-2">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-28 rounded-2xl bg-slate-100 animate-pulse" />
-              ))}
-            </div>
-          ) : activeBookings.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-xs text-slate-500">
-              Không tìm thấy đơn đặt sân nào phù hợp với bộ lọc.
-            </div>
-          ) : (
-            <div className="space-y-2 max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
-              {activeBookings.map((b) => {
-                const isSelected = selectedBooking?.id === b.id;
-                const isLocked = Boolean(b.invoiceLockedAt);
-                const isPaid = b.paymentStatus === "PAID" || b.remainingAmount === 0;
-                const isPinned = b.id === pinnedBookingId;
-
-                return (
-                  <div
-                    key={b.id}
-                    onClick={() => setSelectedBooking(b)}
-                    className={`cursor-pointer rounded-2xl border p-3.5 transition-all duration-200 ${
-                      isSelected
-                        ? "border-[#02712a] bg-green-50/80 shadow-md ring-2 ring-green-600/30"
-                        : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-sm"
-                    }`}
-                  >
-                    {/* Header: Sân con cụ thể & Mã đơn */}
-                    <div className="flex items-center justify-between gap-1">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-black text-slate-900 text-xs">
-                          {b.court.name}
-                        </span>
-                        {b.courtSurface && (
-                          <span className="rounded-md bg-purple-100 text-purple-900 border border-purple-200 px-1.5 py-0.2 text-[10px] font-black">
-                            {b.courtSurface.name}
-                          </span>
-                        )}
-                        {isLocked && (
-                          <span className="inline-flex items-center gap-0.5 rounded-md bg-green-100 px-1.5 py-0.5 text-[9px] font-black text-[#02712a]">
-                            <Lock className="h-2.5 w-2.5" /> Khóa
-                          </span>
-                        )}
-                        {isPinned && (
-                          <span className="rounded-md bg-sky-100 px-1.5 py-0.5 text-[9px] font-black text-sky-800" title="Mở từ trang Đơn đặt, không thuộc danh sách hôm nay">
-                            Mở từ Đơn đặt
-                          </span>
-                        )}
-                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-extrabold text-emerald-800 uppercase">
-                          {!b.checkedInAt ? t("openTab.notCheckedIn") : b.bookingStatus}
-                        </span>
-                      </div>
-                      <span className="text-[11px] font-mono font-bold text-slate-500">
-                        #{b.bookingCode.slice(-6)}
-                      </span>
-                    </div>
-
-                    {/* Customer info */}
-                    <div className="mt-2 space-y-1 text-xs text-slate-600">
-                      <div className="flex items-center justify-between font-bold text-slate-800">
-                        <span className="flex items-center gap-1 truncate">
-                          <User className="h-3 w-3 text-slate-400 shrink-0" />
-                          <span className="truncate">{b.user.fullName}</span>
-                        </span>
-                        {b.user.phone && (
-                          <span className="text-[11px] text-slate-500 font-mono flex items-center gap-0.5">
-                            <Phone className="h-2.5 w-2.5" /> {b.user.phone}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center justify-between text-slate-500 text-[11px]">
-                        <span className="flex items-center gap-1">
-                          <Clock className="h-3 w-3 text-slate-400" />
-                          {b.startTime.slice(0, 5)} - {b.endTime.slice(0, 5)}
-                        </span>
-                        <span>{b.services?.length || 0} dịch vụ</span>
-                      </div>
-                    </div>
-
-                    {/* Badges & Remaining */}
-                    <div className="mt-2.5 flex items-center justify-between border-t border-slate-100 pt-2 text-xs">
-                      <div className="flex items-center gap-1">
-                        <span
-                          className={`rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase ${
-                            b.bookingStatus === "IN_PROGRESS"
-                              ? "bg-emerald-100 text-emerald-800"
-                              : b.bookingStatus === "COMPLETED"
-                              ? "bg-slate-200 text-slate-700"
-                              : "bg-blue-100 text-blue-800"
-                          }`}
-                        >
-                          {b.bookingStatus === "IN_PROGRESS"
-                            ? "Đang dùng"
-                            : b.bookingStatus === "COMPLETED"
-                            ? "Hoàn tất"
-                            : "Sắp tới"}
-                        </span>
-                        <span
-                          className={`rounded-md px-1.5 py-0.5 text-[9px] font-black uppercase ${
-                            isPaid
-                              ? "bg-emerald-100 text-emerald-800"
-                              : b.depositAmount > 0
-                              ? "bg-amber-100 text-amber-800"
-                              : "bg-rose-100 text-rose-800"
-                          }`}
-                        >
-                          {isPaid ? "Đã trả đủ" : b.depositAmount > 0 ? "Đã cọc" : "Chưa trả"}
-                        </span>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-[10px] text-slate-400 mr-1">Thu:</span>
-                        <span
-                          className={`font-black text-xs ${
-                            b.remainingAmount > 0 ? "text-[#02712a]" : "text-slate-500"
-                          }`}
-                        >
-                          {formatMoney(b.remainingAmount)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* =========================================================================
-            MIDDLE COLUMN: Menu Dịch Vụ / Đồ Ăn / Thức Uống (Hiển Thị Kho & Trạng Thái)
-           ========================================================================= */}
-        <div className="lg:col-span-4 space-y-3">
-          <div className="rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
-                <Package className="h-4 w-4 text-[#02712a]" /> Menu Dịch Vụ
-                {selectedBooking && (
-                  <span className="text-[11px] font-bold text-[#02712a] bg-green-50 px-2 py-0.5 rounded-lg border border-green-200">
-                    {selectedBooking.courtSurface?.name || selectedBooking.court.name}
-                  </span>
-                )}
-              </h2>
-            </div>
-
-            {/* Search menu */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-              <Input
-                placeholder="Tìm món, nước, đồ thuê..."
-                value={searchService}
-                onChange={(e) => setSearchService(e.target.value)}
-                className="pl-8 text-xs py-2 h-9 rounded-xl"
-              />
-            </div>
-
-            {/* Categories filter */}
-            <div className="flex flex-wrap gap-1">
-              <button
-                onClick={() => setSelectedCategory("")}
-                className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
-                  selectedCategory === "" ? "bg-[#02712a] text-white shadow-xs" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[18rem_minmax(0,1fr)_20rem] xl:grid-cols-[22rem_minmax(0,1fr)_24rem] lg:grid-rows-[minmax(0,1fr)]">
+        {/* Left: the sessions. */}
+        <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="space-y-2.5 border-b border-slate-100 p-3">
+            <h2 className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-slate-700">
+              <Layers className="h-4 w-4 text-[#02712a]" /> Phiên sân ({activeBookings.length})
+            </h2>
+            {venueOptions.length > 1 ? (
+              <select
+                aria-label="Cụm sân"
+                value={venueFilter}
+                onChange={(e) => setVenueFilter(e.target.value)}
+                className={`h-9 w-full rounded-xl border px-2.5 text-xs font-semibold outline-none focus:border-[#02712a] ${
+                  venueFilter ? "border-[#02712a] bg-green-50 text-[#02712a]" : "border-slate-200 bg-white text-slate-600"
                 }`}
               >
-                Tất cả
+                <option value="">Tất cả cụm sân</option>
+                {venueOptions.map((venue) => (
+                  <option key={venue.id} value={venue.id}>
+                    {venue.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <Input
+                placeholder="Tên khách, SĐT, sân, mã đơn"
+                value={searchBooking}
+                onChange={(e) => setSearchBooking(e.target.value)}
+                className="h-9 rounded-xl py-2 pl-8 text-xs"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setBookingFilter("IN_USE")}
+                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-extrabold transition ${
+                  bookingFilter === "IN_USE" ? "bg-[#02712a] text-white shadow-xs" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                Đang chơi
               </button>
-              {categories.map((cat) => (
-                <button
-                  key={cat.id}
-                  onClick={() => setSelectedCategory(cat.id)}
-                  className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
-                    selectedCategory === cat.id
-                      ? "bg-[#02712a] text-white shadow-xs"
-                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                  }`}
-                >
-                  {cat.name}
-                </button>
-              ))}
+              <select
+                aria-label="Bộ lọc khác"
+                value={otherFilter}
+                onChange={(e) => setBookingFilter((e.target.value || "IN_USE") as BookingFilterType)}
+                className={`h-8 min-w-0 flex-1 rounded-lg border px-2 text-xs font-semibold outline-none focus:border-[#02712a] ${
+                  otherFilter ? "border-[#02712a] bg-green-50 text-[#02712a]" : "border-slate-200 bg-white text-slate-600"
+                }`}
+              >
+                <option value="">Bộ lọc khác…</option>
+                {OTHER_FILTERS.map((item) => (
+                  <option key={item.key} value={item.key}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
-          {/* Service Items Grid */}
-          <div className="grid gap-2.5 sm:grid-cols-2 max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
-            {filteredServices.length === 0 ? (
-              <div className="col-span-full rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-xs text-slate-500">
-                Không tìm thấy món hoặc dịch vụ phù hợp.
+          <div className="max-h-[24rem] min-h-0 flex-1 space-y-2 overflow-y-auto p-2.5 lg:max-h-none">
+            {loading ? (
+              [1, 2, 3].map((i) => <div key={i} className="h-16 animate-pulse rounded-2xl bg-slate-100" />)
+            ) : activeBookings.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-center text-xs text-slate-500">
+                {bookingFilter === "IN_USE" && !searchBooking.trim() ? (
+                  <>
+                    <p className="font-semibold text-slate-600">Chưa có khách nào đang chơi.</p>
+                    <p className="mt-1">Phiên sắp tới nằm ở “Bộ lọc khác”.</p>
+                  </>
+                ) : (
+                  "Không có phiên nào phù hợp."
+                )}
               </div>
             ) : (
-              filteredServices.map((svc) => {
-                const isLocked = isCurrentBookingLocked;
-                const stock = svc.trackInventory ? Number(svc.inventory?.quantity ?? 0) : 999;
-                const isOutOfStock = svc.trackInventory && stock <= 0;
-
-                return (
-                  <div
-                    key={svc.id}
-                    onClick={() => {
-                      if (!isLocked && !isOutOfStock) handleAddService(svc);
-                    }}
-                    className={`group relative rounded-2xl border p-3 shadow-xs transition-all duration-200 flex flex-col justify-between select-none ${
-                      isLocked || isOutOfStock
-                        ? "cursor-not-allowed border-slate-200 bg-slate-50/80 opacity-70"
-                        : "cursor-pointer border-slate-200 bg-white hover:border-[#02712a] hover:shadow-md active:scale-95"
-                    }`}
-                  >
-                    <div>
-                      {/* Top: Badges */}
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="text-[9px] font-black uppercase tracking-wider text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">
-                          {svc.type === "RENTAL_SERVICE" ? "Cho thuê" : svc.unit}
-                        </span>
-                        {svc.trackInventory && (
-                          <span
-                            className={`text-[9px] font-black px-1.5 py-0.5 rounded ${
-                              isOutOfStock
-                                ? "bg-rose-100 text-rose-700"
-                                : stock <= 5
-                                ? "bg-amber-100 text-amber-800"
-                                : "bg-emerald-100 text-emerald-800"
-                            }`}
-                          >
-                            {isOutOfStock ? "Hết hàng" : `Kho: ${stock}`}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Item Thumbnail & Name — ServiceImage fits the picture inside the box
-                          (object-contain) so wide product shots are not cropped. */}
-                      <div className="mt-2 flex items-center gap-2">
-                        <ServiceImage
-                          src={svc.imageUrl}
-                          alt={svc.name}
-                          className="h-10 w-10 shrink-0 rounded-xl"
-                          fallback={
-                            <div className="h-10 w-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400 shrink-0">
-                              <Package className="h-5 w-5" />
-                            </div>
-                          }
-                        />
-                        <h3 className="font-black text-slate-900 text-xs line-clamp-2 group-hover:text-[#02712a] transition">
-                          {svc.name}
-                        </h3>
-                      </div>
-                    </div>
-
-                    {/* Price and Add button */}
-                    <div className="mt-3 flex items-center justify-between pt-2 border-t border-slate-100">
-                      <span className="font-black text-[#02712a] text-xs">
-                        {formatMoney(svc.price)}
-                      </span>
-                      <button
-                        disabled={isLocked || isOutOfStock}
-                        className={`flex h-7 w-7 items-center justify-center rounded-lg transition ${
-                          isLocked || isOutOfStock
-                            ? "bg-slate-200 text-slate-400 cursor-not-allowed"
-                            : "bg-green-50 text-[#02712a] group-hover:bg-[#02712a] group-hover:text-white"
-                        }`}
-                      >
-                        {isLocked ? <Lock className="h-3 w-3" /> : <Plus className="h-3.5 w-3.5" />}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
+              activeBookings.map((b) => (
+                <SessionCard
+                  key={b.id}
+                  booking={b}
+                  phase={sessionPhase(b, now)}
+                  role={role}
+                  selected={selectedBooking?.id === b.id}
+                  pinned={b.id === pinnedBookingId}
+                  onSelect={() => setSelectedBooking(b)}
+                />
+              ))
             )}
           </div>
-        </div>
+        </section>
 
-        {/* =========================================================================
-            RIGHT COLUMN: Chi Tiết Đơn Hàng & Bill Realtime & Checkout POS
-           ========================================================================= */}
-        <div className="lg:col-span-4 space-y-4">
-          {selectedBooking ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xl flex flex-col justify-between min-h-[calc(100vh-220px)]">
-              <div>
-                {/* Header: Court details & Customer */}
-                <div className="border-b border-slate-100 pb-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h2 className="font-black text-slate-900 text-base flex items-center gap-1.5">
-                        {selectedBooking.court.name}
-                        {selectedBooking.courtSurface && (
-                          <span className="rounded-lg bg-purple-100 text-purple-900 border border-purple-200 px-2 py-0.5 text-xs font-black">
-                            {selectedBooking.courtSurface.name}
-                          </span>
-                        )}
-                      </h2>
-                    </div>
-                    <span className="text-xs font-mono font-black text-[#02712a] bg-green-50 px-2 py-0.5 rounded-lg border border-green-200">
-                      #{selectedBooking.bookingCode}
-                    </span>
-                  </div>
+        {/* Middle: add services to the selected session. */}
+        <ServiceMenu
+          courtLabel={selectedCourt ? selectedCourt.main : null}
+          services={selectedBooking ? filteredServices : []}
+          categories={categories}
+          category={selectedCategory}
+          onCategory={setSelectedCategory}
+          search={searchService}
+          onSearch={setSearchService}
+          blockedReason={blockedReason}
+          onAdd={handleAddService}
+        />
 
-                  {/* Customer info & Check-in bar */}
-                  <div className="flex items-center justify-between text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                    <div className="space-y-0.5">
-                      <p className="font-extrabold text-slate-900 flex items-center gap-1">
-                        <User className="h-3 w-3 text-slate-400" /> {selectedBooking.user.fullName}
-                      </p>
-                      <p className="text-[11px] text-slate-500 font-mono">
-                        {selectedBooking.user.phone || selectedBooking.user.email}
-                      </p>
-                    </div>
-
-                    {/* Check-in status / button */}
-                    {!selectedBooking.checkedInAt ? (
-                      <Button
-                        size="sm"
-                        className="bg-[#02712a] hover:bg-[#1fa955] text-white text-[11px] h-7 px-2.5 font-bold shadow-xs"
-                        onClick={handleCheckIn}
-                      >
-                        <CheckCircle2 className="mr-1 h-3 w-3" /> Check-in
-                      </Button>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-800 bg-emerald-100 px-2 py-1 rounded-md">
-                        <Check className="h-3 w-3" /> Đã check-in
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Lock invoice banner */}
-                {isCurrentBookingLocked ? (
-                  <div className="mt-2.5 flex items-center justify-between rounded-xl bg-emerald-50 border border-emerald-200 p-2 text-xs text-emerald-900">
-                    <span className="flex items-center gap-1 font-extrabold">
-                      <Lock className="h-3.5 w-3.5 text-[#02712a]" /> HÓA ĐƠN ĐÃ KHÓA
-                    </span>
-                    <button
-                      onClick={() => setIsUnlockConfirmOpen(true)}
-                      className="text-[11px] font-bold text-slate-600 hover:text-slate-900 hover:underline flex items-center gap-0.5"
-                    >
-                      <Unlock className="h-3 w-3" /> Mở khóa
-                    </button>
-                  </div>
-                ) : (
-                  <div className="mt-2.5 flex items-center justify-between rounded-xl bg-amber-50 border border-amber-200 p-2 text-xs text-amber-800">
-                    <span className="text-[11px] font-medium">Chế độ sửa dịch vụ</span>
-                    <button
-                      onClick={() => toggleLockInvoice(selectedBooking.id, true)}
-                      className="flex items-center gap-1 rounded-md bg-[#02712a] px-2 py-0.5 text-[10px] font-extrabold text-white"
-                    >
-                      <Lock className="h-2.5 w-2.5" /> Khóa bill
-                    </button>
-                  </div>
-                )}
-
-                {/* Services list in booking */}
-                <div className="mt-3 space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <h3 className="font-black uppercase text-slate-600 tracking-wider">
-                      Dịch vụ đã dùng ({selectedBooking.services?.length || 0})
-                    </h3>
-                  </div>
-
-                  {selectedBooking.services?.length === 0 ? (
-                    <div className="rounded-xl bg-slate-50 p-5 text-center text-xs text-slate-400 border border-dashed border-slate-200">
-                      Chưa có dịch vụ nào trong đơn. Chọn món ở cột giữa để thêm vào hóa đơn.
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
-                      {selectedBooking.services.map((item) => (
-                        <div
-                          key={item.id}
-                          className="flex items-center justify-between rounded-xl bg-slate-50 p-2.5 border border-slate-200"
-                        >
-                          <div className="flex-1 pr-2">
-                            <p className="text-xs font-bold text-slate-900 line-clamp-1">
-                              {item.name || item.service?.name || "Dịch vụ"}
-                            </p>
-                            <p className="text-[11px] text-slate-500 font-medium">
-                              {formatMoney(item.unitPrice || item.price)} x {item.quantity} ={" "}
-                              <strong className="text-[#02712a]">
-                                {formatMoney(Number(item.unitPrice || item.price) * item.quantity)}
-                              </strong>
-                            </p>
-
-                            {/* Rental item status badge */}
-                            {item.rentalItems && item.rentalItems.length > 0 && (
-                              <div className="mt-1 flex flex-wrap gap-1">
-                                {item.rentalItems.map((rental) => (
-                                  <button
-                                    key={rental.id}
-                                    onClick={() => {
-                                      if (isCurrentBookingLocked) {
-                                        showToast("Hóa đơn đã khóa. Vui lòng mở khóa để xử lý trả đồ!", "error");
-                                        return;
-                                      }
-                                      setSelectedRental({ id: rental.id, name: item.name || item.service?.name || "Thiết bị" });
-                                      setIsReturnModalOpen(true);
-                                    }}
-                                    className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${
-                                      rental.status === "RETURNED"
-                                        ? "bg-emerald-100 text-emerald-800"
-                                        : rental.status === "DAMAGED"
-                                        ? "bg-rose-100 text-rose-800"
-                                        : "bg-amber-100 text-amber-800 hover:bg-amber-200"
-                                    }`}
-                                  >
-                                    {rental.status === "RENTED" ? "Đang thuê (Click trả)" : rental.status}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Quantity control */}
-                          <div className="flex items-center gap-1">
-                            <button
-                              disabled={isCurrentBookingLocked}
-                              onClick={() => handleUpdateQuantity(item.serviceId || item.id, item.quantity, -1)}
-                              className={`flex h-6 w-6 items-center justify-center rounded-md border text-xs transition ${
-                                isCurrentBookingLocked
-                                  ? "bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed"
-                                  : "bg-white border-slate-300 text-slate-700 hover:bg-slate-100 active:scale-95"
-                              }`}
-                            >
-                              <Minus className="h-3 w-3" />
-                            </button>
-                            <span className="text-xs font-black w-4 text-center text-slate-900">{item.quantity}</span>
-                            <button
-                              disabled={isCurrentBookingLocked}
-                              onClick={() => handleUpdateQuantity(item.serviceId || item.id, item.quantity, 1)}
-                              className={`flex h-6 w-6 items-center justify-center rounded-md border text-xs transition ${
-                                isCurrentBookingLocked
-                                  ? "bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed"
-                                  : "bg-white border-slate-300 text-slate-700 hover:bg-slate-100 active:scale-95"
-                              }`}
-                            >
-                              <Plus className="h-3 w-3" />
-                            </button>
-                            <button
-                              disabled={isCurrentBookingLocked}
-                              onClick={() => handleRemoveService(item.serviceId || item.id)}
-                              className={`ml-1 p-1 transition ${
-                                isCurrentBookingLocked ? "text-slate-300 cursor-not-allowed" : "text-slate-400 hover:text-rose-600"
-                              }`}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Bottom: Totals & Checkout Button */}
-              <div className="space-y-3 border-t border-slate-100 pt-3 mt-3">
-                <div className="space-y-1.5 text-xs">
-                  <div className="flex justify-between text-slate-600">
-                    <span>Tiền thuê sân:</span>
-                    <span className="font-bold text-slate-900">{formatMoney(selectedBooking.courtSubtotal)}</span>
-                  </div>
-                  <div className="flex justify-between text-slate-600">
-                    <span>Tiền dịch vụ đã dùng:</span>
-                    <span className="font-bold text-slate-900">{formatMoney(selectedBooking.serviceSubtotal)}</span>
-                  </div>
-                  <div className="flex justify-between text-slate-600">
-                    <span>Tiền cọc / Đã trả trước:</span>
-                    <span className="font-bold text-blue-600">-{formatMoney(selectedBooking.depositPaid)}</span>
-                  </div>
-                  <div className="flex justify-between items-baseline text-sm font-black text-slate-900 pt-2 border-t border-slate-200">
-                    <span>CÒN PHẢI THU:</span>
-                    <span className="text-xl font-black text-[#02712a]">
-                      {formatMoney(selectedBooking.remainingAmount)}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Action Buttons */}
-                <div className="space-y-2">
-                  {selectedBooking.remainingAmount > 0 ? (
-                    <Button
-                      className="w-full h-12 bg-[#02712a] text-white font-black text-sm shadow-md hover:bg-[#1fa955] transition flex items-center justify-center gap-2"
-                      onClick={handleOpenCheckoutModal}
-                    >
-                      <CreditCard className="h-4 w-4" /> THANH TOÁN / CHECKOUT ({formatMoney(selectedBooking.remainingAmount)})
-                    </Button>
-                  ) : (
-                    <div className="space-y-2">
-                      <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-2.5 text-center text-xs font-black text-emerald-800 flex items-center justify-center gap-1.5">
-                        <CheckCircle2 className="h-4 w-4 text-[#02712a]" /> ĐÃ THANH TOÁN ĐỦ 100%
-                      </div>
-                      <Button
-                        variant="secondary"
-                        className="w-full h-10 border-slate-300 text-slate-800 text-xs font-extrabold flex items-center justify-center gap-2"
-                        onClick={() => {
-                          setReceiptData({
-                            booking: selectedBooking,
-                            paidAmount: selectedBooking.totalAmount,
-                            paymentMethod: "Đã thanh toán trước",
-                            paidAt: new Date().toLocaleString("vi-VN")
-                          });
-                        }}
-                      >
-                        <Printer className="h-3.5 w-3.5" /> Xem phiếu thu / In hóa đơn
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="flex h-full min-h-[400px] flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-slate-500">
-              Vui lòng chọn một đơn đặt sân ở cột bên trái để quản lý thu ngân.
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* =========================================================================
-          CHECKOUT & PAYMENT MODAL (CASH, BANK TRANSFER, VIETQR)
-         ========================================================================= */}
-      <Modal
-        isOpen={isPaymentModalOpen}
-        onClose={() => setIsPaymentModalOpen(false)}
-        title={`Thanh toán đơn #${selectedBooking?.bookingCode}`}
-        maxWidth="max-w-md"
-      >
-        {selectedBooking && (
-          <div className="space-y-4 pt-2">
-            {/* Amount Summary */}
-            <div className="rounded-xl bg-slate-50 p-3 border border-slate-200 space-y-1 text-xs">
-              <div className="flex justify-between text-slate-600">
-                <span>Khách hàng:</span>
-                <strong className="text-slate-900">{selectedBooking.user.fullName}</strong>
-              </div>
-              <div className="flex justify-between text-slate-600">
-                <span>Sân:</span>
-                <span className="font-bold text-slate-900">
-                  {selectedBooking.court.name} {selectedBooking.courtSurface?.name ? `(${selectedBooking.courtSurface.name})` : ""}
-                </span>
-              </div>
-              <div className="flex justify-between text-slate-600 pt-1 border-t border-slate-200 font-extrabold">
-                <span>Số tiền cần thu:</span>
-                <span className="text-base text-[#02712a] font-black">{formatMoney(selectedBooking.remainingAmount)}</span>
-              </div>
-            </div>
-
-            {/* Payment Method Selector */}
-            <div>
-              <label className="block text-xs font-bold uppercase text-slate-600 mb-1.5">
-                Phương thức thanh toán
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod("CASH")}
-                  className={`flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl border text-xs font-extrabold transition ${
-                    paymentMethod === "CASH"
-                      ? "border-[#02712a] bg-green-50 text-[#02712a] shadow-xs"
-                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  <Banknote className="h-5 w-5" /> Tiền mặt
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod("BANK_TRANSFER")}
-                  className={`flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl border text-xs font-extrabold transition ${
-                    paymentMethod === "BANK_TRANSFER"
-                      ? "border-[#02712a] bg-green-50 text-[#02712a] shadow-xs"
-                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  <CreditCard className="h-5 w-5" /> Chuyển khoản
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod("QR_TRANSFER")}
-                  className={`flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl border text-xs font-extrabold transition ${
-                    paymentMethod === "QR_TRANSFER"
-                      ? "border-[#02712a] bg-green-50 text-[#02712a] shadow-xs"
-                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  <QrCode className="h-5 w-5" /> Quét VietQR
-                </button>
-              </div>
-            </div>
-
-            {/* Payment Method Details */}
-            {paymentMethod === "CASH" && (
-              <div className="space-y-3 rounded-xl bg-slate-50 p-3.5 border border-slate-200 text-xs">
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">Tiền khách đưa (VND):</label>
-                  <Input
-                    type="number"
-                    value={cashGiven || ""}
-                    onChange={(e) => setCashGiven(Number(e.target.value))}
-                    placeholder="Nhập số tiền khách đưa..."
-                    className="font-black text-sm"
-                  />
-                </div>
-
-                {/* Quick cash chips */}
-                <div className="flex flex-wrap gap-1">
-                  {[
-                    { label: "Đủ tiền", val: selectedBooking.remainingAmount },
-                    { label: "+10k", val: selectedBooking.remainingAmount + 10000 },
-                    { label: "+20k", val: selectedBooking.remainingAmount + 20000 },
-                    { label: "+50k", val: selectedBooking.remainingAmount + 50000 },
-                    { label: "200k", val: 200000 },
-                    { label: "500k", val: 500000 }
-                  ].map((chip, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() => setCashGiven(chip.val)}
-                      className="px-2 py-0.5 bg-white border border-slate-300 rounded text-[11px] font-bold text-slate-700 hover:bg-slate-100"
-                    >
-                      {chip.label}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Change calculation */}
-                <div className="pt-2 border-t border-slate-200 flex justify-between items-baseline font-black">
-                  <span>Tiền thừa trả khách:</span>
-                  <span
-                    className={`text-base ${
-                      cashGiven >= selectedBooking.remainingAmount ? "text-[#02712a]" : "text-rose-600"
-                    }`}
-                  >
-                    {cashGiven >= selectedBooking.remainingAmount
-                      ? formatMoney(cashGiven - selectedBooking.remainingAmount)
-                      : `Còn thiếu: ${formatMoney(selectedBooking.remainingAmount - cashGiven)}`}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {paymentMethod === "BANK_TRANSFER" && (
-              <div className="space-y-2 rounded-xl bg-slate-50 p-3 border border-slate-200 text-xs">
-                <p className="font-bold text-slate-800">Thông tin chuyển khoản sân:</p>
-                <div className="space-y-1 bg-white p-2.5 rounded-lg border border-slate-200 text-[11px]">
-                  <p>Ngân hàng: <strong>MB Bank (Ngân hàng Quân Đội)</strong></p>
-                  <p>Số tài khoản: <strong className="text-base text-blue-700 font-mono">0396445585</strong></p>
-                  <p>Chủ tài khoản: <strong>SPORTS BOOKING SYSTEM</strong></p>
-                  <p>
-                    Nội dung CK: <strong className="text-[#02712a] font-mono">BK {selectedBooking.bookingCode}</strong>
-                  </p>
-                </div>
-                <div>
-                  <label className="block font-bold text-slate-700 mt-2 mb-1">Mã giao dịch / Ghi chú (nếu có):</label>
-                  <Input
-                    placeholder="VD: MB12345678..."
-                    value={transactionRef}
-                    onChange={(e) => setTransactionRef(e.target.value)}
-                  />
-                </div>
-              </div>
-            )}
-
-            {paymentMethod === "QR_TRANSFER" && (
-              <div className="space-y-3 rounded-xl bg-slate-50 p-3.5 border border-slate-200 text-center">
-                <p className="text-xs font-bold text-slate-700">Quét mã QR để thanh toán chính xác:</p>
-                <div className="flex justify-center">
-                  <img
-                    src={`https://img.vietqr.io/image/970422-0396445585-compact2.png?amount=${selectedBooking.remainingAmount}&addInfo=${encodeURIComponent(
-                      selectedBooking.bookingCode
-                    )}&accountName=SPORTS%20BOOKING%20SYSTEM`}
-                    alt="VietQR"
-                    className="h-44 w-44 rounded-xl border border-slate-300 shadow-sm bg-white p-1 object-contain"
-                  />
-                </div>
-                <p className="text-[11px] text-slate-500">
-                  Số tiền: <strong>{formatMoney(selectedBooking.remainingAmount)}</strong> | Nội dung: <strong>{selectedBooking.bookingCode}</strong>
-                </p>
-              </div>
-            )}
-
-            {/* Modal Actions */}
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-              <Button type="button" variant="secondary" onClick={() => setIsPaymentModalOpen(false)}>
-                Hủy
-              </Button>
-              <Button
-                type="button"
-                className="bg-[#02712a] text-white font-extrabold px-5"
-                disabled={isProcessingPayment || (paymentMethod === "CASH" && cashGiven < selectedBooking.remainingAmount)}
-                onClick={handleProcessPayment}
-              >
-                {isProcessingPayment ? "Đang xử lý..." : "Xác nhận thanh toán"}
-              </Button>
-            </div>
+        {/* Right: the session's bill, ending with its payment. */}
+        {selectedBooking && selectedPhase ? (
+          <SessionBill
+            booking={selectedBooking}
+            phase={selectedPhase}
+            role={role}
+            now={now}
+            busy={actionPending || lockPending}
+            onCheckIn={async () => {
+              setActionPending(true);
+              await handleCheckIn();
+              setActionPending(false);
+            }}
+            onEndSession={handleEndSession}
+            onReopen={() => setIsUnlockConfirmOpen(true)}
+            onFinish={handleFinish}
+            onQuantity={handleUpdateQuantity}
+            onRemove={handleRemoveService}
+            onReturnRental={(rental) => {
+              setSelectedRental(rental);
+              setReturnStatus("RETURNED");
+              setReturnNotes("");
+              setIsReturnModalOpen(true);
+            }}
+            onPaid={handlePaid}
+            onRefreshTotals={refreshSelectedTotals}
+            onPaymentError={(message) => showToast(message, "error")}
+            onReceipt={() =>
+              setReceiptData({
+                booking: selectedBooking,
+                paidAmount: Number(selectedBooking.paidAtCounter ?? 0) || selectedBooking.totalAmount,
+                paymentMethod: Number(selectedBooking.paidAtCounter ?? 0) > 0 ? "Tại quầy" : "Đã thanh toán trước",
+                paidAt: new Date().toLocaleString("vi-VN")
+              })
+            }
+          />
+        ) : (
+          <div className="flex min-h-[16rem] flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
+            Chọn một phiên sân ở cột trái để xem hoá đơn.
           </div>
         )}
-      </Modal>
+      </div>
 
       {/* =========================================================================
           RECEIPT MODAL (In Phiếu Thu / Xem Hóa Đơn)
@@ -1481,16 +864,16 @@ export function PartnerCashierPage() {
         )}
       </Modal>
 
-      {/* Unlock Invoice Confirm Modal */}
+      {/* Reopening an ended session unlocks its services. */}
       <Modal
         isOpen={isUnlockConfirmOpen}
         onClose={() => setIsUnlockConfirmOpen(false)}
-        title="Mở khóa hóa đơn?"
+        title="Mở lại phiên?"
         maxWidth="max-w-sm"
       >
         <div className="space-y-4 pt-2">
           <p className="text-sm text-slate-600">
-            Bạn có chắc chắn muốn mở khóa hóa đơn để chỉnh sửa dịch vụ cho đơn đặt sân này?
+            Phiên sẽ quay lại trạng thái đang chơi để thêm, sửa hoặc bớt dịch vụ. Kết thúc phiên lại khi khách xong.
           </p>
           <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
             <Button type="button" variant="secondary" onClick={() => setIsUnlockConfirmOpen(false)}>
@@ -1504,7 +887,7 @@ export function PartnerCashierPage() {
                 setIsUnlockConfirmOpen(false);
               }}
             >
-              Mở khóa
+              Mở lại phiên
             </Button>
           </div>
         </div>

@@ -14,7 +14,7 @@ export function Timeline({ hours, language, highlightHour }: TimelineProps) {
         <div
           key={hour}
           className={clsx(
-            "flex h-12 items-center justify-center border-b border-slate-100 bg-slate-50 text-[11px] font-black tracking-wide text-slate-500",
+            "flex h-12 items-center justify-center border-b border-slate-100 bg-slate-50 text-[13px] font-semibold text-[#475569]",
             highlightHour === hour && "bg-emerald-50 text-emerald-700"
           )}
           aria-label={hour}

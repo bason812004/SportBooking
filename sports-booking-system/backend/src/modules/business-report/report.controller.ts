@@ -6,6 +6,11 @@ function range(query: any) {
   return { from: query.from as string, to: query.to as string };
 }
 
+/** The partner or court an admin narrowed the report to (admin routes only accept these fields). */
+function scope(query: any) {
+  return { partnerId: query.partnerId as string | undefined, courtId: query.courtId as string | undefined };
+}
+
 function sendFile(res: import("express").Response, buffer: Buffer, format: "excel" | "pdf", filenameBase: string) {
   if (format === "excel") {
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
@@ -18,13 +23,14 @@ function sendFile(res: import("express").Response, buffer: Buffer, format: "exce
 }
 
 export const adminReportController = {
-  overview: asyncHandler(async (req, res) => sendSuccess(res, await adminReportService.overview(range(req.query)))),
-  revenue: asyncHandler(async (req, res) => sendSuccess(res, await adminReportService.revenue(range(req.query)))),
-  bookings: asyncHandler(async (req, res) => sendSuccess(res, await adminReportService.bookings(range(req.query)))),
-  services: asyncHandler(async (req, res) => sendSuccess(res, await adminReportService.services(range(req.query)))),
+  overview: asyncHandler(async (req, res) => sendSuccess(res, await adminReportService.overview(range(req.query), scope(req.query)))),
+  revenue: asyncHandler(async (req, res) => sendSuccess(res, await adminReportService.revenue(range(req.query), scope(req.query)))),
+  bookings: asyncHandler(async (req, res) => sendSuccess(res, await adminReportService.bookings(range(req.query), scope(req.query)))),
+  services: asyncHandler(async (req, res) => sendSuccess(res, await adminReportService.services(range(req.query), scope(req.query)))),
+  breakdown: asyncHandler(async (req, res) => sendSuccess(res, await adminReportService.breakdown(range(req.query)))),
   export: asyncHandler(async (req, res) => {
     const format = req.query.format as "excel" | "pdf";
-    const buffer = await adminReportService.export(range(req.query), format);
+    const buffer = await adminReportService.export(range(req.query), format, scope(req.query));
     sendFile(res, buffer, format, "bao-cao-admin");
   }),
   customer: asyncHandler(async (req, res) => sendSuccess(res, await adminReportService.customer(req.params.userId))),

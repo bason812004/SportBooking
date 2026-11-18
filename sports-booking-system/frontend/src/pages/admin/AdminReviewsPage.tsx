@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, MessageSquareX, Trash2 } from "lucide-react";
+import { Eye, EyeOff, MessageSquareX, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
+import { ReviewStatsBand } from "../../features/admin/components/ReviewStatsBand";
+import { formatYmd } from "../../features/bookings/components/BookingCalendar/utils";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { TablePagination } from "../../components/common/TablePagination";
 import { PageHero } from "../../components/common/PageHero";
+import { ReportExportButtons } from "../../components/common/ReportExportButtons";
 import { ModeratedReviewCard } from "../../components/review/ModeratedReviewCard";
 import { useDebounce } from "../../hooks/useDebounce";
 import type { ModeratedReview } from "../../types/api";
@@ -25,6 +28,22 @@ const statusOptions = [
 
 const ratingOptions = [{ value: "", label: "Mọi số sao" }, ...[5, 4, 3, 2, 1].map((rating) => ({ value: String(rating), label: `${rating} sao` }))];
 
+const timeframeOptions = [
+  { value: "", label: "Mọi thời gian" },
+  { value: "30d", label: "30 ngày qua" },
+  { value: "3m", label: "3 tháng qua" },
+  { value: "12m", label: "12 tháng qua" }
+];
+
+/** First day (YYYY-MM-DD) of a "last …" period that ends today; none for all time. */
+function timeframeStart(timeframe: string) {
+  if (!timeframe) return undefined;
+  const start = new Date();
+  if (timeframe === "30d") start.setDate(start.getDate() - 29);
+  else start.setMonth(start.getMonth() - (timeframe === "3m" ? 3 : 12));
+  return formatYmd(start);
+}
+
 const actionCopy: Record<ReviewAction, { title: (name: string) => string; done: string }> = {
   hide: { title: (name) => `Ẩn đánh giá của ${name}`, done: "Đã ẩn đánh giá, người viết đã được thông báo" },
   show: { title: (name) => `Hiển thị lại đánh giá của ${name}`, done: "Đã hiển thị lại đánh giá" },
@@ -40,13 +59,23 @@ export function AdminReviewsPage() {
   const [status, setStatus] = useState("");
   const [rating, setRating] = useState("");
   const [partnerId, setPartnerId] = useState("");
+  // Picked from the statistics: there is no court box among the filters.
+  const [court, setCourt] = useState<{ id: string; name: string } | null>(null);
+  const [timeframe, setTimeframe] = useState("");
+  const fromDate = useMemo(() => timeframeStart(timeframe), [timeframe]);
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(10);
   const [pending, setPending] = useState<PendingAction | null>(null);
 
   const q = useQuery({
-    queryKey: ["admin-reviews", debouncedSearch, status, rating, partnerId, page, limit],
-    queryFn: () => adminApi.reviews({ search: debouncedSearch, status, rating, partnerId, page, limit }),
+    queryKey: ["admin-reviews", debouncedSearch, status, rating, partnerId, court?.id, fromDate, page, limit],
+    queryFn: () => adminApi.reviews({ search: debouncedSearch, status, rating, partnerId, courtId: court?.id, fromDate, page, limit }),
+    placeholderData: keepPreviousData
+  });
+  // The statistics cover the partner, court and period; the search, status and star filters only narrow the list.
+  const stats = useQuery({
+    queryKey: ["admin-review-stats", partnerId, court?.id, fromDate],
+    queryFn: () => adminApi.reviewStats({ partnerId, courtId: court?.id, fromDate }),
     placeholderData: keepPreviousData
   });
   // Same list (and cache) as the bookings page filters.
@@ -66,6 +95,9 @@ export function AdminReviewsPage() {
     if (totalPages && page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
+  // Hiding, showing or deleting a review moves the statistics too.
+  const refresh = () => Promise.all([qc.invalidateQueries({ queryKey: ["admin-reviews"] }), qc.invalidateQueries({ queryKey: ["admin-review-stats"] })]);
+
   const action = useMutation({
     mutationFn: ({ review, action, reason }: PendingAction & { reason: string }) =>
       action === "delete"
@@ -76,12 +108,12 @@ export function AdminReviewsPage() {
     onSuccess: async (_result, { action }) => {
       toast.success(actionCopy[action].done);
       setPending(null);
-      await qc.invalidateQueries({ queryKey: ["admin-reviews"] });
+      await refresh();
     },
     // A conflict means the review changed meanwhile: show what it is now.
     onError: (e) => {
       toast.error(e.message);
-      void qc.invalidateQueries({ queryKey: ["admin-reviews"] });
+      void refresh();
     }
   });
 
@@ -90,23 +122,62 @@ export function AdminReviewsPage() {
     setPage(1);
     set(value);
   };
+  // A court belongs to one partner: picking another partner drops the court.
+  const pickPartner = (value: string) => {
+    setPage(1);
+    setPartnerId(value);
+    setCourt(null);
+  };
 
   return (
     <div className="space-y-5">
       <PageHero eyebrow="Nội dung" title="Đánh giá" subtitle="Kiểm duyệt đánh giá của khách hàng về các sân: ẩn, hiển thị lại hoặc xóa kèm lý do." />
 
-      <div className="grid gap-3 rounded-2xl border bg-white p-4 md:grid-cols-2 xl:grid-cols-4">
-        <Input label="Tìm nội dung, người viết, email, sân" value={search} onChange={(e) => filter(setSearch)(e.target.value)} />
-        <Select label="Trạng thái" value={status} onChange={(e) => filter(setStatus)(e.target.value)} options={statusOptions} />
-        <Select label="Số sao" value={rating} onChange={(e) => filter(setRating)(e.target.value)} options={ratingOptions} />
-        <Select
-          label="Đối tác"
-          className="w-full min-w-0"
-          value={partnerId}
-          disabled={filterOptions.isLoading}
-          onChange={(e) => filter(setPartnerId)(e.target.value)}
-          options={partnerOptions}
-        />
+      <ReviewStatsBand
+        stats={stats.data}
+        loading={stats.isLoading}
+        error={stats.isError ? stats.error.message : undefined}
+        onRetry={() => stats.refetch()}
+        rating={rating ? Number(rating) : undefined}
+        onRating={(value) => filter(setRating)(value ? String(value) : "")}
+        partnerId={partnerId || undefined}
+        onPartner={(value) => pickPartner(value ?? "")}
+        courtId={court?.id}
+        onCourt={(value) => filter(setCourt)(value ?? null)}
+      />
+
+      <div className="space-y-3 rounded-2xl border bg-white p-4">
+        <div className="flex flex-wrap items-center gap-3 border-b pb-3 text-sm">
+          {court && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 font-semibold text-emerald-800">
+              Sân: {court.name}
+              <button type="button" aria-label="Bỏ lọc theo sân" className="rounded-full p-0.5 hover:bg-emerald-100" onClick={() => filter(setCourt)(null)}>
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </span>
+          )}
+          {/* The file holds the statistics above, so it follows their partner, court and period only. */}
+          <div className="ml-auto">
+            <ReportExportButtons
+              filenameBase={`thong-ke-danh-gia-${new Date().toISOString().slice(0, 10)}`}
+              onExport={(format) => adminApi.exportReviewStats({ partnerId, courtId: court?.id, fromDate }, format)}
+            />
+          </div>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <Input label="Tìm nội dung, người viết, email, sân" value={search} onChange={(e) => filter(setSearch)(e.target.value)} />
+          <Select label="Trạng thái" value={status} onChange={(e) => filter(setStatus)(e.target.value)} options={statusOptions} />
+          <Select label="Số sao" value={rating} onChange={(e) => filter(setRating)(e.target.value)} options={ratingOptions} />
+          <Select
+            label="Đối tác"
+            className="w-full min-w-0"
+            value={partnerId}
+            disabled={filterOptions.isLoading}
+            onChange={(e) => pickPartner(e.target.value)}
+            options={partnerOptions}
+          />
+          <Select label="Thời gian" value={timeframe} onChange={(e) => filter(setTimeframe)(e.target.value)} options={timeframeOptions} />
+        </div>
       </div>
 
       {/* Loading and errors replace only the list, so the filters above always stay usable. */}

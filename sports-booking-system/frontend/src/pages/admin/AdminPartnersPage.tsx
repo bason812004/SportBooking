@@ -13,6 +13,7 @@ import { ErrorState, LoadingState } from "../../components/common/States";
 import { TablePagination } from "../../components/common/TablePagination";
 import { ReasonModal } from "../../components/common/ReasonModal";
 import { PageHero } from "../../components/common/PageHero";
+import { ReportExportButtons } from "../../components/common/ReportExportButtons";
 import { useDebounce } from "../../hooks/useDebounce";
 import { formatDate, httpUrl } from "../../lib/format";
 
@@ -106,9 +107,18 @@ export function AdminPartnersPage() {
     <div className="space-y-6">
       <PageHero eyebrow="Quản trị" title="Đối tác" subtitle="Quản lý và duyệt hồ sơ đối tác kinh doanh sân thể thao." />
 
-      <div className="grid gap-3 rounded-2xl border bg-white p-4 md:grid-cols-2">
-        <Input label="Tìm doanh nghiệp, người đại diện, email, SĐT, MST" value={search} onChange={(e) => { setPage(1); setSearch(e.target.value); }} />
-        <Select label="Trạng thái" value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} options={statusFilterOptions} />
+      <div className="space-y-3 rounded-2xl border bg-white p-4">
+        <div className="grid gap-3 md:grid-cols-2">
+          <Input label="Tìm doanh nghiệp, người đại diện, email, SĐT, MST" value={search} onChange={(e) => { setPage(1); setSearch(e.target.value); }} />
+          <Select label="Trạng thái" value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} options={statusFilterOptions} />
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-3">
+          <span className="text-sm text-slate-500">Xuất danh sách đối tác theo tìm kiếm và trạng thái đang chọn (số tài khoản chỉ hiện 4 số cuối)</span>
+          <ReportExportButtons
+            filenameBase={`doi-tac-${new Date().toISOString().slice(0, 10)}`}
+            onExport={(format) => adminApi.exportPartners({ search: debouncedSearch, status }, format)}
+          />
+        </div>
       </div>
 
       {/* Loading and errors replace only the list, so the filters above always stay usable. */}

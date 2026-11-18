@@ -20,6 +20,8 @@ cashierRoutes.delete("/bookings/:bookingId/services/:serviceId", requireRole(Use
 
 cashierRoutes.post("/bookings/:bookingId/check-in", requireRole(UserRole.PARTNER, UserRole.RECIPIENT, UserRole.ADMIN), asyncHandler(cashierController.checkInBooking));
 cashierRoutes.post("/rentals/return", requireRole(UserRole.PARTNER, UserRole.RECIPIENT, UserRole.ADMIN), validate(returnRentalSchema), asyncHandler(cashierController.returnRentalItem));
+// Ends a checked-in session that owes nothing (with money owed, the payment finishes it).
+cashierRoutes.post("/bookings/:bookingId/finish", requireRole(UserRole.PARTNER, UserRole.RECIPIENT, UserRole.ADMIN), validate(bookingParamsSchema), asyncHandler(cashierController.finishSession));
 // Locked at the counter, an invoice's services stop changing on every device until it is unlocked.
 cashierRoutes.post("/bookings/:bookingId/invoice-lock", requireRole(UserRole.PARTNER, UserRole.RECIPIENT, UserRole.ADMIN), validate(bookingParamsSchema), asyncHandler(cashierController.lockInvoice));
 cashierRoutes.delete("/bookings/:bookingId/invoice-lock", requireRole(UserRole.PARTNER, UserRole.RECIPIENT, UserRole.ADMIN), validate(bookingParamsSchema), asyncHandler(cashierController.unlockInvoice));

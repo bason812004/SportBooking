@@ -38,7 +38,8 @@ export async function buildExcelReport(input: { title: string; sheets: ReportExp
 
 export interface ReportExportSection {
   heading: string;
-  table?: { columns: ReportExportColumn[]; rows: Array<Record<string, unknown>> };
+  /** `widths` follows pdfmake ("*" shares the rest, "auto" fits the content); every column shares alike without it. */
+  table?: { columns: ReportExportColumn[]; rows: Array<Record<string, unknown>>; widths?: Array<"*" | "auto" | number> };
   kpis?: Array<{ label: string; value: string }>;
 }
 
@@ -55,7 +56,14 @@ pdfMake.setFonts(fonts);
 pdfMake.setLocalAccessPolicy((filePath) => filePath.startsWith(robotoFontsDir));
 pdfMake.setUrlAccessPolicy(() => false);
 
-export async function buildPdfReport(input: { title: string; subtitle?: string; sections: ReportExportSection[] }): Promise<Buffer> {
+/** Wide lists (many columns) use `orientation: "landscape"` and a smaller `fontSize`; reports keep the defaults. */
+export async function buildPdfReport(input: {
+  title: string;
+  subtitle?: string;
+  sections: ReportExportSection[];
+  orientation?: "portrait" | "landscape";
+  fontSize?: number;
+}): Promise<Buffer> {
   const content: TDocumentDefinitions["content"] = [
     { text: input.title, style: "title" },
     ...(input.subtitle ? [{ text: input.subtitle, style: "subtitle" }] : [])
@@ -76,7 +84,7 @@ export async function buildPdfReport(input: { title: string; subtitle?: string; 
       content.push({
         table: {
           headerRows: 1,
-          widths: section.table.columns.map(() => "*"),
+          widths: section.table.widths ?? section.table.columns.map(() => "*"),
           body: [
             section.table.columns.map((column) => ({ text: column.header, bold: true })),
             ...section.table.rows.map((row) => section.table!.columns.map((column) => String(row[column.key] ?? "")))
@@ -90,7 +98,8 @@ export async function buildPdfReport(input: { title: string; subtitle?: string; 
 
   const docDefinition: TDocumentDefinitions = {
     content,
-    defaultStyle: { font: "Roboto", fontSize: 10 },
+    pageOrientation: input.orientation ?? "portrait",
+    defaultStyle: { font: "Roboto", fontSize: input.fontSize ?? 10 },
     styles: {
       title: { fontSize: 18, bold: true },
       subtitle: { fontSize: 11, color: "#666666", margin: [0, 2, 0, 0] },

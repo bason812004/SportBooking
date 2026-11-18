@@ -402,11 +402,11 @@ export function RecipientBookingsPage() {
         title="Quản lý Đơn đặt sân"
         subtitle="Theo dõi, lọc và xử lý các booking cho sân của bạn."
         actions={
-          <div className="flex overflow-hidden rounded-xl border border-white/20 bg-white/10 backdrop-blur">
+          <div className="flex overflow-hidden rounded-xl border border-line bg-white">
             <button
               type="button"
               onClick={() => setViewMode("table")}
-              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-bold transition ${viewMode === "table" ? "bg-white text-emerald-800" : "text-white/80 hover:bg-white/10"}`}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-bold transition ${viewMode === "table" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
             >
               <Table2 className="h-4 w-4" />
               Bảng
@@ -414,7 +414,7 @@ export function RecipientBookingsPage() {
             <button
               type="button"
               onClick={() => setViewMode("calendar")}
-              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-bold transition ${viewMode === "calendar" ? "bg-white text-emerald-800" : "text-white/80 hover:bg-white/10"}`}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-bold transition ${viewMode === "calendar" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-50"}`}
             >
               <CalendarDays className="h-4 w-4" />
               Lịch

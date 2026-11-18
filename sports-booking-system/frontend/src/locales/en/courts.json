@@ -86,7 +86,37 @@
       "success": "Report sent. Thank you for your feedback!",
       "failed": "Could not send the report.",
       "alreadyReported": "You already reported this court; an admin is reviewing it.",
-      "loginRequired": "Please log in to report a court."
+      "loginRequired": "Please log in to report a court.",
+      "thread": {
+        "title": "Your report",
+        "reportLabel": "Report",
+        "you": "You",
+        "admin": "Administrator",
+        "status": {
+          "PENDING": "Waiting",
+          "RESOLVED": "Resolved",
+          "REJECTED": "Rejected"
+        },
+        "decision": {
+          "RESOLVED": "Report resolved",
+          "REJECTED": "Report rejected"
+        },
+        "measures": "Measures taken",
+        "systemRecorded": "Recorded by the system",
+        "replyLabel": "Reply to the administrator",
+        "replyPlaceholder": "Add information, times or details for the administrator...",
+        "send": "Send",
+        "sending": "Sending...",
+        "sent": "Sent to the administrator.",
+        "repliesLeft": "You can send {{count}} more messages before an administrator answers.",
+        "limitReached": "You sent several messages in a row. Please wait for an administrator to answer.",
+        "closed": "This report is closed, so you can no longer reply. If the court still has a problem, send a new report from its page.",
+        "viewCourt": "View court page",
+        "loading": "Loading report...",
+        "failed": "Could not load the report.",
+        "retry": "Try again",
+        "sentAt": "Sent at {{time}}"
+      }
     }
   }
 }

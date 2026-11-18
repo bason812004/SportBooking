@@ -70,3 +70,59 @@ export function occupiedSurfaceHours(
   const minutes = Math.max(0, timeToMinutes(booking.endTime.toISOString().slice(11, 16)) - timeToMinutes(booking.startTime.toISOString().slice(11, 16)));
   return (filled * minutes) / 60;
 }
+
+export type BreakdownCourt = { id: string; name: string; partnerId: string; partnerName: string; approvalStatus: string };
+/** One court's share of the settlement ledger for bookings played in the range: settled money and money still waiting. */
+export type CourtLedger = { courtId: string; grossAmount: number; commissionAmount: number; netAmount: number; pendingAmount: number };
+
+type BreakdownFigures = { grossAmount: number; commissionAmount: number; netAmount: number; pendingAmount: number; bookings: number };
+const noFigures = (): BreakdownFigures => ({ grossAmount: 0, commissionAmount: 0, netAmount: 0, pendingAmount: 0, bookings: 0 });
+const byRevenue = <T extends { grossAmount: number; name: string }>(a: T, b: T) => b.grossAmount - a.grossAmount || a.name.localeCompare(b.name, "vi");
+
+/**
+ * Revenue per court and per partner for the admin report, from the same ledger and booking counts as the overview, so
+ * the rows add up to the whole-system figures. Every approved court is listed (0 when nothing happened); a court still
+ * pending or rejected only when it has money or bookings in the range. A partner's row adds up its listed courts.
+ */
+export function revenueBreakdown(courts: BreakdownCourt[], ledger: CourtLedger[], bookingCounts: Array<{ courtId: string; bookings: number }>) {
+  const figures = new Map<string, BreakdownFigures>();
+  const of = (courtId: string) => {
+    let entry = figures.get(courtId);
+    if (!entry) figures.set(courtId, (entry = noFigures()));
+    return entry;
+  };
+  for (const row of ledger) {
+    const entry = of(row.courtId);
+    entry.grossAmount += row.grossAmount;
+    entry.commissionAmount += row.commissionAmount;
+    entry.netAmount += row.netAmount;
+    entry.pendingAmount += row.pendingAmount;
+  }
+  for (const row of bookingCounts) of(row.courtId).bookings += row.bookings;
+
+  const active = (entry?: BreakdownFigures) => Boolean(entry && (entry.grossAmount || entry.pendingAmount || entry.bookings));
+  const courtRows = courts
+    .filter((court) => court.approvalStatus === "APPROVED" || active(figures.get(court.id)))
+    .map((court) => ({
+      courtId: court.id,
+      name: court.name,
+      partnerId: court.partnerId,
+      partnerName: court.partnerName,
+      approvalStatus: court.approvalStatus,
+      ...(figures.get(court.id) ?? noFigures())
+    }))
+    .sort(byRevenue);
+
+  const partners = new Map<string, BreakdownFigures & { partnerId: string; name: string; courtCount: number }>();
+  for (const court of courtRows) {
+    let partner = partners.get(court.partnerId);
+    if (!partner) partners.set(court.partnerId, (partner = { partnerId: court.partnerId, name: court.partnerName, courtCount: 0, ...noFigures() }));
+    partner.courtCount += 1;
+    partner.grossAmount += court.grossAmount;
+    partner.commissionAmount += court.commissionAmount;
+    partner.netAmount += court.netAmount;
+    partner.pendingAmount += court.pendingAmount;
+    partner.bookings += court.bookings;
+  }
+  return { partners: Array.from(partners.values()).sort(byRevenue), courts: courtRows };
+}

@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { CheckCheck, ExternalLink } from "lucide-react";
+import { CheckCheck, ExternalLink, MessagesSquare } from "lucide-react";
 import { PageHero } from "../../components/common/PageHero";
 import { EmptyState, ErrorState, LoadingState } from "../../components/common/States";
 import { TablePagination } from "../../components/common/TablePagination";
 import { resolveNotificationRoute } from "../../components/layout/NotificationBell";
 import { Button } from "../../components/ui/Button";
 import { useAuth } from "../../features/auth/hooks/useAuth";
+import { ReportThreadModal } from "../../features/courtReports/components/ReportThreadModal";
+import { reporterThreadId } from "../../features/courtReports/reportNotifications";
 import { useMarkAllNotificationsRead, useMarkNotificationRead, useNotificationPage } from "../../features/notifications/hooks/useNotifications";
 import { campaignTypeLabel, campaignTypeTone } from "../../features/notifications/notificationTypes";
 import { formatDateTime } from "../../lib/format";
@@ -24,6 +26,7 @@ export function NotificationsPage() {
   const [tab, setTab] = useState<Tab>("all");
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
+  const [threadId, setThreadId] = useState<string | null>(null);
   const q = useNotificationPage(page, limit, tab === "unread");
   const markRead = useMarkNotificationRead();
   const markAllRead = useMarkAllNotificationsRead();
@@ -78,6 +81,7 @@ export function NotificationsPage() {
           <>
             <div className="space-y-3">
               {items.map((item) => {
+                const reportId = reporterThreadId(item, user?.role);
                 const target = resolveNotificationRoute(item, user?.role);
                 const typeLabel = campaignTypeLabel(item.type);
                 return (
@@ -105,7 +109,17 @@ export function NotificationsPage() {
                             Đã đọc
                           </Button>
                         )}
-                        {target && (
+                        {reportId ? (
+                          <Button
+                            variant="secondary"
+                            onClick={() => {
+                              if (!item.isRead) markRead.mutate(item.id);
+                              setThreadId(reportId);
+                            }}
+                          >
+                            <MessagesSquare className="h-4 w-4" /> Xem trao đổi
+                          </Button>
+                        ) : target && (
                           <Button
                             variant="secondary"
                             onClick={() => {
@@ -139,6 +153,7 @@ export function NotificationsPage() {
           </>
         )}
       </div>
+      {threadId && <ReportThreadModal key={threadId} reportId={threadId} onClose={() => setThreadId(null)} />}
     </div>
   );
 }

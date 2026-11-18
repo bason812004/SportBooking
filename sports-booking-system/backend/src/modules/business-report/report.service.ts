@@ -4,9 +4,44 @@ import { buildExcelReport, buildPdfReport, type ReportExportSheet, type ReportEx
 import { getManagedCourtId } from "../recipient/recipient.service.js";
 import { partnerIdForUser } from "../analytics/analytics.service.js";
 import { reportRepository, type ReportScope } from "./report.repository.js";
-import { bucketFor, bucketKey, rangePeriods } from "./report.calculations.js";
+import { bucketFor, bucketKey, rangePeriods, revenueBreakdown } from "./report.calculations.js";
 
 type Range = { from: string; to: string };
+type Breakdown = ReturnType<typeof revenueBreakdown>;
+
+/** What an admin narrowed the report to: one court, else one partner, else the whole system. */
+function adminScope(scope: ReportScope = {}): ReportScope {
+  if (scope.courtId) return { courtId: scope.courtId };
+  if (scope.partnerId) return { partnerId: scope.partnerId };
+  return {};
+}
+
+/** Revenue per partner and per court for the range, read from the same ledger as the overview. */
+async function breakdown(range: Range) {
+  const [courts, ledger, bookingCounts] = await Promise.all([
+    reportRepository.reportCourts(),
+    reportRepository.ledgerByCourt(range.from, range.to),
+    reportRepository.bookingCountsByCourt(toDbDate(range.from), toDbDate(range.to))
+  ]);
+  return revenueBreakdown(courts, ledger, bookingCounts);
+}
+
+const partnerBreakdownColumns = [
+  { header: "Đối tác", key: "name", width: 30 },
+  { header: "Số sân", key: "courtCount", width: 10 },
+  { header: "Booking", key: "bookings", width: 10 }
+];
+const courtBreakdownColumns = [
+  { header: "Sân", key: "name", width: 34 },
+  { header: "Đối tác", key: "partnerName", width: 26 },
+  { header: "Booking", key: "bookings", width: 10 }
+];
+const moneyBreakdownColumns = [
+  { header: "Doanh thu gộp", key: "grossAmount", width: 18 },
+  { header: "Hoa hồng", key: "commissionAmount", width: 16 },
+  { header: "Doanh thu ròng", key: "netAmount", width: 18 },
+  { header: "Chờ quyết toán", key: "pendingAmount", width: 18 }
+];
 
 /** Booking statuses as the screens name them, for the exported files. */
 const BOOKING_STATUS_LABELS: Record<string, string> = {
@@ -106,7 +141,17 @@ function currency(value: number) {
   return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 }).format(value);
 }
 
-async function exportReport(scope: ReportScope, range: Range, format: "excel" | "pdf", includeCommission: boolean) {
+/**
+ * `extra` is for admins: the name of the partner or court the report is narrowed to, and the per-partner / per-court
+ * tables to add (the whole system gets both, a partner its courts).
+ */
+async function exportReport(
+  scope: ReportScope,
+  range: Range,
+  format: "excel" | "pdf",
+  includeCommission: boolean,
+  extra: { scopeName?: string | null; breakdown?: Partial<Breakdown> } = {}
+) {
   const [overviewResult, revenueResult, bookingRows, serviceRows] = await Promise.all([
     overview(scope, range, includeCommission),
     revenue(scope, range, includeCommission),
@@ -115,7 +160,9 @@ async function exportReport(scope: ReportScope, range: Range, format: "excel" | 
   ]);
   const statusRows = bookingRows.map((row) => ({ status: BOOKING_STATUS_LABELS[row.status] ?? row.status, count: row.count }));
 
-  const title = "Báo cáo hoạt động";
+  const title = extra.scopeName ? `Báo cáo hoạt động — ${extra.scopeName}` : "Báo cáo hoạt động";
+  const partnerRows = extra.breakdown?.partners;
+  const courtRows = extra.breakdown?.courts;
   const subtitle = `Từ ${range.from} đến ${range.to} — doanh thu tính theo ngày chơi từ sổ quyết toán`;
 
   if (format === "excel") {
@@ -171,7 +218,9 @@ async function exportReport(scope: ReportScope, range: Range, format: "excel" | 
           { header: "Doanh thu", key: "revenue", width: 18 }
         ],
         rows: serviceRows
-      }
+      },
+      ...(partnerRows ? [{ name: "Doanh thu theo đối tác", columns: [...partnerBreakdownColumns, ...moneyBreakdownColumns], rows: partnerRows }] : []),
+      ...(courtRows ? [{ name: "Doanh thu theo sân", columns: [...courtBreakdownColumns, ...moneyBreakdownColumns], rows: courtRows }] : [])
     ];
     return buildExcelReport({ title, sheets });
   }
@@ -214,9 +263,21 @@ async function exportReport(scope: ReportScope, range: Range, format: "excel" | 
         columns: [{ header: "Tên dịch vụ", key: "name" }, { header: "Số lượng", key: "quantity" }, { header: "Doanh thu", key: "revenue" }],
         rows: serviceRows
       }
-    }
+    },
+    ...(partnerRows
+      ? [{ heading: "Doanh thu theo đối tác", table: { columns: [...partnerBreakdownColumns, ...moneyBreakdownColumns], rows: partnerRows } }]
+      : []),
+    ...(courtRows ? [{ heading: "Doanh thu theo sân", table: { columns: [...courtBreakdownColumns, ...moneyBreakdownColumns], rows: courtRows } }] : [])
   ];
   return buildPdfReport({ title, subtitle, sections });
+}
+
+/** An admin's export: the report of the chosen scope plus the tables that split it further. */
+async function exportAdminReport(range: Range, format: "excel" | "pdf", scope: ReportScope) {
+  const narrowed = adminScope(scope);
+  const [scopeName, split] = await Promise.all([reportRepository.scopeName(narrowed), narrowed.courtId ? null : breakdown(range)]);
+  const extraTables = split && (narrowed.partnerId ? { courts: split.courts.filter((court) => court.partnerId === narrowed.partnerId) } : split);
+  return exportReport(narrowed, range, format, true, { scopeName, breakdown: extraTables ?? undefined });
 }
 
 async function customerReport(userId: string) {
@@ -378,11 +439,12 @@ async function exportBookingReport(bookingId: string, format: "excel" | "pdf") {
 }
 
 export const adminReportService = {
-  overview: (range: Range) => overview({}, range, true),
-  revenue: (range: Range) => revenue({}, range, true),
-  bookings: (range: Range) => bookings({}, range),
-  services: (range: Range) => services({}, range),
-  export: (range: Range, format: "excel" | "pdf") => exportReport({}, range, format, true),
+  overview: (range: Range, scope?: ReportScope) => overview(adminScope(scope), range, true),
+  revenue: (range: Range, scope?: ReportScope) => revenue(adminScope(scope), range, true),
+  bookings: (range: Range, scope?: ReportScope) => bookings(adminScope(scope), range),
+  services: (range: Range, scope?: ReportScope) => services(adminScope(scope), range),
+  breakdown,
+  export: (range: Range, format: "excel" | "pdf", scope?: ReportScope) => exportAdminReport(range, format, scope ?? {}),
   customer: (userId: string) => customerReport(userId),
   exportCustomer: (userId: string, format: "excel" | "pdf") => exportCustomerReport(userId, format),
   exportBooking: (bookingId: string, format: "excel" | "pdf") => exportBookingReport(bookingId, format)

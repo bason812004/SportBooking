@@ -85,9 +85,34 @@ export const inventoryController = {
 
   async getTransactions(req: Request, res: Response) {
     const actor = await getActor(req);
-    const limit = req.query.limit ? Number(req.query.limit) : 50;
-    const txs = await inventoryService.getTransactions(actor.partnerId, limit, courtFor(actor, req.query.courtId));
-    return sendSuccess(res, txs);
+    const query = req.query as Record<string, any>;
+    const data = await inventoryService.getTransactions(actor.partnerId, {
+      courtId: courtFor(actor, query.courtId),
+      type: query.type,
+      search: query.search,
+      from: query.from,
+      to: query.to,
+      page: query.page,
+      limit: query.limit
+    });
+    return sendSuccess(res, data);
+  },
+
+  /** Staff: what their court sold (never another court's, whatever courtId the request carries). */
+  async getSalesHistory(req: Request, res: Response) {
+    const actor = await getActor(req);
+    const query = req.query as Record<string, any>;
+    return sendSuccess(res, await inventoryService.salesHistory(actor, { from: query.from, to: query.to, search: query.search, page: query.page, limit: query.limit }));
+  },
+
+  /** Staff: their court's rental pieces. */
+  async getRentalHistory(req: Request, res: Response) {
+    const actor = await getActor(req);
+    const query = req.query as Record<string, any>;
+    return sendSuccess(
+      res,
+      await inventoryService.rentalHistory(actor, { status: query.status, from: query.from, to: query.to, search: query.search, page: query.page, limit: query.limit })
+    );
   },
 
   async listSuppliers(req: Request, res: Response) {
@@ -105,7 +130,7 @@ export const inventoryController = {
   async createPurchaseOrder(req: Request, res: Response) {
     const actor = await getActor(req);
     const po = await inventoryService.createPurchaseOrder(actor, req.body);
-    const message = actor.role === "RECIPIENT" ? "Đã gửi đề xuất nhập hàng cho đối tác duyệt" : "Tạo đơn nhập hàng thành công";
+    const message = "Tạo đơn nhập hàng thành công";
     return sendSuccess(res, po, 201, message);
   },
 

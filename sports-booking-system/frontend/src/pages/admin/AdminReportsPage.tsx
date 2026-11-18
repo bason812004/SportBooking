@@ -1,8 +1,7 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, ExternalLink, Flag, Settings2, XCircle } from "lucide-react";
-import { toast } from "sonner";
+import { Link, useSearchParams } from "react-router-dom";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { AlertTriangle, CheckCircle2, ExternalLink, Flag, MessageSquare, MessageSquareReply, Settings2, XCircle } from "lucide-react";
 import { adminApi } from "../../features/admin/api/adminApi";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
@@ -11,8 +10,8 @@ import { PageHero } from "../../components/common/PageHero";
 import { TablePagination } from "../../components/common/TablePagination";
 import { useDebounce } from "../../hooks/useDebounce";
 import { formatDateTime } from "../../lib/format";
-import { ReasonModal } from "../../components/common/ReasonModal";
 import type { AdminReport } from "../../types/api";
+import { AdminReportThreadModal, type ReportComposeMode } from "./AdminReportThreadModal";
 
 const statusLabel: Record<string, { label: string; className: string }> = {
   PENDING: { label: "Chờ xử lý", className: "bg-amber-100 text-amber-800" },
@@ -34,33 +33,30 @@ const courtStatusText = (court: AdminReport["court"]) => {
 };
 
 export function AdminReportsPage() {
-  const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [status, setStatus] = useState("PENDING");
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search.trim(), 400);
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(10);
-  const [deciding, setDeciding] = useState<{ report: AdminReport; action: "resolve" | "reject" } | null>(null);
+  // The conversation open in the modal; ?reportId= (from a notification) opens one directly.
+  const [picked, setPicked] = useState<{ id: string; mode: ReportComposeMode } | null>(null);
+  const linkedId = searchParams.get("reportId");
+  const opened = picked ?? (linkedId ? { id: linkedId, mode: "message" as const } : null);
+  const openThread = (id: string, mode: ReportComposeMode) => setPicked({ id, mode });
+  const closeThread = () => {
+    setPicked(null);
+    if (linkedId) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("reportId");
+      setSearchParams(next, { replace: true });
+    }
+  };
 
   const q = useQuery({
     queryKey: ["admin-reports", status, debouncedSearch, page, limit],
     queryFn: () => adminApi.reports({ status, search: debouncedSearch, page, limit }),
     placeholderData: keepPreviousData
-  });
-
-  const decide = useMutation({
-    mutationFn: ({ report, action, note }: { report: AdminReport; action: "resolve" | "reject"; note: string }) =>
-      adminApi.setReportStatus(report.id, action, note || undefined),
-    onSuccess: async (_data, variables) => {
-      toast.success(variables.action === "resolve" ? "Đã đánh dấu đã xử lý và báo cho người báo cáo" : "Đã bác bỏ và báo cho người báo cáo");
-      setDeciding(null);
-      await qc.invalidateQueries({ queryKey: ["admin-reports"] });
-    },
-    onError: async (error) => {
-      toast.error(error.message);
-      // Decided by someone else meanwhile: show the list as it is now.
-      await qc.invalidateQueries({ queryKey: ["admin-reports"] });
-    }
   });
 
   const items = q.data?.items ?? [];
@@ -69,7 +65,11 @@ export function AdminReportsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHero eyebrow="Bảo mật" title="Báo cáo vi phạm" subtitle="Xem xét các báo cáo khách hàng gửi về sân. Kết quả và ghi chú được gửi lại cho người báo cáo." />
+      <PageHero
+        eyebrow="Bảo mật"
+        title="Báo cáo vi phạm"
+        subtitle="Xem xét các báo cáo khách hàng gửi về sân, trao đổi với người báo cáo và gửi lại cách đã xử lý sân."
+      />
 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap gap-2">
@@ -117,6 +117,7 @@ export function AdminReportsPage() {
           {items.map((report) => {
             const st = statusLabel[report.status] ?? { label: report.status, className: "bg-slate-100 text-slate-700" };
             const courtNote = courtStatusText(report.court);
+            const awaitingAdmin = report.status === "PENDING" && report.lastMessage?.authorRole === "USER";
             return (
               <article key={report.id} className="rounded-2xl border bg-white p-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
@@ -126,6 +127,11 @@ export function AdminReportsPage() {
                       <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">{report.court.name}</span>
                       {report.court.partner && <span className="text-xs text-slate-500">{report.court.partner.businessName}</span>}
                       {courtNote && <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600">{courtNote}</span>}
+                      {awaitingAdmin && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2.5 py-1 text-xs font-bold text-sky-800">
+                          <MessageSquareReply className="h-3.5 w-3.5" /> Người báo cáo vừa trả lời
+                        </span>
+                      )}
                       {report.courtPendingCount > 1 && (
                         <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-bold text-red-700">
                           Sân này có {report.courtPendingCount} báo cáo chờ xử lý
@@ -146,7 +152,7 @@ export function AdminReportsPage() {
                         <p>
                           {st.label} bởi <b>{report.resolver?.fullName ?? "—"}</b> · {formatDateTime(report.resolvedAt)}
                         </p>
-                        {report.adminNote && <p className="mt-1 whitespace-pre-line">Ghi chú: {report.adminNote}</p>}
+                        {report.adminNote && <p className="mt-1 line-clamp-3 whitespace-pre-line">Phản hồi: {report.adminNote}</p>}
                       </div>
                     )}
                     <div className="mt-3 flex flex-wrap gap-4 text-sm">
@@ -163,16 +169,21 @@ export function AdminReportsPage() {
                       </a>
                     </div>
                   </div>
-                  {report.status === "PENDING" && (
-                    <div className="flex gap-2">
-                      <Button onClick={() => setDeciding({ report, action: "resolve" })}>
-                        <CheckCircle2 className="h-4 w-4" /> Đã xử lý
-                      </Button>
-                      <Button variant="danger" onClick={() => setDeciding({ report, action: "reject" })}>
-                        <XCircle className="h-4 w-4" /> Bác bỏ
-                      </Button>
-                    </div>
-                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="secondary" onClick={() => openThread(report.id, "message")}>
+                      <MessageSquare className="h-4 w-4" /> Trao đổi{report.messageCount ? ` (${report.messageCount})` : ""}
+                    </Button>
+                    {report.status === "PENDING" && (
+                      <>
+                        <Button onClick={() => openThread(report.id, "resolve")}>
+                          <CheckCircle2 className="h-4 w-4" /> Đã xử lý
+                        </Button>
+                        <Button variant="danger" onClick={() => openThread(report.id, "reject")}>
+                          <XCircle className="h-4 w-4" /> Bác bỏ
+                        </Button>
+                      </>
+                    )}
+                  </div>
                 </div>
               </article>
             );
@@ -192,29 +203,7 @@ export function AdminReportsPage() {
         />
       )}
 
-      <ReasonModal
-        key={deciding ? `${deciding.action}-${deciding.report.id}` : "none"}
-        open={Boolean(deciding)}
-        required={deciding?.action === "reject"}
-        title={deciding?.action === "reject" ? "Bác bỏ báo cáo?" : "Đánh dấu đã xử lý?"}
-        description={
-          deciding && (
-            <p>
-              Báo cáo về sân <b>{deciding.report.court.name}</b>: “{deciding.report.reason}”.{" "}
-              {deciding.action === "reject"
-                ? "Người báo cáo nhận thông báo kèm lý do bác bỏ."
-                : "Hãy xử lý sân trước (khoá, yêu cầu cập nhật...) ở trang quản trị sân. Người báo cáo nhận thông báo kèm ghi chú nếu có."}
-            </p>
-          )
-        }
-        label={deciding?.action === "reject" ? "Lý do bác bỏ" : "Ghi chú (không bắt buộc)"}
-        placeholder={deciding?.action === "reject" ? "Ví dụ: đã kiểm tra, thông tin sân đúng thực tế" : "Ví dụ: đã yêu cầu đối tác cập nhật giờ mở cửa"}
-        confirmLabel={deciding?.action === "reject" ? "Bác bỏ" : "Đã xử lý"}
-        confirmVariant={deciding?.action === "reject" ? "danger" : "primary"}
-        pending={decide.isPending}
-        onClose={() => setDeciding(null)}
-        onConfirm={(note) => deciding && decide.mutate({ ...deciding, note })}
-      />
+      {opened && <AdminReportThreadModal key={`${opened.id}-${opened.mode}`} reportId={opened.id} initialMode={opened.mode} onClose={closeThread} />}
     </div>
   );
 }

@@ -3,7 +3,7 @@ import type { Language } from "./utils";
 
 export function CalendarLegend({ language }: { language: Language }) {
   const items = [
-    { color: "bg-emerald-50 border-emerald-300 text-emerald-800", label: language === "en" ? "Available" : "Còn trống" },
+    { color: "bg-emerald-100 border-emerald-300 text-emerald-800", label: language === "en" ? "Available" : "Còn trống" },
     { color: "bg-emerald-600 border-emerald-700 text-white", label: language === "en" ? "Selected" : "Đang chọn" },
     { color: "bg-rose-50 border-rose-300 text-rose-700", label: language === "en" ? "Booked" : "Đã đặt" },
     { color: "bg-amber-50 border-amber-300 text-amber-700", label: language === "en" ? "Maintenance" : "Bảo trì" },

@@ -1,9 +1,11 @@
 import type { ReactNode } from "react";
 
+/**
+ * Formerly the green page banner. Pages show no banner any more: the dashboard top bar already names the page, so
+ * title, eyebrow and subtitle are accepted but not rendered. What a page put in the banner still shows, as one row
+ * above its content: filters and other children on the left, buttons (actions) on the right.
+ */
 export function PageHero({
-  eyebrow,
-  title,
-  subtitle,
   actions,
   children
 }: {
@@ -13,24 +15,11 @@ export function PageHero({
   actions?: ReactNode;
   children?: ReactNode;
 }) {
+  if (!actions && !children) return null;
   return (
-    <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-700 via-teal-700 to-slate-900 p-4 text-white shadow-xl">
-      <div className="absolute -right-16 -top-20 h-64 w-64 rounded-full bg-white/10" />
-      <div className="relative flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="flex flex-wrap items-center gap-2 text-xl font-black">
-            {title}
-            {eyebrow && (
-              <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-100">
-                {eyebrow}
-              </span>
-            )}
-          </h1>
-          {subtitle && <p className="mt-1 text-sm text-white/70">{subtitle}</p>}
-        </div>
-        {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
-      </div>
-      {children && <div className="relative mt-4 flex flex-wrap justify-start">{children}</div>}
-    </section>
+    <div className="flex flex-wrap items-end justify-between gap-3">
+      {children && <div className="flex flex-wrap justify-start">{children}</div>}
+      {actions && <div className="ml-auto flex flex-wrap gap-2">{actions}</div>}
+    </div>
   );
 }

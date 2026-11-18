@@ -26,15 +26,34 @@ const campaignTypeTones: Record<string, string> = {
   COURT_UPDATE_REQUESTED: "bg-sky-100 text-sky-700"
 };
 
-export type AudienceKey = "CUSTOMERS" | "PARTNERS" | "STAFF" | "ALL" | "ONE_USER" | "ONE_PARTNER";
+export type AudienceKey = "CUSTOMERS" | "PARTNERS" | "STAFF" | "ALL" | "ONE_USER" | "ONE_PARTNER" | "SELECTED";
+export type GroupAudienceKey = Extract<AudienceKey, "CUSTOMERS" | "PARTNERS" | "STAFF" | "ALL">;
 
-/** Who a campaign goes to, as the admin picks it; each maps to the API's targetType (and targetRole). */
-export const audienceOptions: Array<{ value: AudienceKey; label: string; targetType: string; targetRole?: string }> = [
+/** The whole groups a campaign can go to ("Nhóm chung" in the recipient picker); each maps to the API's target. */
+export const groupAudiences: Array<{ value: GroupAudienceKey; label: string; targetType: "ROLE" | "ALL"; targetRole?: string }> = [
   { value: "CUSTOMERS", label: "Tất cả khách hàng", targetType: "ROLE", targetRole: "USER" },
   { value: "PARTNERS", label: "Tất cả đối tác", targetType: "ROLE", targetRole: "PARTNER" },
   { value: "STAFF", label: "Tất cả nhân viên sân", targetType: "ROLE", targetRole: "RECIPIENT" },
-  { value: "ALL", label: "Mọi tài khoản (trừ bạn)", targetType: "ALL" },
+  { value: "ALL", label: "Mọi tài khoản (trừ bạn)", targetType: "ALL" }
+];
+
+/**
+ * Who a new campaign goes to until the admin picks: system, maintenance and incident notices concern everyone,
+ * money matters the partners, promotions the customers. The admin confirms the count before anything is sent.
+ */
+export const defaultAudienceByType: Record<string, GroupAudienceKey> = {
+  SYSTEM: "ALL",
+  MAINTENANCE: "ALL",
+  INCIDENT: "ALL",
+  FINANCE: "PARTNERS",
+  PROMOTION: "CUSTOMERS"
+};
+
+/** Every audience a sent campaign can have, for the history filter (one partner only in campaigns sent before). */
+export const audienceOptions: Array<{ value: AudienceKey; label: string; targetType: string; targetRole?: string }> = [
+  ...groupAudiences,
   { value: "ONE_USER", label: "Một tài khoản", targetType: "USER" },
+  { value: "SELECTED", label: "Nhiều tài khoản chọn riêng", targetType: "USERS" },
   { value: "ONE_PARTNER", label: "Một đối tác", targetType: "PARTNER" }
 ];
 
@@ -54,8 +73,10 @@ export function campaignTargetLabel(campaign: {
   targetUserEmail?: string | null;
   targetPartnerId?: string | null;
   targetPartnerName?: string | null;
+  recipientCount?: number;
 }) {
   if (campaign.targetType === "ALL") return "Mọi tài khoản";
+  if (campaign.targetType === "USERS") return `${campaign.recipientCount ?? "Nhiều"} tài khoản chọn riêng`;
   if (campaign.targetType === "ROLE") {
     return audienceOptions.find((option) => option.targetRole === campaign.targetRole)?.label
       ?? `Tất cả ${(roleLabels[campaign.targetRole ?? ""] ?? campaign.targetRole ?? "").toLowerCase()}`;

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { CalendarDays, WalletCards, Activity, ClipboardList } from "lucide-react";
 import { recipientApi } from "../../features/recipient/api/recipientApi";
+import { CourtStatusPanel } from "../../features/recipient/components/CourtStatusPanel";
 import { EmptyState, LoadingState, ErrorState } from "../../components/common/States";
 import { PageHero } from "../../components/common/PageHero";
 import { StatCard } from "../../components/common/StatCard";
@@ -37,6 +38,8 @@ export function RecipientDashboardPage() {
         />
         <StatCard label="Đơn chờ xác nhận" value={data.pendingBookings} icon={ClipboardList} iconBg="bg-amber-100 text-amber-700" to="/recipient/bookings?status=PENDING" />
       </div>
+
+      <CourtStatusPanel />
 
       <section className="rounded-2xl border bg-white p-6 shadow-sm">
         <div className="mb-4 flex items-center justify-between">

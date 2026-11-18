@@ -113,7 +113,7 @@ export function AdminVouchersPage() {
         subtitle="Quản lý voucher do Admin phát hành và kiểm duyệt voucher của các đối tác."
         actions={
           <Link to="/admin/vouchers/create">
-            <Button className="bg-white/20 text-white ring-1 ring-white/30 hover:bg-white/30">
+            <Button>
               <Plus className="h-4 w-4" /> Tạo voucher
             </Button>
           </Link>

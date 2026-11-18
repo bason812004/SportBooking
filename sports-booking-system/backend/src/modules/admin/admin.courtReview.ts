@@ -27,6 +27,26 @@ export type CourtReviewCheck = {
 export const NEW_ACCOUNT_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** How long after approving a court an admin may take the approval back; later, the court is locked instead. */
+export const APPROVAL_REVOKE_HOURS = 24;
+
+/** moderation_history actions that decide a court; other entries (such as update requests) are not decisions. */
+export const COURT_DECISION_ACTIONS = ["APPROVED", "REJECTED", "APPROVAL_REVOKED"];
+
+/**
+ * Until when the approval of a court can be revoked: only while the court is approved and its latest decision is
+ * that approval, within APPROVAL_REVOKE_HOURS of it. Courts approved before decisions were recorded cannot be.
+ */
+export function approvalRevocableUntil(
+  courtStatus: string,
+  latestDecision: { action: string; createdAt: Date | string } | null | undefined,
+  now = new Date()
+) {
+  if (courtStatus !== "APPROVED" || latestDecision?.action !== "APPROVED") return null;
+  const until = new Date(new Date(latestDecision.createdAt).getTime() + APPROVAL_REVOKE_HOURS * 60 * 60 * 1000);
+  return until > now ? until : null;
+}
+
 const present = (value?: string | null) => Boolean(value?.trim());
 const info = (key: string, ok: boolean, okLabel: string, missingLabel: string): CourtReviewCheck =>
   ({ key, status: ok ? "ok" : "missing", label: ok ? okLabel : missingLabel });
@@ -63,10 +83,8 @@ export function courtReviewChecks(input: CourtReviewInput) {
       "Đối tác đã được duyệt hồ sơ",
       input.partnerStatus === "REJECTED" ? "Hồ sơ đối tác đã bị từ chối" : "Đối tác chưa được duyệt hồ sơ"
     ),
+    // Photos still pending are approved with the court (adminService.approveCourt), so they are no warning.
     warn("images", totalImages > 0, `Có ${totalImages} ảnh sân`, "Sân chưa có ảnh nào"),
-    ...(input.pendingImages > 0
-      ? [{ key: "pending_images", status: "warning" as const, label: `Còn ${input.pendingImages} ảnh chưa xét duyệt` }]
-      : []),
     warn(
       "duplicate_address",
       input.duplicateAddressCourts === 0,

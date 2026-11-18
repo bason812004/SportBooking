@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Eye, FolderCheck, ImageOff, MapPin, XCircle } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { adminApi } from "../../features/admin/api/adminApi";
 import { LoadingState, ErrorState } from "../../components/common/States";
@@ -12,6 +12,7 @@ import { courtAddress } from "../../lib/format";
 
 export function AdminPendingCourtsPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
 
@@ -23,8 +24,11 @@ export function AdminPendingCourtsPage() {
 
   const approve = useMutation({
     mutationFn: adminApi.approveCourt,
-    onSuccess: () => {
-      toast.success("Đã duyệt sân");
+    onSuccess: ({ approvedImages }, courtId) => {
+      // The court leaves this list: the toast keeps a way to its review page, where the approval can be revoked.
+      toast.success(approvedImages ? `Đã duyệt sân và ${approvedImages} ảnh` : "Đã duyệt sân", {
+        action: { label: "Hủy duyệt", onClick: () => navigate(`/admin/courts/pending/${courtId}`) }
+      });
       queryClient.invalidateQueries({ queryKey: ["admin-pending-courts"] });
       queryClient.invalidateQueries({ queryKey: ["admin-dashboard"] });
     },
@@ -86,8 +90,8 @@ export function AdminPendingCourtsPage() {
                       {court.category?.name && (
                         <span className="rounded-full bg-sky-100 px-2.5 py-1 text-xs font-bold text-sky-800">{court.category.name}</span>
                       )}
-                      {(court.courtCount ?? 0) > 0 && (
-                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">{court.courtCount} sân con</span>
+                      {(court._count?.surfaces ?? 0) > 0 && (
+                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">{court._count.surfaces} sân con</span>
                       )}
                       <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">
                         {imageCount ? `${imageCount} ảnh` : "Chưa có ảnh"}

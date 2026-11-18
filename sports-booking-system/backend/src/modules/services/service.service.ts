@@ -1,5 +1,6 @@
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { serviceRepository } from "./service.repository.js";
+import { toPriceHistoryEntry } from "./service.priceHistory.js";
 import type { CreateServiceCategoryInput, CreateServiceInput, ServiceViewer, UpdateServiceInput } from "./service.types.js";
 
 async function ownScope(userId: string) {
@@ -51,8 +52,36 @@ export const serviceService = {
     return serviceRepository.createCategory(data);
   },
 
+  /** The partner's catalog, each service with its latest price history line ("Đổi giá lần cuối ..."). */
   async listPartnerServices(partnerId: string, categoryId?: string, search?: string, courtId?: string) {
-    return serviceRepository.listPartnerServices(partnerId, categoryId, search, courtId);
+    const services: any[] = await serviceRepository.listPartnerServices(partnerId, categoryId, search, courtId);
+    // The history is extra: the catalog still lists if it cannot be read.
+    const latest = await serviceRepository.lastPriceChanges(services.map((service) => service.id)).catch((error: unknown) => {
+      console.error("[ServiceService] lastPriceChanges failed:", error);
+      return [];
+    });
+    const byService = new Map(latest.map((row) => [row.serviceId, row]));
+    return services.map((service) => {
+      const row = byService.get(service.id);
+      return { ...service, lastPriceChange: row ? { kind: row.kind, changedAt: new Date(row.changedAt).toISOString() } : null };
+    });
+  },
+
+  /**
+   * When a service's sale and cost prices were set, from what and by whom, newest first. For the partner who owns it
+   * and their staff (a receptionist only for the court they manage).
+   */
+  async priceHistory(userId: string, id: string) {
+    const scope = await ownScope(userId);
+    const service = await serviceRepository.findServiceById(id);
+    if (!service || service.partnerId !== scope.partnerId || (scope.managedCourtId && service.courtId !== scope.managedCourtId)) {
+      throw new NotFoundError("Dịch vụ không tồn tại");
+    }
+    const rows = await serviceRepository.priceHistory(id);
+    return {
+      service: { id: service.id, name: service.name, court: service.court ?? null },
+      entries: rows.map(toPriceHistoryEntry)
+    };
   },
 
   /** A court's menu: full rows for its own counter, the customer view for everyone else. */
@@ -77,20 +106,21 @@ export const serviceService = {
     return (await seesInternals(viewer, service.partnerId, service.courtId)) ? service : publicView(service);
   },
 
-  async createService(partnerId: string, data: CreateServiceInput) {
+  async createService(partnerId: string, data: CreateServiceInput, actorId: string | null = null) {
     const courtIds = [...new Set(data.courtIds)];
     const courts = await serviceRepository.partnerCourts(partnerId, courtIds);
     if (courts.length !== courtIds.length) throw new ForbiddenError("Chỉ được bán dịch vụ ở sân của bạn");
     await assertNameFree(courtIds, data.name);
 
-    const created = await serviceRepository.createService(partnerId, { ...data, courtIds });
+    const created = await serviceRepository.createService(partnerId, { ...data, courtIds }, actorId);
     if (data.imageUrl !== undefined && created.length) {
       await serviceRepository.applyImageToPartnerServices(partnerId, created[0].name, data.imageUrl ?? null);
     }
     return created;
   },
 
-  async updateService(partnerId: string, id: string, data: UpdateServiceInput) {
+  /** `actorId`: the user making the edit, kept with the price history when a price changes. */
+  async updateService(partnerId: string, id: string, data: UpdateServiceInput, actorId: string | null = null) {
     const service = await serviceRepository.findServiceById(id);
     if (!service) throw new NotFoundError("Dịch vụ không tồn tại");
     if (service.partnerId !== partnerId) throw new ForbiddenError("Không có quyền chỉnh sửa dịch vụ này");
@@ -103,7 +133,11 @@ export const serviceService = {
     const name = data.name ?? service.name;
     if (courtId && (data.name !== undefined || data.courtId !== undefined)) await assertNameFree([courtId], name, id);
 
-    const updated = await serviceRepository.updateService(id, { ...data, courtId: data.courtId === service.courtId ? undefined : data.courtId });
+    const updated = await serviceRepository.updateService(
+      id,
+      { ...data, courtId: data.courtId === service.courtId ? undefined : data.courtId },
+      actorId
+    );
     // The picture is shared by every court's row for this product; the rest stays per court.
     if (data.imageUrl !== undefined) {
       await serviceRepository.applyImageToPartnerServices(partnerId, updated?.name ?? service.name, data.imageUrl ?? null);

@@ -4,6 +4,8 @@ import { useNavigate } from "react-router-dom";
 import { Bell } from "lucide-react";
 import { formatDateTime } from "../../lib/format";
 import { useAuth } from "../../features/auth/hooks/useAuth";
+import { ReportThreadModal } from "../../features/courtReports/components/ReportThreadModal";
+import { reporterThreadId } from "../../features/courtReports/reportNotifications";
 import { useMarkAllNotificationsRead, useMarkNotificationRead, useMyNotifications } from "../../features/notifications/hooks/useNotifications";
 import type { NotificationItem } from "../../features/notifications/api/notificationApi";
 import type { Role } from "../../types/api";
@@ -29,8 +31,11 @@ export function resolveNotificationRoute(item: NotificationItem, role?: Role): s
       return role === "ADMIN" ? "/admin/courts" : null;
     case "PARTNER_APPROVAL_REQUESTED":
       return role === "ADMIN" ? "/admin/partners?status=PENDING" : null;
+    // For admins: a new report, or the reporter answered; the reports page opens that report's conversation.
     case "REPORT_CREATED":
-      return role === "ADMIN" ? "/admin/reports" : null;
+    case "REPORT_REPLIED":
+      if (role !== "ADMIN") return null;
+      return typeof metadata.reportId === "string" ? `/admin/reports?reportId=${metadata.reportId}` : "/admin/reports";
     case "WITHDRAWAL_CREATED":
       return role === "ADMIN" ? "/admin/withdrawals" : null;
     // Refunds open the booking itself: the admin bookings list is filtered to today by default.
@@ -59,10 +64,14 @@ export function resolveNotificationRoute(item: NotificationItem, role?: Role): s
     case "REVIEW_RESTORED":
     case "REVIEW_DELETED":
     case "REVIEW_REPLIED":
-    // For the customer who reported a court: what came of it.
+    // For the customer who reported a court (the bell opens the report's conversation; see reporterThreadId).
     case "REPORT_RESOLVED":
     case "REPORT_REJECTED":
+    case "REPORT_MESSAGE":
       return typeof metadata.courtId === "string" ? `/courts/${metadata.courtId}` : null;
+    // A sale took a product to its reorder level or out of stock: buy more (purchase orders are the partner's).
+    case "STOCK_LOW":
+      return role === "PARTNER" ? "/partner/purchases" : null;
     // An admin disabled or re-enabled one of the partner's vouchers.
     case "VOUCHER_DISABLED":
     case "VOUCHER_ENABLED":
@@ -84,6 +93,10 @@ export function resolveNotificationRoute(item: NotificationItem, role?: Role): s
     case "COURT_LOCKED":
     case "COURT_UNLOCKED":
       return role === "PARTNER" ? "/partner/courts" : null;
+    // An admin took a court's approval back: the court form shows the reason as the update to make.
+    case "COURT_APPROVAL_REVOKED":
+      if (role !== "PARTNER") return null;
+      return typeof metadata.courtId === "string" ? `/partner/courts/${metadata.courtId}/edit` : "/partner/courts";
     // An admin removed one of the user's comments: the post shows what is left.
     case "BLOG_COMMENT_REMOVED":
       return typeof metadata.slug === "string" ? `/blogs/${metadata.slug}` : null;
@@ -105,6 +118,7 @@ export function resolveNotificationRoute(item: NotificationItem, role?: Role): s
 export function NotificationBell() {
   const { t } = useTranslation("common");
   const [open, setOpen] = useState(false);
+  const [threadId, setThreadId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | null>(null);
   const navigate = useNavigate();
@@ -117,7 +131,10 @@ export function NotificationBell() {
   const items = [...new Map((data?.pages.flatMap((page) => page.items) ?? []).map((item) => [item.id, item])).values()];
   const unreadCount = data?.pages[0]?.unreadCount ?? 0;
 
-  useEffect(() => { setOpen(false); }, [user?.id]);
+  useEffect(() => {
+    setOpen(false);
+    setThreadId(null);
+  }, [user?.id]);
 
   useEffect(() => {
     function handleClick(event: MouseEvent) {
@@ -141,6 +158,7 @@ export function NotificationBell() {
   }
 
   return (
+    <>
     <div ref={menuRef} className="relative" onMouseEnter={openMenu} onMouseLeave={closeMenuSoon}>
       <button
         onClick={() => setOpen((current) => !current)}
@@ -185,8 +203,14 @@ export function NotificationBell() {
                 key={item.id}
                 onClick={() => {
                   if (!item.isRead) markRead.mutate(item.id);
-                  // One with nowhere to go opens the notifications page, where its whole text is shown.
                   setOpen(false);
+                  // A notice about the customer's report opens its conversation where they are.
+                  const reportId = reporterThreadId(item, user?.role);
+                  if (reportId) {
+                    setThreadId(reportId);
+                    return;
+                  }
+                  // One with nowhere to go opens the notifications page, where its whole text is shown.
                   navigate(resolveNotificationRoute(item, user?.role) ?? `/notifications#${item.id}`);
                 }}
                 className={`block w-full border-b border-slate-50 px-4 py-3 text-left transition hover:bg-slate-50 ${
@@ -217,5 +241,7 @@ export function NotificationBell() {
         </button>
       </div>
     </div>
+    {threadId && <ReportThreadModal key={threadId} reportId={threadId} onClose={() => setThreadId(null)} />}
+    </>
   );
 }

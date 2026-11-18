@@ -60,7 +60,7 @@ for (const relation of ["bookings", "booking_slots", "bookingSeries", "availabil
   });
 }
 
-test("deleting an unused surface synchronizes count to prevent legacy auto-fill", async () => {
+test("deleting an unused surface synchronizes the count", async () => {
   assert.deepEqual(await partnerRepository.deleteCourtSurface("c1", "s1"), { id: "s1" });
   assert.deepEqual(calls, ["lock", "lock", "delete"]);
   assert.equal(savedCount, 2);
@@ -72,10 +72,10 @@ test("last surface is retained to respect the venue minimum count", async () => 
   assert.deepEqual(calls, ["lock", "lock"]);
 });
 
-test("a stale detail read cannot recreate a surface deleted since the initial query", async () => {
-  surfaceCount = 2;
+test("opening a court is read-only: it never adds sub-courts, even when court_count is higher", async () => {
+  // The mocked court says court_count 3 but has no sub-court rows.
   const court = await partnerRepository.courtByPartner("c1", "p1");
-  assert.equal(court?.surfaces.length, 2);
-  assert.equal(court?.courtCount, 2);
-  assert.deepEqual(calls, ["lock"]);
+  assert.deepEqual(court?.surfaces, []);
+  assert.equal(court?.courtCount, 3);
+  assert.deepEqual(calls, []);
 });

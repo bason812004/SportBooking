@@ -7,6 +7,7 @@ import { ensureServiceTables } from "../services/service.repository.js";
 import { settlementService } from "../settlements/settlement.service.js";
 import { translateReason } from "../vouchers/voucher.eligibility.js";
 import { voucherRepository } from "../vouchers/voucher.repository.js";
+import { releaseBookingStock, takeStock, type StockAlert } from "../inventory/inventory.stock.js";
 
 function generateShortId(prefix: string): string {
   const rand = Math.random().toString(36).slice(2, 10);
@@ -92,6 +93,25 @@ async function takeVoucherUse(tx: Prisma.TransactionClient, userId: string, vouc
     where: { userId, voucherId, status: "CLAIMED" },
     data: { status: "USED", usedAt: new Date() }
   });
+}
+
+/**
+ * Takes stock for the services a new booking was made with (inventory/inventory.stock.ts), in the transaction that
+ * creates it: too little free stock refuses the booking. `alerts` collects products taken to their reorder level.
+ */
+async function takeBookingStock(
+  tx: Prisma.TransactionClient,
+  booking: { id: string; bookingCode?: string | null; bookingServices?: Array<{ id: string; serviceId: string | null; quantity: number }> },
+  alerts?: StockAlert[]
+) {
+  const lines = booking.bookingServices ?? [];
+  if (!lines.length) return;
+  await takeStock(
+    tx,
+    lines.map((line) => ({ serviceId: line.serviceId, quantity: line.quantity, bookingServiceId: line.id })),
+    { referenceType: "BOOKING", referenceId: booking.id, note: `Đặt cùng đơn ${booking.bookingCode ?? booking.id}` },
+    { alerts }
+  );
 }
 
 export const bookingRepository = {
@@ -227,33 +247,7 @@ export const bookingRepository = {
       });
       await voucherRepository.releaseVoucherUses([id], tx);
       const settlement = await settlementService.cancelForBooking(id, tx);
-      const services = await tx.bookingService.findMany({
-        where: { bookingId: id, status: "ACTIVE" }
-      });
-      for (const bs of services) {
-        if (bs.serviceId && bs.quantity > 0) {
-          const inv = await tx.serviceInventory.findFirst({ where: { serviceId: bs.serviceId } });
-          if (inv) {
-            await tx.serviceInventory.update({
-              where: { id: inv.id },
-              data: { quantity: { increment: bs.quantity } }
-            });
-            await tx.inventoryTransaction.create({
-              data: {
-                serviceId: bs.serviceId,
-                // Restocking covers products as well as rentals, and the POS records the same
-                // return as ADJUSTMENT — RENTAL_IN would mislabel every drink put back.
-                type: "ADJUSTMENT",
-                quantity: bs.quantity,
-                unitCost: inv.lastPurchasePrice,
-                referenceType: "BOOKING_CANCELLED",
-                referenceId: id,
-                note: `Hoàn kho do hủy booking ${id}`
-              }
-            });
-          }
-        }
-      }
+      await releaseBookingStock(tx, id, `Hoàn kho do huỷ đơn ${updated.bookingCode ?? id}`, "BOOKING_CANCELLED");
       return { ...updated, settlement };
     });
   },
@@ -302,35 +296,27 @@ export const bookingRepository = {
     return Array.from(map.values());
   },
 
-  /** Creates `bookingService` rows for an already-created booking and deducts inventory, mirroring the checkout flow above. */
-  async attachServicesToBooking(tx: Prisma.TransactionClient, bookingId: string, lines: Array<{ serviceId: string; quantity: number; price: number }>) {
+  /** Writes a walk-in's service lines on its (first) booking and takes their stock, in the booking's transaction. */
+  async attachServicesToBooking(
+    tx: Prisma.TransactionClient,
+    bookingId: string,
+    lines: Array<{ serviceId: string; quantity: number; price: number }>,
+    alerts?: StockAlert[]
+  ) {
+    const created = [];
     for (const line of lines) {
-      await tx.bookingService.create({
-        data: { id: generateShortId("bs"), bookingId, serviceId: line.serviceId, quantity: line.quantity, unitPrice: line.price, price: line.price * line.quantity, totalPrice: line.price * line.quantity, status: "ACTIVE" }
-      });
-      const inv = await tx.serviceInventory.findFirst({ where: { serviceId: line.serviceId } });
-      if (inv) {
-        if (inv.quantity < line.quantity) throw new ValidationError("Sản phẩm/dịch vụ không đủ tồn kho");
-        await tx.serviceInventory.update({
-          where: { id: inv.id },
-          data: { quantity: { decrement: line.quantity } }
-        });
-        await tx.inventoryTransaction.create({
-          data: {
-            serviceId: line.serviceId,
-            type: "RENTAL_OUT",
-            quantity: line.quantity,
-            unitCost: inv.lastPurchasePrice,
-            referenceType: "BOOKING",
-            referenceId: bookingId,
-            note: `Đặt cùng đơn booking ${bookingId}`
-          }
-        });
-      }
+      created.push(
+        await tx.bookingService.create({
+          data: { id: generateShortId("bs"), bookingId, serviceId: line.serviceId, quantity: line.quantity, unitPrice: line.price, price: line.price * line.quantity, totalPrice: line.price * line.quantity, status: "ACTIVE", addedBy: "BOOKING" }
+        })
+      );
     }
+    await takeBookingStock(tx, { id: bookingId, bookingServices: created }, alerts);
   },
 
   createWithServices(input: {
+    /** Products this booking takes to their reorder level (the partner is told after commit). */
+    alerts?: StockAlert[];
     bookingCode: string;
     userId: string;
     courtId: string;
@@ -377,12 +363,15 @@ export const bookingRepository = {
               unitPrice: service.price,
               price: service.price * service.quantity,
               totalPrice: service.price * service.quantity,
-              status: "ACTIVE"
+              status: "ACTIVE",
+              // Ordered with the booking (the counter's sales history tells these apart).
+              addedBy: "BOOKING"
             }))
           }
         },
         include: { court: true, bookingServices: { include: { service: true } } }
       });
+      await takeBookingStock(tx, booking, input.alerts);
 
       if (input.voucherId && input.voucherDiscountAmount > 0) {
         await takeVoucherUse(tx, input.userId, input.voucherId);
@@ -436,6 +425,8 @@ export const bookingRepository = {
   },
 
   createCheckout(input: {
+    /** Products this booking takes to their reorder level (the partner is told after commit). */
+    alerts?: StockAlert[];
     bookingCode: string;
     userId: string;
     courtId: string;
@@ -506,12 +497,15 @@ export const bookingRepository = {
                 unitPrice: service.price,
                 price: service.price * service.quantity,
                 totalPrice: service.price * service.quantity,
-                status: "ACTIVE"
+                status: "ACTIVE",
+                // Ordered with the booking (the counter's sales history tells these apart).
+                addedBy: "BOOKING"
               }))
             }
           },
           include: { court: true, bookingSlots: true, bookingServices: { include: { service: true } } }
         });
+        await takeBookingStock(tx, booking, input.alerts);
 
         if (input.voucherId && input.voucherDiscountAmount > 0) {
           await takeVoucherUse(tx, input.userId, input.voucherId);
@@ -553,6 +547,8 @@ export const bookingRepository = {
   },
 
   createPayAtCourtCheckout(input: {
+    /** Products this booking takes to their reorder level (the partner is told after commit). */
+    alerts?: StockAlert[];
     bookingCode: string;
     userId: string;
     courtId: string;
@@ -614,12 +610,15 @@ export const bookingRepository = {
                 unitPrice: service.price,
                 price: service.price * service.quantity,
                 totalPrice: service.price * service.quantity,
-                status: "ACTIVE"
+                status: "ACTIVE",
+                // Ordered with the booking (the counter's sales history tells these apart).
+                addedBy: "BOOKING"
               }))
             }
           },
           include: { court: true, bookingSlots: true, bookingServices: { include: { service: true } } }
         });
+        await takeBookingStock(tx, booking, input.alerts);
 
         if (input.voucherId && input.voucherDiscountAmount > 0) {
           await takeVoucherUse(tx, input.userId, input.voucherId);
@@ -643,6 +642,8 @@ export const bookingRepository = {
   },
 
   createOrderCheckout(input: {
+    /** Products this booking takes to their reorder level (the partner is told after commit). */
+    alerts?: StockAlert[];
     userId: string;
     courtId: string;
     days: Array<{
@@ -741,12 +742,15 @@ export const bookingRepository = {
                   unitPrice: service.price,
                   price: service.price * service.quantity,
                   totalPrice: service.price * service.quantity,
-                  status: "ACTIVE"
+                  status: "ACTIVE",
+                  // Ordered with the booking (the counter's sales history tells these apart).
+                  addedBy: "BOOKING"
                 }))
               }
             },
             include: { court: true, bookingSlots: true, bookingServices: { include: { service: true } } }
           });
+          await takeBookingStock(tx, booking, input.alerts);
           bookings.push(booking);
 
           if (input.voucherId && day.voucherDiscountAmount > 0) {
@@ -790,6 +794,8 @@ export const bookingRepository = {
   },
 
   createPayAtCourtOrderCheckout(input: {
+    /** Products this booking takes to their reorder level (the partner is told after commit). */
+    alerts?: StockAlert[];
     userId: string;
     courtId: string;
     days: Array<{
@@ -842,35 +848,6 @@ export const bookingRepository = {
           const primarySurfaceId = (firstSlot as any).courtSurfaceId || (firstSlot as any).court_surface_id || (firstSlot as any).courtSubId || null;
           const bookingId = generateShortId("bk");
 
-          for (const service of day.services) {
-            if (service.serviceId && service.quantity > 0) {
-              const inv = await tx.serviceInventory.findFirst({
-                where: { serviceId: service.serviceId }
-              });
-              if (inv) {
-                if (inv.quantity < service.quantity) {
-                  const svc = await tx.service.findUnique({ where: { id: service.serviceId } });
-                  throw new ValidationError(`Sản phẩm/dịch vụ "${svc?.name || "Sản phẩm"}" chỉ còn ${inv.quantity} sản phẩm trong kho.`);
-                }
-                await tx.serviceInventory.update({
-                  where: { id: inv.id },
-                  data: { quantity: { decrement: service.quantity } }
-                });
-                await tx.inventoryTransaction.create({
-                  data: {
-                    serviceId: service.serviceId,
-                    // Matches how the POS records the same deduction (cashier.repository).
-                    type: "SALE",
-                    quantity: service.quantity,
-                    unitCost: inv.lastPurchasePrice,
-                    referenceType: "BOOKING",
-                    referenceId: bookingId,
-                    note: `Đặt cùng đơn booking ${bookingId}`
-                  }
-                });
-              }
-            }
-          }
           const booking = await tx.booking.create({
             data: {
               id: bookingId,
@@ -910,12 +887,15 @@ export const bookingRepository = {
                   unitPrice: service.price,
                   price: service.price * service.quantity,
                   totalPrice: service.price * service.quantity,
-                  status: "ACTIVE"
+                  status: "ACTIVE",
+                  // Ordered with the booking (the counter's sales history tells these apart).
+                  addedBy: "BOOKING"
                 }))
               }
             },
             include: { court: true, bookingSlots: true, bookingServices: { include: { service: true } } }
           });
+          await takeBookingStock(tx, booking, input.alerts);
           bookings.push(booking);
 
           if (input.voucherId && day.voucherDiscountAmount > 0) {

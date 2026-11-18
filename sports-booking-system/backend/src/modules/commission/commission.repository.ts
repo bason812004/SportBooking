@@ -21,17 +21,42 @@ export const commissionRepository = {
     });
   },
 
-  /** Who the default rate applies to, and the partners with a rate of their own. */
-  async rateCoverage() {
-    const [usingDefault, overrides] = await Promise.all([
-      prisma.partnerProfile.count({ where: { commissionRate: null } }),
-      prisma.partnerProfile.findMany({
-        where: { commissionRate: { not: null } },
-        select: { id: true, businessName: true, commissionRate: true },
-        orderBy: { businessName: "asc" }
-      })
-    ]);
-    return { usingDefault, overrides };
+  /**
+   * Every partner with its own rate (null: the default), the day it joined and the last audit entry that changed its
+   * rate. A save of the same value is no change: previousRate and rate are compared.
+   */
+  partnerRateRows() {
+    return prisma.$queryRaw<
+      Array<{ id: string; businessName: string; commissionRate: unknown; joinedAt: Date; partnerChangeAt: Date | null; partnerChangeBy: string | null }>
+    >`
+      select p.id, p.business_name as "businessName", p.commission_rate as "commissionRate", p.created_at as "joinedAt",
+        pc.created_at as "partnerChangeAt", pc.actor_name as "partnerChangeBy"
+      from partner_profiles p
+      left join lateral (
+        select a.created_at, u.full_name as actor_name
+        from audit_logs a
+        left join users u on u.id = a.actor_id
+        where a.action = 'PARTNER_COMMISSION_UPDATED' and a.entity_id = p.id
+          and (a.metadata -> 'previousRate') is distinct from (a.metadata -> 'rate')
+        order by a.created_at desc
+        limit 1
+      ) pc on true
+      order by p.business_name
+    `;
+  },
+
+  /** The last audit entry that changed the default rate, if any. */
+  async latestDefaultChange() {
+    const rows = await prisma.$queryRaw<Array<{ at: Date; changedBy: string | null }>>`
+      select a.created_at as "at", u.full_name as "changedBy"
+      from audit_logs a
+      left join users u on u.id = a.actor_id
+      where a.action = 'COMMISSION_DEFAULT_UPDATED'
+        and (a.metadata -> 'previousRate') is distinct from (a.metadata -> 'rate')
+      order by a.created_at desc
+      limit 1
+    `;
+    return rows[0] ?? null;
   },
 
   /** The latest changes to the default and partner rates, from the audit log. */

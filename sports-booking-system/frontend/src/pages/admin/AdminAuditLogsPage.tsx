@@ -72,7 +72,7 @@ export function AdminAuditLogsPage() {
         title="Nhật ký kiểm toán"
         subtitle="Mỗi thao tác quản trị và tài chính được ghi nối tiếp thành chuỗi hash. Cơ sở dữ liệu chặn sửa, xoá bản ghi; nút xác minh tính lại toàn bộ chuỗi để phát hiện thay đổi."
         actions={
-          <Button className="bg-white/20 text-white ring-1 ring-white/30 hover:bg-white/30" disabled={verify.isPending} onClick={() => verify.mutate()}>
+          <Button variant="secondary" disabled={verify.isPending} onClick={() => verify.mutate()}>
             <CheckCircle2 className="h-4 w-4" />
             {verify.isPending ? "Đang xác minh..." : "Xác minh chuỗi"}
           </Button>

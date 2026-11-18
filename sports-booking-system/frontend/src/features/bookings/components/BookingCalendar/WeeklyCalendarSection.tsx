@@ -38,6 +38,8 @@ export type WeeklyCalendarSectionProps = {
   /** Staff-only: lets clicking a BOOKED/BLOCKED slot open a management action. Off by default. */
   manageable?: boolean;
   onManage?: (slot: WeeklyScheduleSlot) => void;
+  /** Leaves out the toolbar's "Lịch đặt sân theo tuần" title and court name (the page already says which court). */
+  hideTitle?: boolean;
 };
 
 export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
@@ -59,7 +61,8 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
     rightSlot,
     selectionMode = "multi-day",
     manageable,
-    onManage
+    onManage,
+    hideTitle
   } = props;
 
   const { isCompact } = useResponsiveLayout();
@@ -167,6 +170,7 @@ export function WeeklyCalendarSection(props: WeeklyCalendarSectionProps) {
         weekEnd={weekEndDate}
         language={language}
         courtName={response?.court?.name ?? ""}
+        hideTitle={hideTitle}
         view={activeView}
         onPrev={() => shiftWeek(-7)}
         onNext={() => shiftWeek(7)}

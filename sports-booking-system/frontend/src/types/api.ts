@@ -306,6 +306,8 @@ export type AdminDashboard = {
   users: number;
   partners: number;
   courts: number;
+  /** Courts in operation: approved by an admin. */
+  approvedCourts: number;
   bookings: number;
   pendingCourts: number;
   pendingPartners: number;
@@ -391,7 +393,13 @@ export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED";
 export type AdminPendingCourt = Court & {
   partner: { id: string; businessName: string; approvalStatus: ApprovalStatus; user: { fullName: string; email: string } };
   imageRequests: Array<{ imageUrl: string }>;
-  _count: { images: number; imageRequests: number };
+  _count: { images: number; imageRequests: number; surfaces: number };
+};
+
+/** What revoking a court approval would leave standing: the upcoming bookings whose customers are told. */
+export type CourtApprovalRevocation = {
+  revocableUntil: string | null;
+  bookings: Array<{ id: string; bookingCode: string; bookingDate: string; startTime: string; endTime: string; customerName: string; surfaceName: string | null }>;
 };
 
 export type CourtReviewCheck = { key: string; status: "ok" | "warning" | "missing"; label: string };
@@ -447,6 +455,8 @@ export type AdminCourtReview = {
   partnerCourts: Record<ApprovalStatus, number>;
   duplicateAddressCourts: Array<{ id: string; name: string; approvalStatus: ApprovalStatus; partner: { businessName: string } }>;
   history: Array<{ id: string; action: string; reason?: string | null; createdAt: string; actor?: { fullName?: string | null; email?: string | null } | null }>;
+  /** Until when the approval can be taken back (a short window after approving); null when it cannot. */
+  revocableUntil: string | null;
   review: { canApprove: boolean; blockers: string[]; checks: CourtReviewCheck[] };
 };
 
@@ -542,6 +552,32 @@ export type ReviewSummary = {
   distribution: Array<{ rating: number; count: number }>;
 };
 
+/** A court or partner in the review statistics: its visible reviews and their average, hidden ones apart. */
+export type ReviewStatsRank = {
+  id: string;
+  name: string;
+  count: number;
+  averageRating: number;
+  hiddenCount: number;
+  repliedCount: number;
+  lowCount: number;
+};
+
+/** The admin's review statistics for one partner, court and period (the list's other filters do not apply). */
+export type AdminReviewStats = {
+  summary: ReviewSummary;
+  /** Visible reviews the court owner replied to. */
+  repliedCount: number;
+  /** Visible 1–2 star reviews. */
+  lowCount: number;
+  /** Visible reviews per day (YYYY-MM-DD) or month (YYYY-MM); a period without one has no average. */
+  trend: { unit: "day" | "month"; points: Array<{ period: string; count: number; averageRating: number | null }> };
+  /** Lowest rated first. */
+  courts: Array<ReviewStatsRank & { partnerId: string | null; partnerName: string | null }>;
+  /** Lowest rated first. */
+  partners: Array<ReviewStatsRank & { courtCount: number }>;
+};
+
 /** Whether the signed-in user may review the court now, and the booking the review would go with. */
 export type ReviewEligibility = {
   canReview: boolean;
@@ -579,7 +615,61 @@ export type AdminReport = {
   resolver?: { id: string; fullName: string } | null;
   /** Reports still waiting on the same court, this one included when it waits. */
   courtPendingCount: number;
+  /** Messages in the report's conversation, and who wrote the last one (a reporter's answer waits for an admin). */
+  messageCount: number;
+  lastMessage: { authorRole: "ADMIN" | "USER"; createdAt: string } | null;
 };
+
+export type ReportStatus = "PENDING" | "RESOLVED" | "REJECTED";
+
+/** Something done about a reported court: SYSTEM ones come from the audit log, ADMIN ones were ticked by the admin. */
+export type ReportMeasure = {
+  code: string;
+  label: string;
+  detail?: string | null;
+  source: "SYSTEM" | "ADMIN";
+  auditId?: string;
+  at?: string;
+};
+
+/** One entry of a report's conversation; the first is the report itself (kind REPORT, title = reason). */
+export type ReportThreadEntry = {
+  id: string;
+  kind: "REPORT" | "MESSAGE" | "RESOLVED" | "REJECTED";
+  authorRole: "ADMIN" | "USER";
+  /** Null for an admin in the reporter's view. */
+  authorName: string | null;
+  title?: string;
+  content: string;
+  measures: ReportMeasure[];
+  createdAt: string;
+};
+
+/** GET /reports/:id: the reporter's own report. */
+export type MyReportThread = {
+  id: string;
+  status: ReportStatus;
+  reason: string;
+  description?: string | null;
+  createdAt: string;
+  resolvedAt?: string | null;
+  court: { id: string; name: string };
+  entries: ReportThreadEntry[];
+  canReply: boolean;
+  repliesLeft: number;
+};
+
+/** GET /admin/reports/:id */
+export type AdminReportThread = {
+  report: Omit<AdminReport, "courtPendingCount" | "messageCount" | "lastMessage">;
+  entries: ReportThreadEntry[];
+  /** What the audit log shows was done about the court since the report came in (only while it waits). */
+  detectedMeasures: ReportMeasure[];
+  measureOptions: Array<{ code: string; label: string }>;
+  otherPending: Array<{ id: string; reason: string; createdAt: string; reporterName: string }>;
+};
+
+export type ReportDecisionPayload = { note: string; measures?: string[]; auditIds?: string[]; applyToCourtPending?: boolean };
 
 export type CommissionRateConfig = {
   partnerId: string;
@@ -590,10 +680,26 @@ export type CommissionRateConfig = {
 };
 
 /** The default rate and who it reaches: partners without a rate of their own use it, the overrides do not. */
+/** Why a partner's rate holds since that day (see backend commission.rateSince.ts). */
+export type CommissionRateSinceReason = "OVERRIDE_SET" | "OVERRIDE_REMOVED" | "DEFAULT_CHANGED" | "JOINED";
+
 export type CommissionDefault = {
   rate: number;
+  /** The last change of the default in the audit log, else when the setting was last written. */
+  defaultSince: string | null;
+  defaultChangedBy: string | null;
   partnersUsingDefault: number;
   overrides: Array<{ partnerId: string; businessName: string; rate: number }>;
+  /** Every partner's current rate and since when it applies. */
+  partners: Array<{
+    partnerId: string;
+    businessName: string;
+    rate: number;
+    source: "DEFAULT" | "OVERRIDE";
+    since: string;
+    sinceReason: CommissionRateSinceReason;
+    changedBy: string | null;
+  }>;
 };
 
 export type CommissionRateChange = {
@@ -678,7 +784,17 @@ export type AdminFinanceReport = {
   partners: AdminFinancePartner[];
 };
 
-export type NotificationTargetType = "ALL" | "ROLE" | "USER" | "PARTNER";
+/** USERS: accounts the admin picked one by one (their ids are in metadata.targetUserIds). */
+export type NotificationTargetType = "ALL" | "ROLE" | "USER" | "PARTNER" | "USERS";
+
+/** One branch of the notification recipient picker: a role, a partner (owner and staff) or a court (its customers). */
+export type NotificationRecipientGroup = {
+  id: string;
+  name: string;
+  /** A court's partner. */
+  detail: string | null;
+  members: Array<{ id: string; fullName: string; email: string; role: Role }>;
+};
 
 export type AdminNotificationCampaign = {
   id: string;

@@ -30,6 +30,9 @@ export interface ActiveBookingService {
   }>;
 }
 
+/** What was paid before the session (online or a deposit) covered: nothing, part of the court, or all of it. */
+export type PrepaidKind = "NONE" | "DEPOSIT" | "COURT_FULL";
+
 export interface CashierBooking {
   id: string;
   bookingCode: string;
@@ -43,8 +46,12 @@ export interface CashierBooking {
   depositAmount: number;
   courtSubtotal: number;
   serviceSubtotal: number;
+  voucherDiscount?: number;
   totalAmount: number;
   depositPaid: number;
+  /** Collected at the counter so far, on top of depositPaid. */
+  paidAtCounter?: number;
+  prepaidKind?: PrepaidKind;
   remainingAmount: number;
   checkedInAt?: string | null;
   /** Locked at the counter: services cannot change until it is unlocked (on every device). */
@@ -74,6 +81,8 @@ export interface CashierBookingDetail {
   voucherDiscount: number;
   grandTotal: number;
   depositPaid: number;
+  paidAtCounter: number;
+  prepaidKind: PrepaidKind;
   remainingAmount: number;
   activeServices: ActiveBookingService[];
 }
@@ -120,6 +129,11 @@ export const cashierApi = {
     const res = locked
       ? await api.post<ApiResponse<{ invoiceLockedAt: string | null }>>(`/cashier/bookings/${bookingId}/invoice-lock`)
       : await api.delete<ApiResponse<{ invoiceLockedAt: string | null }>>(`/cashier/bookings/${bookingId}/invoice-lock`);
+    return res.data.data;
+  },
+  /** Ends a checked-in session that owes nothing; with money owed, taking the payment finishes it instead. */
+  async finishSession(bookingId: string) {
+    const res = await api.post<ApiResponse<{ id: string; bookingStatus: "COMPLETED" }>>(`/cashier/bookings/${bookingId}/finish`);
     return res.data.data;
   },
   async returnRentalItem(rentalItemId: string, status: "RETURNED" | "DAMAGED" | "LOST", notes?: string) {

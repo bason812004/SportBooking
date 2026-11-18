@@ -13,3 +13,13 @@ it("selling a service checks the guest in only once the booked time has begun", 
   assert.equal(playHasStarted(booking, new Date("2026-09-19T17:59:59+07:00")), false);
   assert.equal(playHasStarted(booking, new Date("2026-09-19T18:00:00+07:00")), true);
 });
+
+it("names what the money paid before the session covered", async () => {
+  const { prepaidKind } = await import("./cashier.calculations.js");
+  assert.equal(prepaidKind(0, 500000), "NONE");
+  assert.equal(prepaidKind(250000, 500000), "DEPOSIT");
+  assert.equal(prepaidKind(500000, 500000), "COURT_FULL");
+  // A voucher lowers what the court costs: paying the rest online covers it.
+  assert.equal(prepaidKind(450000, 500000, 50000), "COURT_FULL");
+  assert.equal(prepaidKind(400000, 500000, 50000), "DEPOSIT");
+});

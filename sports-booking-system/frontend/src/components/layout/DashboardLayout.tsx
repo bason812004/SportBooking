@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   Banknote,
@@ -34,6 +35,7 @@ import { useLanguage } from "../../lib/i18n";
 import { ScrollToTopButton } from "../common/ScrollToTopButton";
 import { Button } from "../ui/Button";
 import { NotificationBell } from "./NotificationBell";
+import { TopBarSlotContext } from "./TopBarActions";
 
 type MenuItem = {
   to: string;
@@ -93,13 +95,14 @@ const menus = {
     { to: "/recipient/bookings", label: "Đơn đặt sân", icon: CalendarCheck, group: "Vận hành" },
     { to: "/recipient/services", label: "Dịch vụ & Món", icon: ShoppingBag, group: "Tồn kho & Dịch vụ" },
     { to: "/recipient/inventory", label: "Tồn kho hàng hóa", icon: Boxes, group: "Tồn kho & Dịch vụ" },
-    { to: "/recipient/purchases", label: "Nhập hàng & NCC", icon: Truck, group: "Tồn kho & Dịch vụ" },
     { to: "/recipient/report", label: "Báo cáo", icon: BarChart3, group: "Tài chính" }
   ]
 } satisfies Record<"PARTNER" | "ADMIN" | "RECIPIENT", MenuItem[]>;
 
 export function DashboardLayout() {
   const { user, logout } = useAuth();
+  // Where pages put their own top-bar buttons (TopBarActions), left of the bell.
+  const [topBarSlot, setTopBarSlot] = useState<HTMLElement | null>(null);
   const { t } = useLanguage();
   const isAdmin = user?.role === "ADMIN";
   const isRecipient = user?.role === "RECIPIENT";
@@ -178,10 +181,15 @@ export function DashboardLayout() {
             {current?.group && <span>{t(current.group)} / </span>}
             {current && <span className="text-ink">{t(current.label)}</span>}
           </p>
-          <NotificationBell />
+          <div className="flex shrink-0 items-center gap-2">
+            <div ref={setTopBarSlot} className="flex items-center gap-2 empty:hidden" />
+            <NotificationBell />
+          </div>
         </header>
         <div className="px-4 pb-12 pt-5 md:px-6">
-          <Outlet />
+          <TopBarSlotContext.Provider value={topBarSlot}>
+            <Outlet />
+          </TopBarSlotContext.Provider>
         </div>
       </main>
       <ScrollToTopButton />

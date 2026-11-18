@@ -1,10 +1,19 @@
+import { BookingStatus } from "@prisma/client";
 import { prisma } from "../../config/db.js";
-import { NotFoundError } from "../../shared/errors/AppError.js";
+import { ConflictError, NotFoundError, ValidationError } from "../../shared/errors/AppError.js";
 import { checkoutAccessRepository, type CheckoutActor } from "../checkout/checkout.access.js";
+import { assertNothingOwed } from "../checkout/checkout.balance.js";
+import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
+import { settlementService } from "../settlements/settlement.service.js";
 import { checkInBooking } from "../recipient/recipient.counter.js";
 import { cashierRepository } from "./cashier.repository.js";
 import type { AddServiceToBookingInput, ReturnRentalItemInput } from "./cashier.types.js";
+import { notifyStockAlerts } from "../inventory/inventory.alerts.js";
+import type { StockAlert } from "../inventory/inventory.stock.js";
+
+/** Sessions the counter can finish: the customer checked in (or a payment already started). */
+const FINISHABLE_SESSION_STATUSES: BookingStatus[] = [BookingStatus.IN_PROGRESS, BookingStatus.CHECKOUT_PENDING];
 
 export const cashierService = {
   scopeFor(userId: string, role: string) {
@@ -28,6 +37,38 @@ export const cashierService = {
     return cashierRepository.getBookingDetailForCashier(bookingId);
   },
 
+  /**
+   * Ends a session at the counter when the customer owes nothing (everything was paid online, or at the counter
+   * already): the booking finishes now, keeping its booked hours. Only a checked-in session; money still owed is
+   * taken through the payment, which finishes the booking itself.
+   */
+  async finishSession(bookingId: string, actor: CheckoutActor) {
+    await checkoutAccessRepository.assertBooking(bookingId, actor, true);
+    const booking = await cashierRepository.sessionBooking(bookingId);
+    if (!booking) throw new NotFoundError("Booking không tồn tại");
+    if (!FINISHABLE_SESSION_STATUSES.includes(booking.bookingStatus)) {
+      throw new ValidationError("Chỉ hoàn tất được phiên khách đang chơi (đã check-in)");
+    }
+    const settlement = await cashierRepository.transaction(async (tx) => {
+      await assertNothingOwed(booking.id, tx);
+      if (!(await cashierRepository.completeSession(booking.id, booking.bookingStatus, tx))) {
+        throw new ConflictError("Phiên vừa được cập nhật ở nơi khác, hãy tải lại trang");
+      }
+      const finished = await cashierRepository.sessionBooking(booking.id, tx);
+      return settlementService.finishBooking(finished!, "COMPLETED", tx);
+    });
+
+    realtimeService.toBooking(bookingId, "booking:status-changed", { bookingId, status: "COMPLETED" });
+    realtimeService.toCourt(booking.courtId, "court:booking-updated", { bookingId, isCompleted: true, status: "COMPLETED" });
+    if (settlement) {
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toAdmin(realtimeEvents.settlementUpdated, settlement);
+      realtimeService.toPartner(settlement.partnerId, realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+      realtimeService.toAdmin(realtimeEvents.walletUpdated, { partnerId: settlement.partnerId });
+    }
+    return { id: booking.id, bookingStatus: "COMPLETED" as const };
+  },
+
   /** Same rule as the staff counter screen, early check-in charge included (recipient.counter). */
   async checkInBooking(bookingId: string, actor: CheckoutActor) {
     await checkoutAccessRepository.assertBooking(bookingId, actor, true);
@@ -38,7 +79,10 @@ export const cashierService = {
 
   async addServiceToBooking(bookingId: string, input: AddServiceToBookingInput, addedBy: string, actor: CheckoutActor) {
     await checkoutAccessRepository.assertBooking(bookingId, actor);
-    const result = await cashierRepository.addServiceToBooking(bookingId, input, addedBy);
+    // Products this sale took to their reorder level: the partner hears once the sale has committed.
+    const alerts: StockAlert[] = [];
+    const result = await cashierRepository.addServiceToBooking(bookingId, input, addedBy, alerts);
+    void notifyStockAlerts(alerts);
     const detail = await cashierRepository.getBookingDetailForCashier(bookingId);
 
     realtimeService.toBooking(bookingId, "booking:checkout-ready", { bookingId });
@@ -72,7 +116,9 @@ export const cashierService = {
 
   async updateBookingServiceQuantity(bookingId: string, serviceId: string, quantity: number, actor: CheckoutActor) {
     await checkoutAccessRepository.assertBooking(bookingId, actor, true);
-    const result = await cashierRepository.updateBookingServiceQuantity(bookingId, serviceId, quantity);
+    const alerts: StockAlert[] = [];
+    const result = await cashierRepository.updateBookingServiceQuantity(bookingId, serviceId, quantity, alerts);
+    void notifyStockAlerts(alerts);
     const detail = await cashierRepository.getBookingDetailForCashier(bookingId);
 
     realtimeService.toBooking(bookingId, "booking:service-updated", {

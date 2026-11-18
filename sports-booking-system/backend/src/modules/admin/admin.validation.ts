@@ -1,5 +1,6 @@
 import { AccountStatus, BookingStatus, PaymentStatus, UserRole } from "@prisma/client";
 import { z } from "zod";
+import { REPORT_MEASURE_CODES } from "../reports/report.thread.js";
 import { categoryWriteSchema } from "../categories/category.validation.js";
 
 export const rejectSchema = z.object({
@@ -41,6 +42,30 @@ export const partnerQuerySchema = z.object({
   })
 });
 
+const exportFormat = z.enum(["excel", "pdf"]);
+
+/** The commission page as a file: every partner's rate and the change history, nothing to filter. */
+export const commissionExportQuerySchema = z.object({
+  query: z.object({ format: exportFormat })
+});
+
+// Exports take the list's own filters (every page of it). Customers are always role USER, so no role filter here.
+export const customerExportQuerySchema = z.object({
+  query: z.object({
+    search: optionalQuery(z.string().trim().max(160)),
+    status: optionalQuery(z.nativeEnum(AccountStatus)),
+    format: exportFormat
+  })
+});
+
+export const partnerExportQuerySchema = z.object({
+  query: z.object({
+    search: optionalQuery(z.string().trim().max(180)),
+    status: optionalQuery(z.enum(["PENDING", "APPROVED", "REJECTED"])),
+    format: exportFormat
+  })
+});
+
 export const listQuerySchema = z.object({
   query: z.object({
     page: z.string().optional(),
@@ -62,15 +87,33 @@ export const reportListQuerySchema = z.object({
 
 const reportIdParams = z.object({ id: z.string().trim().min(1).max(40) });
 
-/** Resolving takes an optional note; rejecting tells the reporter why, so the reason is required. */
+export const reportThreadSchema = z.object({ params: reportIdParams });
+
+export const reportMessageSchema = z.object({
+  params: reportIdParams,
+  body: z.object({ content: z.string().trim().min(1, "Nhập nội dung tin nhắn").max(2000, "Tin nhắn tối đa 2000 ký tự") })
+});
+
+/**
+ * Both decisions tell the reporter in the admin's words. Resolving also says what was done: audit entries the system
+ * found on the court (auditIds, checked again by the service) and measures taken outside the system.
+ */
 export const reportResolveSchema = z.object({
   params: reportIdParams,
-  body: z.object({ note: z.string().trim().max(1000).optional() })
+  body: z.object({
+    note: z.string().trim().min(10, "Viết phản hồi cho người báo cáo (ít nhất 10 ký tự)").max(2000, "Phản hồi tối đa 2000 ký tự"),
+    measures: z.array(z.enum(REPORT_MEASURE_CODES)).max(REPORT_MEASURE_CODES.length).optional(),
+    auditIds: z.array(z.string().uuid()).max(50).optional(),
+    applyToCourtPending: z.boolean().optional()
+  })
 });
 
 export const reportRejectSchema = z.object({
   params: reportIdParams,
-  body: z.object({ note: z.string().trim().min(3, "Nhập lý do (ít nhất 3 ký tự)").max(1000) })
+  body: z.object({
+    note: z.string().trim().min(3, "Nhập lý do (ít nhất 3 ký tự)").max(2000, "Lý do tối đa 2000 ký tự"),
+    applyToCourtPending: z.boolean().optional()
+  })
 });
 
 const dayQuery = optionalQuery(z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày phải có dạng YYYY-MM-DD"));
@@ -97,8 +140,24 @@ export const reviewListQuerySchema = z.object({
     status: optionalQuery(z.enum(["VISIBLE", "HIDDEN"])),
     rating: optionalQuery(z.coerce.number().int().min(1).max(5)),
     partnerId: optionalQuery(z.string().trim().max(40)),
-    courtId: optionalQuery(z.string().trim().max(40))
+    courtId: optionalQuery(z.string().trim().max(40)),
+    fromDate: dayQuery,
+    toDate: dayQuery
   })
+});
+
+/** The statistics above the review list: one partner, one court and a period; the list's other filters do not apply. */
+export const reviewStatsQuerySchema = z.object({
+  query: z.object({
+    partnerId: optionalQuery(z.string().trim().max(40)),
+    courtId: optionalQuery(z.string().trim().max(40)),
+    fromDate: dayQuery,
+    toDate: dayQuery
+  })
+});
+
+export const reviewStatsExportQuerySchema = z.object({
+  query: reviewStatsQuerySchema.shape.query.extend({ format: exportFormat })
 });
 
 /** Hiding or deleting a review tells its author why, so the reason is required; showing it again takes an optional note. */
@@ -300,15 +359,25 @@ export const financeMonthSchema = z.object({
 const CAMPAIGN_TYPES = ["SYSTEM", "FINANCE", "INCIDENT", "MAINTENANCE", "PROMOTION"] as const;
 const CAMPAIGN_ROLES = ["USER", "PARTNER", "RECIPIENT", "ADMIN"] as const;
 
-/** Who a campaign goes to: every account, one role, one account or one partner. Counted the same way before sending. */
+/**
+ * Who a campaign goes to: every account, one role, one account or one partner. Counted the same way before sending.
+ * Accounts picked one by one (USERS) are sent, not counted beforehand: the admin already sees how many were picked.
+ */
 const campaignAudience = {
   targetType: z.enum(["ALL", "ROLE", "USER", "PARTNER"]),
   targetRole: optionalQuery(z.enum(CAMPAIGN_ROLES)),
   targetUserId: optionalQuery(z.string().trim().max(40)),
   targetPartnerId: optionalQuery(z.string().trim().max(40))
 };
+const MAX_PICKED_RECIPIENTS = 1000;
 
-function requireAudienceTarget(value: { targetType: string; targetRole?: string; targetUserId?: string; targetPartnerId?: string }, ctx: z.RefinementCtx) {
+function requireAudienceTarget(
+  value: { targetType: string; targetRole?: string; targetUserId?: string; targetPartnerId?: string; targetUserIds?: string[] },
+  ctx: z.RefinementCtx
+) {
+  if (value.targetType === "USERS" && !value.targetUserIds?.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["targetUserIds"], message: "Chọn các tài khoản nhận thông báo" });
+  }
   if (value.targetType === "ROLE" && !value.targetRole) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["targetRole"], message: "Chọn vai trò nhận thông báo" });
   }
@@ -326,7 +395,7 @@ export const notificationCampaignQuerySchema = z.object({
     limit: z.string().optional(),
     search: optionalQuery(z.string().trim().max(180)),
     type: optionalQuery(z.string().trim().max(80)),
-    targetType: optionalQuery(z.enum(["ALL", "ROLE", "USER", "PARTNER"])),
+    targetType: optionalQuery(z.enum(["ALL", "ROLE", "USER", "PARTNER", "USERS"])),
     targetRole: optionalQuery(z.enum(CAMPAIGN_ROLES))
   })
 });
@@ -337,8 +406,18 @@ export const notificationCampaignCreateSchema = z.object({
     content: z.string().trim().min(3, "Nội dung có ít nhất 3 ký tự").max(4000, "Nội dung tối đa 4000 ký tự"),
     type: z.enum(CAMPAIGN_TYPES),
     ...campaignAudience,
+    targetType: z.enum(["ALL", "ROLE", "USER", "PARTNER", "USERS"]),
+    targetUserIds: z
+      .array(z.string().trim().min(1).max(40))
+      .max(MAX_PICKED_RECIPIENTS, `Chọn tối đa ${MAX_PICKED_RECIPIENTS} tài khoản; nhiều hơn hãy gửi cho cả nhóm`)
+      .optional(),
     metadata: z.record(z.unknown()).optional()
   }).superRefine(requireAudienceTarget)
+});
+
+/** The groups the recipient picker shows: accounts by role, a partner's owner and staff, or a court's customers. */
+export const notificationRecipientGroupsSchema = z.object({
+  query: z.object({ by: z.enum(["role", "partner", "court"]) })
 });
 
 export const notificationAudienceQuerySchema = z.object({

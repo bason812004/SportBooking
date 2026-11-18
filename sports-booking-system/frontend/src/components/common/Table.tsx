@@ -1,9 +1,16 @@
 import type { HTMLAttributes, TdHTMLAttributes, ThHTMLAttributes } from "react";
 import clsx from "clsx";
 
-export function Table({ className, minWidth, children, ...props }: HTMLAttributes<HTMLTableElement> & { minWidth?: string }) {
+/** `wrapperClassName` styles the scrolling frame around the table, e.g. to let it fill a page's free height. */
+export function Table({
+  className,
+  wrapperClassName,
+  minWidth,
+  children,
+  ...props
+}: HTMLAttributes<HTMLTableElement> & { minWidth?: string; wrapperClassName?: string }) {
   return (
-    <div className="overflow-auto rounded-2xl border border-line bg-white">
+    <div className={clsx("overflow-auto rounded-2xl border border-line bg-white", wrapperClassName)}>
       <table className={clsx("w-full text-sm", className)} style={minWidth ? { minWidth } : undefined} {...props}>
         {children}
       </table>

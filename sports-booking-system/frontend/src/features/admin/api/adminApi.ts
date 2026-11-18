@@ -7,8 +7,11 @@ import type {
   AdminCourt,
   AdminUser,
   AdminCourtReview,
+  CourtApprovalRevocation,
   AdminDashboard,
   AdminFinanceReport,
+  AdminReviewStats,
+  NotificationRecipientGroup,
   AdminFinanceTransaction,
   AdminBlog,
   AdminBlogComment,
@@ -24,6 +27,9 @@ import type {
   AdminVoucherDetail,
   AdminVoucherInput,
   AdminReport,
+  AdminReportThread,
+  ReportDecisionPayload,
+  ReportThreadEntry,
   AuditLog,
   BlockchainLog,
   Category,
@@ -97,6 +103,16 @@ export const adminApi = {
     const { data } = await api.get<ApiResponse<Paginated<AdminPartnerListItem>>>("/admin/partners", { params: clean(params) });
     return data.data;
   },
+  /** The partner list with the page's search and status, every page of it (account numbers masked). */
+  async exportPartners(params: { search?: string; status?: string }, format: "excel" | "pdf") {
+    const { data } = await api.get<Blob>("/admin/partners/export", { params: clean({ ...params, format }), responseType: "blob" });
+    return data;
+  },
+  /** Customers (role USER) with the user list's search and status, every page of it. */
+  async exportCustomers(params: { search?: string; status?: string }, format: "excel" | "pdf") {
+    const { data } = await api.get<Blob>("/admin/users/export", { params: clean({ ...params, format }), responseType: "blob" });
+    return data;
+  },
   async partnerDetail(id: string) {
     const { data } = await api.get<ApiResponse<AdminPartner>>(`/admin/partners/${id}`);
     return data.data;
@@ -116,6 +132,11 @@ export const adminApi = {
   async commissionHistory() {
     const { data } = await api.get<ApiResponse<CommissionRateChange[]>>("/admin/commission/history");
     return data.data;
+  },
+  /** Every partner's rate with the day it took effect, and the whole change history. */
+  async exportCommission(format: "excel" | "pdf") {
+    const { data } = await api.get<Blob>("/admin/commission/export", { params: { format }, responseType: "blob" });
+    return data;
   },
   async updateCommissionDefault(rate: number) {
     const { data } = await api.patch<ApiResponse<{ rate: number }>>("/admin/commission/default", { rate });
@@ -170,8 +191,14 @@ export const adminApi = {
     targetRole?: string;
     targetUserId?: string;
     targetPartnerId?: string;
+    targetUserIds?: string[];
   }) {
     const { data } = await api.post<ApiResponse<AdminNotificationCampaign>>("/admin/notifications/campaigns", payload);
+    return data.data;
+  },
+  /** The recipient picker's tree: active accounts by role, per partner (owner and staff) or per court (its customers). */
+  async notificationRecipientGroups(by: "role" | "partner" | "court") {
+    const { data } = await api.get<ApiResponse<NotificationRecipientGroup[]>>("/admin/notifications/recipient-groups", { params: { by } });
     return data.data;
   },
   /** How many active accounts a campaign to this audience would reach (the sender excluded from groups). */
@@ -215,12 +242,23 @@ export const adminApi = {
     const { data } = await api.get<ApiResponse<AdminCourtReview>>(`/admin/courts/${id}/review`);
     return data.data;
   },
+  /** approvedImages: the photos still pending that were approved with the court. */
   async approveCourt(id: string) {
-    const { data } = await api.put<ApiResponse<Court>>(`/admin/courts/${id}/approve`);
+    const { data } = await api.put<ApiResponse<{ id: string; approvalStatus: "APPROVED"; approvedImages: number }>>(`/admin/courts/${id}/approve`);
     return data.data;
   },
   async rejectCourt(id: string, reason: string) {
     const { data } = await api.put<ApiResponse<Court>>(`/admin/courts/${id}/reject`, { reason });
+    return data.data;
+  },
+  /** Until when an approval can be taken back, and the upcoming bookings that stand if it is. */
+  async approvalRevocation(id: string) {
+    const { data } = await api.get<ApiResponse<CourtApprovalRevocation>>(`/admin/courts/${id}/approval-revocation`);
+    return data.data;
+  },
+  /** Sends an approved court back to PENDING; notifiedBookings: customers told their booking stands. */
+  async revokeCourtApproval(id: string, reason: string) {
+    const { data } = await api.put<ApiResponse<{ id: string; approvalStatus: "PENDING"; notifiedBookings: number }>>(`/admin/courts/${id}/revoke-approval`, { reason });
     return data.data;
   },
   async categories() {
@@ -243,6 +281,15 @@ export const adminApi = {
     const { data } = await api.get<ApiResponse<Paginated<ModeratedReview>>>("/admin/reviews", { params: clean(params) });
     return data.data;
   },
+  async reviewStats(params: { partnerId?: string; courtId?: string; fromDate?: string } = {}) {
+    const { data } = await api.get<ApiResponse<AdminReviewStats>>("/admin/reviews/stats", { params: clean(params) });
+    return data.data;
+  },
+  /** The review statistics (same partner, court and period) as an Excel workbook or a PDF. */
+  async exportReviewStats(params: { partnerId?: string; courtId?: string; fromDate?: string }, format: "excel" | "pdf") {
+    const { data } = await api.get<Blob>("/admin/reviews/stats/export", { params: clean({ ...params, format }), responseType: "blob" });
+    return data;
+  },
   /** Hiding needs a reason (the author is told); showing again takes an optional note. */
   async setReviewStatus(id: string, action: "hide" | "show", reason?: string) {
     const { data } = await api.put<ApiResponse<unknown>>(`/admin/reviews/${id}/${action}`, { reason });
@@ -264,9 +311,19 @@ export const adminApi = {
     });
     return data.data;
   },
-  /** Rejecting needs a reason; resolving takes an optional note. Both are sent to the reporter. */
-  async setReportStatus(id: string, action: "resolve" | "reject", note?: string) {
-    const { data } = await api.put<ApiResponse<unknown>>(`/admin/reports/${id}/${action}`, { note });
+  /** A report with its conversation, the measures the audit log shows and the court's other waiting reports. */
+  async reportThread(id: string) {
+    const { data } = await api.get<ApiResponse<AdminReportThread>>(`/admin/reports/${id}`);
+    return data.data;
+  },
+  /** Writes to the reporter while the report waits; they are notified and may answer. */
+  async sendReportMessage(id: string, content: string) {
+    const { data } = await api.post<ApiResponse<ReportThreadEntry>>(`/admin/reports/${id}/messages`, { content });
+    return data.data;
+  },
+  /** Both decisions carry the admin's words to the reporter; resolving also says what was done (measures). */
+  async setReportStatus(id: string, action: "resolve" | "reject", payload: ReportDecisionPayload) {
+    const { data } = await api.put<ApiResponse<{ id: string; closed: string[] }>>(`/admin/reports/${id}/${action}`, payload);
     return data.data;
   },
   async statistics() {

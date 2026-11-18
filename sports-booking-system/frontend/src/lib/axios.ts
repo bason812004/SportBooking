@@ -52,11 +52,20 @@ api.interceptors.response.use(
       }
     }
 
-    const message = error.response?.data?.message ?? error.response?.data?.error?.message ?? "Không thể kết nối máy chủ";
+    let data = error.response?.data;
+    // A file download (responseType "blob") gets its error body as a Blob too: read the JSON message out of it.
+    if (typeof Blob !== "undefined" && data instanceof Blob && data.type.includes("json")) {
+      try {
+        data = JSON.parse(await data.text());
+      } catch {
+        // Not readable: the generic message below stands.
+      }
+    }
+    const message = data?.message ?? data?.error?.message ?? "Không thể kết nối máy chủ";
     const rejected = new Error(message) as Error & { code?: string; fieldErrors?: Record<string, string[]> };
-    rejected.code = error.response?.data?.error?.code ?? error.response?.data?.code;
+    rejected.code = data?.error?.code ?? data?.code;
     // A validation error says only "Dữ liệu gửi lên không hợp lệ"; the reason per field is here.
-    rejected.fieldErrors = error.response?.data?.errors ?? error.response?.data?.error?.fieldErrors;
+    rejected.fieldErrors = data?.errors ?? data?.error?.fieldErrors;
     return Promise.reject(rejected);
   }
 );

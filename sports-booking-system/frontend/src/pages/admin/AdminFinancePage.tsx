@@ -192,7 +192,7 @@ export function AdminFinancePage() {
         title="Tài chính"
         subtitle="Đối soát doanh thu, hoa hồng, hoàn tiền và số dư ví của đối tác. Tiền trả cho đối tác đi qua tab Rút tiền."
         actions={
-          <div className="flex flex-wrap items-end gap-2 rounded-xl bg-white/95 p-2">
+          <div className="flex flex-wrap items-end gap-2 rounded-xl border border-line bg-white p-2">
             <Input
               label="Tháng"
               type="month"

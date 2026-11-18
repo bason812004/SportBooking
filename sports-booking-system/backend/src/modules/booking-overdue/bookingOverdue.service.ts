@@ -1,12 +1,12 @@
 import { prisma } from "../../config/db.js";
 import { env } from "../../config/env.js";
 import { bookingRepository } from "../bookings/booking.repository.js";
-import { cashierRepository } from "../cashier/cashier.repository.js";
 import { notificationService } from "../notifications/notification.service.js";
 import { realtimeEvents } from "../realtime/realtime.events.js";
 import { realtimeService } from "../realtime/realtime.service.js";
 import { commissionableCourtAmount, settlementService } from "../settlements/settlement.service.js";
 import { recordAdminAction } from "../admin/admin.audit.js";
+import { releaseBookingStock } from "../inventory/inventory.stock.js";
 import { autoFinishStatus, OPEN_BOOKING_STATUSES } from "./bookingOverdue.calculations.js";
 import { bookingOverdueRepository, type OverdueBookingRow } from "./bookingOverdue.repository.js";
 
@@ -47,6 +47,8 @@ export const bookingOverdueService = {
         if (!(await bookingOverdueRepository.markAutoFinished(id, booking.bookingStatus, status, tx))) return null;
         const finished = { ...booking, bookingStatus: status };
         const settlement = await settlementService.finishBooking(finished, status, tx);
+        // A no-show gives its pre-ordered services back in this same transaction (inventory/inventory.stock.ts).
+        if (status === "NO_SHOW") await releaseBookingStock(tx, id, "Tự động trả do khách không đến", "BOOKING_NO_SHOW");
         // No one did this: the audit entry has no actor and says what the decision rested on.
         await recordAdminAction(null, "BOOKING_AUTO_FINISHED", "BOOKING", id, {
           bookingCode: booking.bookingCode,
@@ -62,9 +64,6 @@ export const bookingOverdueService = {
     );
     if (!result) return null;
 
-    if (result.status === "NO_SHOW") {
-      await cashierRepository.releaseBookingServices(id, "Tự động trả do khách không đến").catch(() => {});
-    }
     if (result.settlement) {
       const { partnerId } = result.settlement;
       realtimeService.toPartner(partnerId, realtimeEvents.settlementUpdated, result.settlement);

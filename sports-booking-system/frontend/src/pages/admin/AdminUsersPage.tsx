@@ -17,6 +17,7 @@ import { useUrlSort } from "../../hooks/useUrlSort";
 import { Table, THead, TBody, Tr, Th, Td } from "../../components/common/Table";
 import { TablePagination } from "../../components/common/TablePagination";
 import { PageHero } from "../../components/common/PageHero";
+import { ReportExportButtons } from "../../components/common/ReportExportButtons";
 import { CustomerReportPanel } from "../../features/report/components/CustomerReportPanel";
 import { formatDate } from "../../lib/format";
 
@@ -93,10 +94,19 @@ export function AdminUsersPage() {
     <div className="space-y-6">
       <PageHero eyebrow="Quản trị" title="Người dùng" subtitle="Quản lý tất cả tài khoản người dùng trên hệ thống." />
 
-      <div className="grid gap-3 rounded-2xl border bg-white p-4 md:grid-cols-3">
-        <Input label="Tìm tên, email, SĐT" value={search} onChange={(e) => { setPage(1); setSearch(e.target.value); }} />
-        <Select label="Vai trò" value={role} onChange={(e) => { setPage(1); setRole(e.target.value); }} options={roleFilterOptions} />
-        <Select label="Trạng thái" value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} options={statusFilterOptions} />
+      <div className="space-y-3 rounded-2xl border bg-white p-4">
+        <div className="grid gap-3 md:grid-cols-3">
+          <Input label="Tìm tên, email, SĐT" value={search} onChange={(e) => { setPage(1); setSearch(e.target.value); }} />
+          <Select label="Vai trò" value={role} onChange={(e) => { setPage(1); setRole(e.target.value); }} options={roleFilterOptions} />
+          <Select label="Trạng thái" value={status} onChange={(e) => { setPage(1); setStatus(e.target.value); }} options={statusFilterOptions} />
+        </div>
+        {/* Customers only (role USER), whatever the role filter says; search and status apply. */}
+        <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-3">
+          <ReportExportButtons
+            filenameBase={`khach-hang-${new Date().toISOString().slice(0, 10)}`}
+            onExport={(format) => adminApi.exportCustomers({ search: debouncedSearch, status }, format)}
+          />
+        </div>
       </div>
 
       {/* Loading and errors replace only the list, so the filters above always stay usable. */}

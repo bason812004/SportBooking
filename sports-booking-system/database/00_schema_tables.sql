@@ -45,6 +45,7 @@ create extension if not exists "pgcrypto";
 drop table if exists notifications cascade;
 drop table if exists notification_campaigns cascade;
 drop table if exists favorites cascade;
+drop table if exists report_messages cascade;
 drop table if exists reports cascade;
 drop table if exists partner_payouts cascade;
 drop table if exists commission_transactions cascade;
@@ -138,6 +139,7 @@ drop sequence if exists seq_demand_features cascade;
 drop sequence if exists seq_booking_services cascade;
 drop sequence if exists seq_reviews cascade;
 drop sequence if exists seq_reports cascade;
+drop sequence if exists seq_report_messages cascade;
 drop sequence if exists seq_notifications cascade;
 drop sequence if exists seq_notification_campaigns cascade;
 drop sequence if exists seq_analytics_events cascade;
@@ -227,6 +229,7 @@ create sequence seq_demand_features;
 create sequence seq_booking_services;
 create sequence seq_reviews;
 create sequence seq_reports;
+create sequence seq_report_messages;
 create sequence seq_notifications;
 create sequence seq_notification_campaigns;
 create sequence seq_analytics_events;
@@ -729,13 +732,26 @@ create table reports (
   resolved_at timestamptz
 );
 
+-- The conversation about a report (database/38_report_messages.sql): append-only.
+create table report_messages (
+  id varchar(20) primary key default ('rm' || lpad(nextval('seq_report_messages')::text, 4, '0')),
+  report_id varchar(20) not null references reports(id),
+  author_id varchar(20) references users(id),
+  author_role varchar(20) not null check (author_role in ('ADMIN', 'USER')),
+  kind varchar(20) not null default 'MESSAGE' check (kind in ('MESSAGE', 'RESOLVED', 'REJECTED')),
+  content text not null check (char_length(content) between 1 and 2000),
+  measures jsonb,
+  created_at timestamptz not null default now(),
+  constraint report_messages_decision_by_admin check (kind = 'MESSAGE' or author_role = 'ADMIN')
+);
+
 create table notification_campaigns (
   id varchar(20) primary key default ('nc' || lpad(nextval('seq_notification_campaigns')::text, 4, '0')),
   title varchar(160) not null,
   content text not null,
   type varchar(80) not null,
-  target_type varchar(30) not null check (target_type in ('ALL', 'ROLE', 'USER', 'PARTNER')),
-  target_role varchar(20) check (target_role is null or target_role in ('USER', 'PARTNER', 'ADMIN')),
+  target_type varchar(30) not null check (target_type in ('ALL', 'ROLE', 'USER', 'PARTNER', 'USERS')),
+  target_role varchar(20) check (target_role is null or target_role in ('USER', 'PARTNER', 'RECIPIENT', 'ADMIN')),
   target_user_id varchar(20) references users(id) on delete set null,
   target_partner_id varchar(20) references partner_profiles(id) on delete set null,
   sent_by varchar(20) references users(id) on delete set null,
@@ -747,6 +763,8 @@ create table notification_campaigns (
     or (target_type = 'ROLE' and target_role is not null and target_user_id is null and target_partner_id is null)
     or (target_type = 'USER' and target_user_id is not null and target_role is null and target_partner_id is null)
     or (target_type = 'PARTNER' and target_partner_id is not null and target_role is null and target_user_id is null)
+    -- Accounts picked one by one: their ids are in metadata_json.targetUserIds (37_notification_campaign_selected_users.sql).
+    or (target_type = 'USERS' and target_role is null and target_user_id is null and target_partner_id is null)
   )
 );
 
@@ -965,6 +983,13 @@ begin
 end;
 $$ language plpgsql;
 
+create or replace function prevent_report_message_mutation()
+returns trigger as $$
+begin
+  raise exception 'report_messages is append-only; % is not allowed', tg_op;
+end;
+$$ language plpgsql;
+
 create trigger trg_users_updated_at before update on users for each row execute function set_updated_at();
 create trigger trg_blockchain_logs_updated_at before update on blockchain_logs for each row execute function set_updated_at();
 create trigger trg_system_settings_updated_at before update on system_settings for each row execute function set_updated_at();
@@ -993,6 +1018,9 @@ create trigger trg_team_recruitment_posts_updated_at before update on team_recru
 create trigger trg_commission_transactions_immutable
 before update or delete on commission_transactions
 for each row execute function prevent_commission_transaction_mutation();
+create trigger trg_report_messages_immutable
+before update or delete on report_messages
+for each row execute function prevent_report_message_mutation();
 
 -- ══════════════════════════════════════════════════════════════════════
 -- INDEXES
@@ -1057,6 +1085,7 @@ create unique index if not exists uq_commission_earning_per_booking
   where transaction_type = 'EARNING';
 create index if not exists idx_reviews_court_id on reviews(court_id);
 create index if not exists idx_reports_status on reports(status);
+create index if not exists idx_report_messages_report on report_messages(report_id, created_at);
 create index if not exists idx_notifications_user_id on notifications(user_id);
 create index if not exists idx_notification_campaigns_created_at on notification_campaigns(created_at desc);
 create index if not exists idx_notification_campaigns_sent_by on notification_campaigns(sent_by);

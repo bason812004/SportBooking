@@ -69,14 +69,18 @@ export const serviceController = {
       categoryId: body.categoryId ?? undefined,
       sportType: body.sportType ?? undefined,
       imageUrl: body.imageUrl ?? undefined
-    });
+    }, req.user!.id);
     return sendSuccess(res, services, 201, services.length > 1 ? `Đã tạo dịch vụ cho ${services.length} sân` : "Tạo dịch vụ thành công");
   },
 
   async updateService(req: Request, res: Response) {
     const partnerId = await getPartnerId(req.user!.id);
-    const service = await serviceService.updateService(partnerId, req.params.id, req.body);
+    const service = await serviceService.updateService(partnerId, req.params.id, req.body, req.user!.id);
     return sendSuccess(res, service, 200, "Cập nhật dịch vụ thành công");
+  },
+
+  async priceHistory(req: Request, res: Response) {
+    return sendSuccess(res, await serviceService.priceHistory(req.user!.id, req.params.id));
   },
 
   async deleteService(req: Request, res: Response) {

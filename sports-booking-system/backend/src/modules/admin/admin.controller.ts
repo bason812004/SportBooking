@@ -2,6 +2,14 @@ import { asyncHandler } from "../../shared/utils/asyncHandler.js";
 import { sendSuccess } from "../../shared/utils/response.js";
 import { adminService } from "./admin.service.js";
 
+/** An exported list as an Excel or PDF download, named after the list and today's date. */
+function sendListFile(res: import("express").Response, buffer: Buffer, format: "excel" | "pdf", name: string) {
+  const filename = `${name}-${new Date().toISOString().slice(0, 10)}.${format === "excel" ? "xlsx" : "pdf"}`;
+  res.setHeader("Content-Type", format === "excel" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.send(buffer);
+}
+
 export const adminController = {
   dashboard: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.dashboard())),
   users: asyncHandler(async (req, res) => sendSuccess(res, await adminService.users(req.query))),
@@ -20,6 +28,10 @@ export const adminController = {
   rejectPartner: asyncHandler(async (req, res) => sendSuccess(res, await adminService.rejectPartner(req.user!.id, req.params.id, req.body.reason))),
   commissionDefault: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.commissionDefault())),
   commissionHistory: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.commissionHistory())),
+  exportCommission: asyncHandler(async (req, res) => {
+    const format = req.query.format as "excel" | "pdf";
+    sendListFile(res, await adminService.exportCommission(format), format, "ty-le-hoa-hong");
+  }),
   updateCommissionDefault: asyncHandler(async (req, res) =>
     sendSuccess(res, await adminService.updateCommissionDefault(req.user!.id, req.body.rate))
   ),
@@ -37,6 +49,14 @@ export const adminController = {
   financeReconciliation: asyncHandler(async (req, res) =>
     sendSuccess(res, await adminService.financeReconciliation(req.query.month as string | undefined))
   ),
+  exportCustomers: asyncHandler(async (req, res) => {
+    const query = req.query as any;
+    sendListFile(res, await adminService.exportCustomers(req.user!.id, query), query.format, "khach-hang");
+  }),
+  exportPartners: asyncHandler(async (req, res) => {
+    const query = req.query as any;
+    sendListFile(res, await adminService.exportPartners(req.user!.id, query), query.format, "doi-tac");
+  }),
   financeExport: asyncHandler(async (req, res) => {
     const file = await adminService.financeExport(req.query.month as string | undefined);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -52,6 +72,9 @@ export const adminController = {
   ),
   notificationCampaignRecipients: asyncHandler(async (req, res) =>
     sendSuccess(res, await adminService.notificationCampaignRecipients(req.params.id, req.query))
+  ),
+  notificationRecipientGroups: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.notificationRecipientGroups(req.user!.id, req.query.by as "role" | "partner" | "court"))
   ),
   notificationAudience: asyncHandler(async (req, res) =>
     sendSuccess(res, await adminService.notificationAudience(req.user!.id, req.query as any))
@@ -71,21 +94,34 @@ export const adminController = {
   pendingCourts: asyncHandler(async (req, res) => sendSuccess(res, await adminService.pendingCourts(req.query))),
   approveCourt: asyncHandler(async (req, res) => sendSuccess(res, await adminService.approveCourt(req.user!.id, req.params.id))),
   rejectCourt: asyncHandler(async (req, res) => sendSuccess(res, await adminService.rejectCourt(req.user!.id, req.params.id, req.body.reason))),
+  approvalRevocation: asyncHandler(async (req, res) => sendSuccess(res, await adminService.approvalRevocation(req.params.id))),
+  revokeCourtApproval: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.revokeCourtApproval(req.user!.id, req.params.id, req.body.reason))
+  ),
   categories: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.categories())),
   createCategory: asyncHandler(async (req, res) => sendSuccess(res, await adminService.createCategory(req.user!.id, req.body), 201)),
   updateCategory: asyncHandler(async (req, res) => sendSuccess(res, await adminService.updateCategory(req.user!.id, req.params.id, req.body))),
   deleteCategory: asyncHandler(async (req, res) => sendSuccess(res, await adminService.deleteCategory(req.user!.id, req.params.id))),
   reviews: asyncHandler(async (req, res) => sendSuccess(res, await adminService.reviews(req.query))),
+  reviewStats: asyncHandler(async (req, res) => sendSuccess(res, await adminService.reviewStats(req.query as Record<string, string | undefined>))),
+  exportReviewStats: asyncHandler(async (req, res) => {
+    const query = req.query as any;
+    sendListFile(res, await adminService.exportReviewStats(query), query.format, "thong-ke-danh-gia");
+  }),
   hideReview: asyncHandler(async (req, res) => sendSuccess(res, await adminService.setReviewDisplay(req.user!.id, req.params.id, "HIDDEN", req.body.reason))),
   showReview: asyncHandler(async (req, res) => sendSuccess(res, await adminService.setReviewDisplay(req.user!.id, req.params.id, "VISIBLE", req.body.reason))),
   deleteReview: asyncHandler(async (req, res) => sendSuccess(res, await adminService.deleteReview(req.user!.id, req.params.id, req.body.reason))),
   removeReviewReply: asyncHandler(async (req, res) => sendSuccess(res, await adminService.removeReviewReply(req.user!.id, req.params.id, req.body.reason))),
   reports: asyncHandler(async (req, res) => sendSuccess(res, await adminService.reports(req.query))),
+  reportThread: asyncHandler(async (req, res) => sendSuccess(res, await adminService.reportThread(req.params.id))),
+  sendReportMessage: asyncHandler(async (req, res) =>
+    sendSuccess(res, await adminService.sendReportMessage(req.user!.id, req.params.id, req.body.content), 201)
+  ),
   resolveReport: asyncHandler(async (req, res) =>
-    sendSuccess(res, await adminService.decideReport(req.user!.id, req.params.id, "RESOLVED", req.body.note))
+    sendSuccess(res, await adminService.decideReport(req.user!.id, req.params.id, "RESOLVED", req.body))
   ),
   rejectReport: asyncHandler(async (req, res) =>
-    sendSuccess(res, await adminService.decideReport(req.user!.id, req.params.id, "REJECTED", req.body.note))
+    sendSuccess(res, await adminService.decideReport(req.user!.id, req.params.id, "REJECTED", req.body))
   ),
   statistics: asyncHandler(async (_req, res) => sendSuccess(res, await adminService.statistics())),
   vouchers: asyncHandler(async (req, res) => sendSuccess(res, await adminService.vouchers(req.query))),

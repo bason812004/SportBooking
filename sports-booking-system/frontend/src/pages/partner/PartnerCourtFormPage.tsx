@@ -135,7 +135,8 @@ export function PartnerCourtFormPage() {
               surfaces: sport.surfaces.map((surface) => ({
                 name: surface.name.trim(),
                 surface: surface.surface.trim() || null
-              }))
+              })),
+              prices: sport.prices.map(({ dayType, startTime, endTime, price }) => ({ dayType, startTime, endTime, price }))
             }))
           });
 
@@ -271,8 +272,8 @@ export function PartnerCourtFormPage() {
                 <Section
                   icon={Layers}
                   step={2}
-                  title="Môn thể thao và sân con"
-                  description="Mỗi môn sẽ thành một sân riêng. Khai số sân con và đặt tên để nhân viên và khách dễ nhận biết."
+                  title="Môn thể thao, sân con và giá dự kiến"
+                  description="Mỗi môn sẽ thành một sân riêng. Khai số sân con, đặt tên để nhân viên và khách dễ nhận biết, và nhập giá dự kiến để admin xem trước."
                 >
                   <CourtSportsSection categories={categories.data ?? []} />
                 </Section>
@@ -412,10 +413,10 @@ export function PartnerCourtFormPage() {
               <ol className="mt-3 space-y-3 text-sm text-emerald-900">
                 {[
                   editing ? "Bạn lưu thay đổi thông tin sân" : "Bạn gửi đăng ký cơ sở cùng các môn và sân con",
-                  editing ? "Đổi tên, địa chỉ hoặc môn: admin duyệt lại; các thay đổi khác áp dụng ngay" : "Admin kiểm tra thông tin và hình ảnh của từng sân",
+                  editing ? "Đổi tên, địa chỉ hoặc môn: admin duyệt lại; các thay đổi khác áp dụng ngay" : "Admin kiểm tra thông tin, hình ảnh và giá dự kiến của từng sân; ảnh được duyệt cùng sân",
                   editing
                     ? "Đổi giờ mở cửa: khách có đơn ngoài giờ mới được báo"
-                    : "Sân hiển thị cho khách. Hãy thiết lập bảng giá cho từng sân để nhận đặt sân"
+                    : "Sân hiển thị cho khách. Giá dự kiến trở thành bảng giá, bạn sửa tiếp ở trang Bảng giá"
                 ].map((text, index) => (
                   <li key={text} className="flex gap-3">
                     <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-emerald-600 text-xs font-bold text-white">{index + 1}</span>

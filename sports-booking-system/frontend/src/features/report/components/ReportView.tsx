@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { CalendarCheck, PercentCircle, ShoppingBag, Wallet } from "lucide-react";
-import { usePeriodRange } from "../../../hooks/usePeriodRange";
+import { usePeriodRange, type PeriodRange } from "../../../hooks/usePeriodRange";
 import { BarChart } from "../../../components/charts/BarChart";
 import { LineChart } from "../../../components/charts/LineChart";
 import { PeriodRangeFilter } from "../../../components/common/PeriodRangeFilter";
@@ -8,59 +8,74 @@ import { StatCard } from "../../../components/common/StatCard";
 import { ReportExportButtons } from "../../../components/common/ReportExportButtons";
 import { LoadingState, ErrorState } from "../../../components/common/States";
 import { bookingStatusLabel } from "../../../lib/format";
-import type { ReportBookingRow, ReportRange, ReportRevenuePoint } from "../api/reportApi";
+import type { ReportBookingRow, ReportRange, ReportRevenuePoint, ReportScopeParams } from "../api/reportApi";
 
 function currency(value: number) {
   return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 }).format(value);
 }
 
+type ReportQuery = ReportRange & ReportScopeParams;
+
 interface ReportApiClient {
-  overview: (range: ReportRange) => Promise<any>;
-  revenue: (range: ReportRange) => Promise<any>;
-  bookings: (range: ReportRange) => Promise<any>;
-  services: (range: ReportRange) => Promise<any>;
-  exportReport: (range: ReportRange, format: "excel" | "pdf") => Promise<Blob>;
+  overview: (query: ReportQuery) => Promise<any>;
+  revenue: (query: ReportQuery) => Promise<any>;
+  bookings: (query: ReportQuery) => Promise<any>;
+  services: (query: ReportQuery) => Promise<any>;
+  exportReport: (query: ReportQuery, format: "excel" | "pdf") => Promise<Blob>;
 }
 
+/**
+ * A page that holds the period itself (the admin report, shared by its tabs) passes `period` and draws the period
+ * filter and export buttons on its own; `scope` narrows an admin report to one partner or one court.
+ */
 export function ReportView({
   queryKeyPrefix,
   api,
   includeCommission,
-  filenameBase
+  filenameBase,
+  period: sharedPeriod,
+  scope
 }: {
   queryKeyPrefix: string;
   api: ReportApiClient;
   includeCommission: boolean;
   filenameBase: string;
+  period?: PeriodRange;
+  scope?: ReportScopeParams;
 }) {
-  const period = usePeriodRange({ defaultMode: "month" });
+  const ownPeriod = usePeriodRange({ defaultMode: "month" });
+  const period = sharedPeriod ?? ownPeriod;
   const range: ReportRange = { from: period.range.fromDate, to: period.range.toDate };
+  const query: ReportQuery = { ...range, ...scope };
+  const scopeKey = [scope?.partnerId ?? null, scope?.courtId ?? null];
 
   const overview = useQuery({
-    queryKey: [queryKeyPrefix, "overview", range.from, range.to],
-    queryFn: () => api.overview(range)
+    queryKey: [queryKeyPrefix, "overview", range.from, range.to, ...scopeKey],
+    queryFn: () => api.overview(query)
   });
   const revenue = useQuery({
-    queryKey: [queryKeyPrefix, "revenue", range.from, range.to],
-    queryFn: () => api.revenue(range)
+    queryKey: [queryKeyPrefix, "revenue", range.from, range.to, ...scopeKey],
+    queryFn: () => api.revenue(query)
   });
   const bookings = useQuery({
-    queryKey: [queryKeyPrefix, "bookings", range.from, range.to],
-    queryFn: () => api.bookings(range)
+    queryKey: [queryKeyPrefix, "bookings", range.from, range.to, ...scopeKey],
+    queryFn: () => api.bookings(query)
   });
   const services = useQuery({
-    queryKey: [queryKeyPrefix, "services", range.from, range.to],
-    queryFn: () => api.services(range)
+    queryKey: [queryKeyPrefix, "services", range.from, range.to, ...scopeKey],
+    queryFn: () => api.services(query)
   });
   const revenueSeries: ReportRevenuePoint[] = revenue.data?.series ?? [];
   const bookingRows: ReportBookingRow[] = bookings.data ?? [];
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4">
-        <PeriodRangeFilter period={period} />
-        <ReportExportButtons filenameBase={`${filenameBase}-${range.from}_${range.to}`} onExport={(format) => api.exportReport(range, format)} />
-      </div>
+      {!sharedPeriod && (
+        <div className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+          <PeriodRangeFilter period={period} />
+          <ReportExportButtons filenameBase={`${filenameBase}-${range.from}_${range.to}`} onExport={(format) => api.exportReport(query, format)} />
+        </div>
+      )}
 
       {overview.isLoading ? (
         <LoadingState />

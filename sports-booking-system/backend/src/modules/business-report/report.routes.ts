@@ -5,6 +5,8 @@ import { requireRole } from "../../middlewares/role.middleware.js";
 import { validate } from "../../middlewares/validate.middleware.js";
 import { adminReportController, partnerReportController, recipientReportController } from "./report.controller.js";
 import {
+  adminReportExportQuerySchema,
+  adminReportRangeQuerySchema,
   reportBookingExportQuerySchema,
   reportCustomerExportQuerySchema,
   reportCustomerParamSchema,
@@ -14,11 +16,12 @@ import {
 
 export const adminReportRoutes = Router();
 adminReportRoutes.use(authMiddleware, requireRole(UserRole.ADMIN));
-adminReportRoutes.get("/overview", validate(reportRangeQuerySchema), adminReportController.overview);
-adminReportRoutes.get("/revenue", validate(reportRangeQuerySchema), adminReportController.revenue);
-adminReportRoutes.get("/bookings", validate(reportRangeQuerySchema), adminReportController.bookings);
-adminReportRoutes.get("/services", validate(reportRangeQuerySchema), adminReportController.services);
-adminReportRoutes.get("/export", validate(reportExportQuerySchema), adminReportController.export);
+adminReportRoutes.get("/overview", validate(adminReportRangeQuerySchema), adminReportController.overview);
+adminReportRoutes.get("/revenue", validate(adminReportRangeQuerySchema), adminReportController.revenue);
+adminReportRoutes.get("/bookings", validate(adminReportRangeQuerySchema), adminReportController.bookings);
+adminReportRoutes.get("/services", validate(adminReportRangeQuerySchema), adminReportController.services);
+adminReportRoutes.get("/breakdown", validate(reportRangeQuerySchema), adminReportController.breakdown);
+adminReportRoutes.get("/export", validate(adminReportExportQuerySchema), adminReportController.export);
 adminReportRoutes.get("/customer/:userId", validate(reportCustomerParamSchema), adminReportController.customer);
 adminReportRoutes.get("/customer/:userId/export", validate(reportCustomerExportQuerySchema), adminReportController.exportCustomer);
 adminReportRoutes.get("/booking/:bookingId/export", validate(reportBookingExportQuerySchema), adminReportController.exportBooking);
